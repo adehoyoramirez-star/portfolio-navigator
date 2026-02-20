@@ -1,5 +1,6 @@
-import { useState, useMemo, useCallback } from 'react';
-import { Order, ASSETS, recalculateAll } from '@/lib/portfolio';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { Order, MarketData, recalculateAll } from '@/lib/portfolio';
+import { fetchRealMarketData } from '@/lib/marketData';
 import { formatCurrency } from '@/lib/formatters';
 import { KPIBar } from '@/components/dashboard/KPIBar';
 import { DonutCharts } from '@/components/dashboard/DonutCharts';
@@ -10,19 +11,45 @@ import { ControlPanel } from '@/components/dashboard/ControlPanel';
 import { usePortfolioStorage } from '@/hooks/usePortfolioStorage';
 
 const Index = () => {
-  const { data, loading, save } = usePortfolioStorage();
+  const { data, loading: storageLoading, save } = usePortfolioStorage();
   const [version, setVersion] = useState(0);
+  const [marketData, setMarketData] = useState<MarketData | null>(null);
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketErrors, setMarketErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setMarketLoading(true);
+      try {
+        const { marketData: md, fetchErrors } = await fetchRealMarketData();
+        if (!cancelled) {
+          setMarketData(md);
+          setMarketErrors(fetchErrors);
+        }
+      } catch (e) {
+        console.error('Failed to fetch market data:', e);
+        if (!cancelled) {
+          setMarketErrors(['Error al conectar con Yahoo Finance']);
+        }
+      }
+      if (!cancelled) setMarketLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [version]);
 
   const results = useMemo(() => {
+    if (!marketData) return null;
     return recalculateAll(
       data.positions,
       data.cashReserve,
       data.monthlyContribution,
       data.btcMinWeight,
-      data.btcMaxWeight
+      data.btcMaxWeight,
+      marketData
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, version]);
+  }, [data, marketData, version]);
 
   const handleRecalculate = useCallback(() => setVersion(v => v + 1), []);
 
@@ -48,10 +75,13 @@ const Index = () => {
     setVersion(v => v + 1);
   }, [data, save]);
 
-  if (loading) {
+  if (storageLoading || marketLoading || !results) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground animate-pulse">Cargando cartera...</div>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        <div className="text-muted-foreground animate-pulse">
+          {storageLoading ? 'Cargando cartera...' : 'Obteniendo datos de Yahoo Finance...'}
+        </div>
       </div>
     );
   }
@@ -71,6 +101,14 @@ const Index = () => {
             <p className="text-lg font-mono font-semibold">{formatCurrency(results.totalValue)}</p>
           </div>
         </div>
+
+        {marketErrors.length > 0 && (
+          <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3">
+            <p className="text-xs text-destructive">
+              ⚠ Error al obtener datos de: {marketErrors.join(', ')}. Se usan datos parciales.
+            </p>
+          </div>
+        )}
 
         <KPIBar
           regime={results.regime}
@@ -114,7 +152,7 @@ const Index = () => {
         />
 
         <p className="text-center text-xs text-muted-foreground pb-4">
-          Datos simulados · Conectar Yahoo Finance para datos en tiempo real
+          Datos en tiempo real · Yahoo Finance
         </p>
       </div>
     </div>

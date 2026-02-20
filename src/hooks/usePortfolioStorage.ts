@@ -13,10 +13,10 @@ interface PortfolioData {
 export function usePortfolioStorage() {
   const [data, setData] = useState<PortfolioData>({
     positions: DEFAULT_POSITIONS,
-    cashReserve: 2000,
+    cashReserve: 150,
     monthlyContribution: 400,
-    btcMinWeight: 0.25,
-    btcMaxWeight: 0.35,
+    btcMinWeight: 0.20,
+    btcMaxWeight: 0.30,
   });
   const [loading, setLoading] = useState(true);
 
@@ -32,10 +32,10 @@ export function usePortfolioStorage() {
         if (row) {
           setData({
             positions: (row.positions as any) || DEFAULT_POSITIONS,
-            cashReserve: row.cash_reserve ?? 2000,
+            cashReserve: row.cash_reserve ?? 150,
             monthlyContribution: row.monthly_contribution ?? 400,
-            btcMinWeight: row.btc_min_weight ?? 0.25,
-            btcMaxWeight: row.btc_max_weight ?? 0.35,
+            btcMinWeight: row.btc_min_weight ?? 0.20,
+            btcMaxWeight: row.btc_max_weight ?? 0.30,
           });
         }
       } catch (e) {

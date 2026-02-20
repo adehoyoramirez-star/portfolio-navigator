@@ -77,54 +77,14 @@ export const CHART_COLORS = [
 ];
 
 export const DEFAULT_POSITIONS: Record<string, Position> = {
-  'BTC-EUR': { shares: 0.05, avgPrice: 60000 },
-  'EMXC.DE': { shares: 50, avgPrice: 28 },
-  'IS3Q.DE': { shares: 100, avgPrice: 6.5 },
-  'PPFB.DE': { shares: 30, avgPrice: 200 },
-  'URNU.DE': { shares: 15, avgPrice: 8.5 },
-  'VVSM.DE': { shares: 20, avgPrice: 30 },
-  'ZPRR.DE': { shares: 40, avgPrice: 15 },
+  'BTC-EUR': { shares: 0.031285, avgPrice: 88010.99 },
+  'EMXC.DE': { shares: 31, avgPrice: 28.93 },
+  'IS3Q.DE': { shares: 26, avgPrice: 67.53 },
+  'PPFB.DE': { shares: 4, avgPrice: 69.39 },
+  'URNU.DE': { shares: 13, avgPrice: 26.48 },
+  'VVSM.DE': { shares: 2, avgPrice: 52.01 },
+  'ZPRR.DE': { shares: 6, avgPrice: 61.67 },
 };
-
-// ─── Mock Market Data ────────────────────────────────────────────────────────
-
-const EXPECTED_RETURNS = [0.30, 0.08, 0.09, 0.05, 0.15, 0.12, 0.06];
-const VOLS = [0.60, 0.18, 0.22, 0.15, 0.35, 0.25, 0.16];
-const CORR = [
-  [1.00, 0.15, 0.20, 0.05, 0.10, 0.30, 0.10],
-  [0.15, 1.00, 0.75, 0.10, 0.15, 0.40, 0.25],
-  [0.20, 0.75, 1.00, 0.10, 0.15, 0.45, 0.20],
-  [0.05, 0.10, 0.10, 1.00, 0.05, 0.05, 0.15],
-  [0.10, 0.15, 0.15, 0.05, 1.00, 0.20, 0.10],
-  [0.30, 0.40, 0.45, 0.05, 0.20, 1.00, 0.15],
-  [0.10, 0.25, 0.20, 0.15, 0.10, 0.15, 1.00],
-];
-
-function buildCovMatrix(): number[][] {
-  return CORR.map((row, i) => row.map((c, j) => c * VOLS[i] * VOLS[j]));
-}
-
-export function getMockMarketData(): MarketData {
-  return {
-    prices: {
-      'BTC-EUR': 84500,
-      'EMXC.DE': 31.20,
-      'IS3Q.DE': 7.15,
-      'PPFB.DE': 218.50,
-      'URNU.DE': 9.30,
-      'VVSM.DE': 34.80,
-      'ZPRR.DE': 16.40,
-    },
-    vix: 18.5,
-    tnx: 4.25,
-    irx: 3.80,
-    btcZScore: 0.8,
-    vixPercentile80: 28,
-    vixPercentile20: 14,
-    expectedReturns: EXPECTED_RETURNS,
-    covMatrix: buildCovMatrix(),
-  };
-}
 
 // ─── Market Regime ───────────────────────────────────────────────────────────
 
@@ -153,7 +113,7 @@ function portfolioVariance(w: number[], cov: number[][]): number {
   return v;
 }
 
-function portfolioReturn(w: number[], r: number[]): number {
+function portfolioReturnCalc(w: number[], r: number[]): number {
   return w.reduce((s, wi, i) => s + wi * r[i], 0);
 }
 
@@ -177,7 +137,6 @@ export function optimizePortfolio(
     const others = raw.map(r => (r / sum) * remaining);
     const w = [btcW, ...others];
 
-    // Constraints: each weight [0.02, 0.40]
     let valid = true;
     for (let i = 0; i < n; i++) {
       if (w[i] < 0.02 || w[i] > 0.40) { valid = false; break; }
@@ -190,7 +149,7 @@ export function optimizePortfolio(
     const pVol = Math.sqrt(portfolioVariance(w, cov));
     if (pVol > targetVol) continue;
 
-    const pRet = portfolioReturn(w, ret);
+    const pRet = portfolioReturnCalc(w, ret);
     const sharpe = pRet / pVol;
     if (sharpe > bestSharpe) {
       bestSharpe = sharpe;
@@ -199,7 +158,7 @@ export function optimizePortfolio(
   }
 
   const vol = Math.sqrt(portfolioVariance(bestWeights, cov));
-  const r = portfolioReturn(bestWeights, ret);
+  const r = portfolioReturnCalc(bestWeights, ret);
   return { weights: bestWeights, ret: r, vol };
 }
 
@@ -312,9 +271,9 @@ export function recalculateAll(
   cashReserve: number,
   monthlyContribution: number,
   btcMinWeight: number,
-  btcMaxWeight: number
+  btcMaxWeight: number,
+  marketData: MarketData
 ): PortfolioResults {
-  const marketData = getMockMarketData();
   const regime = calculateRegime(marketData);
   const { weights, ret, vol } = optimizePortfolio(marketData, regime.targetVol, btcMinWeight, btcMaxWeight);
 
