@@ -1,54 +1,29 @@
-import { MarketRegime } from '@/lib/portfolio';
-import { formatCurrency, formatPercent, formatNumber } from '@/lib/formatters';
+import React from 'react';
+import { formatCurrency, formatPercentage } from '@/lib/formatters';
 
 interface KPIBarProps {
-  regime: MarketRegime;
+  regime: string;
   btcPrice: number;
   btcZScore: number;
   probability: number;
   cashReserve: number;
+  targetVol?: number;
 }
 
-export function KPIBar({ regime, btcPrice, btcZScore, probability, cashReserve }: KPIBarProps) {
+export const KPIBar: React.FC<KPIBarProps> = ({ regime, btcPrice, btcZScore, probability, cashReserve, targetVol }) => {
+  const regimeColors: Record<string, string> = {
+    RISK_ON: 'text-green-600',
+    NEUTRAL: 'text-yellow-600',
+    RISK_OFF: 'text-orange-600',
+    ATTACK_MODE: 'text-purple-600'
+  };
+  const regimeClass = regimeColors[regime] || 'text-gray-600';
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <div className="rounded-lg bg-card border border-border p-4">
-        <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Régimen</p>
-        <div className="flex items-center gap-2">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full animate-pulse-glow"
-            style={{ backgroundColor: regime.color }}
-          />
-          <span className="font-semibold text-sm" style={{ color: regime.color }}>
-            {regime.name}
-          </span>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          Vol. obj: {formatPercent(regime.targetVol)}
-        </p>
-      </div>
-
-      <div className="rounded-lg bg-card border border-border p-4">
-        <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">BTC Precio</p>
-        <p className="font-mono font-semibold text-lg">{formatCurrency(btcPrice)}</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Z-score: <span className={btcZScore > 1 ? 'text-success' : btcZScore < -1 ? 'text-destructive' : 'text-foreground'}>{formatNumber(btcZScore, 2)}</span>
-        </p>
-      </div>
-
-      <div className="rounded-lg bg-card border border-border p-4">
-        <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Prob. 150K€</p>
-        <p className={`font-mono font-semibold text-lg ${probability >= 0.5 ? 'text-success' : 'text-destructive'}`}>
-          {formatPercent(probability)}
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">500 simulaciones · 10 años</p>
-      </div>
-
-      <div className="rounded-lg bg-card border border-border p-4">
-        <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Reserva</p>
-        <p className="font-mono font-semibold text-lg">{formatCurrency(cashReserve)}</p>
-        <p className="text-xs text-muted-foreground mt-1">Efectivo disponible</p>
-      </div>
+    <div className="grid grid-cols-4 gap-4 p-4 bg-white rounded-lg shadow">
+      <div><div className="text-sm text-gray-500">Régimen</div><div className={`text-xl font-bold ${regimeClass}`}>{regime}</div>{targetVol && <div className="text-xs text-gray-400">Vol. obj: {formatPercentage(targetVol)}</div>}</div>
+      <div><div className="text-sm text-gray-500">BTC Precio</div><div className="text-xl font-bold">{formatCurrency(btcPrice)}</div><div className={`text-xs ${btcZScore < -2 ? 'text-red-500' : 'text-gray-400'}`}>Z-score: {btcZScore.toFixed(2)}</div></div>
+      <div><div className="text-sm text-gray-500">Prob. 150k€</div><div className="text-xl font-bold">{formatPercentage(probability)}</div><div className="text-xs text-gray-400">500 sim · 10 años</div></div>
+      <div><div className="text-sm text-gray-500">Reserva</div><div className="text-xl font-bold">{formatCurrency(cashReserve)}</div><div className="text-xs text-gray-400">Efectivo disponible</div></div>
     </div>
   );
-}
+};

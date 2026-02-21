@@ -1,68 +1,24 @@
-import { GaugeChart } from './GaugeChart';
+import React from 'react';
 import { MarketData } from '@/lib/portfolio';
 
 interface MarketGaugesProps {
-  data: MarketData;
+  marketData: MarketData;
 }
 
-export function MarketGauges({ data }: MarketGaugesProps) {
-  const green = 'hsl(149, 100%, 39%)';
-  const yellow = 'hsl(45, 100%, 50%)';
-  const red = 'hsl(0, 65%, 51%)';
-  const blue = 'hsl(210, 80%, 55%)';
+export const MarketGauges: React.FC<MarketGaugesProps> = ({ marketData }) => {
+  const { vix, tnx, irx, btcZScore } = marketData;
+  const tedSpread = tnx - irx;
+  const getVixColor = (v: number) => v < 20 ? 'text-green-600' : v < 30 ? 'text-yellow-600' : 'text-red-600';
+  const getTedColor = (s: number) => s < 0 ? 'text-red-600' : s < 1 ? 'text-yellow-600' : 'text-green-600';
+  const getRateColor = (r: number) => r < 2 ? 'text-green-600' : r < 4 ? 'text-yellow-600' : 'text-red-600';
+  const getZColor = (z: number) => (z < -2 || z > 2) ? 'text-red-600' : (z < -1 || z > 1) ? 'text-yellow-600' : 'text-green-600';
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <GaugeChart
-        value={data.vix}
-        min={0}
-        max={40}
-        segments={[
-          { from: 0, to: 20, color: green },
-          { from: 20, to: 30, color: yellow },
-          { from: 30, to: 40, color: red },
-        ]}
-        label="VIX"
-        unit=""
-      />
-      <GaugeChart
-        value={(data.tnx - data.irx) * 100}
-        min={-100}
-        max={200}
-        segments={[
-          { from: -100, to: 0, color: red },
-          { from: 0, to: 100, color: yellow },
-          { from: 100, to: 200, color: green },
-        ]}
-        label="Curva 10y-3m"
-        unit=" bps"
-        decimals={0}
-      />
-      <GaugeChart
-        value={data.tnx}
-        min={0}
-        max={6}
-        segments={[
-          { from: 0, to: 2, color: green },
-          { from: 2, to: 4, color: yellow },
-          { from: 4, to: 6, color: red },
-        ]}
-        label="Tipo 10 Años"
-        unit="%"
-      />
-      <GaugeChart
-        value={data.btcZScore}
-        min={-3}
-        max={3}
-        segments={[
-          { from: -3, to: -1, color: red },
-          { from: -1, to: 1, color: blue },
-          { from: 1, to: 3, color: green },
-        ]}
-        label="Z-Score BTC"
-        unit=""
-        decimals={2}
-      />
+    <div className="grid grid-cols-4 gap-4">
+      <div className="bg-white p-4 rounded-lg shadow text-center"><div className="text-sm text-gray-500">VIX</div><div className={`text-2xl font-bold ${getVixColor(vix)}`}>{vix.toFixed(1)}</div></div>
+      <div className="bg-white p-4 rounded-lg shadow text-center"><div className="text-sm text-gray-500">Curva 10y-3m</div><div className={`text-2xl font-bold ${getTedColor(tedSpread)}`}>{(tedSpread * 100).toFixed(0)} pb</div></div>
+      <div className="bg-white p-4 rounded-lg shadow text-center"><div className="text-sm text-gray-500">Tipo 10 años</div><div className={`text-2xl font-bold ${getRateColor(tnx)}`}>{tnx.toFixed(1)}%</div></div>
+      <div className="bg-white p-4 rounded-lg shadow text-center"><div className="text-sm text-gray-500">Z-score BTC</div><div className={`text-2xl font-bold ${getZColor(btcZScore)}`}>{btcZScore.toFixed(2)}</div></div>
     </div>
   );
-}
+};

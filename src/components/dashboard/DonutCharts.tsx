@@ -1,78 +1,45 @@
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-import { ASSETS, CHART_COLORS } from '@/lib/portfolio';
-import { formatPercent } from '@/lib/formatters';
+import React from 'react';
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ASSETS } from '@/lib/constants';
+import { formatPercentage } from '@/lib/formatters';
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D', '#FF6B6B'];
 
 interface DonutChartsProps {
-  weights: number[];
+  targetWeights: number[];
   riskContribution: number[];
 }
 
-const CustomTooltip = ({ active, payload }: any) => {
-  if (!active || !payload?.[0]) return null;
-  const d = payload[0].payload;
-  return (
-    <div className="rounded-lg bg-popover border border-border px-3 py-2 text-sm shadow-lg">
-      <p className="font-medium">{d.name}</p>
-      <p className="text-muted-foreground">{formatPercent(d.value)}</p>
-    </div>
-  );
-};
+export const DonutCharts: React.FC<DonutChartsProps> = ({ targetWeights, riskContribution }) => {
+  const targetData = ASSETS.map((asset, i) => ({ name: asset, value: targetWeights[i] }));
+  const riskData = ASSETS.map((asset, i) => ({ name: asset, value: riskContribution[i] }));
 
-function DonutChart({ data, title }: { data: { name: string; value: number; color: string }[]; title: string }) {
   return (
-    <div className="rounded-lg bg-card border border-border p-4">
-      <h3 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wider">{title}</h3>
-      <div className="h-[240px]">
-        <ResponsiveContainer width="100%" height="100%">
+    <div className="grid grid-cols-2 gap-4">
+      <div className="bg-white p-4 rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-2 text-center">Asignación objetivo</h3>
+        <ResponsiveContainer width="100%" height={300}>
           <PieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              innerRadius={60}
-              outerRadius={90}
-              paddingAngle={2}
-              dataKey="value"
-              strokeWidth={0}
-            >
-              {data.map((entry, i) => (
-                <Cell key={i} fill={entry.color} />
-              ))}
+            <Pie data={targetData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" label={({ name, value }) => `${name}: ${formatPercentage(value)}`}>
+              {targetData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
             </Pie>
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip formatter={(v: number) => formatPercentage(v)} />
+            <Legend />
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2">
-        {data.map((d, i) => (
-          <div key={i} className="flex items-center gap-2 text-xs">
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
-            <span className="text-muted-foreground truncate">{d.name}</span>
-            <span className="font-mono ml-auto">{formatPercent(d.value)}</span>
-          </div>
-        ))}
+      <div className="bg-white p-4 rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-2 text-center">Contribución al riesgo</h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <PieChart>
+            <Pie data={riskData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" label={({ name, value }) => `${name}: ${formatPercentage(value)}`}>
+              {riskData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+            </Pie>
+            <Tooltip formatter={(v: number) => formatPercentage(v)} />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
-}
-
-export function DonutCharts({ weights, riskContribution }: DonutChartsProps) {
-  const allocationData = ASSETS.map((a, i) => ({
-    name: a.name,
-    value: weights[i],
-    color: CHART_COLORS[i],
-  }));
-
-  const riskData = ASSETS.map((a, i) => ({
-    name: a.name,
-    value: riskContribution[i],
-    color: CHART_COLORS[i],
-  }));
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <DonutChart data={allocationData} title="Asignación Objetivo" />
-      <DonutChart data={riskData} title="Contribución al Riesgo" />
-    </div>
-  );
-}
+};

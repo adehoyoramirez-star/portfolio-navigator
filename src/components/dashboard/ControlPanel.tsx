@@ -1,9 +1,6 @@
-import { useState } from 'react';
+import React from 'react';
 import { Order } from '@/lib/portfolio';
-import { formatCurrency, formatCurrencyDecimal, formatShares, formatPercent } from '@/lib/formatters';
-import { Slider } from '@/components/ui/slider';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
+import { formatCurrency, formatPercentage } from '@/lib/formatters';
 
 interface ControlPanelProps {
   monthlyContribution: number;
@@ -19,126 +16,51 @@ interface ControlPanelProps {
   onConfirmOrders: (orders: Order[]) => void;
 }
 
-export function ControlPanel({
-  monthlyContribution,
-  btcMinWeight,
-  btcMaxWeight,
-  orders,
-  portfolioReturn,
-  portfolioVol,
-  onMonthlyChange,
-  onBtcMinChange,
-  onBtcMaxChange,
-  onRecalculate,
-  onConfirmOrders,
-}: ControlPanelProps) {
-  const [confirming, setConfirming] = useState(false);
-  const totalCost = orders.reduce((s, o) => s + o.cost, 0);
-
+export const ControlPanel: React.FC<ControlPanelProps> = ({
+  monthlyContribution, btcMinWeight, btcMaxWeight, orders,
+  portfolioReturn, portfolioVol,
+  onMonthlyChange, onBtcMinChange, onBtcMaxChange, onRecalculate, onConfirmOrders
+}) => {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {/* Controls */}
-      <div className="rounded-lg bg-card border border-border p-5 space-y-5">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Parámetros</h3>
-
-        <div>
-          <label className="text-xs text-muted-foreground block mb-2">
-            Aporte Mensual: <span className="font-mono text-foreground">{formatCurrency(monthlyContribution)}</span>
-          </label>
-          <Input
-            type="number"
-            value={monthlyContribution}
-            onChange={e => onMonthlyChange(Number(e.target.value) || 0)}
-            className="font-mono bg-muted border-border"
-          />
+    <div className="bg-white p-4 rounded-lg shadow">
+      <h3 className="text-lg font-semibold mb-4">Controles de optimización</h3>
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div><label className="block text-sm font-medium text-gray-700">Aporte mensual (€)</label>
+          <input type="number" value={monthlyContribution} onChange={e => onMonthlyChange(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" min="0" step="50" />
         </div>
-
-        <div>
-          <label className="text-xs text-muted-foreground block mb-2">
-            Peso Mínimo BTC: <span className="font-mono text-foreground">{formatPercent(btcMinWeight)}</span>
-          </label>
-          <Slider
-            value={[btcMinWeight]}
-            onValueChange={([v]) => {
-              onBtcMinChange(v);
-              if (v > btcMaxWeight) onBtcMaxChange(v);
-            }}
-            min={0.20}
-            max={0.40}
-            step={0.01}
-            className="py-2"
-          />
-        </div>
-
-        <div>
-          <label className="text-xs text-muted-foreground block mb-2">
-            Peso Máximo BTC: <span className="font-mono text-foreground">{formatPercent(btcMaxWeight)}</span>
-          </label>
-          <Slider
-            value={[btcMaxWeight]}
-            onValueChange={([v]) => onBtcMaxChange(Math.max(v, btcMinWeight))}
-            min={0.20}
-            max={0.40}
-            step={0.01}
-            className="py-2"
-          />
-        </div>
-
-        <div className="flex items-center gap-3 pt-2">
-          <Button onClick={onRecalculate} className="flex-1">
-            Recalcular
-          </Button>
-          <div className="text-xs text-muted-foreground text-right">
-            <p>Ret: <span className="font-mono text-foreground">{formatPercent(portfolioReturn)}</span></p>
-            <p>Vol: <span className="font-mono text-foreground">{formatPercent(portfolioVol)}</span></p>
+        <div className="grid grid-cols-2 gap-2">
+          <div><label className="block text-sm font-medium text-gray-700">BTC min</label>
+            <input type="number" value={btcMinWeight} onChange={e => onBtcMinChange(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" min="0" max="0.4" step="0.01" />
+          </div>
+          <div><label className="block text-sm font-medium text-gray-700">BTC max</label>
+            <input type="number" value={btcMaxWeight} onChange={e => onBtcMaxChange(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" min={btcMinWeight} max="0.4" step="0.01" />
           </div>
         </div>
       </div>
-
-      {/* Orders */}
-      <div className="rounded-lg bg-card border border-border p-5">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">Órdenes Sugeridas</h3>
-
-        {orders.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4">No hay órdenes necesarias. La cartera está equilibrada.</p>
-        ) : (
-          <>
-            <div className="space-y-2 max-h-[220px] overflow-y-auto">
-              {orders.map(order => (
-                <div key={order.ticker} className="flex items-center justify-between py-2 border-b border-border/50">
-                  <div>
-                    <p className="text-sm font-medium">{order.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatShares(order.shares, order.ticker === 'BTC-EUR')} × {formatCurrencyDecimal(order.price)}
-                    </p>
-                  </div>
-                  <p className="font-mono text-sm font-medium text-success">{formatCurrency(order.cost)}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
-              <p className="text-sm text-muted-foreground">
-                Coste total: <span className="font-mono text-foreground font-medium">{formatCurrency(totalCost)}</span>
-              </p>
-              <Button
-                onClick={() => {
-                  if (!confirming) {
-                    setConfirming(true);
-                    return;
-                  }
-                  onConfirmOrders(orders);
-                  setConfirming(false);
-                }}
-                variant={confirming ? 'destructive' : 'default'}
-                size="sm"
-              >
-                {confirming ? '¿Confirmar?' : 'Ejecutar'}
-              </Button>
-            </div>
-          </>
-        )}
+      <div className="flex justify-between items-center mb-4">
+        <div><span className="text-sm text-gray-500">Retorno esperado: </span><span className="font-medium">{formatPercentage(portfolioReturn)}</span></div>
+        <div><span className="text-sm text-gray-500">Volatilidad: </span><span className="font-medium">{formatPercentage(portfolioVol)}</span></div>
+        <button onClick={onRecalculate} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Recalcular</button>
       </div>
+      {orders.length > 0 && (
+        <div className="border-t pt-4">
+          <h4 className="font-semibold mb-2">Órdenes sugeridas</h4>
+          <table className="w-full text-sm mb-4">
+            <thead><tr className="border-b"><th className="text-left p-1">Activo</th><th className="text-right p-1">Unidades</th><th className="text-right p-1">Precio</th><th className="text-right p-1">Coste</th></tr></thead>
+            <tbody>
+              {orders.map((order) => (
+                <tr key={order.ticker}>
+                  <td className="p-1">{order.ticker}</td>
+                  <td className="text-right p-1">{order.shares.toFixed(4)}</td>
+                  <td className="text-right p-1">{formatCurrency(order.price)}</td>
+                  <td className="text-right p-1">{formatCurrency(order.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button onClick={() => onConfirmOrders(orders)} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Confirmar ejecución</button>
+        </div>
+      )}
     </div>
   );
-}
+};
