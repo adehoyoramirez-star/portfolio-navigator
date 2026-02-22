@@ -20,7 +20,7 @@ export interface HistoricalData {
 // --- FIN TIPOS ---
 
 async function fetchYahoo(ticker: string, range: string = '1d', interval: string = '1d'): Promise<any> {
-  const url = `/api/${ticker}?range=${range}&interval=${interval}`;
+  const url = `/api/yahoo?ticker=${encodeURIComponent(ticker)}&range=${range}&interval=${interval}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Error fetching ${ticker}: ${response.statusText}`);
   const data = await response.json();
