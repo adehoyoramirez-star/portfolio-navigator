@@ -2,6 +2,7 @@
 import * as math from 'mathjs';
 import { ASSETS, Asset, SECTOR_MAP, SECTOR_CAP, TARGET_GOAL, STRUCTURAL_RESERVE_PCT } from './constants';
 import { getCurrentPrices, getHistoricalData, getMacroData, CurrentPrices, MacroData, HistoricalData } from './yahooFinance';
+import { MacroExtendedData } from './macroExtended';
 
 // ---------- TIPOS ----------
 export interface Position {
@@ -39,6 +40,7 @@ export interface RecalculateResult {
   orders: Order[];
   portfolioReturn: number;
   portfolioVol: number;
+  macroExtended?: MacroExtendedData;
 }
 
 // ---------- CONSTANTES ----------
@@ -62,8 +64,9 @@ function calculateZScore(btcPrices: number[]): number {
   const window = 200;
   if (btcPrices.length < window) return 0;
   const lastPrices = btcPrices.slice(-window);
-  const ma = Number(math.mean(lastPrices)); // Convertir a número
-  const std = Number(math.std(lastPrices)); // Convertir a número
+  // Convertir explícitamente a número para evitar errores de tipo de mathjs
+  const ma = Number(math.mean(lastPrices));
+  const std = Number(math.std(lastPrices));
   const lastPrice = btcPrices[btcPrices.length - 1];
   return (lastPrice - ma) / std;
 }
@@ -80,7 +83,31 @@ function percentile(arr: number[], p: number): number {
   return sorted[base];
 }
 
-function getRegime(vix: number, vixHistory: number[], btcZ: number): { regime: string; targetVol: number; p80: number; p20: number } {
+function calculateCovariance(matrix: number[][]): number[][] {
+  const n = matrix.length;
+  const m = matrix[0].length;
+  const means: number[] = new Array(m).fill(0);
+  for (let j = 0; j < m; j++) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += matrix[i][j];
+    }
+    means[j] = sum / n;
+  }
+  const cov: number[][] = Array(m).fill(0).map(() => new Array(m).fill(0));
+  for (let i = 0; i < m; i++) {
+    for (let j = 0; j < m; j++) {
+      let sum = 0;
+      for (let k = 0; k < n; k++) {
+        sum += (matrix[k][i] - means[i]) * (matrix[k][j] - means[j]);
+      }
+      cov[i][j] = sum / (n - 1);
+    }
+  }
+  return cov;
+}
+
+function getRegime(vix: number, vixHistory: number[], btcZ: number, m2Growth: number): { regime: string; targetVol: number; p80: number; p20: number } {
   const p80 = percentile(vixHistory, 0.8);
   const p20 = percentile(vixHistory, 0.2);
   let regime: string;
@@ -101,44 +128,26 @@ function getRegime(vix: number, vixHistory: number[], btcZ: number): { regime: s
     regime = 'ATTACK_MODE';
     targetVol = 0.22;
   }
+
+  // Ajuste por liquidez (M2)
+  if (m2Growth > 5) {
+    targetVol *= 1.1;
+  } else if (m2Growth < 2) {
+    targetVol *= 0.9;
+  }
+
   return { regime, targetVol, p80, p20 };
 }
 
-// ---------- COVARIANZA MANUAL (evita math.cov) ----------
-function calculateCovariance(matrix: number[][]): number[][] {
-  const n = matrix.length;           // número de filas (días)
-  const m = matrix[0].length;        // número de columnas (activos)
-  // Calcular medias por columna
-  const means: number[] = new Array(m).fill(0);
-  for (let j = 0; j < m; j++) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      sum += matrix[i][j];
-    }
-    means[j] = sum / n;
-  }
-  // Calcular matriz de covarianza (m x m)
-  const cov: number[][] = Array(m).fill(0).map(() => new Array(m).fill(0));
-  for (let i = 0; i < m; i++) {
-    for (let j = 0; j < m; j++) {
-      let sum = 0;
-      for (let k = 0; k < n; k++) {
-        sum += (matrix[k][i] - means[i]) * (matrix[k][j] - means[j]);
-      }
-      cov[i][j] = sum / (n - 1); // covarianza muestral
-    }
-  }
-  return cov;
-}
-
 function optimizePortfolio(
-  returns: number[][], // matriz de retornos: filas = días, columnas = activos
+  returns: number[][],
   targetVol: number,
   btcMin: number,
-  btcMax: number
+  btcMax: number,
+  erp: number
 ): number[] {
   const n = ASSETS.length;
-  // Calcular media de retornos por activo
+  // Media de retornos por activo
   const mu: number[] = [];
   for (let j = 0; j < n; j++) {
     let sum = 0;
@@ -148,45 +157,42 @@ function optimizePortfolio(
     mu.push(sum / returns.length);
   }
 
-  // Calcular matriz de covarianza
+  // Identificar activos de renta variable
+  const equityIndices = ASSETS.reduce((acc, asset, idx) => {
+    if (['EMXC.DE', 'IS3Q.DE', 'VVSM.DE'].includes(asset)) acc.push(idx);
+    return acc;
+  }, [] as number[]);
+
+  // Ajuste por ERP
+  const erpFactor = 1 + (erp / 100);
+  equityIndices.forEach(i => { mu[i] *= erpFactor; });
+
+  // Covarianza
   const cov = calculateCovariance(returns);
 
-  // Función Sharpe negativo
-  const negSharpe = (w: number[]): number => {
-    let portReturn = 0;
-    for (let i = 0; i < n; i++) portReturn += w[i] * mu[i];
-    let portVar = 0;
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        portVar += w[i] * w[j] * cov[i][j];
-      }
-    }
-    const portVol = Math.sqrt(portVar);
-    return -portReturn / portVol;
-  };
-
-  // Restricciones
-  const sectors = [...new Set(Object.values(SECTOR_MAP))];
-
-  // Búsqueda aleatoria simple (para evitar optimizadores complejos)
+  // Búsqueda aleatoria de pesos óptimos
   let bestW: number[] = [];
   let bestSharpe = -Infinity;
+
+  const sectors = [...new Set(Object.values(SECTOR_MAP))];
+
   for (let attempt = 0; attempt < 20000; attempt++) {
     const w = Array(n).fill(0).map(() => Math.random());
     const sum = w.reduce((a, b) => a + b, 0);
     const wNorm = w.map(v => v / sum);
 
-    // Verificar límites individuales
-    const boundsOk = wNorm.every((v, i) => {
+    // Límites individuales
+    let boundsOk = true;
+    for (let i = 0; i < n; i++) {
       if (i === ASSETS.indexOf('BTC-EUR')) {
-        return v >= btcMin && v <= btcMax;
+        if (wNorm[i] < btcMin || wNorm[i] > btcMax) { boundsOk = false; break; }
       } else {
-        return v >= 0.02 && v <= 0.40;
+        if (wNorm[i] < 0.02 || wNorm[i] > 0.40) { boundsOk = false; break; }
       }
-    });
+    }
     if (!boundsOk) continue;
 
-    // Verificar límites sectoriales
+    // Límites sectoriales
     let sectorsOk = true;
     for (const sector of sectors) {
       const indices = ASSETS.map((a, idx) => SECTOR_MAP[a] === sector ? idx : -1).filter(i => i >= 0);
@@ -195,7 +201,7 @@ function optimizePortfolio(
     }
     if (!sectorsOk) continue;
 
-    // Calcular volatilidad
+    // Volatilidad
     let portVar = 0;
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
@@ -205,7 +211,9 @@ function optimizePortfolio(
     const portVol = Math.sqrt(portVar);
     if (portVol > targetVol) continue;
 
-    const portReturn = wNorm.reduce((acc, wi, i) => acc + wi * mu[i], 0);
+    // Sharpe
+    let portReturn = 0;
+    for (let i = 0; i < n; i++) portReturn += wNorm[i] * mu[i];
     const sharpe = portReturn / portVol;
     if (sharpe > bestSharpe) {
       bestSharpe = sharpe;
@@ -214,7 +222,6 @@ function optimizePortfolio(
   }
 
   if (bestW.length === 0) {
-    // fallback: pesos iguales
     return Array(n).fill(1 / n);
   }
   return bestW;
@@ -236,7 +243,6 @@ function monteCarlo(
   for (let sim = 0; sim < nSims; sim++) {
     let value = currentValue;
     for (let m = 0; m < months; m++) {
-      // Box-Muller para generar normal estándar
       const u = Math.random();
       const v = Math.random();
       const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
@@ -265,10 +271,16 @@ function generateOrders(
   for (let i = 0; i < ASSETS.length; i++) {
     const diff = targetValues[i] - currentValues[i];
     if (diff > 0) {
-      const shares = diff / prices[i];
-      const cost = shares * prices[i];
-      if (cost <= cashAvailable - totalCost) {
-        orders.push({ ticker: ASSETS[i], shares, price: prices[i], cost });
+      const price = prices[i];
+      let shares: number;
+      if (ASSETS[i] === 'BTC-EUR') {
+        shares = diff / price;
+      } else {
+        shares = Math.floor(diff / price);
+      }
+      const cost = shares * price;
+      if (cost > 0 && cost <= cashAvailable - totalCost) {
+        orders.push({ ticker: ASSETS[i], shares, price, cost });
         totalCost += cost;
       }
     }
@@ -282,28 +294,27 @@ export async function recalculateAll(
   cashReserve: number,
   monthlyContribution: number,
   btcMinWeight: number,
-  btcMaxWeight: number
+  btcMaxWeight: number,
+  macroExtended: MacroExtendedData | null
 ): Promise<RecalculateResult> {
-  // Obtener datos
   const prices: CurrentPrices = await getCurrentPrices();
   const macro: MacroData = await getMacroData();
   const historical: HistoricalData = await getHistoricalData(2);
 
-  // Arrays ordenados
+  const erp = macroExtended?.erp ?? 20;
+  const m2Growth = macroExtended?.m2Growth ?? 5;
+
   const pricesArray = ASSETS.map(a => prices[a] || 0);
   const currentValues = ASSETS.map(asset => positions[asset]?.shares * prices[asset] || 0);
   const totalInvested = currentValues.reduce((a, b) => a + b, 0);
   const totalValue = totalInvested + cashReserve;
 
-  // Z-score BTC
   const btcPrices = (historical['BTC-EUR'] as number[]) || [];
   const btcZ = calculateZScore(btcPrices);
 
-  // Histórico VIX
   const vixHistory = (historical['^VIX'] as number[]) || [];
-  const { regime, targetVol, p80, p20 } = getRegime(macro.vix, vixHistory, btcZ);
+  const { regime, targetVol, p80, p20 } = getRegime(macro.vix, vixHistory, btcZ, m2Growth);
 
-  // Construir matriz de retornos históricos (días x activos)
   const firstAsset = ASSETS[0];
   const firstHist = historical[firstAsset] as number[];
   const numDays = firstHist?.length || 0;
@@ -321,10 +332,8 @@ export async function recalculateAll(
     returnsMatrix.push(row);
   }
 
-  // Optimizar pesos objetivo
-  const targetWeights = optimizePortfolio(returnsMatrix, targetVol, btcMinWeight, btcMaxWeight);
+  const targetWeights = optimizePortfolio(returnsMatrix, targetVol, btcMinWeight, btcMaxWeight, erp);
 
-  // Rentabilidad media anual esperada (usamos la media de los retornos históricos)
   let totalMean = 0;
   for (let j = 0; j < ASSETS.length; j++) {
     let sum = 0;
@@ -333,9 +342,8 @@ export async function recalculateAll(
     }
     totalMean += sum / returnsMatrix.length;
   }
-  const muAnnual = (totalMean / ASSETS.length) * 252; // media de medias
+  const muAnnual = (totalMean / ASSETS.length) * 252;
 
-  // Monte Carlo
   const { results: mcResults, probability } = monteCarlo(
     totalValue,
     monthlyContribution,
@@ -345,7 +353,6 @@ export async function recalculateAll(
     500
   );
 
-  // Contribución al riesgo (usando covarianza manual)
   const currentWeights = totalInvested > 0 ? currentValues.map(v => v / totalInvested) : Array(ASSETS.length).fill(1/ASSETS.length);
   const covMatrix = calculateCovariance(returnsMatrix);
   let portVar = 0;
@@ -364,7 +371,6 @@ export async function recalculateAll(
   });
   const riskContribNorm = riskContrib.map(v => v / riskContrib.reduce((a, b) => a + b, 0));
 
-  // Generar órdenes
   const cashAvailable = cashReserve + monthlyContribution;
   const structuralReserve = STRUCTURAL_RESERVE_PCT * totalValue;
   const usableCash = regime === 'ATTACK_MODE' ? cashAvailable : Math.max(0, cashAvailable - structuralReserve);
@@ -376,7 +382,6 @@ export async function recalculateAll(
     pricesArray
   );
 
-  // MarketData
   const marketData: MarketData = {
     vix: macro.vix,
     tnx: macro.tnx,
@@ -400,11 +405,6 @@ export async function recalculateAll(
     orders,
     portfolioReturn: muAnnual,
     portfolioVol: targetVol,
+    macroExtended: { erp, m2Growth }
   };
 }
-// Re-exportar desde constants
-export { ASSETS, SECTOR_MAP, SECTOR_CAP, TARGET_GOAL, DEFAULT_MONTHLY, STRUCTURAL_RESERVE_PCT } from './constants';
-export type { Asset } from './constants';
-
-// Alias para TARGET_AMOUNT (por si algún componente lo usa)
-export const TARGET_AMOUNT = TARGET_GOAL;
