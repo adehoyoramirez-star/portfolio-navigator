@@ -64,7 +64,6 @@ function calculateZScore(btcPrices: number[]): number {
   const window = 200;
   if (btcPrices.length < window) return 0;
   const lastPrices = btcPrices.slice(-window);
-  // Convertir explícitamente a número para evitar errores de tipo de mathjs
   const ma = Number(math.mean(lastPrices));
   const std = Number(math.std(lastPrices));
   const lastPrice = btcPrices[btcPrices.length - 1];
@@ -274,9 +273,9 @@ function generateOrders(
       const price = prices[i];
       let shares: number;
       if (ASSETS[i] === 'BTC-EUR') {
-        shares = diff / price;
+        shares = diff / price; // fracciones permitidas
       } else {
-        shares = Math.floor(diff / price);
+        shares = Math.floor(diff / price); // solo unidades enteras
       }
       const cost = shares * price;
       if (cost > 0 && cost <= cashAvailable - totalCost) {
@@ -297,24 +296,30 @@ export async function recalculateAll(
   btcMaxWeight: number,
   macroExtended: MacroExtendedData | null
 ): Promise<RecalculateResult> {
+  // Obtener datos de mercado
   const prices: CurrentPrices = await getCurrentPrices();
   const macro: MacroData = await getMacroData();
   const historical: HistoricalData = await getHistoricalData(2);
 
-  const erp = macroExtended?.erp ?? 20;
-  const m2Growth = macroExtended?.m2Growth ?? 5;
+  // Extraer valores de macroExtended (con fallback)
+  const erp = macroExtended?.erp ?? 20; // PER por defecto 20
+  const m2Growth = macroExtended?.m2Growth ?? 5; // crecimiento por defecto 5%
 
+  // Valores actuales
   const pricesArray = ASSETS.map(a => prices[a] || 0);
   const currentValues = ASSETS.map(asset => positions[asset]?.shares * prices[asset] || 0);
   const totalInvested = currentValues.reduce((a, b) => a + b, 0);
   const totalValue = totalInvested + cashReserve;
 
+  // Z-score BTC
   const btcPrices = (historical['BTC-EUR'] as number[]) || [];
   const btcZ = calculateZScore(btcPrices);
 
+  // Histórico VIX
   const vixHistory = (historical['^VIX'] as number[]) || [];
   const { regime, targetVol, p80, p20 } = getRegime(macro.vix, vixHistory, btcZ, m2Growth);
 
+  // Construir matriz de retornos históricos
   const firstAsset = ASSETS[0];
   const firstHist = historical[firstAsset] as number[];
   const numDays = firstHist?.length || 0;
@@ -332,8 +337,10 @@ export async function recalculateAll(
     returnsMatrix.push(row);
   }
 
+  // Optimizar pesos objetivo
   const targetWeights = optimizePortfolio(returnsMatrix, targetVol, btcMinWeight, btcMaxWeight, erp);
 
+  // Rentabilidad media anual esperada
   let totalMean = 0;
   for (let j = 0; j < ASSETS.length; j++) {
     let sum = 0;
@@ -344,6 +351,7 @@ export async function recalculateAll(
   }
   const muAnnual = (totalMean / ASSETS.length) * 252;
 
+  // Monte Carlo
   const { results: mcResults, probability } = monteCarlo(
     totalValue,
     monthlyContribution,
@@ -353,6 +361,7 @@ export async function recalculateAll(
     500
   );
 
+  // Contribución al riesgo
   const currentWeights = totalInvested > 0 ? currentValues.map(v => v / totalInvested) : Array(ASSETS.length).fill(1/ASSETS.length);
   const covMatrix = calculateCovariance(returnsMatrix);
   let portVar = 0;
@@ -371,6 +380,7 @@ export async function recalculateAll(
   });
   const riskContribNorm = riskContrib.map(v => v / riskContrib.reduce((a, b) => a + b, 0));
 
+  // Generar órdenes
   const cashAvailable = cashReserve + monthlyContribution;
   const structuralReserve = STRUCTURAL_RESERVE_PCT * totalValue;
   const usableCash = regime === 'ATTACK_MODE' ? cashAvailable : Math.max(0, cashAvailable - structuralReserve);
@@ -382,6 +392,7 @@ export async function recalculateAll(
     pricesArray
   );
 
+  // Preparar marketData
   const marketData: MarketData = {
     vix: macro.vix,
     tnx: macro.tnx,
