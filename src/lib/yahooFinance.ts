@@ -20,12 +20,9 @@ export interface HistoricalData {
 // --- FIN TIPOS ---
 
 async function fetchYahoo(ticker: string, range: string = '1d', interval: string = '1d'): Promise<any> {
-  // Usamos la ruta del proxy configurado en vite.config.ts
   const url = `/api/${ticker}?range=${range}&interval=${interval}`;
   const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Error fetching ${ticker}: ${response.statusText}`);
-  }
+  if (!response.ok) throw new Error(`Error fetching ${ticker}: ${response.statusText}`);
   const data = await response.json();
   return data;
 }
