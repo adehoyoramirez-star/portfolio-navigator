@@ -19,12 +19,9 @@ async function getSP500PE(): Promise<number> {
   }
 }
 
-// Obtener M2 desde FRED (usando el proxy que ya tienes, o podrías crear uno similar)
-// Si no tienes proxy para FRED, puedes crearlo siguiendo el mismo patrón.
-// Por ahora, asumimos que ya tienes un proxy en /api/fred. Si no, crea api/fred.js similar al de yahoo-quote pero con la URL de FRED.
+// Obtener M2 desde FRED
 async function getM2Growth(): Promise<number> {
   try {
-    // Asegúrate de tener el proxy api/fred.js funcionando. Si no, usa el valor de ejemplo.
     const response = await axios.get('/api/fred?series_id=M2SL');
     const obs = response.data.observations;
     if (obs?.length < 2) throw new Error('No hay suficientes datos');

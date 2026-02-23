@@ -1,6 +1,4 @@
-// api/yahoo-quote.js
 export default async function handler(req, res) {
-  // Permitir CORS para todas las solicitudes
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET');
 
