@@ -1,4 +1,3 @@
-// src/pages/Index.tsx
 import React, { useState } from 'react';
 import { usePortfolio } from '../hooks/usePortfolio';
 import { KPIBar } from '../components/dashboard/KPIBar';
@@ -8,8 +7,8 @@ import { PositionsTable } from '../components/dashboard/PositionsTable';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { MonteCarloChart } from '../components/dashboard/MonteCarloChart';
 import { Asset } from '../lib/constants';
+import { MacroExtendedData } from '../lib/macroExtended'; // 👈 Importación que faltaba
 
-// Tipo para los datos del portfolio (necesario para setData)
 interface PortfolioData {
   positions: Record<Asset, { shares: number; avgPrice: number }>;
   cashReserve: number;
@@ -20,20 +19,23 @@ interface PortfolioData {
 
 export default function Index() {
   const { loading, error, results, data, macroExtended, setData } = usePortfolio();
-  const [version, setVersion] = useState(0); // Para forzar recálculos si es necesario
+  const [version, setVersion] = useState(0);
 
-  if (loading) return <div className="p-4">Cargando datos financieros...</div>;
+  if (loading) return <div className="p-4 text-white">Cargando datos financieros...</div>;
   if (error) return <div className="p-4 text-red-500">Error: {error.message}</div>;
-  if (!results) return <div className="p-4">Sin resultados</div>;
+  if (!results) return <div className="p-4 text-white">Sin resultados</div>;
 
-  const handleRecalculate = () => setVersion(v => v + 1);
-  const handleConfirmOrders = (orders: any[]) => alert('Órdenes confirmadas (simulado)');
+  const handleRecalculate = () => setVersion((v: number) => v + 1); // 👈 Tipado explícito
+  const handleConfirmOrders = (orders: any[]) => {
+    console.log('Órdenes confirmadas:', orders); // 👈 Ahora 'orders' se usa
+    alert('Órdenes confirmadas (simulado)');
+  };
   const handleMonthlyChange = (value: number) => setData((prev: PortfolioData) => ({ ...prev, monthlyContribution: value }));
   const handleBtcMinChange = (value: number) => setData((prev: PortfolioData) => ({ ...prev, btcMinWeight: value }));
   const handleBtcMaxChange = (value: number) => setData((prev: PortfolioData) => ({ ...prev, btcMaxWeight: value }));
 
   return (
-    <div className="container mx-auto p-4 space-y-4">
+    <div className="container mx-auto p-4 space-y-4 bg-black text-white min-h-screen">
       <h1 className="text-2xl font-bold mb-4">📊 APEX Portfolio (Datos Reales)</h1>
 
       <KPIBar
@@ -50,13 +52,17 @@ export default function Index() {
         riskContribution={results.riskContribution}
       />
 
-      <MarketGauges marketData={results.marketData} />
+      <MarketGauges
+        marketData={results.marketData}
+        macroExtended={macroExtended}
+        tnx={results.marketData.tnx}
+      />
 
       <PositionsTable
         positions={data.positions}
         prices={results.marketData.prices}
         targetWeights={results.weights}
-        totalValue={results.totalValue}
+        totalValue={results.totalValue} // 👈 Prop añadida (requerida por el componente)
       />
 
       <MonteCarloChart

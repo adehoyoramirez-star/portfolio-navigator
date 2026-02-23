@@ -14,13 +14,21 @@ export const MonteCarloChart: React.FC<MonteCarloChartProps> = ({ results, proba
   const binWidth = (max - min) / binCount;
   const bins = Array(binCount).fill(0).map((_, i) => ({
     rangeMin: min + i * binWidth,
+    rangeMax: min + (i + 1) * binWidth,
     count: 0
   }));
   results.forEach(v => {
     const i = Math.floor((v - min) / binWidth);
     if (i >= 0 && i < binCount) bins[i].count++;
   });
-  const data = bins.map(b => ({ name: `${formatCurrency(b.rangeMin)}`, value: b.count }));
+  const data = bins.map(b => ({
+    name: `${formatCurrency(b.rangeMin)} - ${formatCurrency(b.rangeMax)}`,
+    value: b.count,
+    rangeMin: b.rangeMin // mantener para referencia
+  }));
+
+  // Encontrar el índice donde el rango mínimo supera 150k
+  const targetIndex = data.findIndex(d => d.rangeMin >= 150000);
 
   return (
     <div className="bg-gray-800 p-4 rounded-lg shadow">
@@ -40,7 +48,13 @@ export const MonteCarloChart: React.FC<MonteCarloChartProps> = ({ results, proba
             contentStyle={{ backgroundColor: '#1f1f1f', borderColor: '#444', color: '#fff' }}
           />
           <Bar dataKey="value" fill="#8884d8" />
-          <ReferenceLine x={data.findIndex(d => d.rangeMin >= 150000)} stroke="red" label={{ value: '150k', fill: 'red', position: 'top' }} />
+          {targetIndex !== -1 && (
+            <ReferenceLine
+              x={data[targetIndex].name}
+              stroke="red"
+              label={{ value: '150k', fill: 'red', position: 'top' }}
+            />
+          )}
         </BarChart>
       </ResponsiveContainer>
     </div>

@@ -1,8 +1,11 @@
 import React from 'react';
 import { MarketData } from '@/lib/portfolio';
+import { MacroExtendedData } from '@/lib/macroExtended';
 
 interface MarketGaugesProps {
   marketData: MarketData;
+  macroExtended: MacroExtendedData | null;
+  tnx: number;
 }
 
 export const MarketGauges: React.FC<MarketGaugesProps> = ({ marketData }) => {
