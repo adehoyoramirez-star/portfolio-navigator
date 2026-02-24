@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { MarketData } from '@/lib/portfolio';
 import { MacroExtendedData } from '@/lib/macroExtended';
 
@@ -18,11 +18,23 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const { vix, tnx: tnxFromData, irx, btcZScore } = marketData;
   const tedSpread = tnxFromData - irx;
 
+  // Referencias para limpiar timeouts
+  const perTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const m2TimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (perTimeoutRef.current) clearTimeout(perTimeoutRef.current);
+      if (m2TimeoutRef.current) clearTimeout(m2TimeoutRef.current);
+    };
+  }, []);
+
   const [editingPER, setEditingPER] = useState(false);
   const [editingM2, setEditingM2] = useState(false);
-  const [perInput, setPerInput] = useState(macroExtended?.erp?.toString() || '22');
-  const [m2Input, setM2Input] = useState(macroExtended?.m2Growth?.toString() || '5.2');
+  const [perInput, setPerInput] = useState(() => macroExtended?.erp?.toString() ?? '22');
+  const [m2Input, setM2Input] = useState(() => macroExtended?.m2Growth?.toString() ?? '5.2');
 
+  // Valores con fallback seguro
   const per = macroExtended?.erp ?? 22;
   const earningsYield = 1 / per;
   const riskFree = tnx / 100;
@@ -30,21 +42,70 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const m2Growth = macroExtended?.m2Growth?.toFixed(1) ?? '5.2';
 
   const handlePERSubmit = () => {
+    console.log('Enviando PER:', perInput); // DEPURACIÓN
     const newPER = parseFloat(perInput);
-    if (!isNaN(newPER) && newPER > 0 && onMacroChange) {
+    if (isNaN(newPER) || newPER <= 0) {
+      console.warn('PER inválido:', perInput);
+      return;
+    }
+    if (!onMacroChange) {
+      console.error('onMacroChange no está definida');
+      setEditingPER(false);
+      return;
+    }
+    try {
       onMacroChange({ erp: newPER, m2Growth: macroExtended?.m2Growth ?? 5.2 });
       setEditingPER(false);
+    } catch (error) {
+      console.error('Error al actualizar PER:', error);
     }
   };
 
   const handleM2Submit = () => {
+    console.log('Enviando M2:', m2Input); // DEPURACIÓN
     const newM2 = parseFloat(m2Input);
-    if (!isNaN(newM2) && onMacroChange) {
+    if (isNaN(newM2)) {
+      console.warn('M2 inválido:', m2Input);
+      return;
+    }
+    if (!onMacroChange) {
+      console.error('onMacroChange no está definida');
+      setEditingM2(false);
+      return;
+    }
+    try {
       onMacroChange({ erp: macroExtended?.erp ?? 22, m2Growth: newM2 });
       setEditingM2(false);
+    } catch (error) {
+      console.error('Error al actualizar M2:', error);
     }
   };
 
+  const handlePERClick = (e: React.MouseEvent) => {
+    console.log('Clic en PER'); // DEPURACIÓN
+    e.preventDefault();
+    e.stopPropagation();
+    if (perTimeoutRef.current) clearTimeout(perTimeoutRef.current);
+    perTimeoutRef.current = setTimeout(() => {
+      console.log('Activando edición PER'); // DEPURACIÓN
+      setEditingPER(true);
+      perTimeoutRef.current = null;
+    }, 0);
+  };
+
+  const handleM2Click = (e: React.MouseEvent) => {
+    console.log('Clic en M2'); // DEPURACIÓN
+    e.preventDefault();
+    e.stopPropagation();
+    if (m2TimeoutRef.current) clearTimeout(m2TimeoutRef.current);
+    m2TimeoutRef.current = setTimeout(() => {
+      console.log('Activando edición M2'); // DEPURACIÓN
+      setEditingM2(true);
+      m2TimeoutRef.current = null;
+    }, 0);
+  };
+
+  // Colores (igual que antes)
   const getVixColor = (v: number) => v < 20 ? 'text-green-400' : v < 30 ? 'text-yellow-400' : 'text-red-400';
   const getTedColor = (s: number) => s < 0 ? 'text-red-400' : s < 1 ? 'text-yellow-400' : 'text-green-400';
   const getRateColor = (r: number) => r < 2 ? 'text-green-400' : r < 4 ? 'text-yellow-400' : 'text-red-400';
@@ -54,6 +115,7 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* Primera fila: VIX, Curva, Tipo, Z-score */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center">
           <div className="text-sm text-gray-400">VIX</div>
@@ -75,12 +137,16 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
         </div>
       </div>
 
+      {/* Segunda fila: ERP y M2 */}
       <div className="grid grid-cols-2 gap-4">
+        {/* ERP */}
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center relative">
           <div className="text-sm text-gray-400">ERP (Equity Risk Premium)</div>
           {editingPER ? (
             <div className="flex items-center justify-center gap-2 mt-1">
               <input
+                id="per-input"
+                name="per"
                 type="number"
                 value={perInput}
                 onChange={(e) => setPerInput(e.target.value)}
@@ -94,11 +160,7 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
           ) : (
             <div
               className={`text-2xl font-bold ${getErpColor(parseFloat(erpValue))} cursor-pointer hover:opacity-80`}
-              onClick={(e) => {
-                e.preventDefault(); // Evita cualquier comportamiento por defecto (como navegación)
-                e.stopPropagation(); // Detiene propagación a elementos padre
-                setTimeout(() => setEditingPER(true), 0); // Permite que el evento termine antes de actualizar estado
-              }}
+              onClick={handlePERClick}
               title="Haz clic para editar el PER"
             >
               {erpValue}%
@@ -108,11 +170,14 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
           <div className="text-xs text-gray-400 mt-1">PER: {per}</div>
         </div>
 
+        {/* M2 */}
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center">
           <div className="text-sm text-gray-400">M2 Crecimiento anual</div>
           {editingM2 ? (
             <div className="flex items-center justify-center gap-2 mt-1">
               <input
+                id="m2-input"
+                name="m2"
                 type="number"
                 value={m2Input}
                 onChange={(e) => setM2Input(e.target.value)}
@@ -127,11 +192,7 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
           ) : (
             <div
               className={`text-2xl font-bold ${getM2Color(parseFloat(m2Growth))} cursor-pointer hover:opacity-80`}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setTimeout(() => setEditingM2(true), 0);
-              }}
+              onClick={handleM2Click}
               title="Haz clic para editar M2"
             >
               {m2Growth}%

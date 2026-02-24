@@ -40,8 +40,9 @@ export default function Index() {
   const { loading, error, results } = usePortfolio(userMacro, portfolioData);
 
   const handleMacroChange = (newMacro: MacroExtendedData) => {
-    setUserMacro(newMacro);
-  };
+  console.log('handleMacroChange llamado con', newMacro); // DEPURACIÓN
+  setUserMacro(newMacro);
+};
 
   const handleConfirmOrders = (orders: any[]) => {
     const newPositions = { ...portfolioData.positions };
