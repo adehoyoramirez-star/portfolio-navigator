@@ -3,6 +3,9 @@ import * as math from 'mathjs';
 import { ASSETS, Asset, SECTOR_MAP, SECTOR_CAP, TARGET_GOAL, STRUCTURAL_RESERVE_PCT } from './constants';
 import { getCurrentPrices, getHistoricalData, getMacroData, CurrentPrices, MacroData, HistoricalData } from './yahooFinance';
 import { MacroExtendedData } from './macroExtended';
+import { ledoitWolfCovariance } from './risk';
+import { optimizeMeanVariance } from './optimizer';
+import { monteCarloInstitutional } from './montecarlo';
 
 // ---------- TIPOS ----------
 export interface Position {
@@ -82,30 +85,6 @@ function percentile(arr: number[], p: number): number {
   return sorted[base];
 }
 
-function calculateCovariance(matrix: number[][]): number[][] {
-  const n = matrix.length;
-  const m = matrix[0].length;
-  const means: number[] = new Array(m).fill(0);
-  for (let j = 0; j < m; j++) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      sum += matrix[i][j];
-    }
-    means[j] = sum / n;
-  }
-  const cov: number[][] = Array(m).fill(0).map(() => new Array(m).fill(0));
-  for (let i = 0; i < m; i++) {
-    for (let j = 0; j < m; j++) {
-      let sum = 0;
-      for (let k = 0; k < n; k++) {
-        sum += (matrix[k][i] - means[i]) * (matrix[k][j] - means[j]);
-      }
-      cov[i][j] = sum / (n - 1);
-    }
-  }
-  return cov;
-}
-
 function getRegime(vix: number, vixHistory: number[], btcZ: number, m2Growth: number): { regime: string; targetVol: number; p80: number; p20: number } {
   const p80 = percentile(vixHistory, 0.8);
   const p20 = percentile(vixHistory, 0.2);
@@ -138,155 +117,6 @@ function getRegime(vix: number, vixHistory: number[], btcZ: number, m2Growth: nu
   return { regime, targetVol, p80, p20 };
 }
 
-function optimizePortfolio(
-  returns: number[][],
-  targetVol: number,
-  btcMin: number,
-  btcMax: number,
-  erp: number
-): number[] {
-  const n = ASSETS.length;
-  // Media de retornos por activo
-  const mu: number[] = [];
-  for (let j = 0; j < n; j++) {
-    let sum = 0;
-    for (let i = 0; i < returns.length; i++) {
-      sum += returns[i][j];
-    }
-    mu.push(sum / returns.length);
-  }
-
-  // Identificar activos de renta variable
-  const equityIndices = ASSETS.reduce((acc, asset, idx) => {
-    if (['EMXC.DE', 'IS3Q.DE', 'VVSM.DE'].includes(asset)) acc.push(idx);
-    return acc;
-  }, [] as number[]);
-
-  // Ajuste por ERP
-  const erpFactor = 1 + (erp / 100);
-  equityIndices.forEach(i => { mu[i] *= erpFactor; });
-
-  // Covarianza
-  const cov = calculateCovariance(returns);
-
-  // Búsqueda aleatoria de pesos óptimos
-  let bestW: number[] = [];
-  let bestSharpe = -Infinity;
-
-  const sectors = [...new Set(Object.values(SECTOR_MAP))];
-
-  for (let attempt = 0; attempt < 20000; attempt++) {
-    const w = Array(n).fill(0).map(() => Math.random());
-    const sum = w.reduce((a, b) => a + b, 0);
-    const wNorm = w.map(v => v / sum);
-
-    // Límites individuales
-    let boundsOk = true;
-    for (let i = 0; i < n; i++) {
-      if (i === ASSETS.indexOf('BTC-EUR')) {
-        if (wNorm[i] < btcMin || wNorm[i] > btcMax) { boundsOk = false; break; }
-      } else {
-        if (wNorm[i] < 0.02 || wNorm[i] > 0.40) { boundsOk = false; break; }
-      }
-    }
-    if (!boundsOk) continue;
-
-    // Límites sectoriales
-    let sectorsOk = true;
-    for (const sector of sectors) {
-      const indices = ASSETS.map((a, idx) => SECTOR_MAP[a] === sector ? idx : -1).filter(i => i >= 0);
-      const sectorSum = indices.reduce((acc, i) => acc + wNorm[i], 0);
-      if (sectorSum > SECTOR_CAP) { sectorsOk = false; break; }
-    }
-    if (!sectorsOk) continue;
-
-    // Volatilidad
-    let portVar = 0;
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        portVar += wNorm[i] * wNorm[j] * cov[i][j];
-      }
-    }
-    const portVol = Math.sqrt(portVar);
-    if (portVol > targetVol) continue;
-
-    // Sharpe
-    let portReturn = 0;
-    for (let i = 0; i < n; i++) portReturn += wNorm[i] * mu[i];
-    const sharpe = portReturn / portVol;
-    if (sharpe > bestSharpe) {
-      bestSharpe = sharpe;
-      bestW = wNorm;
-    }
-  }
-
-  if (bestW.length === 0) {
-    return Array(n).fill(1 / n);
-  }
-  return bestW;
-}
-
-function monteCarlo(
-  currentValue: number,
-  monthlyContribution: number,
-  years: number,
-  muAnnual: number,
-  volAnnual: number,
-  nSims: number = 500
-): { results: number[]; probability: number } {
-  const months = years * 12;
-  const monthlyMu = muAnnual / 12;
-  const monthlyVol = volAnnual / Math.sqrt(12);
-  const results: number[] = [];
-
-  for (let sim = 0; sim < nSims; sim++) {
-    let value = currentValue;
-    for (let m = 0; m < months; m++) {
-      const u = Math.random();
-      const v = Math.random();
-      const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-      const ret = monthlyMu + monthlyVol * z;
-      value = value * (1 + ret) + monthlyContribution;
-    }
-    results.push(value);
-  }
-
-  const probability = results.filter(v => v >= TARGET_GOAL).length / nSims;
-  return { results, probability };
-}
-
-function generateOrders(
-  currentWeights: number[],
-  targetWeights: number[],
-  currentValues: number[],
-  cashAvailable: number,
-  prices: number[]
-): { orders: Order[]; totalCost: number } {
-  const totalInvested = currentValues.reduce((a, b) => a + b, 0);
-  const targetValues = targetWeights.map(w => w * (totalInvested + cashAvailable));
-  const orders: Order[] = [];
-  let totalCost = 0;
-
-  for (let i = 0; i < ASSETS.length; i++) {
-    const diff = targetValues[i] - currentValues[i];
-    if (diff > 0) {
-      const price = prices[i];
-      let shares: number;
-      if (ASSETS[i] === 'BTC-EUR') {
-        shares = diff / price; // fracciones permitidas
-      } else {
-        shares = Math.floor(diff / price); // solo unidades enteras
-      }
-      const cost = shares * price;
-      if (cost > 0 && cost <= cashAvailable - totalCost) {
-        orders.push({ ticker: ASSETS[i], shares, price, cost });
-        totalCost += cost;
-      }
-    }
-  }
-  return { orders, totalCost };
-}
-
 // ---------- FUNCIÓN PRINCIPAL ----------
 export async function recalculateAll(
   positions: Record<Asset, Position>,
@@ -310,6 +140,8 @@ export async function recalculateAll(
   const currentValues = ASSETS.map(asset => positions[asset]?.shares * prices[asset] || 0);
   const totalInvested = currentValues.reduce((a, b) => a + b, 0);
   const totalValue = totalInvested + cashReserve;
+  // 👇 Silenciar advertencia de TypeScript
+  void totalValue;
 
   // Z-score BTC
   const btcPrices = (historical['BTC-EUR'] as number[]) || [];
@@ -337,44 +169,69 @@ export async function recalculateAll(
     returnsMatrix.push(row);
   }
 
-  // Optimizar pesos objetivo
-  const targetWeights = optimizePortfolio(returnsMatrix, targetVol, btcMinWeight, btcMaxWeight, erp);
-
-  // Rentabilidad media anual esperada
-  let totalMean = 0;
+  // Calcular retornos esperados diarios por activo
+  const muDaily: number[] = [];
   for (let j = 0; j < ASSETS.length; j++) {
     let sum = 0;
     for (let i = 0; i < returnsMatrix.length; i++) {
       sum += returnsMatrix[i][j];
     }
-    totalMean += sum / returnsMatrix.length;
+    muDaily.push(sum / returnsMatrix.length);
   }
-  const muAnnual = (totalMean / ASSETS.length) * 252;
 
-  // Monte Carlo
-  const { results: mcResults, probability } = monteCarlo(
-    totalValue,
-    monthlyContribution,
-    10,
-    muAnnual,
-    targetVol,
-    500
+  // Ajuste por ERP (afecta a activos de renta variable)
+  const equityIndices = ASSETS.reduce((acc, asset, idx) => {
+    if (['EMXC.DE', 'IS3Q.DE', 'VVSM.DE'].includes(asset)) acc.push(idx);
+    return acc;
+  }, [] as number[]);
+  const erpFactor = 1 + (erp / 100);
+  equityIndices.forEach(i => { muDaily[i] *= erpFactor; });
+
+  // Covarianza shrinkeada
+  const cov = ledoitWolfCovariance(returnsMatrix);
+
+  // Obtener pesos actuales
+  const currentWeights = totalInvested > 0 ? currentValues.map(v => v / totalInvested) : Array(ASSETS.length).fill(1/ASSETS.length);
+  // 👇 Silenciar advertencia de TypeScript
+  void currentWeights;
+
+  // Optimización convexa (con penalización de turnover)
+  const targetWeights = optimizeMeanVariance(
+    muDaily,                 // retornos diarios medios
+    cov,                     // matriz de covarianza shrinkeada
+    3,                       // lambda (aversión al riesgo)
+    currentWeights,          // pesos actuales para penalizar turnover
+    0.1                      // penalización por turnover
   );
 
-  // Contribución al riesgo
-  const currentWeights = totalInvested > 0 ? currentValues.map(v => v / totalInvested) : Array(ASSETS.length).fill(1/ASSETS.length);
-  const covMatrix = calculateCovariance(returnsMatrix);
+  // Rentabilidad anual esperada del portafolio objetivo
+  const muAnnual = targetWeights.reduce((sum, w, i) => sum + w * muDaily[i], 0) * 252;
+
+  // Monte Carlo institucional (t‑Student)
+  const mc = monteCarloInstitutional(
+    totalValue,
+    monthlyContribution,
+    10,               // años
+    muAnnual,
+    targetVol,
+    5,                // grados de libertad (colas pesadas)
+    2000              // simulaciones
+  );
+  const probability = mc.probability;
+  const mcResults = mc.results;
+
+  // Contribución al riesgo (usando covarianza shrinkeada)
   let portVar = 0;
   for (let i = 0; i < ASSETS.length; i++) {
     for (let j = 0; j < ASSETS.length; j++) {
-      portVar += currentWeights[i] * currentWeights[j] * covMatrix[i][j];
+      portVar += currentWeights[i] * currentWeights[j] * cov[i][j];
     }
   }
   const portVol = Math.sqrt(portVar);
   const riskContrib = currentWeights.map((w, i) => {
     let marginal = 0;
     for (let j = 0; j < ASSETS.length; j++) {
-      marginal += covMatrix[i][j] * currentWeights[j];
+      marginal += cov[i][j] * currentWeights[j];
     }
     return w * marginal / portVol;
   });
@@ -418,4 +275,37 @@ export async function recalculateAll(
     portfolioVol: targetVol,
     macroExtended: { erp, m2Growth }
   };
+}
+
+// ---------- GENERACIÓN DE ÓRDENES (sin cambios) ----------
+function generateOrders(
+  currentWeights: number[],
+  targetWeights: number[],
+  currentValues: number[],
+  cashAvailable: number,
+  prices: number[]
+): { orders: Order[]; totalCost: number } {
+  const totalInvested = currentValues.reduce((a, b) => a + b, 0);
+  const targetValues = targetWeights.map(w => w * (totalInvested + cashAvailable));
+  const orders: Order[] = [];
+  let totalCost = 0;
+
+  for (let i = 0; i < ASSETS.length; i++) {
+    const diff = targetValues[i] - currentValues[i];
+    if (diff > 0) {
+      const price = prices[i];
+      let shares: number;
+      if (ASSETS[i] === 'BTC-EUR') {
+        shares = diff / price;       // fracciones permitidas
+      } else {
+        shares = Math.floor(diff / price); // solo unidades enteras
+      }
+      const cost = shares * price;
+      if (cost > 0 && cost <= cashAvailable - totalCost) {
+        orders.push({ ticker: ASSETS[i], shares, price, cost });
+        totalCost += cost;
+      }
+    }
+  }
+  return { orders, totalCost };
 }
