@@ -1,48 +1,47 @@
 import { useState, useEffect } from 'react';
-import { ASSETS, DEFAULT_POSITIONS } from '../lib/constants';
 import { recalculateAll } from '../lib/portfolio';
-import { getMacroExtended, MacroExtendedData } from '../lib/macroExtended';
+import { MacroExtendedData } from '../lib/macroExtended';
+import { Asset } from '../lib/constants';
 
-export function usePortfolio() {
+export interface PortfolioData {
+  positions: Record<Asset, { shares: number; avgPrice: number }>;
+  cashReserve: number;
+  monthlyContribution: number;
+  btcMinWeight: number;
+  btcMaxWeight: number;
+}
+
+export function usePortfolio(
+  userMacro: MacroExtendedData | null,
+  portfolioData: PortfolioData
+) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [results, setResults] = useState<any>(null);
-  const [macroExtended, setMacroExtended] = useState<MacroExtendedData | null>(null);
-  const [data, setData] = useState({
-    positions: DEFAULT_POSITIONS,
-    cashReserve: 150,
-    monthlyContribution: 400,
-    btcMinWeight: 0.2,
-    btcMaxWeight: 0.3
-  });
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        // Datos de cartera y mercado
         const res = await recalculateAll(
-          data.positions,
-          data.cashReserve,
-          data.monthlyContribution,
-          data.btcMinWeight,
-          data.btcMaxWeight
+          portfolioData.positions,
+          portfolioData.cashReserve,
+          portfolioData.monthlyContribution,
+          portfolioData.btcMinWeight,
+          portfolioData.btcMaxWeight,
+          userMacro
         );
         setResults(res);
-
-        // Datos macro extendidos (ERP, M2)
-        const macroExt = await getMacroExtended();
-        setMacroExtended(macroExt);
-
         setError(null);
       } catch (err) {
         setError(err as Error);
+        console.error('Error en usePortfolio:', err);
       } finally {
         setLoading(false);
       }
     };
     fetchData();
-  }, [data]); // Se ejecuta cada vez que cambia data
+  }, [portfolioData, userMacro]);
 
-  return { loading, error, results, data, macroExtended, setData };
+  return { loading, error, results };
 }
