@@ -24,7 +24,10 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const [m2Input, setM2Input] = useState(macroExtended?.m2Growth?.toString() || '5.2');
 
   const per = macroExtended?.erp ?? 22;
-  const erpValue = ((1 / per - tnx) * 100).toFixed(1);
+  // 👇 Cálculo corregido del ERP
+  const earningsYield = 1 / per;
+  const riskFree = tnx / 100;
+  const erpValue = ((earningsYield - riskFree) * 100).toFixed(1);
   const m2Growth = macroExtended?.m2Growth?.toFixed(1) ?? '5.2';
 
   const handlePERSubmit = () => {
@@ -43,6 +46,7 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
     }
   };
 
+  // Colores (igual que antes)
   const getVixColor = (v: number) => v < 20 ? 'text-green-400' : v < 30 ? 'text-yellow-400' : 'text-red-400';
   const getTedColor = (s: number) => s < 0 ? 'text-red-400' : s < 1 ? 'text-yellow-400' : 'text-green-400';
   const getRateColor = (r: number) => r < 2 ? 'text-green-400' : r < 4 ? 'text-yellow-400' : 'text-red-400';
