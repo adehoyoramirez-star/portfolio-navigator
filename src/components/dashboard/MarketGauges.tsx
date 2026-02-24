@@ -24,7 +24,6 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const [m2Input, setM2Input] = useState(macroExtended?.m2Growth?.toString() || '5.2');
 
   const per = macroExtended?.erp ?? 22;
-  // 👇 Cálculo corregido del ERP
   const earningsYield = 1 / per;
   const riskFree = tnx / 100;
   const erpValue = ((earningsYield - riskFree) * 100).toFixed(1);
@@ -46,7 +45,6 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
     }
   };
 
-  // Colores (igual que antes)
   const getVixColor = (v: number) => v < 20 ? 'text-green-400' : v < 30 ? 'text-yellow-400' : 'text-red-400';
   const getTedColor = (s: number) => s < 0 ? 'text-red-400' : s < 1 ? 'text-yellow-400' : 'text-green-400';
   const getRateColor = (r: number) => r < 2 ? 'text-green-400' : r < 4 ? 'text-yellow-400' : 'text-red-400';
@@ -96,7 +94,11 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
           ) : (
             <div
               className={`text-2xl font-bold ${getErpColor(parseFloat(erpValue))} cursor-pointer hover:opacity-80`}
-              onClick={() => setEditingPER(true)}
+              onClick={(e) => {
+                e.preventDefault(); // Evita cualquier comportamiento por defecto (como navegación)
+                e.stopPropagation(); // Detiene propagación a elementos padre
+                setTimeout(() => setEditingPER(true), 0); // Permite que el evento termine antes de actualizar estado
+              }}
               title="Haz clic para editar el PER"
             >
               {erpValue}%
@@ -125,7 +127,11 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
           ) : (
             <div
               className={`text-2xl font-bold ${getM2Color(parseFloat(m2Growth))} cursor-pointer hover:opacity-80`}
-              onClick={() => setEditingM2(true)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setTimeout(() => setEditingM2(true), 0);
+              }}
               title="Haz clic para editar M2"
             >
               {m2Growth}%
