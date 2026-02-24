@@ -1,4 +1,3 @@
-// src/components/dashboard/PositionsTable.tsx
 import React from 'react';
 import { ASSETS, Asset } from '@/lib/constants';
 import { formatCurrency, formatPercentage } from '@/lib/formatters';
@@ -17,16 +16,16 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
   const totalInvested = ASSETS.reduce((sum, asset) => sum + (positions[asset]?.shares * prices[asset] || 0), 0);
 
   return (
-    <div className="bg-gray-800 p-4 rounded-lg shadow overflow-x-auto">
+    <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-700 shadow-lg overflow-x-auto">
       <table className="w-full text-sm text-white">
         <thead>
-          <tr className="border-b border-gray-600">
-            <th className="text-left p-2">Activo</th>
-            <th className="text-right p-2">Shares</th>
-            <th className="text-right p-2">Precio Medio</th>
-            <th className="text-right p-2">Precio Actual</th>
-            <th className="text-right p-2">Valor</th>
-            <th className="text-right p-2">Desv. vs Obj.</th>
+          <tr className="border-b border-slate-700">
+            <th className="text-left p-3 text-slate-400 font-medium">Activo</th>
+            <th className="text-right p-3 text-slate-400 font-medium">Shares</th>
+            <th className="text-right p-3 text-slate-400 font-medium">Precio Medio</th>
+            <th className="text-right p-3 text-slate-400 font-medium">Precio Actual</th>
+            <th className="text-right p-3 text-slate-400 font-medium">Valor</th>
+            <th className="text-right p-3 text-slate-400 font-medium">Desv. vs Obj.</th>
           </tr>
         </thead>
         <tbody>
@@ -37,17 +36,30 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
             const currentWeight = totalInvested > 0 ? value / totalInvested : 0;
             const targetWeight = targetWeights[i] || 0;
             const deviation = currentWeight - targetWeight;
-            const deviationColor = deviation > 0.01 ? 'text-green-400' : deviation < -0.01 ? 'text-red-400' : 'text-gray-400';
+            const deviationColor = deviation > 0.01 ? 'text-green-400' : deviation < -0.01 ? 'text-red-400' : 'text-slate-400';
+            const deviationPercent = Math.min(Math.abs(deviation) * 100, 100);
 
             return (
-              <tr key={asset} className="border-b border-gray-700 hover:bg-gray-700">
-                <td className="p-2 font-medium">{asset}</td>
-                <td className="text-right p-2">{pos.shares.toFixed(4)}</td>
-                <td className="text-right p-2">{formatCurrency(pos.avgPrice)}</td>
-                <td className="text-right p-2">{formatCurrency(price)}</td>
-                <td className="text-right p-2">{formatCurrency(value)}</td>
-                <td className={`text-right p-2 ${deviationColor}`}>
+              <tr key={asset} className="border-b border-slate-700/50 hover:bg-slate-700/20 transition-colors">
+                <td className="p-3 font-medium">{asset}</td>
+                <td className="text-right p-3 font-mono">{pos.shares.toFixed(4)}</td>
+                <td className="text-right p-3 font-mono">{formatCurrency(pos.avgPrice)}</td>
+                <td className="text-right p-3 font-mono">{formatCurrency(price)}</td>
+                <td className="text-right p-3 font-mono">{formatCurrency(value)}</td>
+                <td className={`text-right p-3 font-mono ${deviationColor}`}>
                   {formatPercentage(deviation)}
+                  <div className="flex justify-end mt-1">
+                    {deviation > 0 && (
+                      <div className="w-16 h-1 bg-green-500/20 rounded-full overflow-hidden">
+                        <div className="h-full bg-green-500 rounded-full" style={{ width: `${deviationPercent}%` }} />
+                      </div>
+                    )}
+                    {deviation < 0 && (
+                      <div className="w-16 h-1 bg-red-500/20 rounded-full overflow-hidden">
+                        <div className="h-full bg-red-500 rounded-full" style={{ width: `${deviationPercent}%` }} />
+                      </div>
+                    )}
+                  </div>
                 </td>
               </tr>
             );

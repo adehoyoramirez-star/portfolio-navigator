@@ -3,7 +3,15 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recha
 import { ASSETS } from '@/lib/constants';
 import { formatPercentage } from '@/lib/formatters';
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D', '#FF6B6B'];
+const COLORS = [
+  '#3b82f6', // azul
+  '#10b981', // verde
+  '#f59e0b', // naranja
+  '#ef4444', // rojo
+  '#8b5cf6', // púrpura
+  '#ec4899', // rosa
+  '#06b6d4'  // cian
+];
 
 interface DonutChartsProps {
   targetWeights: number[];
@@ -43,9 +51,16 @@ export const DonutCharts: React.FC<DonutChartsProps> = ({ targetWeights, riskCon
               ))}
             </Pie>
             <Tooltip
-              formatter={(value: number) => formatPercentage(value)}
-              contentStyle={{ backgroundColor: '#1f1f1f', borderColor: '#444', color: '#fff' }}
-            />
+  formatter={(value: number) => formatPercentage(value)}
+  contentStyle={{
+    backgroundColor: '#1e293b',
+    border: '1px solid #334155',
+    borderRadius: '8px',
+    color: '#f8fafc',
+    boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)'
+  }}
+  labelStyle={{ color: '#94a3b8', fontWeight: '500' }}
+/>
             <Legend wrapperStyle={{ color: '#fff' }} />
           </PieChart>
         </ResponsiveContainer>
