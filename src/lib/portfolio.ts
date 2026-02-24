@@ -1,6 +1,6 @@
 // src/lib/portfolio.ts
 import * as math from 'mathjs';
-import { ASSETS, Asset, SECTOR_MAP, SECTOR_CAP, STRUCTURAL_RESERVE_PCT } from './constants';
+import { ASSETS, Asset, SECTOR_MAP, SECTOR_CAP, TARGET_GOAL, STRUCTURAL_RESERVE_PCT } from './constants';
 import { getCurrentPrices, getHistoricalData, getMacroData, CurrentPrices, MacroData, HistoricalData } from './yahooFinance';
 import { MacroExtendedData } from './macroExtended';
 import { ledoitWolfCovariance } from './risk';
@@ -326,7 +326,7 @@ export async function recalculateAll(
   // Contribución al riesgo (usando covarianza shrinkeada)
   const covMatrix = ledoitWolfCovariance(returnsMatrix);
   const currentWeights = totalInvested > 0 ? currentValues.map(v => v / totalInvested) : Array(ASSETS.length).fill(1/ASSETS.length);
-  void currentWeights; // Silenciar advertencia (realmente se usa)
+  void currentWeights; // Silenciar advertencia
 
   let portVar = 0;
   for (let i = 0; i < ASSETS.length; i++) {
