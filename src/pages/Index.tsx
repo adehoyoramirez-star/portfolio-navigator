@@ -134,6 +134,85 @@ export default function Index() {
         onRecalculate={() => {}}
         onConfirmOrders={handleConfirmOrders}
       />
+      {/* AÑADE ESTE BLOQUE DESPUÉS DE <ControlPanel> O DONDE PREFIERAS */}
+<div className="bg-gray-800 p-4 rounded-lg shadow mt-4">
+  <h3 className="text-lg font-semibold mb-4 text-white">Actualización manual</h3>
+  <div className="grid grid-cols-2 gap-4">
+    <div>
+      <label className="block text-sm font-medium text-gray-300">Reserva manual (€)</label>
+      <input
+        type="number"
+        value={portfolioData.cashReserve}
+        onChange={(e) => {
+          const newReserve = Number(e.target.value);
+          if (!isNaN(newReserve) && newReserve >= 0) {
+            setPortfolioData(prev => ({
+              ...prev,
+              cashReserve: newReserve
+            }));
+          }
+        }}
+        className="mt-1 block w-full rounded-md border-gray-600 bg-gray-700 text-white shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+        min="0"
+        step="10"
+      />
+      <p className="text-xs text-gray-400 mt-1">Actualiza directamente tu efectivo disponible</p>
+    </div>
+    <div>
+      <label className="block text-sm font-medium text-gray-300">Comprar BTC (fracción)</label>
+      <div className="flex gap-2">
+        <input
+          type="number"
+          id="btc-purchase"
+          placeholder="0.001"
+          step="0.001"
+          min="0"
+          className="mt-1 block w-full rounded-md border-gray-600 bg-gray-700 text-white shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+        />
+        <button
+          onClick={() => {
+            const input = document.getElementById('btc-purchase') as HTMLInputElement;
+            const btcToAdd = parseFloat(input.value);
+            if (isNaN(btcToAdd) || btcToAdd <= 0) {
+              alert('Introduce una cantidad válida de BTC');
+              return;
+            }
+          
+            const currentPrice = results?.marketData?.prices?.['BTC-EUR'] || 0;
+            const cost = btcToAdd * currentPrice;
+
+            if (cost > portfolioData.cashReserve) {
+              alert('No hay suficiente reserva para comprar esa cantidad');
+              return;
+            }
+
+            setPortfolioData(prev => {
+              const newPositions = { ...prev.positions };
+              const old = newPositions['BTC-EUR'] || { shares: 0, avgPrice: 0 };
+              const newShares = old.shares + btcToAdd;
+              const newAvgPrice = (old.shares * old.avgPrice + btcToAdd * currentPrice) / newShares;
+
+              newPositions['BTC-EUR'] = { shares: newShares, avgPrice: newAvgPrice };
+
+              return {
+                ...prev,
+                positions: newPositions,
+                cashReserve: prev.cashReserve - cost
+              };
+            });
+
+            input.value = '';
+            alert(`Comprados ${btcToAdd} BTC por ${(cost).toFixed(2)} €`);
+          }}
+          className="mt-1 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+        >
+          Comprar
+        </button>
+      </div>
+      <p className="text-xs text-gray-400 mt-1">Introduce fracción (ej. 0.005) y pulsa Comprar</p>
+    </div>
+  </div>
+</div>
     </div>
   );
 }
