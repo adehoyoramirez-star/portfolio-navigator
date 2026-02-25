@@ -7,9 +7,7 @@ import { PositionsTable } from '../components/dashboard/PositionsTable';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { MonteCarloChart } from '../components/dashboard/MonteCarloChart';
 import { DEFAULT_POSITIONS, Asset } from '../lib/constants';
-import { MacroExtendedData } from '../lib/macroExtended';
-
-const DEFAULT_MACRO = { erp: 22, m2Growth: 5.2 };
+import { MacroExtendedData, DEFAULT_MACRO } from '../lib/macroExtended';
 
 export default function Index() {
   const [userMacro, setUserMacro] = useState<MacroExtendedData>(() => {
@@ -40,6 +38,7 @@ export default function Index() {
   const { loading, error, results } = usePortfolio(userMacro, portfolioData);
 
   const handleMacroChange = (newMacro: MacroExtendedData) => {
+    console.log('handleMacroChange llamado con', newMacro);
     setUserMacro(newMacro);
   };
 
@@ -134,7 +133,7 @@ export default function Index() {
         onConfirmOrders={handleConfirmOrders}
       />
 
-      {/* Pequeño control para la reserva (opcional, puedes quitarlo si no lo quieres) */}
+      {/* Control rápido de reserva (opcional) */}
       <div className="bg-gray-800 p-4 rounded-lg shadow">
         <h3 className="text-lg font-semibold mb-2 text-white">Reserva de efectivo</h3>
         <div className="flex items-center gap-4">
