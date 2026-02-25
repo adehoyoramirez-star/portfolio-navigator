@@ -15,11 +15,9 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   tnx,
   onMacroChange
 }) => {
-  // Desestructurar marketData para obtener los valores necesarios
   const { vix, tnx: tnxFromData, irx, btcZScore } = marketData;
   const tedSpread = tnxFromData - irx;
 
-  // Referencias para los timeouts
   const timeoutsRef = useRef<{ per?: NodeJS.Timeout; m2?: NodeJS.Timeout }>({});
 
   useEffect(() => {
@@ -34,7 +32,6 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const [perInput, setPerInput] = useState(() => macroExtended?.erp?.toString() ?? '22');
   const [m2Input, setM2Input] = useState(() => macroExtended?.m2Growth?.toString() ?? '5.2');
 
-  // Actualizar inputs si cambia macroExtended externamente
   useEffect(() => {
     setPerInput(macroExtended?.erp?.toString() ?? '22');
     setM2Input(macroExtended?.m2Growth?.toString() ?? '5.2');
@@ -49,16 +46,13 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const handlePERSubmit = useCallback(() => {
     try {
       const newPER = parseFloat(perInput);
-      if (isNaN(newPER) || newPER <= 0) {
-        console.warn('PER inválido:', perInput);
-        return;
-      }
+      if (isNaN(newPER) || newPER <= 0) return;
       if (onMacroChange) {
         onMacroChange({ erp: newPER, m2Growth: macroExtended?.m2Growth ?? 5.2 });
       }
       setEditingPER(false);
     } catch (error) {
-      console.error('Error en handlePERSubmit:', error);
+      console.error(error);
       setEditingPER(false);
     }
   }, [perInput, onMacroChange, macroExtended]);
@@ -66,16 +60,13 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const handleM2Submit = useCallback(() => {
     try {
       const newM2 = parseFloat(m2Input);
-      if (isNaN(newM2)) {
-        console.warn('M2 inválido:', m2Input);
-        return;
-      }
+      if (isNaN(newM2)) return;
       if (onMacroChange) {
         onMacroChange({ erp: macroExtended?.erp ?? 22, m2Growth: newM2 });
       }
       setEditingM2(false);
     } catch (error) {
-      console.error('Error en handleM2Submit:', error);
+      console.error(error);
       setEditingM2(false);
     }
   }, [m2Input, onMacroChange, macroExtended]);
@@ -84,26 +75,14 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
     e.preventDefault();
     e.stopPropagation();
     if (timeoutsRef.current.per) clearTimeout(timeoutsRef.current.per);
-    timeoutsRef.current.per = setTimeout(() => {
-      try {
-        setEditingPER(true);
-      } catch (error) {
-        console.error('Error activando edición PER:', error);
-      }
-    }, 0);
+    timeoutsRef.current.per = setTimeout(() => setEditingPER(true), 0);
   }, []);
 
   const handleM2Click = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (timeoutsRef.current.m2) clearTimeout(timeoutsRef.current.m2);
-    timeoutsRef.current.m2 = setTimeout(() => {
-      try {
-        setEditingM2(true);
-      } catch (error) {
-        console.error('Error activando edición M2:', error);
-      }
-    }, 0);
+    timeoutsRef.current.m2 = setTimeout(() => setEditingM2(true), 0);
   }, []);
 
   const cancelPER = useCallback(() => {
@@ -116,7 +95,6 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
     setM2Input(macroExtended?.m2Growth?.toString() ?? '5.2');
   }, [macroExtended]);
 
-  // Colores
   const getVixColor = (v: number) => v < 20 ? 'text-green-400' : v < 30 ? 'text-yellow-400' : 'text-red-400';
   const getTedColor = (s: number) => s < 0 ? 'text-red-400' : s < 1 ? 'text-yellow-400' : 'text-green-400';
   const getRateColor = (r: number) => r < 2 ? 'text-green-400' : r < 4 ? 'text-yellow-400' : 'text-red-400';
@@ -126,7 +104,6 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Primera fila */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center">
           <div className="text-sm text-gray-400">VIX</div>
@@ -148,9 +125,7 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
         </div>
       </div>
 
-      {/* Segunda fila */}
       <div className="grid grid-cols-2 gap-4">
-        {/* ERP */}
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center relative">
           <div className="text-sm text-gray-400">ERP (Equity Risk Premium)</div>
           {editingPER ? (
@@ -180,7 +155,6 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
           <div className="text-xs text-gray-400 mt-1">PER: {per}</div>
         </div>
 
-        {/* M2 */}
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center">
           <div className="text-sm text-gray-400">M2 Crecimiento anual</div>
           {editingM2 ? (

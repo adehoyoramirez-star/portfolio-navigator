@@ -3,11 +3,125 @@ import { usePortfolio, PortfolioData } from '../hooks/usePortfolio';
 import { KPIBar } from '../components/dashboard/KPIBar';
 import { DonutCharts } from '../components/dashboard/DonutCharts';
 import { MarketGauges } from '../components/dashboard/MarketGauges';
-import { PositionsTable } from '../components/dashboard/PositionsTable';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { MonteCarloChart } from '../components/dashboard/MonteCarloChart';
-import { DEFAULT_POSITIONS, Asset } from '../lib/constants';
+import { DEFAULT_POSITIONS, ASSETS, Asset } from '../lib/constants';
 import { MacroExtendedData, DEFAULT_MACRO } from '../lib/macroExtended';
+
+// Componente de tabla editable
+const EditablePositionsTable: React.FC<{
+  positions: Record<Asset, { shares: number; avgPrice: number }>;
+  prices: Record<Asset, number>;
+  onUpdate: (asset: Asset, field: 'shares' | 'avgPrice', value: number) => void;
+}> = ({ positions, prices, onUpdate }) => {
+  // Calcular total invertido y valor actual
+  const totalInvested = ASSETS.reduce((sum, asset) => {
+    const pos = positions[asset] || { shares: 0, avgPrice: 0 };
+    return sum + pos.shares * pos.avgPrice;
+  }, 0);
+
+  const currentTotal = ASSETS.reduce((sum, asset) => {
+    const pos = positions[asset] || { shares: 0, avgPrice: 0 };
+    return sum + pos.shares * (prices[asset] || 0);
+  }, 0);
+
+  const totalGainLoss = currentTotal - totalInvested;
+  const totalGainLossPct = totalInvested > 0 ? (totalGainLoss / totalInvested) : 0;
+
+  return (
+    <div className="bg-gray-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+      {/* Resumen superior */}
+      <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-700/30 rounded-lg">
+        <div>
+          <div className="text-sm text-slate-400">Valor cartera</div>
+          <div className="text-xl font-bold text-white">
+            {new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(currentTotal)}
+          </div>
+        </div>
+        <div>
+          <div className="text-sm text-slate-400">Coste total</div>
+          <div className="text-xl font-bold text-white">
+            {new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalInvested)}
+          </div>
+        </div>
+        <div>
+          <div className="text-sm text-slate-400">Ganancia/Pérdida</div>
+          <div className={`text-xl font-bold ${totalGainLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(totalGainLoss)}
+            {' '}
+            <span className="text-sm">
+              ({((totalGainLoss / (totalInvested || 1)) * 100).toFixed(1)}%)
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <table className="w-full text-sm text-white">
+        <thead>
+          <tr className="border-b border-slate-700">
+            <th className="text-left p-2 text-slate-400">Activo</th>
+            <th className="text-right p-2 text-slate-400">Shares</th>
+            <th className="text-right p-2 text-slate-400">Precio Medio (€)</th>
+            <th className="text-right p-2 text-slate-400">Precio Actual</th>
+            <th className="text-right p-2 text-slate-400">Valor</th>
+            <th className="text-right p-2 text-slate-400">Ganancia/Pérdida</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ASSETS.map((asset) => {
+            const pos = positions[asset] || { shares: 0, avgPrice: 0 };
+            const price = prices[asset] || 0;
+            const value = pos.shares * price;
+            const cost = pos.shares * pos.avgPrice;
+            const gainLoss = value - cost;
+            const gainLossPct = cost > 0 ? (gainLoss / cost) * 100 : 0;
+
+            return (
+              <tr key={asset} className="border-b border-slate-700/50 hover:bg-slate-700/20">
+                <td className="p-2 font-medium">{asset}</td>
+                <td className="p-2">
+                  <input
+                    type="number"
+                    value={pos.shares}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      if (!isNaN(val) && val >= 0) {
+                        onUpdate(asset, 'shares', val);
+                      }
+                    }}
+                    step={asset === 'BTC-EUR' ? '0.000001' : '1'}
+                    min="0"
+                    className="w-full bg-gray-700 text-white rounded px-2 py-1 text-right"
+                  />
+                </td>
+                <td className="p-2">
+                  <input
+                    type="number"
+                    value={pos.avgPrice}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      if (!isNaN(val) && val >= 0) {
+                        onUpdate(asset, 'avgPrice', val);
+                      }
+                    }}
+                    step="0.01"
+                    min="0"
+                    className="w-full bg-gray-700 text-white rounded px-2 py-1 text-right"
+                  />
+                </td>
+                <td className="text-right p-2">{price.toFixed(2)} €</td>
+                <td className="text-right p-2">{value.toFixed(2)} €</td>
+                <td className={`text-right p-2 ${gainLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {gainLoss.toFixed(2)} € ({gainLossPct.toFixed(1)}%)
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+};
 
 export default function Index() {
   const [userMacro, setUserMacro] = useState<MacroExtendedData>(() => {
@@ -38,8 +152,20 @@ export default function Index() {
   const { loading, error, results } = usePortfolio(userMacro, portfolioData);
 
   const handleMacroChange = (newMacro: MacroExtendedData) => {
-    console.log('handleMacroChange llamado con', newMacro);
     setUserMacro(newMacro);
+  };
+
+  const handlePositionUpdate = (asset: Asset, field: 'shares' | 'avgPrice', value: number) => {
+    setPortfolioData(prev => {
+      const updatedPositions = {
+        ...prev.positions,
+        [asset]: {
+          ...prev.positions[asset],
+          [field]: value
+        }
+      };
+      return { ...prev, positions: updatedPositions };
+    });
   };
 
   const handleConfirmOrders = (orders: any[]) => {
@@ -59,24 +185,24 @@ export default function Index() {
       newCashReserve -= cost;
     });
 
-    setPortfolioData({
-      ...portfolioData,
+    setPortfolioData(prev => ({
+      ...prev,
       positions: newPositions,
       cashReserve: newCashReserve,
-    });
-    alert('Órdenes ejecutadas y cartera actualizada');
+    }));
+    alert('Órdenes ejecutadas');
   };
 
   const handleMonthlyChange = (value: number) => {
-    setPortfolioData((prev: PortfolioData) => ({ ...prev, monthlyContribution: value }));
+    setPortfolioData(prev => ({ ...prev, monthlyContribution: value }));
   };
 
   const handleBtcMinChange = (value: number) => {
-    setPortfolioData((prev: PortfolioData) => ({ ...prev, btcMinWeight: value }));
+    setPortfolioData(prev => ({ ...prev, btcMinWeight: value }));
   };
 
   const handleBtcMaxChange = (value: number) => {
-    setPortfolioData((prev: PortfolioData) => ({ ...prev, btcMaxWeight: value }));
+    setPortfolioData(prev => ({ ...prev, btcMaxWeight: value }));
   };
 
   if (loading) return <div className="p-4 text-white">Cargando datos financieros...</div>;
@@ -108,10 +234,10 @@ export default function Index() {
         onMacroChange={handleMacroChange}
       />
 
-      <PositionsTable
+      <EditablePositionsTable
         positions={portfolioData.positions}
         prices={results.marketData.prices}
-        targetWeights={results.weights}
+        onUpdate={handlePositionUpdate}
       />
 
       <MonteCarloChart
@@ -133,7 +259,7 @@ export default function Index() {
         onConfirmOrders={handleConfirmOrders}
       />
 
-      {/* Control rápido de reserva (opcional) */}
+      {/* Input para reserva manual */}
       <div className="bg-gray-800 p-4 rounded-lg shadow">
         <h3 className="text-lg font-semibold mb-2 text-white">Reserva de efectivo</h3>
         <div className="flex items-center gap-4">
@@ -141,9 +267,9 @@ export default function Index() {
             type="number"
             value={portfolioData.cashReserve}
             onChange={(e) => {
-              const newReserve = Number(e.target.value);
-              if (!isNaN(newReserve) && newReserve >= 0) {
-                setPortfolioData(prev => ({ ...prev, cashReserve: newReserve }));
+              const val = Number(e.target.value);
+              if (!isNaN(val) && val >= 0) {
+                setPortfolioData(prev => ({ ...prev, cashReserve: val }));
               }
             }}
             className="w-40 bg-gray-700 text-white rounded px-2 py-1"
