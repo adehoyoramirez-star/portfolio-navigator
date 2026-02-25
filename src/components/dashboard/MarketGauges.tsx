@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { MarketData } from '@/lib/portfolio';
 import { MacroExtendedData } from '@/lib/macroExtended';
 
@@ -15,16 +15,17 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   tnx,
   onMacroChange
 }) => {
+  // Desestructurar marketData para obtener los valores necesarios
   const { vix, tnx: tnxFromData, irx, btcZScore } = marketData;
   const tedSpread = tnxFromData - irx;
 
-  const perTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const m2TimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Referencias para los timeouts
+  const timeoutsRef = useRef<{ per?: NodeJS.Timeout; m2?: NodeJS.Timeout }>({});
 
   useEffect(() => {
     return () => {
-      if (perTimeoutRef.current) clearTimeout(perTimeoutRef.current);
-      if (m2TimeoutRef.current) clearTimeout(m2TimeoutRef.current);
+      if (timeoutsRef.current.per) clearTimeout(timeoutsRef.current.per);
+      if (timeoutsRef.current.m2) clearTimeout(timeoutsRef.current.m2);
     };
   }, []);
 
@@ -33,47 +34,87 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
   const [perInput, setPerInput] = useState(() => macroExtended?.erp?.toString() ?? '22');
   const [m2Input, setM2Input] = useState(() => macroExtended?.m2Growth?.toString() ?? '5.2');
 
+  // Actualizar inputs si cambia macroExtended externamente
+  useEffect(() => {
+    setPerInput(macroExtended?.erp?.toString() ?? '22');
+    setM2Input(macroExtended?.m2Growth?.toString() ?? '5.2');
+  }, [macroExtended]);
+
   const per = macroExtended?.erp ?? 22;
   const earningsYield = 1 / per;
-  const riskFree = tnx / 100;
+  const riskFree = typeof tnx === 'number' && !isNaN(tnx) ? tnx / 100 : 0.04;
   const erpValue = ((earningsYield - riskFree) * 100).toFixed(1);
   const m2Growth = macroExtended?.m2Growth?.toFixed(1) ?? '5.2';
 
-  const handlePERSubmit = () => {
-    const newPER = parseFloat(perInput);
-    if (isNaN(newPER) || newPER <= 0) return;
-    if (onMacroChange) {
-      onMacroChange({ erp: newPER, m2Growth: macroExtended?.m2Growth ?? 5.2 });
+  const handlePERSubmit = useCallback(() => {
+    try {
+      const newPER = parseFloat(perInput);
+      if (isNaN(newPER) || newPER <= 0) {
+        console.warn('PER inválido:', perInput);
+        return;
+      }
+      if (onMacroChange) {
+        onMacroChange({ erp: newPER, m2Growth: macroExtended?.m2Growth ?? 5.2 });
+      }
       setEditingPER(false);
-    } else {
+    } catch (error) {
+      console.error('Error en handlePERSubmit:', error);
       setEditingPER(false);
     }
-  };
+  }, [perInput, onMacroChange, macroExtended]);
 
-  const handleM2Submit = () => {
-    const newM2 = parseFloat(m2Input);
-    if (isNaN(newM2)) return;
-    if (onMacroChange) {
-      onMacroChange({ erp: macroExtended?.erp ?? 22, m2Growth: newM2 });
+  const handleM2Submit = useCallback(() => {
+    try {
+      const newM2 = parseFloat(m2Input);
+      if (isNaN(newM2)) {
+        console.warn('M2 inválido:', m2Input);
+        return;
+      }
+      if (onMacroChange) {
+        onMacroChange({ erp: macroExtended?.erp ?? 22, m2Growth: newM2 });
+      }
       setEditingM2(false);
-    } else {
+    } catch (error) {
+      console.error('Error en handleM2Submit:', error);
       setEditingM2(false);
     }
-  };
+  }, [m2Input, onMacroChange, macroExtended]);
 
-  const handlePERClick = (e: React.MouseEvent) => {
+  const handlePERClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (perTimeoutRef.current) clearTimeout(perTimeoutRef.current);
-    perTimeoutRef.current = setTimeout(() => setEditingPER(true), 0);
-  };
+    if (timeoutsRef.current.per) clearTimeout(timeoutsRef.current.per);
+    timeoutsRef.current.per = setTimeout(() => {
+      try {
+        setEditingPER(true);
+      } catch (error) {
+        console.error('Error activando edición PER:', error);
+      }
+    }, 0);
+  }, []);
 
-  const handleM2Click = (e: React.MouseEvent) => {
+  const handleM2Click = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (m2TimeoutRef.current) clearTimeout(m2TimeoutRef.current);
-    m2TimeoutRef.current = setTimeout(() => setEditingM2(true), 0);
-  };
+    if (timeoutsRef.current.m2) clearTimeout(timeoutsRef.current.m2);
+    timeoutsRef.current.m2 = setTimeout(() => {
+      try {
+        setEditingM2(true);
+      } catch (error) {
+        console.error('Error activando edición M2:', error);
+      }
+    }, 0);
+  }, []);
+
+  const cancelPER = useCallback(() => {
+    setEditingPER(false);
+    setPerInput(macroExtended?.erp?.toString() ?? '22');
+  }, [macroExtended]);
+
+  const cancelM2 = useCallback(() => {
+    setEditingM2(false);
+    setM2Input(macroExtended?.m2Growth?.toString() ?? '5.2');
+  }, [macroExtended]);
 
   // Colores
   const getVixColor = (v: number) => v < 20 ? 'text-green-400' : v < 30 ? 'text-yellow-400' : 'text-red-400';
@@ -85,7 +126,7 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Primera fila: VIX, Curva, Tipo, Z-score */}
+      {/* Primera fila */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center">
           <div className="text-sm text-gray-400">VIX</div>
@@ -107,7 +148,7 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
         </div>
       </div>
 
-      {/* Segunda fila: ERP y M2 */}
+      {/* Segunda fila */}
       <div className="grid grid-cols-2 gap-4">
         {/* ERP */}
         <div className="bg-gray-800 p-4 rounded-lg shadow text-center relative">
@@ -121,9 +162,10 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
                 className="w-20 p-1 text-black rounded"
                 step="0.1"
                 min="1"
+                autoFocus
               />
               <button onClick={handlePERSubmit} className="bg-blue-600 text-white px-2 py-1 rounded text-xs">OK</button>
-              <button onClick={() => setEditingPER(false)} className="bg-gray-600 text-white px-2 py-1 rounded text-xs">Cancel</button>
+              <button onClick={cancelPER} className="bg-gray-600 text-white px-2 py-1 rounded text-xs">Cancel</button>
             </div>
           ) : (
             <div
@@ -151,9 +193,10 @@ export const MarketGauges: React.FC<MarketGaugesProps> = ({
                 step="0.1"
                 min="-10"
                 max="20"
+                autoFocus
               />
               <button onClick={handleM2Submit} className="bg-blue-600 text-white px-2 py-1 rounded text-xs">OK</button>
-              <button onClick={() => setEditingM2(false)} className="bg-gray-600 text-white px-2 py-1 rounded text-xs">Cancel</button>
+              <button onClick={cancelM2} className="bg-gray-600 text-white px-2 py-1 rounded text-xs">Cancel</button>
             </div>
           ) : (
             <div
