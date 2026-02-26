@@ -1,4 +1,4 @@
-import InstitutionalDashboard from "./dashboard/InstitutionalDashboard"
+import InstitutionalDashboard from "@/dashboard/InstitutionalDashboard"
 
 export default function App() {
   return <InstitutionalDashboard />
