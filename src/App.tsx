@@ -1,5 +1,5 @@
-import Index from "./pages/Index"
+import InstitutionalDashboard from "./dashboard/InstitutionalDashboard"
 
 export default function App() {
-  return <Index />
+  return <InstitutionalDashboard />
 }
