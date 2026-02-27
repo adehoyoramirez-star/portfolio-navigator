@@ -1,8 +1,6 @@
-// src/core/macro/erp.ts
-
 export interface ERPResult {
   equityRiskPremium: number
-  commentary: string
+  signal: "RISK_ON" | "RISK_OFF"
 }
 
 export function calculateERP(
@@ -13,9 +11,6 @@ export function calculateERP(
 
   return {
     equityRiskPremium: erp,
-    commentary:
-      erp > 0
-        ? "Equity risk premium positive. Risk assets compensated."
-        : "Equity risk premium negative. Risk compensation deteriorating."
+    signal: erp > 0 ? "RISK_ON" : "RISK_OFF"
   }
 }
