@@ -1,9 +1,5 @@
-// src/App.tsx
-import React from 'react';
-import Index from './pages/Index';
+import InstitutionalDashboard from "@/dashboard/InstitutionalDashboard"
 
-function App() {
-  return <Index />;
+export default function App() {
+  return <InstitutionalDashboard />
 }
-
-export default App;
