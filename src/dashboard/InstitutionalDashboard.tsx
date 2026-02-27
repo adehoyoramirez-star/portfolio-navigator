@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { calculateERP } from "@/core/macro/erp";
 import { liquidityScore } from "@/core/macro/liquidity";
 import { generateExecutiveSummary } from "@/core/summary/executive";
-import { generateDecision, DecisionInput, DecisionOutput } from "@/core/decision/engine";
+import { generateDecision, DecisionOutput } from "@/core/decision/engine";
 import { portfolio as initialPortfolio } from "@/data/portfolio";
 import { getMacroData, getCurrentPrices } from "@/lib/yahooFinance";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 
-// Importación dinámica para evitar errores en build de Vercel
+// Importación dinámica para react-gauge-chart (evita errores en build)
 const GaugeChart = lazy(() => import("react-gauge-chart"));
 
 // Tipos
@@ -16,9 +15,9 @@ interface Asset {
   name: string;
   weight: number;
   currentWeight: number;
-  price: number;
-  shares: number;
-  avgPrice: number;
+  price: number;        // Precio actual (solo lectura)
+  shares: number;       // Participaciones (editable)
+  avgPrice: number;     // Precio de compra (editable)
   volatility: number;
   expectedReturn: number;
   sector: string;
@@ -43,14 +42,9 @@ const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(value);
 };
 
-const formatPercent = (value: number): string => {
-  return new Intl.NumberFormat("es-ES", { style: "percent", minimumFractionDigits: 1 }).format(value);
-};
-
-// Colores para el donut
 const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
-// --- Función de simulación Monte Carlo ---
+// --- Función de simulación Monte Carlo (CORREGIDA) ---
 function runMonteCarloSimulation(
   initialCapital: number,
   monthlyContribution: number,
@@ -96,6 +90,7 @@ function runMonteCarloSimulation(
   return { probability, histogramData };
 }
 
+// Función auxiliar para números aleatorios normales
 function randomNormal(): number {
   let u = 0, v = 0;
   while (u === 0) u = Math.random();
@@ -103,68 +98,94 @@ function randomNormal(): number {
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
+// Componente principal
 const InstitutionalDashboard: React.FC = () => {
-  // Estado de la cartera
   const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
   const [cashReserve, setCashReserve] = useState(portfolio.cashReserve);
   const [monthlyInjection, setMonthlyInjection] = useState(portfolio.monthlyInjection);
   const [years, setYears] = useState(10);
   const [buyPercentage, setBuyPercentage] = useState(50);
 
-  // Estado para datos macro (con valores por defecto)
+  // Indicadores macro (editables manualmente)
   const [vix, setVix] = useState(19);
   const [rsi, setRsi] = useState(55);
   const [momentum, setMomentum] = useState(0.2);
-  const [erpValue, setErpValue] = useState(0.025); // 2.5%
+  const [manualPer, setManualPer] = useState<number | null>(null);
+  const [manualErp, setManualErp] = useState<number | null>(null);
+
+  // Valores calculados
+  const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
   const [regimeScore, setRegimeScore] = useState(0.5);
   const [erpSignal, setErpSignal] = useState<"RISK_ON" | "RISK_OFF">("RISK_ON");
+  const [tnx, setTnx] = useState(4.0);
 
-  // Cargar datos reales al montar el componente
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Obtener datos macro (VIX, TNX, IRX, GSPC)
-        const macro = await getMacroData();
-        setVix(macro.vix);
+  const [loading, setLoading] = useState(false);
 
-        // Calcular ERP con datos reales (ejemplo: usando PER implícito del S&P 500)
-        // En un caso real, obtendrías el PER de una API. Aquí simulamos con el valor de GSPC
-        const per = 22; // Podrías obtenerlo de otra fuente
+  // Función para actualizar datos de mercado
+  const refreshMarketData = async () => {
+    setLoading(true);
+    try {
+      const macro = await getMacroData();
+      setVix(macro.vix);
+      setTnx(macro.tnx);
+
+      // Calcular ERP si no hay manual
+      if (manualPer === null && manualErp === null) {
+        const per = 22;
         const earningsYield = 1 / per;
-        const riskFree = macro.tnx / 100; // TNX ya viene en %
+        const riskFree = macro.tnx / 100;
         const erp = earningsYield - riskFree;
         setErpValue(erp);
         setErpSignal(erp > 0.03 ? "RISK_ON" : "RISK_OFF");
-
-        // Calcular liquidez (simplificado)
-        const liq = liquidityScore({
-          m2Growth: 5.2, // Podrías obtenerlo de otra API
-          vix: macro.vix,
-          yieldCurveSpread: macro.tnx - macro.irx
-        });
-        setLiquidity(liq);
-        setRegimeScore(liq); // Por simplicidad
-
-        // Obtener precios actuales de los activos
-        const prices = await getCurrentPrices();
-        setPortfolio(prev => ({
-          ...prev,
-          assets: prev.assets.map(asset => ({
-            ...asset,
-            price: prices[asset.ticker] || asset.price
-          }))
-        }));
-
-      } catch (error) {
-        console.error("Error fetching market data:", error);
       }
-    };
 
-    fetchData();
+      const liq = liquidityScore({
+        m2Growth: 5.2,
+        vix: macro.vix,
+        yieldCurveSpread: macro.tnx - macro.irx
+      });
+      setLiquidity(liq);
+      setRegimeScore(liq);
+
+      const prices = await getCurrentPrices();
+      setPortfolio(prev => ({
+        ...prev,
+        assets: prev.assets.map(asset => ({
+          ...asset,
+          price: prices[asset.ticker] || asset.price
+        }))
+      }));
+    } catch (error) {
+      console.error("Error actualizando datos:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshMarketData();
   }, []);
 
-  // Decisión del motor macro
+  // Recalcular ERP si cambia PER manual
+  useEffect(() => {
+    if (manualPer !== null && manualPer > 0) {
+      const earningsYield = 1 / manualPer;
+      const riskFree = tnx / 100;
+      const erp = earningsYield - riskFree;
+      setErpValue(erp);
+      setErpSignal(erp > 0.03 ? "RISK_ON" : "RISK_OFF");
+    }
+  }, [manualPer, tnx]);
+
+  useEffect(() => {
+    if (manualErp !== null) {
+      setErpValue(manualErp / 100);
+      setErpSignal(manualErp > 3 ? "RISK_ON" : "RISK_OFF");
+    }
+  }, [manualErp]);
+
+  // Decisión del motor
   const decision: DecisionOutput = generateDecision({
     erp: erpValue,
     liquidity,
@@ -184,8 +205,8 @@ const InstitutionalDashboard: React.FC = () => {
     return runMonteCarloSimulation(
       totalPortfolioValue,
       monthlyInjection,
-      0.08,
-      0.15,
+      0.08,  // expectedReturn (podría ser dinámico)
+      0.15,  // volatility
       years,
       portfolio.targetGoal,
       5000
@@ -194,11 +215,13 @@ const InstitutionalDashboard: React.FC = () => {
 
   const executive = generateExecutiveSummary();
 
+  // Actualizar cartera cuando cambian caja o aportación
   useEffect(() => {
     setPortfolio(prev => ({ ...prev, cashReserve, monthlyInjection }));
   }, [cashReserve, monthlyInjection]);
 
-  const updateAsset = (ticker: string, field: keyof Asset, value: number) => {
+  // Editar solo shares y avgPrice
+  const updateAsset = (ticker: string, field: 'shares' | 'avgPrice', value: number) => {
     setPortfolio(prev => ({
       ...prev,
       assets: prev.assets.map(asset =>
@@ -215,7 +238,6 @@ const InstitutionalDashboard: React.FC = () => {
   // Sugerencia de compra (solo si BUY)
   const purchaseSuggestions = useMemo(() => {
     if (decision.action !== "BUY") return [];
-
     const availableCash = (cashReserve * (buyPercentage / 100)) + monthlyInjection;
     if (availableCash <= 0) return [];
 
@@ -227,16 +249,13 @@ const InstitutionalDashboard: React.FC = () => {
     }).filter(a => a.deficit > 0);
 
     const sorted = [...assetsWithDeficit].sort((a, b) => b.deficit - a.deficit);
-
     let remainingCash = availableCash;
     const suggestions: { ticker: string; name: string; price: number; sharesToBuy: number; cost: number }[] = [];
 
     for (const asset of sorted) {
       if (remainingCash <= 0) break;
-
       let maxSharesByDeficit = asset.deficit / asset.price;
       let maxSharesByCash = remainingCash / asset.price;
-
       let sharesToBuy: number;
       if (asset.ticker === "BTC-EUR") {
         sharesToBuy = Math.min(maxSharesByDeficit, maxSharesByCash);
@@ -244,22 +263,13 @@ const InstitutionalDashboard: React.FC = () => {
       } else {
         sharesToBuy = Math.floor(Math.min(maxSharesByDeficit, maxSharesByCash));
       }
-
       if (sharesToBuy <= 0) continue;
-
       const cost = sharesToBuy * asset.price;
       if (cost <= remainingCash) {
-        suggestions.push({
-          ticker: asset.ticker,
-          name: asset.name,
-          price: asset.price,
-          sharesToBuy,
-          cost
-        });
+        suggestions.push({ ticker: asset.ticker, name: asset.name, price: asset.price, sharesToBuy, cost });
         remainingCash -= cost;
       }
     }
-
     return suggestions;
   }, [decision.action, cashReserve, monthlyInjection, buyPercentage, portfolio.assets, totalPortfolioValue]);
 
@@ -269,97 +279,47 @@ const InstitutionalDashboard: React.FC = () => {
     <div style={styles.container}>
       <h1 style={styles.title}>Institutional Portfolio Dashboard (Hedge Fund)</h1>
 
-      {/* Velocímetros (6 indicadores) */}
+      {/* Botón de actualización */}
+      <div style={{ marginBottom: "20px", display: "flex", gap: "10px", alignItems: "center" }}>
+        <button onClick={refreshMarketData} style={styles.button} disabled={loading}>
+          {loading ? "Actualizando..." : "🔄 Actualizar precios y datos macro"}
+        </button>
+        <span style={{ color: "#9ca3af", fontSize: "0.9rem" }}>
+          Los precios actuales se obtienen de Yahoo Finance (no editables).
+        </span>
+      </div>
+
+      {/* Velocímetros */}
       <div style={{ ...styles.card, display: "flex", justifyContent: "space-around", flexWrap: "wrap", gap: "20px" }}>
-        <Suspense fallback={<div style={{ height: 120, background: "#1f2937", width: 250 }}>Cargando...</div>}>
-          {/* ERP */}
+        <Suspense fallback={<div style={{ height: 120, background: "#1f2937", width: 160 }}>Cargando...</div>}>
           <div style={{ width: "160px", textAlign: "center" }}>
-            <h4>ERP</h4>
-            <GaugeChart
-              id="gauge-erp"
-              nrOfLevels={20}
-              percent={erpValue * 20}
-              textColor="#fff"
-              formatTextValue={() => `${(erpValue * 100).toFixed(1)}%`}
-              colors={["#ef4444", "#f59e0b", "#10b981"]}
-              arcWidth={0.3}
-              cornerRadius={3}
-            />
+            <h4>ERP (S&P 500)</h4>
+            <GaugeChart id="gauge-erp" nrOfLevels={20} percent={erpValue * 20} textColor="#fff" formatTextValue={() => `${(erpValue * 100).toFixed(1)}%`} colors={["#ef4444", "#f59e0b", "#10b981"]} arcWidth={0.3} cornerRadius={3} />
           </div>
-          {/* Liquidez */}
           <div style={{ width: "160px", textAlign: "center" }}>
             <h4>Liquidez</h4>
-            <GaugeChart
-              id="gauge-liquidity"
-              nrOfLevels={20}
-              percent={liquidity}
-              textColor="#fff"
-              formatTextValue={() => (liquidity * 100).toFixed(0) + "%"}
-              colors={["#ef4444", "#f59e0b", "#10b981"]}
-              arcWidth={0.3}
-              cornerRadius={3}
-            />
+            <GaugeChart id="gauge-liquidity" nrOfLevels={20} percent={liquidity} textColor="#fff" formatTextValue={() => (liquidity * 100).toFixed(0) + "%"} colors={["#ef4444", "#f59e0b", "#10b981"]} arcWidth={0.3} cornerRadius={3} />
           </div>
-          {/* Régimen */}
           <div style={{ width: "160px", textAlign: "center" }}>
             <h4>Régimen</h4>
-            <GaugeChart
-              id="gauge-regime"
-              nrOfLevels={20}
-              percent={regimeScore}
-              textColor="#fff"
-              formatTextValue={() => (regimeScore * 100).toFixed(0) + "%"}
-              colors={["#ef4444", "#f59e0b", "#10b981"]}
-              arcWidth={0.3}
-              cornerRadius={3}
-            />
+            <GaugeChart id="gauge-regime" nrOfLevels={20} percent={regimeScore} textColor="#fff" formatTextValue={() => (regimeScore * 100).toFixed(0) + "%"} colors={["#ef4444", "#f59e0b", "#10b981"]} arcWidth={0.3} cornerRadius={3} />
           </div>
-          {/* VIX */}
           <div style={{ width: "160px", textAlign: "center" }}>
-            <h4>VIX</h4>
-            <GaugeChart
-              id="gauge-vix"
-              nrOfLevels={20}
-              percent={Math.min(1, vix / 40)} // VIX 40 = 100%
-              textColor="#fff"
-              formatTextValue={() => vix.toFixed(1)}
-              colors={["#10b981", "#f59e0b", "#ef4444"]} // Invertido: bajo es bueno
-              arcWidth={0.3}
-              cornerRadius={3}
-            />
+            <h4>VIX (S&P 500)</h4>
+            <GaugeChart id="gauge-vix" nrOfLevels={20} percent={Math.min(1, vix / 40)} textColor="#fff" formatTextValue={() => vix.toFixed(1)} colors={["#10b981", "#f59e0b", "#ef4444"]} arcWidth={0.3} cornerRadius={3} />
           </div>
-          {/* RSI */}
           <div style={{ width: "160px", textAlign: "center" }}>
-            <h4>RSI</h4>
-            <GaugeChart
-              id="gauge-rsi"
-              nrOfLevels={20}
-              percent={rsi / 100}
-              textColor="#fff"
-              formatTextValue={() => rsi.toFixed(0)}
-              colors={["#ef4444", "#f59e0b", "#ef4444"]} // Extremos rojos, centro verde
-              arcWidth={0.3}
-              cornerRadius={3}
-            />
+            <h4>RSI (S&P 500)</h4>
+            <GaugeChart id="gauge-rsi" nrOfLevels={20} percent={rsi / 100} textColor="#fff" formatTextValue={() => rsi.toFixed(0)} colors={["#ef4444", "#f59e0b", "#ef4444"]} arcWidth={0.3} cornerRadius={3} />
           </div>
-          {/* Momentum */}
           <div style={{ width: "160px", textAlign: "center" }}>
-            <h4>Momentum</h4>
-            <GaugeChart
-              id="gauge-momentum"
-              nrOfLevels={20}
-              percent={(momentum + 1) / 2}
-              textColor="#fff"
-              formatTextValue={() => momentum.toFixed(2)}
-              colors={["#ef4444", "#f59e0b", "#10b981"]}
-              arcWidth={0.3}
-              cornerRadius={3}
-            />
+            <h4>Momentum (S&P 500)</h4>
+            <GaugeChart id="gauge-momentum" nrOfLevels={20} percent={(momentum + 1) / 2} textColor="#fff" formatTextValue={() => momentum.toFixed(2)} colors={["#ef4444", "#f59e0b", "#10b981"]} arcWidth={0.3} cornerRadius={3} />
           </div>
         </Suspense>
       </div>
 
-      {/* Inputs manuales para VIX, RSI, Momentum */}
+      {/* Inputs manuales */}
       <div style={{ ...styles.card, display: "flex", gap: "2rem", flexWrap: "wrap" }}>
         <div>
           <label style={styles.label}>VIX (manual)</label>
@@ -374,20 +334,25 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.1" min="-1" max="1" />
         </div>
         <div>
-          <p><strong>ERP:</strong> {(erpValue * 100).toFixed(2)}%</p>
+          <label style={styles.label}>PER manual</label>
+          <input type="number" value={manualPer || ''} onChange={(e) => setManualPer(e.target.value ? Number(e.target.value) : null)} style={styles.smallInput} placeholder="Ej: 22" />
+        </div>
+        <div>
+          <label style={styles.label}>ERP manual %</label>
+          <input type="number" value={manualErp || ''} onChange={(e) => setManualErp(e.target.value ? Number(e.target.value) : null)} style={styles.smallInput} step="0.1" />
+        </div>
+        <div>
+          <p><strong>ERP calculado:</strong> {(erpValue * 100).toFixed(2)}%</p>
           <p><strong>Liquidez:</strong> {(liquidity * 100).toFixed(0)}%</p>
         </div>
       </div>
 
-      {/* Decisión macro con factores */}
+      {/* Decisión macro */}
       <div style={styles.card}>
-        <h2>Decisión del motor macro (Hedge Fund)</h2>
+        <h2>Decisión del motor macro</h2>
         <div style={{ display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
           <div>
-            <p style={{
-              fontSize: "3rem", fontWeight: "bold", margin: 0,
-              color: decision.action === "BUY" ? "#10b981" : decision.action === "TRIM" ? "#ef4444" : "#f59e0b"
-            }}>
+            <p style={{ fontSize: "3rem", fontWeight: "bold", margin: 0, color: decision.action === "BUY" ? "#10b981" : decision.action === "TRIM" ? "#ef4444" : "#f59e0b" }}>
               {decision.action === "BUY" ? "COMPRAR" : decision.action === "TRIM" ? "RECORTAR" : "MANTENER"}
             </p>
             <p><strong>Convicción:</strong> {decision.conviction.toFixed(0)}%</p>
@@ -428,7 +393,7 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Histograma Monte Carlo */}
+      {/* Histograma */}
       <div style={styles.card}>
         <h2>Distribución de valores finales (Monte Carlo)</h2>
         <ResponsiveContainer width="100%" height={200}>
@@ -462,7 +427,7 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Sugerencia de compra (solo si BUY) */}
+      {/* Sugerencia de compra */}
       {decision.action === "BUY" && (
         <div style={styles.card}>
           <h2>📈 Sugerencia de compra (basada en motor macro)</h2>
@@ -471,12 +436,7 @@ const InstitutionalDashboard: React.FC = () => {
               <p>Dinero disponible: {formatCurrency((cashReserve * buyPercentage / 100) + monthlyInjection)} (usando {buyPercentage}% de la caja más aportación mensual)</p>
               <table style={styles.table}>
                 <thead>
-                  <tr>
-                    <th>Activo</th>
-                    <th>Precio</th>
-                    <th>Acciones a comprar</th>
-                    <th>Coste</th>
-                  </tr>
+                  <tr><th>Activo</th><th>Precio</th><th>Acciones a comprar</th><th>Coste</th></tr>
                 </thead>
                 <tbody>
                   {purchaseSuggestions.map(s => (
@@ -489,10 +449,7 @@ const InstitutionalDashboard: React.FC = () => {
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr>
-                    <td colSpan={3} style={{ textAlign: "right", fontWeight: "bold" }}>Total:</td>
-                    <td>{formatCurrency(totalSuggestedCost)}</td>
-                  </tr>
+                  <tr><td colSpan={3} style={{ textAlign: "right", fontWeight: "bold" }}>Total:</td><td>{formatCurrency(totalSuggestedCost)}</td></tr>
                 </tfoot>
               </table>
             </>
@@ -502,24 +459,14 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Donut y tabla de activos */}
+      {/* Donut y tabla de activos (precios no editables) */}
       <div style={{ ...styles.card, display: "flex", gap: "2rem", flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: "250px" }}>
           <h2>Distribución actual</h2>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={80}
-                dataKey="value"
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-              >
-                {pieData.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
+              <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                {pieData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
               </Pie>
               <Tooltip formatter={(value: number) => formatCurrency(value)} />
             </PieChart>
@@ -527,13 +474,13 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
 
         <div style={{ flex: 2, overflowX: "auto" }}>
-          <h2>Activos (precios actuales editables)</h2>
+          <h2>Activos (precios de mercado no editables)</h2>
           <table style={styles.table}>
             <thead>
               <tr>
                 <th>Activo</th>
                 <th>Precio actual (€)</th>
-                <th>Particip.</th>
+                <th>Participaciones</th>
                 <th>Valor (€)</th>
                 <th>Precio compra</th>
                 <th>Ganancia/pérdida</th>
@@ -557,15 +504,7 @@ const InstitutionalDashboard: React.FC = () => {
                       <div style={{ fontWeight: 500 }}>{asset.name}</div>
                       <div style={styles.ticker}>{asset.ticker}</div>
                     </td>
-                    <td>
-                      <input
-                        type="number"
-                        value={asset.price}
-                        onChange={(e) => updateAsset(asset.ticker, "price", Number(e.target.value))}
-                        style={styles.smallInput}
-                        step="0.01"
-                      />
-                    </td>
+                    <td>{formatCurrency(asset.price)}</td>
                     <td>
                       <input
                         type="number"
@@ -576,7 +515,15 @@ const InstitutionalDashboard: React.FC = () => {
                       />
                     </td>
                     <td>{formatCurrency(valor)}</td>
-                    <td>{formatCurrency(asset.avgPrice)}</td>
+                    <td>
+                      <input
+                        type="number"
+                        value={asset.avgPrice}
+                        onChange={(e) => updateAsset(asset.ticker, "avgPrice", Number(e.target.value))}
+                        style={styles.smallInput}
+                        step="0.01"
+                      />
+                    </td>
                     <td style={{ color: ganancia >= 0 ? "#10b981" : "#ef4444" }}>
                       {formatCurrency(ganancia)} ({gananciaPorcentaje.toFixed(1)}%)
                     </td>
@@ -586,10 +533,7 @@ const InstitutionalDashboard: React.FC = () => {
                       {deficit > 0 ? formatCurrency(deficit) : "-"}
                     </td>
                     <td>
-                      <span style={{
-                        color: decision.action === "BUY" ? "#10b981" : decision.action === "TRIM" ? "#ef4444" : "#f59e0b",
-                        fontWeight: "bold"
-                      }}>
+                      <span style={{ color: decision.action === "BUY" ? "#10b981" : decision.action === "TRIM" ? "#ef4444" : "#f59e0b", fontWeight: "bold" }}>
                         {decision.action === "BUY" ? "COMPRAR" : decision.action === "TRIM" ? "RECORTAR" : "MANTENER"}
                       </span>
                     </td>
@@ -613,7 +557,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   input: { backgroundColor: "#1f2937", border: "1px solid #374151", color: "white", padding: "8px 12px", borderRadius: "6px", width: "150px" },
   smallInput: { backgroundColor: "#1f2937", border: "1px solid #374151", color: "white", padding: "4px 6px", borderRadius: "4px", width: "80px" },
   table: { width: "100%", borderCollapse: "collapse", fontSize: "14px" },
-  ticker: { fontSize: "12px", color: "#6b7280" }
+  ticker: { fontSize: "12px", color: "#6b7280" },
+  button: {
+    backgroundColor: "#3b82f6",
+    color: "white",
+    border: "none",
+    padding: "8px 16px",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontSize: "14px",
+    fontWeight: "bold"
+  }
 };
 
 export default InstitutionalDashboard;
