@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { calculateERP } from "@/core/macro/erp";
 import { liquidityScore } from "@/core/macro/liquidity";
 import { generateExecutiveSummary } from "@/core/summary/executive";
-import { generateDecision } from "@/core/decision/engine";
+import { generateDecision, DecisionInput, DecisionOutput } from "@/core/decision/engine";
 import { portfolio as initialPortfolio } from "@/data/portfolio";
+import { getMacroData, getCurrentPrices } from "@/lib/yahooFinance";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
-import GaugeChart from "react-gauge-chart";
+
+// Importación dinámica para evitar errores en build de Vercel
+const GaugeChart = lazy(() => import("react-gauge-chart"));
 
 // Tipos
 interface Asset {
@@ -40,15 +43,19 @@ const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(value);
 };
 
+const formatPercent = (value: number): string => {
+  return new Intl.NumberFormat("es-ES", { style: "percent", minimumFractionDigits: 1 }).format(value);
+};
+
 // Colores para el donut
 const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
-// --- Función de simulación Monte Carlo (mejorada) ---
+// --- Función de simulación Monte Carlo ---
 function runMonteCarloSimulation(
   initialCapital: number,
   monthlyContribution: number,
-  expectedReturn: number, // anual, en tanto por uno
-  volatility: number,     // anual, en tanto por uno
+  expectedReturn: number,
+  volatility: number,
   years: number,
   target: number,
   simulations: number = 5000
@@ -89,7 +96,6 @@ function runMonteCarloSimulation(
   return { probability, histogramData };
 }
 
-// Función auxiliar para números aleatorios normales
 function randomNormal(): number {
   let u = 0, v = 0;
   while (u === 0) u = Math.random();
@@ -97,7 +103,6 @@ function randomNormal(): number {
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
-// Componente principal
 const InstitutionalDashboard: React.FC = () => {
   // Estado de la cartera
   const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
@@ -106,25 +111,67 @@ const InstitutionalDashboard: React.FC = () => {
   const [years, setYears] = useState(10);
   const [buyPercentage, setBuyPercentage] = useState(50);
 
-  // Datos macro
-  const earningsYield = 0.065;
-  const riskFreeRate = 0.04;
-  const erpResult = calculateERP(earningsYield, riskFreeRate);
-  const erpValue = erpResult.equityRiskPremium;
+  // Estado para datos macro (con valores por defecto)
+  const [vix, setVix] = useState(19);
+  const [rsi, setRsi] = useState(55);
+  const [momentum, setMomentum] = useState(0.2);
+  const [erpValue, setErpValue] = useState(0.025); // 2.5%
+  const [liquidity, setLiquidity] = useState(0.5);
+  const [regimeScore, setRegimeScore] = useState(0.5);
+  const [erpSignal, setErpSignal] = useState<"RISK_ON" | "RISK_OFF">("RISK_ON");
 
-  const liquidity = liquidityScore({
-    m2Growth: 5.2,
-    vix: 19,
-    yieldCurveSpread: 0.4
-  });
+  // Cargar datos reales al montar el componente
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Obtener datos macro (VIX, TNX, IRX, GSPC)
+        const macro = await getMacroData();
+        setVix(macro.vix);
 
-  const regimeScore = liquidity;
+        // Calcular ERP con datos reales (ejemplo: usando PER implícito del S&P 500)
+        // En un caso real, obtendrías el PER de una API. Aquí simulamos con el valor de GSPC
+        const per = 22; // Podrías obtenerlo de otra fuente
+        const earningsYield = 1 / per;
+        const riskFree = macro.tnx / 100; // TNX ya viene en %
+        const erp = earningsYield - riskFree;
+        setErpValue(erp);
+        setErpSignal(erp > 0.03 ? "RISK_ON" : "RISK_OFF");
+
+        // Calcular liquidez (simplificado)
+        const liq = liquidityScore({
+          m2Growth: 5.2, // Podrías obtenerlo de otra API
+          vix: macro.vix,
+          yieldCurveSpread: macro.tnx - macro.irx
+        });
+        setLiquidity(liq);
+        setRegimeScore(liq); // Por simplicidad
+
+        // Obtener precios actuales de los activos
+        const prices = await getCurrentPrices();
+        setPortfolio(prev => ({
+          ...prev,
+          assets: prev.assets.map(asset => ({
+            ...asset,
+            price: prices[asset.ticker] || asset.price
+          }))
+        }));
+
+      } catch (error) {
+        console.error("Error fetching market data:", error);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   // Decisión del motor macro
-  const decision = generateDecision({
+  const decision: DecisionOutput = generateDecision({
     erp: erpValue,
     liquidity,
-    regimeScore
+    regimeScore,
+    vix,
+    rsi,
+    momentum
   });
 
   // Monte Carlo
@@ -145,15 +192,12 @@ const InstitutionalDashboard: React.FC = () => {
     );
   }, [totalPortfolioValue, monthlyInjection, years, portfolio.targetGoal]);
 
-  // Resumen ejecutivo
   const executive = generateExecutiveSummary();
 
-  // Actualizar cartera si cambian caja o aportación
   useEffect(() => {
     setPortfolio(prev => ({ ...prev, cashReserve, monthlyInjection }));
   }, [cashReserve, monthlyInjection]);
 
-  // Función para editar activos
   const updateAsset = (ticker: string, field: keyof Asset, value: number) => {
     setPortfolio(prev => ({
       ...prev,
@@ -163,22 +207,10 @@ const InstitutionalDashboard: React.FC = () => {
     }));
   };
 
-  // Datos para el donut
   const pieData = portfolio.assets.map(asset => ({
     name: asset.name,
     value: asset.price * asset.shares
   }));
-
-  // Explicación amigable de la decisión
-  const getDecisionExplanation = () => {
-    if (decision.action === "BUY") {
-      return "El motor recomienda COMPRAR porque el ERP es atractivo (>5%) y la liquidez es buena (>0.6).";
-    } else if (decision.action === "TRIM") {
-      return "El motor recomienda RECORTAR porque el ERP es bajo (<3%) o la liquidez es baja (<0.4).";
-    } else {
-      return "El motor recomienda MANTENER, ya que los valores están en zona neutral.";
-    }
-  };
 
   // Sugerencia de compra (solo si BUY)
   const purchaseSuggestions = useMemo(() => {
@@ -235,66 +267,121 @@ const InstitutionalDashboard: React.FC = () => {
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>Institutional Portfolio Dashboard</h1>
+      <h1 style={styles.title}>Institutional Portfolio Dashboard (Hedge Fund)</h1>
 
-      {/* Velocímetros */}
+      {/* Velocímetros (6 indicadores) */}
       <div style={{ ...styles.card, display: "flex", justifyContent: "space-around", flexWrap: "wrap", gap: "20px" }}>
-        {/* ERP */}
-        <div style={{ width: "250px", textAlign: "center" }}>
-          <h3>ERP</h3>
-          <GaugeChart
-            id="gauge-erp"
-            nrOfLevels={20}
-            percent={erpValue * 20}
-            textColor="#fff"
-            formatTextValue={() => `${(erpValue * 100).toFixed(1)}%`}
-            colors={["#ef4444", "#f59e0b", "#10b981"]}
-            arcWidth={0.3}
-            cornerRadius={3}
-          />
-          <p style={{ color: erpValue > 0.05 ? "#10b981" : erpValue > 0.03 ? "#f59e0b" : "#ef4444" }}>
-            {erpValue > 0.05 ? "Alto (favorable)" : erpValue > 0.03 ? "Medio" : "Bajo (desfavorable)"}
-          </p>
+        <Suspense fallback={<div style={{ height: 120, background: "#1f2937", width: 250 }}>Cargando...</div>}>
+          {/* ERP */}
+          <div style={{ width: "160px", textAlign: "center" }}>
+            <h4>ERP</h4>
+            <GaugeChart
+              id="gauge-erp"
+              nrOfLevels={20}
+              percent={erpValue * 20}
+              textColor="#fff"
+              formatTextValue={() => `${(erpValue * 100).toFixed(1)}%`}
+              colors={["#ef4444", "#f59e0b", "#10b981"]}
+              arcWidth={0.3}
+              cornerRadius={3}
+            />
+          </div>
+          {/* Liquidez */}
+          <div style={{ width: "160px", textAlign: "center" }}>
+            <h4>Liquidez</h4>
+            <GaugeChart
+              id="gauge-liquidity"
+              nrOfLevels={20}
+              percent={liquidity}
+              textColor="#fff"
+              formatTextValue={() => (liquidity * 100).toFixed(0) + "%"}
+              colors={["#ef4444", "#f59e0b", "#10b981"]}
+              arcWidth={0.3}
+              cornerRadius={3}
+            />
+          </div>
+          {/* Régimen */}
+          <div style={{ width: "160px", textAlign: "center" }}>
+            <h4>Régimen</h4>
+            <GaugeChart
+              id="gauge-regime"
+              nrOfLevels={20}
+              percent={regimeScore}
+              textColor="#fff"
+              formatTextValue={() => (regimeScore * 100).toFixed(0) + "%"}
+              colors={["#ef4444", "#f59e0b", "#10b981"]}
+              arcWidth={0.3}
+              cornerRadius={3}
+            />
+          </div>
+          {/* VIX */}
+          <div style={{ width: "160px", textAlign: "center" }}>
+            <h4>VIX</h4>
+            <GaugeChart
+              id="gauge-vix"
+              nrOfLevels={20}
+              percent={Math.min(1, vix / 40)} // VIX 40 = 100%
+              textColor="#fff"
+              formatTextValue={() => vix.toFixed(1)}
+              colors={["#10b981", "#f59e0b", "#ef4444"]} // Invertido: bajo es bueno
+              arcWidth={0.3}
+              cornerRadius={3}
+            />
+          </div>
+          {/* RSI */}
+          <div style={{ width: "160px", textAlign: "center" }}>
+            <h4>RSI</h4>
+            <GaugeChart
+              id="gauge-rsi"
+              nrOfLevels={20}
+              percent={rsi / 100}
+              textColor="#fff"
+              formatTextValue={() => rsi.toFixed(0)}
+              colors={["#ef4444", "#f59e0b", "#ef4444"]} // Extremos rojos, centro verde
+              arcWidth={0.3}
+              cornerRadius={3}
+            />
+          </div>
+          {/* Momentum */}
+          <div style={{ width: "160px", textAlign: "center" }}>
+            <h4>Momentum</h4>
+            <GaugeChart
+              id="gauge-momentum"
+              nrOfLevels={20}
+              percent={(momentum + 1) / 2}
+              textColor="#fff"
+              formatTextValue={() => momentum.toFixed(2)}
+              colors={["#ef4444", "#f59e0b", "#10b981"]}
+              arcWidth={0.3}
+              cornerRadius={3}
+            />
+          </div>
+        </Suspense>
+      </div>
+
+      {/* Inputs manuales para VIX, RSI, Momentum */}
+      <div style={{ ...styles.card, display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+        <div>
+          <label style={styles.label}>VIX (manual)</label>
+          <input type="number" value={vix} onChange={(e) => setVix(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
-        {/* Liquidez */}
-        <div style={{ width: "250px", textAlign: "center" }}>
-          <h3>Liquidez</h3>
-          <GaugeChart
-            id="gauge-liquidity"
-            nrOfLevels={20}
-            percent={liquidity}
-            textColor="#fff"
-            formatTextValue={() => (liquidity * 100).toFixed(0) + "%"}
-            colors={["#ef4444", "#f59e0b", "#10b981"]}
-            arcWidth={0.3}
-            cornerRadius={3}
-          />
-          <p style={{ color: liquidity > 0.6 ? "#10b981" : liquidity > 0.4 ? "#f59e0b" : "#ef4444" }}>
-            {liquidity > 0.6 ? "Alta" : liquidity > 0.4 ? "Media" : "Baja"}
-          </p>
+        <div>
+          <label style={styles.label}>RSI (manual)</label>
+          <input type="number" value={rsi} onChange={(e) => setRsi(Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
         </div>
-        {/* Régimen */}
-        <div style={{ width: "250px", textAlign: "center" }}>
-          <h3>Régimen</h3>
-          <GaugeChart
-            id="gauge-regime"
-            nrOfLevels={20}
-            percent={regimeScore}
-            textColor="#fff"
-            formatTextValue={() => (regimeScore * 100).toFixed(0) + "%"}
-            colors={["#ef4444", "#f59e0b", "#10b981"]}
-            arcWidth={0.3}
-            cornerRadius={3}
-          />
-          <p style={{ color: regimeScore > 0.6 ? "#10b981" : regimeScore > 0.4 ? "#f59e0b" : "#ef4444" }}>
-            {regimeScore > 0.6 ? "Expansión" : regimeScore > 0.4 ? "Neutral" : "Contracción"}
-          </p>
+        <div>
+          <label style={styles.label}>Momentum (manual)</label>
+          <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.1" min="-1" max="1" />
+        </div>
+        <div>
+          <p><strong>ERP:</strong> {(erpValue * 100).toFixed(2)}%</p>
+          <p><strong>Liquidez:</strong> {(liquidity * 100).toFixed(0)}%</p>
         </div>
       </div>
 
-      {/* Decisión macro */}
+      {/* Decisión macro con factores */}
       <div style={styles.card}>
-        <h2>Decisión del motor macro</h2>
+        <h2>Decisión del motor macro (Hedge Fund)</h2>
         <div style={{ display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
           <div>
             <p style={{
@@ -306,11 +393,16 @@ const InstitutionalDashboard: React.FC = () => {
             <p><strong>Convicción:</strong> {decision.conviction.toFixed(0)}%</p>
           </div>
           <div style={{ maxWidth: "500px" }}>
-            <p style={{ fontSize: "1.1rem", fontStyle: "italic", color: "#9ca3af" }}>{decision.explanation}</p>
-            <p style={{ backgroundColor: "#1f2937", padding: "10px", borderRadius: "8px" }}>
-              {getDecisionExplanation()}
-            </p>
+            <p style={{ fontSize: "1rem", color: "#9ca3af" }}>{decision.explanation}</p>
           </div>
+        </div>
+        <div style={{ marginTop: "1rem", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px" }}>
+          <div><strong>ERP:</strong> {(decision.factors.erp * 100).toFixed(0)}% favorable</div>
+          <div><strong>Liquidez:</strong> {(decision.factors.liquidity * 100).toFixed(0)}%</div>
+          <div><strong>Régimen:</strong> {(decision.factors.regime * 100).toFixed(0)}%</div>
+          <div><strong>VIX:</strong> {(decision.factors.vix * 100).toFixed(0)}% favorable</div>
+          <div><strong>RSI:</strong> {(decision.factors.rsi * 100).toFixed(0)}% favorable</div>
+          <div><strong>Momentum:</strong> {(decision.factors.momentum * 100).toFixed(0)}% favorable</div>
         </div>
       </div>
 
@@ -319,12 +411,10 @@ const InstitutionalDashboard: React.FC = () => {
         <div style={styles.card}>
           <h2>Prima de riesgo (ERP)</h2>
           <p><strong>Valor:</strong> {(erpValue * 100).toFixed(2)}%</p>
-          <p><strong>Señal:</strong> <span style={{ color: erpResult.signal === "RISK_ON" ? "limegreen" : "red" }}>{erpResult.signal === "RISK_ON" ? "RIESGO ACTIVADO" : "RIESGO DESACTIVADO"}</span></p>
+          <p><strong>Señal:</strong> <span style={{ color: erpSignal === "RISK_ON" ? "limegreen" : "red" }}>{erpSignal === "RISK_ON" ? "RIESGO ACTIVADO" : "RIESGO DESACTIVADO"}</span></p>
         </div>
         <div style={styles.card}>
           <h2>Monte Carlo</h2>
-          <p><strong>Rentabilidad esperada:</strong> {(0.08 * 100).toFixed(2)}%</p>
-          <p><strong>Volatilidad:</strong> {(0.15 * 100).toFixed(2)}%</p>
           <p><strong>Probabilidad de alcanzar objetivo:</strong> {(probability * 100).toFixed(1)}%</p>
           <div style={{ marginTop: "10px" }}>
             <label style={styles.label}>Años de simulación:</label>
@@ -342,7 +432,7 @@ const InstitutionalDashboard: React.FC = () => {
       <div style={styles.card}>
         <h2>Distribución de valores finales (Monte Carlo)</h2>
         <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={histogramData}>
+          <BarChart data={histogramData} barSize={30}>
             <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
             <XAxis dataKey="range" tick={{ fontSize: 10, fill: "#9ca3af" }} interval={0} angle={-45} textAnchor="end" height={80} />
             <YAxis tick={{ fill: "#9ca3af" }} />
@@ -405,9 +495,6 @@ const InstitutionalDashboard: React.FC = () => {
                   </tr>
                 </tfoot>
               </table>
-              <p style={{ color: "#9ca3af", fontSize: "0.9rem" }}>
-                * Las acciones se redondean a números enteros, excepto BTC que admite hasta 4 decimales.
-              </p>
             </>
           ) : (
             <p>No hay suficientes fondos o ningún activo necesita compra.</p>
@@ -511,9 +598,6 @@ const InstitutionalDashboard: React.FC = () => {
               })}
             </tbody>
           </table>
-          <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginTop: "10px" }}>
-            * La recomendación macro es la misma para todos los activos, basada en el motor de decisiones.
-          </p>
         </div>
       </div>
     </div>
