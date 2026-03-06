@@ -1,4 +1,3 @@
-// src/lib/constants.ts
 export const ASSETS = [
   "BTC-EUR",
   "EMXC.DE",
@@ -25,8 +24,6 @@ export const SECTOR_CAP = 0.35;
 export const TARGET_GOAL = 150000;
 export const DEFAULT_MONTHLY = 400;
 export const STRUCTURAL_RESERVE_PCT = 0.08;
-
-// 👇 ESTA ES LA LÍNEA QUE FALTA
 export const DEFAULT_POSITIONS = {
   "BTC-EUR": { shares: 0.031285, avgPrice: 88010.99 },
   "EMXC.DE": { shares: 31, avgPrice: 28.93 },
