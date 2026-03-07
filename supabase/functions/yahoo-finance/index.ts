@@ -69,9 +69,19 @@ interface M2DataPoint {
 }
 
 interface M2Result {
-  current: number;       // valor más reciente
-  growthYoY: number;     // crecimiento YoY en % (lo que usa el CEWS)
-  history: M2DataPoint[]; // últimos 5 años mensual
+  current: number;
+  growthYoY: number;
+  history: M2DataPoint[];
+}
+
+interface CentralBankData {
+  // Fed Balance Sheet (WALCL) — billones USD
+  fedCurrent: number;
+  fedPrev: number;      // hace 12 meses
+  // ECB Assets (ECBASSETSW) — millones EUR → convertimos a billones
+  ecbCurrent: number;
+  ecbPrev: number;
+  source: string;
 }
 
 // ── FRED Shiller CAPE (PER S&P 500 ajustado al ciclo) ────────────────────────
@@ -137,6 +147,50 @@ async function fetchM2FRED(): Promise<M2Result | null> {
   }
 }
 
+// ── FRED Central Bank Balance Sheets ─────────────────────────────────────────
+// WALCL    = Fed total assets (weekly, billones USD)
+// ECBASSETSW = ECB total assets (weekly, millones EUR)
+// BoJ no tiene serie FRED pública fácil — omitimos y normalizamos Fed+ECB
+async function fetchCentralBanksFRED(): Promise<CentralBankData | null> {
+  try {
+    const [fedRes, ecbRes] = await Promise.all([
+      fetch('https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL', { headers: { 'User-Agent': 'Mozilla/5.0' } }),
+      fetch('https://fred.stlouisfed.org/graph/fredgraph.csv?id=ECBASSETSW', { headers: { 'User-Agent': 'Mozilla/5.0' } }),
+    ]);
+
+    const parseFREDcsv = async (res: Response): Promise<number[]> => {
+      if (!res.ok) return [];
+      const text = await res.text();
+      const lines = text.trim().split('\n').slice(1);
+      const values: number[] = [];
+      for (const line of lines) {
+        const parts = line.split(',');
+        const v = parseFloat(parts[1]);
+        if (!isNaN(v) && v > 0) values.push(v);
+      }
+      return values;
+    };
+
+    const fedVals = await parseFREDcsv(fedRes);
+    const ecbVals = await parseFREDcsv(ecbRes);
+
+    if (fedVals.length < 52 || ecbVals.length < 52) return null;
+
+    // Fed en billones USD (WALCL es en millones → dividir por 1000)
+    const fedCurrent = fedVals[fedVals.length - 1] / 1000;
+    const fedPrev    = fedVals[fedVals.length - 53] / 1000; // ~12 meses atrás (semanal)
+
+    // ECB en billones EUR (ECBASSETSW en millones → dividir por 1000)
+    const ecbCurrent = ecbVals[ecbVals.length - 1] / 1000;
+    const ecbPrev    = ecbVals[ecbVals.length - 53] / 1000;
+
+    return { fedCurrent, fedPrev, ecbCurrent, ecbPrev, source: 'FRED WALCL+ECBASSETSW' };
+  } catch (e) {
+    console.error('Central banks FRED error:', e);
+    return null;
+  }
+}
+
 // @ts-ignore — Deno global disponible en el runtime de Supabase Edge Functions
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -144,11 +198,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // Fetch Yahoo + FRED en paralelo (M2 + CAPE)
-    const [yahooResults, m2Data, capeData] = await Promise.all([
+    // Fetch Yahoo + FRED en paralelo (M2 + CAPE + bancos centrales)
+    const [yahooResults, m2Data, capeData, centralBanks] = await Promise.all([
       Promise.allSettled(TICKERS.map(fetchTicker)),
       fetchM2FRED(),
       fetchCAPEFRED(),
+      fetchCentralBanksFRED(),
     ]);
 
     const data: Record<string, ChartResult> = {};
@@ -163,7 +218,7 @@ Deno.serve(async (req: Request) => {
       }
     });
 
-    return new Response(JSON.stringify({ data, errors, m2: m2Data, cape: capeData }), {
+    return new Response(JSON.stringify({ data, errors, m2: m2Data, cape: capeData, centralBanks }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {

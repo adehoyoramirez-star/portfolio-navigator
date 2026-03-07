@@ -1,6 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { ASSETS } from '@/lib/constants';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
+import { globalLiquiditySignal, fromManualInputs } from '@/core/macro/liquidityCycle';
 
 interface YahooChartResult {
   ticker: string;
@@ -18,6 +19,11 @@ interface YahooResponse {
     history: { date: string; value: number }[];
   };
   cape?: { cape: number; source: string } | null;
+  centralBanks?: {
+    fedCurrent: number; fedPrev: number;
+    ecbCurrent: number; ecbPrev: number;
+    source: string;
+  } | null;
 }
 
 // Tipo completo que devuelve fetchRealMarketData — incluye todo lo que el dashboard necesita
@@ -67,6 +73,7 @@ export interface MarketData {
   jumpStd: number;         // dispersión del salto
   // Liquidez global calculada automáticamente
   liquidityScore: number;
+  liquidityDataQuality: "REAL" | "MANUAL";
 }
 
 function cleanCloses(closes: number[]): number[] {
@@ -238,7 +245,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
   }
 
-  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE } = response;
+  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks } = response;
 
   // M2 real de FRED
   const m2Growth = fredM2?.growthYoY ?? 5.2;
@@ -322,11 +329,24 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   // ── DXY ───────────────────────────────────────────────────────────────────
   const dxy = yfData['DX-Y.NYB']?.currentPrice ?? 103.5;
 
-  // ── Liquidez Global (automática) ──────────────────────────────────────────
-  // Proxy: M2 crecimiento positivo + VIX bajo = alta liquidez
-  // Rango normalizado [0, 1]
-  const liquidityRaw = (m2Growth / 10) * 0.6 + Math.max(0, (30 - vixPrice) / 30) * 0.4;
-  const liquidityScoreAuto = Math.max(0, Math.min(1, liquidityRaw));
+  // ── Liquidez Global REAL (bancos centrales desde FRED) ──────────────────────
+  const liquidityOutput = centralBanks
+    ? globalLiquiditySignal({
+        fedBalance:    centralBanks.fedCurrent,
+        prevFedBalance: centralBanks.fedPrev,
+        ecbBalance:    centralBanks.ecbCurrent,
+        prevEcbBalance: centralBanks.ecbPrev,
+        bojBalance:    1,   // BoJ no disponible — ignorado en ponderación
+        prevBojBalance: 1,
+        dxy,
+        prevDxy: undefined,
+      })
+    : fromManualInputs({ liquidityGrowth: m2Growth, dxy });
+
+  const liquidityScoreAuto = Math.max(0, Math.min(1,
+    (liquidityOutput.liquidityGrowth / 10) * 0.6 +
+    Math.max(0, (30 - vixPrice) / 30) * 0.4
+  ));
 
   void sp500Returns; // reservado para futuros cálculos
 
@@ -415,6 +435,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       jumpMean:      jumpParams.mean,
       jumpStd:       jumpParams.stdDev,
       liquidityScore: liquidityScoreAuto,
+      liquidityDataQuality: liquidityOutput.dataQuality,
     },
     fetchErrors,
   };

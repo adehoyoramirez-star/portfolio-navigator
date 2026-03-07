@@ -202,8 +202,9 @@ const InstitutionalDashboard: React.FC = () => {
       setJumpIntensity(parseFloat(md.jumpIntensity.toFixed(2)));
       setJumpMean(parseFloat(md.jumpMean.toFixed(3)));
       setJumpStd(parseFloat(md.jumpStd.toFixed(3)));
-      // Liquidez global automática
-      setLiquidityGrowth(parseFloat((md.liquidityScore * 10).toFixed(1)));
+      // Liquidez global — usar el valor real de crecimiento de bancos centrales
+      // liquidityOutput.liquidityGrowth ya es el % de crecimiento ponderado Fed+ECB
+      setLiquidityGrowth(parseFloat(md.liquidityScore.toFixed(3)));
 
       // CEWS: poblar historial automáticamente desde Yahoo (5 años semanales)
       // Fusionar con datos manuales existentes en localStorage — Yahoo tiene prioridad
@@ -801,7 +802,11 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.1" min="-1" max="1" />
         </div>
         <div>
-          <label style={styles.label}>Liquidez Global % {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Liquidez Global %{" "}
+            <span style={{ fontSize: "0.65rem", color: marketData?.liquidityDataQuality === "REAL" ? "#10b981" : "#ef4444", fontWeight: "normal" }}>
+              {marketData?.liquidityDataQuality === "REAL" ? "● FRED real" : "● manual"}
+            </span>
+          </label>
           <input type="number" value={liquidityGrowth} onChange={(e) => setLiquidityGrowth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
@@ -837,7 +842,7 @@ const InstitutionalDashboard: React.FC = () => {
           <p>Régimen: <strong>{liquidityOutput.regime}</strong></p>
           <p>Crec: {liquidityGrowth}%</p>
           <p>DXY Trend: {(liquidityOutput.dxyTrend * 100).toFixed(1)}%</p>
-          <p style={{ fontSize: "0.75rem", color: "#6b7280" }}>Fuente: {liquidityOutput.dataQuality}</p>
+          <p style={{ fontSize: "0.75rem", color: liquidityOutput.dataQuality === "REAL" ? "#10b981" : "#6b7280" }}>Fuente: {liquidityOutput.dataQuality === "REAL" ? "FRED WALCL+ECB" : "MANUAL"}</p>
         </div>
         <div>
           <h4>Régimen Global</h4>
