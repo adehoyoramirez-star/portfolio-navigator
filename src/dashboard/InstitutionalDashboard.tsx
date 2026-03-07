@@ -142,6 +142,8 @@ const InstitutionalDashboard: React.FC = () => {
   const [dxy, setDxy] = useState(103);                               // Dollar index
   const [moveIndex, setMoveIndex] = useState(120);                   // MOVE index
   const [btcVol, setBtcVol] = useState(0.65);                        // volatilidad BTC (65%)
+  const [btcDominance, setBtcDominance] = useState(54.0);            // BTC.D % — ticker TradingView: BTC.D
+  const [mvrvRatio, setMvrvRatio] = useState(1.8);                   // MVRV ratio — lookintobitcoin.com
 
   const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
@@ -272,6 +274,8 @@ const InstitutionalDashboard: React.FC = () => {
       setDxy(savedMacro.dxy);
       setMoveIndex(savedMacro.moveIndex);
       setBtcVol(savedMacro.btcVol);
+      if (savedMacro.btcDominance !== undefined) setBtcDominance(savedMacro.btcDominance);
+      if (savedMacro.mvrvRatio !== undefined) setMvrvRatio(savedMacro.mvrvRatio);
     }
     refreshMarketData();
   }, []);
@@ -379,6 +383,8 @@ const InstitutionalDashboard: React.FC = () => {
         move: moveIndex,
         dxyTrend: (dxy - 100) / 100,
         btcVol,
+        btcDominance,
+        mvrvRatio,
       },
       // Opcionales — motor degrada elegantemente si faltan
       covMatrix: marketData?.covMatrix,
@@ -528,6 +534,8 @@ const InstitutionalDashboard: React.FC = () => {
       btcRsi,
       btcZScore: btcZ,
       btcMomentum1m: btcRet1m,
+      btcDominance,
+      mvrvRatio,
       regime: engineResult?.regime ?? "EXPANSION",
       regimePenalty: engineResult?.masterRegime.regimePenalty ?? 1.0,
       volTargetMultiplier: engineResult?.volTargetMultiplier ?? 1.0,
@@ -798,6 +806,16 @@ const InstitutionalDashboard: React.FC = () => {
         <div>
           <label style={styles.label}>Volatilidad BTC {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={btcVol} onChange={(e) => setBtcVol(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="2" />
+          <label style={styles.label}>BTC Dominance % {" "}
+            <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span>
+            <span style={{ fontSize: "0.6rem", color: "#6b7280", marginLeft: "4px" }}>TradingView: BTC.D</span>
+          </label>
+          <input type="number" value={btcDominance} onChange={(e) => setBtcDominance(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="100" />
+          <label style={styles.label}>MVRV Ratio {" "}
+            <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span>
+            <span style={{ fontSize: "0.6rem", color: "#6b7280", marginLeft: "4px" }}>lookintobitcoin.com</span>
+          </label>
+          <input type="number" value={mvrvRatio} onChange={(e) => setMvrvRatio(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="10" />
         </div>
         <div>
           <label style={styles.label}>Jump Intensity {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
@@ -857,6 +875,10 @@ const InstitutionalDashboard: React.FC = () => {
           <h4>BTC Tactical</h4>
           <p>Señal: <strong>{btcEntry.signal}</strong></p>
           <p>RSI: {btcRsi.toFixed(1)} · Z: {btcZ.toFixed(2)}</p>
+          <p style={{ fontSize: "0.75rem", color: mvrvRatio < 1.0 ? "#ef4444" : mvrvRatio < 1.5 ? "#f59e0b" : mvrvRatio > 3.5 ? "#ef4444" : "#10b981" }}>
+            MVRV: {mvrvRatio.toFixed(2)} {mvrvRatio < 1.0 ? "🔴 fondo histórico" : mvrvRatio < 1.5 ? "🟡 acumulación" : mvrvRatio > 3.5 ? "🔴 burbuja" : "🟢 neutral"}
+            {" · "}BTC.D: {btcDominance.toFixed(1)}% {btcDominance > 54 ? "↑ acumulación" : btcDominance > 52 ? "→ neutral-alto" : "↓ altseason"}
+          </p>
         </div>
       </div>
 

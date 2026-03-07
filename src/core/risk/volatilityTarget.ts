@@ -26,7 +26,7 @@ export interface VolTargetOutput {
 
 // Volatilidad objetivo del portfolio. 14% es un nivel típico para un
 // portfolio multi-activo con exposición a cripto moderada.
-export const DEFAULT_TARGET_VOL = 0.14;
+export const DEFAULT_TARGET_VOL = 0.18; // Subido de 0.14 a 0.18 — perfil acumulación largo plazo con BTC en cartera
 
 // Caps institucionales: nunca apalancar >1.5x ni reducir <0.3x
 const VOL_MULTIPLIER_MAX = 1.5;

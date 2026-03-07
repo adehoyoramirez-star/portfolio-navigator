@@ -40,6 +40,10 @@ export interface SmartDCAInput {
   btcZScore: number;
   btcMomentum1m: number;
 
+  // Señales adelantadas BTC (leading indicators — preceden al precio 1-3 meses)
+  btcDominance?: number;   // BTC.D en % (ej: 54.2) — ticker TradingView: BTC.D
+  mvrvRatio?: number;      // MVRV = Market Value / Realized Value — lookintobitcoin.com
+
   // Estado del motor (macro)
   regime: string;
   regimePenalty: number;
@@ -97,7 +101,7 @@ export interface SmartDCAOutput {
 // ── SEÑALES DE CONFLUENCIA DE FONDO ───────────────────────────────────────
 // Las 5 señales que juntas indican un fondo de ciclo real
 function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
-  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty } = input;
+  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio } = input;
 
   // 1. BTC sobreventa extrema (RSI < 35 Y Z-Score < -1.5)
   const btcOversold = btcRsi < 35 && btcZScore < -1.5;
@@ -117,6 +121,17 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   // 4. Momentum BTC tocando suelo: muy negativo (caída fuerte) pero el Z-score
   // deja de empeorar — divergencia positiva entre precio y momentum
   const momentumDivergence = btcMomentum1m < -0.10 && btcZScore > -2.5; // caída fuerte pero no destrucción
+
+  // 6. BTC Dominance en zona de acumulación institucional
+  // Cuando BTC.D > 52% el capital cripto fluye a BTC — precede subidas 1-3 meses
+  // > 54% = señal fuerte, > 58% = dominancia extrema (ciclo maduro)
+  const dominanceAccumulation = btcDominance !== undefined && btcDominance > 52;
+
+  // 7. MVRV Ratio en zona de valor histórica
+  // MVRV < 1.0 = holders en pérdidas promedio → fondo histórico confirmado
+  // MVRV < 1.5 = zona de acumulación atractiva
+  // MVRV > 3.5 = zona de burbuja — evitar compras
+  const mvrvUndervalued = mvrvRatio !== undefined && mvrvRatio < 1.5;
 
   // 5. CEWS: volatility clustering empezando a normalizarse
   // (VIX lleva semanas bajando desde pico de pánico)
@@ -160,6 +175,28 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
       description: volNormalizing
         ? `Volatility clustering mejorando — el régimen de pánico se está disolviendo`
         : `Vol clustering en ${cewsOutput?.signals.volClustering.level ?? "sin datos"} — sin normalización`,
+    },
+    {
+      name: "BTC Dominance Acumulación",
+      active: dominanceAccumulation,
+      description: btcDominance !== undefined
+        ? dominanceAccumulation
+          ? `BTC.D ${btcDominance.toFixed(1)}% — capital cripto fluyendo a BTC, acumulación institucional`
+          : `BTC.D ${btcDominance.toFixed(1)}% — por debajo del umbral de acumulación (52%)`
+        : "BTC.D no introducido — señal desactivada",
+    },
+    {
+      name: "MVRV Zona de Valor",
+      active: mvrvUndervalued,
+      description: mvrvRatio !== undefined
+        ? mvrvUndervalued
+          ? mvrvRatio < 1.0
+            ? `MVRV ${mvrvRatio.toFixed(2)} — holders en pérdidas, fondo histórico confirmado 🔴`
+            : `MVRV ${mvrvRatio.toFixed(2)} — zona de acumulación atractiva (< 1.5)`
+          : mvrvRatio > 3.5
+            ? `MVRV ${mvrvRatio.toFixed(2)} — zona de burbuja, evitar compras grandes ⚠️`
+            : `MVRV ${mvrvRatio.toFixed(2)} — valoración neutral`
+        : "MVRV no introducido — señal desactivada",
     },
   ];
 }
@@ -376,7 +413,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
 
   if (volTargetMultiplier < 0.60) {
     return emptyOutput("BLOCK_VOL",
-      `Volatilidad del portfolio supera el objetivo (×${volTargetMultiplier.toFixed(2)}).`,
+      `Volatilidad del portfolio supera el objetivo del 18% (×${volTargetMultiplier.toFixed(2)}).`,
       "Esperar normalización de volatilidad antes de añadir capital.",
       attackSignals, attackConfluence
     );
