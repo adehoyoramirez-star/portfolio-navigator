@@ -1,11 +1,27 @@
 // ===============================================
 // ARCHIVO: src/core/engine/olympusV3.ts
+// NIVEL 2 — Motor completo con todas las capas integradas
 // ===============================================
+// CAPAS DE ASIGNACIÓN (en orden de aplicación):
+//
+//   1. FACTOR SCORES     → momentum (Jegadeesh-Titman) + value (cross-sectional z-score)
+//   2. KELLY FRACTION    → half-kelly con cap 0.25 sobre expected return normalizado
+//   3. CORRELATION       → penalización si correlación media > 0.5
+//   4. REGIME PENALTY    → continua [0.4,1.0] via regimeProbabilistic (Nivel 2)
+//   5. MARKOWITZ BLEND   → blend 50/50 Kelly + Markowitz si covMatrix disponible (Nivel 2)
+//   6. RISK PARITY BLEND → blend adicional con ERC si sector budgets (Nivel 2)
+//   7. VOL TARGET        → escalar allocations a volatilidad objetivo 14% (Nivel 2)
+//   8. TAIL RISK OVERLAY → reducción adicional en drawdown severo o crisis extrema (Nivel 2)
+// ===============================================
+
 import { calculateMomentum } from "../factors/momentum";
-import { calculateValue } from "../factors/value";
-import { detectCrisis } from "../macro/crisis";
+import { calculateValue, computeUniverseStats, ValueInput } from "../factors/value";
+import { getMasterRegime, MasterRegimeOutput } from "../macro/masterRegime";
 import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
+import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBudget";
+import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
+import { computeTailRiskOverlay } from "../risk/tailRisk";
 
 export interface AssetInput {
   name: string;
@@ -13,27 +29,51 @@ export interface AssetInput {
   returns3m: number;
   returns1m: number;
   earningsYield: number;
-  volatility: number;
+  volatility: number;   // decimal anualizado (0.60 = 60%)
+  sector?: string;      // NUEVO Nivel 2: para sector budgets en risk parity
 }
 
 export interface OlympusOutput {
   name: string;
+  // Factor scores
   momentumScore: number;
   valueScore: number;
+  valuePercentileRank: number;
+  // Expected return
   expectedReturn: number;
+  normalizedExpectedReturn: number;
+  // Kelly
   kellyFraction: number;
-  baseAllocation: number;
-  finalAllocation: number;
+  rawKelly: number;
+  isCapped: boolean;
+  // Allocations por capa (trazabilidad completa)
+  kellyAllocation: number;         // tras Kelly + correlación + régimen
+  markowitzAllocation: number;     // weight de Markowitz (0 si no hay covMatrix)
+  riskParityAllocation: number;    // weight de risk parity
+  blendedAllocation: number;       // tras blend Kelly+Markowitz+RiskParity
+  volAdjustedAllocation: number;   // tras vol target
+  finalAllocation: number;         // tras tail risk overlay
 }
+
+export type PortfolioRegime = "EXPANSION" | "CONTRACTION" | "CRISIS" | "ALL_CASH";
 
 export interface EngineOutput {
   allocations: OlympusOutput[];
-  crisis: {
-    probability: number;
-    regime: "EXPANSION" | "CONTRACTION" | "CRISIS";
-  };
+  regime: PortfolioRegime;
+  masterRegime: MasterRegimeOutput;
   correlationPenalty: number;
   totalAllocation: number;
+  // NUEVO Nivel 2: capas de riesgo
+  volTargetMultiplier: number;
+  tailRiskOverlay: number;
+  tailRiskActive: boolean;
+  tailRiskReason: string;
+  meta: {
+    allCash: boolean;
+    confidence: "HIGH" | "MEDIUM" | "LOW";
+    dominantSignal: string;
+    hasRealCovMatrix: boolean;  // true si se usó covMatrix real de Supabase
+  };
 }
 
 export interface OlympusEngineInput {
@@ -43,65 +83,239 @@ export interface OlympusEngineInput {
     vix: number;
     yieldSpread: number;
     creditSpread: number;
+    move: number;
+    dxyTrend: number;
+    btcVol: number;
+    m2Growth: number;    // NUEVO Nivel 2
   };
+  // NUEVO Nivel 2: opcionales — motor funciona sin ellos (degradación elegante)
+  covMatrix?: number[][];            // covarianza real de Supabase (para Markowitz)
+  portfolioDrawdown?: number;        // drawdown actual (para tail risk)
+  portfolioRealizedVol?: number;     // vol realizada del portfolio (para vol target)
+  targetVol?: number;                // target de volatilidad (default: 14%)
 }
 
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const { assets, correlationMatrix, macro } = input;
-  const crisis = detectCrisis(macro.vix, macro.yieldSpread, macro.creditSpread);
+  const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
+
+  // ====== CAPA 1: RÉGIMEN UNIFICADO (continuo) ======
+  const masterRegime = getMasterRegime({
+    vix: macro.vix,
+    yieldSpread: macro.yieldSpread,
+    creditSpread: macro.creditSpread,
+    move: macro.move,
+    dxyTrend: macro.dxyTrend,
+    btcVol: macro.btcVol,
+    m2Growth: macro.m2Growth,
+  });
+
   const corrPenalty = correlationPenalty(correlationMatrix);
 
-  const allocations: OlympusOutput[] = [];
+  // ====== CAPA 2: FACTOR SCORES ======
+  const universeStats = computeUniverseStats(assets as ValueInput[]);
 
-  for (const asset of assets) {
+  const rawScores = assets.map(asset => {
     const momentum = calculateMomentum({
       returns12m: asset.returns12m,
       returns1m: asset.returns1m,
       returns3m: asset.returns3m,
     });
+    const value = calculateValue({ earningsYield: asset.earningsYield }, universeStats);
+    const rawExpectedReturn = momentum.momentumScore * 0.6 + value.valueScore * 0.4;
+    return { asset, momentum, value, rawExpectedReturn };
+  });
 
-    const value = calculateValue({ earningsYield: asset.earningsYield });
+  // Z-normalizar expectedReturn del universo
+  const allRaw = rawScores.map(s => s.rawExpectedReturn);
+  const rawMean = allRaw.reduce((a, b) => a + b, 0) / allRaw.length;
+  const rawStd = Math.sqrt(allRaw.reduce((s, v) => s + (v - rawMean) ** 2, 0) / allRaw.length) || 1;
 
-    const expectedReturn = momentum.momentumScore * 0.6 + value.valueScore * 0.4;
+  // ====== CAPA 3: KELLY ======
+  const kellyAllocations = rawScores.map(({ asset, momentum, value, rawExpectedReturn }) => {
+    const normalizedExpectedReturn = (rawExpectedReturn - rawMean) / rawStd;
+    const kelly = calculateKelly({ expectedReturn: normalizedExpectedReturn, volatility: asset.volatility });
+    const kellyAlloc = kelly.kellyFraction * corrPenalty * masterRegime.regimePenalty;
+    return { asset, momentum, value, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyAlloc };
+  });
 
-    const kelly = calculateKelly({
-      expectedReturn,
-      volatility: asset.volatility,
-    });
+  // ALL_CASH check
+  const totalKelly = kellyAllocations.reduce((s, a) => s + a.kellyAlloc, 0);
+  if (totalKelly === 0) {
+    const empty = kellyAllocations.map(({ asset, momentum, value, rawExpectedReturn, normalizedExpectedReturn, kelly }) => ({
+      name: asset.name, momentumScore: momentum.momentumScore, valueScore: value.valueScore,
+      valuePercentileRank: value.percentileRank, expectedReturn: rawExpectedReturn,
+      normalizedExpectedReturn, kellyFraction: kelly.kellyFraction, rawKelly: kelly.rawKelly,
+      isCapped: kelly.isCapped, kellyAllocation: 0, markowitzAllocation: 0,
+      riskParityAllocation: 0, blendedAllocation: 0, volAdjustedAllocation: 0, finalAllocation: 0,
+    }));
+    return {
+      allocations: empty, regime: "ALL_CASH", masterRegime, correlationPenalty: corrPenalty,
+      totalAllocation: 0, volTargetMultiplier: 0, tailRiskOverlay: 1, tailRiskActive: false, tailRiskReason: "",
+      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix },
+    };
+  }
 
-    let regimePenalty = 1;
-    if (crisis.regime === "CRISIS") regimePenalty = 0.4;
-    else if (crisis.regime === "CONTRACTION") regimePenalty = 0.7;
+  // Normalizar Kelly a suma=1
+  const kellyNorm = kellyAllocations.map(a => ({ ...a, kellyNormalized: a.kellyAlloc / totalKelly }));
 
-    const baseAllocation = kelly.kellyFraction * corrPenalty * regimePenalty;
+  // ====== CAPA 4: MARKOWITZ BLEND (Nivel 2) ======
+  let markowitzWeights: number[] = assets.map(() => 1 / assets.length); // fallback: equal weight
+  if (hasRealCovMatrix && input.covMatrix) {
+    try {
+      markowitzWeights = minimumVarianceWeights(input.covMatrix, assets.length);
+    } catch {
+      // Si la matriz es singular u otro error, fallback a equal weight
+      markowitzWeights = assets.map(() => 1 / assets.length);
+    }
+  }
 
-    allocations.push({
+  // ====== CAPA 5: RISK PARITY BLEND (Nivel 2) ======
+  const rpInputs = assets.map(a => ({
+    name: a.name,
+    volatility: a.volatility,
+    riskBudget: DEFAULT_SECTOR_BUDGETS[a.sector ?? ""] ?? 1,
+  }));
+  const rpResult = computeRiskParityWeights(rpInputs);
+  const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
+
+  // ====== BLEND FINAL: Kelly 50% + Markowitz 30% + RiskParity 20% ======
+  // Con covMatrix real: usa Markowitz. Sin ella: 50% Kelly + 50% Risk Parity
+  const blendWeights = assets.map((_, i) => {
+    if (hasRealCovMatrix) {
+      return kellyNorm[i].kellyNormalized * 0.50
+           + markowitzWeights[i]           * 0.30
+           + rpWeights[i]                  * 0.20;
+    } else {
+      return kellyNorm[i].kellyNormalized * 0.50
+           + rpWeights[i]                  * 0.50;
+    }
+  });
+
+  // Normalizar blend a suma=1
+  const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
+  const blendNorm = blendWeights.map(w => w / totalBlend);
+
+  // ====== CAPA 6: VOLATILITY TARGET (Nivel 2) ======
+  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, blendNorm, input.covMatrix);
+  const volTarget = computeVolTargetMultiplier({
+    targetVol: input.targetVol ?? DEFAULT_TARGET_VOL,
+    realizedVol,
+    regimePenalty: masterRegime.regimePenalty,
+  });
+
+  // ====== CAPA 7: TAIL RISK OVERLAY (Nivel 2) ======
+  const tailRisk = computeTailRiskOverlay({
+    drawdown: input.portfolioDrawdown ?? 0,
+    vix: macro.vix,
+    creditSpread: macro.creditSpread,
+    stressScore: masterRegime.stressDetail.score,
+  });
+
+  // ====== ENSAMBLAR OUTPUT FINAL ======
+  const allocations: OlympusOutput[] = kellyNorm.map(({ asset, momentum, value, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyNormalized }, i) => {
+    const blended    = blendNorm[i];
+    const volAdj     = blended * volTarget.multiplier;
+    const final      = volAdj * tailRisk.overlay;
+
+    return {
       name: asset.name,
       momentumScore: momentum.momentumScore,
       valueScore: value.valueScore,
-      expectedReturn,
+      valuePercentileRank: value.percentileRank,
+      expectedReturn: rawExpectedReturn,
+      normalizedExpectedReturn,
       kellyFraction: kelly.kellyFraction,
-      baseAllocation,
-      finalAllocation: 0,
-    });
-  }
+      rawKelly: kelly.rawKelly,
+      isCapped: kelly.isCapped,
+      kellyAllocation: kellyNormalized,
+      markowitzAllocation: markowitzWeights[i],
+      riskParityAllocation: rpWeights[i],
+      blendedAllocation: blended,
+      volAdjustedAllocation: volAdj,
+      finalAllocation: final,
+    };
+  });
 
-  const totalBase = allocations.reduce((sum, a) => sum + a.baseAllocation, 0);
-  if (totalBase > 0) {
-    allocations.forEach(a => {
-      a.finalAllocation = a.baseAllocation / totalBase;
-    });
+  // Re-normalizar finalAllocation a suma=1 (vol target y tail risk pueden haberla movido)
+  const totalFinal = allocations.reduce((s, a) => s + a.finalAllocation, 0);
+  if (totalFinal > 0) {
+    allocations.forEach(a => { a.finalAllocation = a.finalAllocation / totalFinal; });
   }
-
-  const totalAllocation = allocations.reduce((sum, a) => sum + a.finalAllocation, 0);
 
   return {
     allocations,
-    crisis: {
-      probability: crisis.crisisProbability,
-      regime: crisis.regime,
-    },
+    regime: masterRegime.regime,
+    masterRegime,
     correlationPenalty: corrPenalty,
-    totalAllocation,
+    totalAllocation: allocations.reduce((s, a) => s + a.finalAllocation, 0),
+    volTargetMultiplier: volTarget.multiplier,
+    tailRiskOverlay: tailRisk.overlay,
+    tailRiskActive: tailRisk.isActive,
+    tailRiskReason: tailRisk.triggerReason,
+    meta: {
+      allCash: false,
+      confidence: masterRegime.confidence,
+      dominantSignal: masterRegime.dominantSignal,
+      hasRealCovMatrix,
+    },
   };
+}
+
+// ==================== HELPERS INTERNOS ====================
+
+/**
+ * Minimum Variance Portfolio usando covarianza real.
+ * Alternativa a Markowitz completo cuando no hay expected returns confiables.
+ * La cartera de mínima varianza es la solución única del frontier sin inputs de retorno.
+ */
+function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
+  // Inversión de covarianza aproximada via gradiente descendiente simple
+  // (evita dependencia de mathjs para matrices pequeñas como 7 activos)
+  const iters = 500;
+  let weights = Array(n).fill(1 / n);
+
+  for (let iter = 0; iter < iters; iter++) {
+    // Gradiente del portfolio variance respecto a cada weight
+    // ∂(w'Σw)/∂w_i = 2 * Σ_j w_j * σ_ij
+    const grad = Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        grad[i] += 2 * weights[j] * covMatrix[i][j];
+      }
+    }
+
+    // Gradient descent con learning rate adaptativo
+    const lr = 0.05 / (1 + iter * 0.01);
+    const updated = weights.map((w, i) => Math.max(0.01, w - lr * grad[i]));
+
+    // Proyectar al simplex (normalizar)
+    const sum = updated.reduce((a, b) => a + b, 0);
+    weights = updated.map(w => w / sum);
+  }
+
+  return weights;
+}
+
+/**
+ * Estima la volatilidad del portfolio desde pesos y covarianza.
+ * Fallback: volatilidad media ponderada si no hay covMatrix.
+ */
+function estimatePortfolioVol(
+  assets: AssetInput[],
+  weights: number[],
+  covMatrix?: number[][]
+): number {
+  if (covMatrix && covMatrix.length === assets.length) {
+    // w' Σ w
+    let portfolioVar = 0;
+    for (let i = 0; i < assets.length; i++) {
+      for (let j = 0; j < assets.length; j++) {
+        portfolioVar += weights[i] * weights[j] * covMatrix[i][j];
+      }
+    }
+    return Math.sqrt(Math.max(0, portfolioVar));
+  }
+  // Fallback: volatilidad media ponderada (ignora correlaciones)
+  return assets.reduce((sum, a, i) => sum + weights[i] * a.volatility, 0);
 }

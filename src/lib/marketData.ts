@@ -1,5 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
-import { ASSETS, MarketData } from './portfolio';
+import { ASSETS } from '@/lib/constants';
 
 interface YahooChartResult {
   ticker: string;
@@ -11,6 +11,34 @@ interface YahooChartResult {
 interface YahooResponse {
   data: Record<string, YahooChartResult>;
   errors: string[];
+}
+
+// Tipo completo que devuelve fetchRealMarketData — incluye todo lo que el dashboard necesita
+export interface MarketData {
+  // Precios actuales por ticker
+  prices: Record<string, number>;
+  // Macro
+  vix: number;
+  tnx: number;   // bono 10y USA %
+  irx: number;   // bono 2y / fed funds %
+  // BTC indicadores técnicos calculados desde histórico real
+  btcZScore: number;
+  btcRsi: number;
+  // VIX percentiles para contexto histórico
+  vixPercentile80: number;
+  vixPercentile20: number;
+  // Retornos esperados anualizados por activo (orden = ASSETS)
+  expectedReturns: number[];
+  // Retornos históricos por períodos por activo (orden = ASSETS)
+  returns12m: number[];
+  returns3m: number[];
+  returns1m: number[];
+  // Volatilidades realizadas anualizadas por activo (orden = ASSETS)
+  realizedVols: number[];
+  // Historial de precios de cierre limpio por ticker (para correlaciones y RSI)
+  closesHistory: Record<string, number[]>;
+  // Matriz de covarianza anualizada (orden = ASSETS)
+  covMatrix: number[][];
 }
 
 function cleanCloses(closes: number[]): number[] {
@@ -86,52 +114,103 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
 
   const { data: yfData, errors: fetchErrors } = response;
 
-  // Extract current prices for assets
+  // ====== PRECIOS ACTUALES ======
   const prices: Record<string, number> = {};
-  for (const asset of ASSETS) {
-    const d = yfData[asset.ticker];
-    prices[asset.ticker] = d?.currentPrice ?? 0;
+  for (const ticker of ASSETS) {
+    const d = yfData[ticker];
+    prices[ticker] = d?.currentPrice ?? 0;
   }
 
-  // VIX data
+  // ====== MACRO ======
   const vixData = yfData['^VIX'];
   const vixPrice = vixData?.currentPrice ?? 18;
   const vixCloses = vixData ? cleanCloses(vixData.closes) : [];
   const vixP80 = vixCloses.length > 50 ? percentile(vixCloses, 80) : 28;
   const vixP20 = vixCloses.length > 50 ? percentile(vixCloses, 20) : 14;
-
-  // TNX and IRX
   const tnxPrice = yfData['^TNX']?.currentPrice ?? 4.25;
   const irxPrice = yfData['^IRX']?.currentPrice ?? 3.80;
 
-  // BTC Z-score (200-day)
-  const btcData = yfData['BTC-EUR'];
-  let btcZScore = 0;
-  if (btcData) {
-    const btcCloses = cleanCloses(btcData.closes);
-    const last200 = btcCloses.slice(-200);
-    if (last200.length >= 200) {
-      const m = mean(last200);
-      const s = std(last200);
-      btcZScore = s > 0 ? (btcData.currentPrice - m) / s : 0;
-    }
+  // ====== HISTÓRICO DE CIERRES LIMPIO POR ACTIVO ======
+  const closesHistory: Record<string, number[]> = {};
+  for (const ticker of ASSETS) {
+    const d = yfData[ticker];
+    closesHistory[ticker] = d ? cleanCloses(d.closes) : [];
   }
 
-  // Expected returns and covariance from historical data
-  const assetReturns: number[][] = ASSETS.map(a => {
-    const d = yfData[a.ticker];
-    if (!d) return [];
-    return dailyReturns(cleanCloses(d.closes));
+  // ====== RETORNOS DIARIOS POR ACTIVO ======
+  const returnsPerAsset = ASSETS.map(ticker => dailyReturns(closesHistory[ticker]));
+
+  // ====== BTC INDICADORES TÉCNICOS (desde histórico real, no mock) ======
+  const btcCloses = closesHistory['BTC-EUR'];
+  const btcReturns = returnsPerAsset[ASSETS.indexOf('BTC-EUR')];
+
+  // Z-Score 200 días
+  let btcZScore = 0;
+  const last200 = btcCloses.slice(-200);
+  if (last200.length >= 200) {
+    const m = mean(last200);
+    const s = std(last200);
+    btcZScore = s > 0 ? ((yfData['BTC-EUR']?.currentPrice ?? last200[last200.length - 1]) - m) / s : 0;
+  }
+
+  // RSI 14 días desde retornos reales
+  let btcRsi = 50;
+  if (btcReturns.length >= 15) {
+    const recent = btcReturns.slice(-14);
+    const gains = recent.filter(r => r > 0).reduce((a, b) => a + b, 0) / 14;
+    const losses = Math.abs(recent.filter(r => r < 0).reduce((a, b) => a + b, 0)) / 14;
+    const rs = losses === 0 ? 100 : gains / losses;
+    btcRsi = 100 - (100 / (1 + rs));
+  }
+
+  // ====== RETORNOS POR PERÍODO (12m, 3m, 1m) ======
+  // Aproximación: 252 días hábiles/año, 63 días/trimestre, 21 días/mes
+  const DAYS_12M = 252;
+  const DAYS_3M  = 63;
+  const DAYS_1M  = 21;
+
+  const returns12m = ASSETS.map(ticker => {
+    const closes = closesHistory[ticker];
+    if (closes.length < DAYS_12M + 1) return 0;
+    const start = closes[closes.length - DAYS_12M - 1];
+    const end   = closes[closes.length - 1];
+    return start > 0 ? (end / start) - 1 : 0;
   });
 
-  const expectedReturns = assetReturns.map(r => {
+  const returns3m = ASSETS.map(ticker => {
+    const closes = closesHistory[ticker];
+    if (closes.length < DAYS_3M + 1) return 0;
+    const start = closes[closes.length - DAYS_3M - 1];
+    const end   = closes[closes.length - 1];
+    return start > 0 ? (end / start) - 1 : 0;
+  });
+
+  const returns1m = ASSETS.map(ticker => {
+    const closes = closesHistory[ticker];
+    if (closes.length < DAYS_1M + 1) return 0;
+    const start = closes[closes.length - DAYS_1M - 1];
+    const end   = closes[closes.length - 1];
+    return start > 0 ? (end / start) - 1 : 0;
+  });
+
+  // ====== EXPECTED RETURNS (media aritmética anualizada) ======
+  const expectedReturns = returnsPerAsset.map(r => {
     if (r.length < 20) return 0.05;
-    return mean(r) * 252; // annualize
+    return mean(r) * 252;
   });
 
-  const covMatrix = assetReturns.some(r => r.length < 20)
+  // ====== VOLATILIDADES REALIZADAS ANUALIZADAS ======
+  const realizedVols = returnsPerAsset.map(r => {
+    if (r.length < 20) return 0.25; // fallback razonable
+    const m = mean(r);
+    const variance = r.reduce((s, v) => s + (v - m) ** 2, 0) / (r.length - 1);
+    return Math.sqrt(variance * 252);
+  });
+
+  // ====== MATRIZ DE COVARIANZA ======
+  const covMatrix = returnsPerAsset.some(r => r.length < 20)
     ? fallbackCovMatrix()
-    : covarianceMatrix(assetReturns);
+    : covarianceMatrix(returnsPerAsset);
 
   return {
     marketData: {
@@ -140,9 +219,15 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       tnx: tnxPrice,
       irx: irxPrice,
       btcZScore,
+      btcRsi,
       vixPercentile80: vixP80,
       vixPercentile20: vixP20,
       expectedReturns,
+      returns12m,
+      returns3m,
+      returns1m,
+      realizedVols,
+      closesHistory,
       covMatrix,
     },
     fetchErrors,
