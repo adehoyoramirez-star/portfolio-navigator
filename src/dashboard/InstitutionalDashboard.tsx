@@ -183,14 +183,7 @@ const InstitutionalDashboard: React.FC = () => {
       // Cada campo se actualiza desde su fuente real. El usuario puede hacer
       // override manual después si lo necesita.
 
-      // M2 desde FRED
-      if (md.m2GrowthSource === "FRED") {
-        setM2Growth(parseFloat(md.m2Growth.toFixed(2)));
-      }
-      // PER S&P 500 desde FRED CAPE
-      if (md.perSource === "FRED") {
-        setManualPER(parseFloat(md.per.toFixed(2)));
-      }
+      // M2 y PER — input manual del usuario (no auto-seed desde FRED)
       // S&P 500 RSI y Momentum
       setRsi(parseFloat(md.sp500Rsi.toFixed(1)));
       setMomentum(parseFloat(md.sp500Momentum3m.toFixed(3)));
@@ -202,9 +195,7 @@ const InstitutionalDashboard: React.FC = () => {
       setJumpIntensity(parseFloat(md.jumpIntensity.toFixed(2)));
       setJumpMean(parseFloat(md.jumpMean.toFixed(3)));
       setJumpStd(parseFloat(md.jumpStd.toFixed(3)));
-      // Liquidez global — usar el valor real de crecimiento de bancos centrales
-      // liquidityOutput.liquidityGrowth ya es el % de crecimiento ponderado Fed+ECB
-      setLiquidityGrowth(parseFloat(md.liquidityScore.toFixed(3)));
+      // Liquidez Global — input manual del usuario, no se auto-seed
 
       // CEWS: poblar historial automáticamente desde Yahoo (5 años semanales)
       // Fusionar con datos manuales existentes en localStorage — Yahoo tiene prioridad
@@ -659,7 +650,8 @@ const InstitutionalDashboard: React.FC = () => {
     const rsiVal = asset.rsi ?? calculateRSI(asset.history, 14);
     const zScoreVal = asset.zScore ?? calculateZScore(asset.history, 200);
     const currentValue = asset.price * asset.shares;
-    const targetValue = totalPortfolioValue * (asset.weight / 100);
+    const engineAlloc = engineResult?.allocations.find(a => a.name === asset.name)?.finalAllocation ?? (asset.weight / 100);
+    const targetValue = totalPortfolioValue * engineAlloc;
     const deficit = targetValue - currentValue;
     return rsiVal < 30 && zScoreVal < -1.5 && deficit > 0;
   };
@@ -765,7 +757,7 @@ const InstitutionalDashboard: React.FC = () => {
       {/* Inputs manuales macro (incluyendo nuevos parámetros) */}
       <div style={{ ...styles.card, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem" }}>
         <div>
-          <label style={styles.label}>PER S&P 500 {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● FRED auto</span></label>
+          <label style={styles.label}>PER S&P 500 {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={manualPER} onChange={(e) => setManualPER(Number(e.target.value))} style={styles.smallInput} step="0.1" min="1" />
         </div>
         <div>
@@ -779,9 +771,7 @@ const InstitutionalDashboard: React.FC = () => {
         <div>
           <label style={styles.label}>
             M2 Growth %{" "}
-            <span style={{ fontSize: "0.65rem", color: marketData?.m2GrowthSource === "FRED" ? "#10b981" : "#6b7280", fontWeight: "normal" }}>
-              {marketData?.m2GrowthSource === "FRED" ? "● FRED auto" : "● manual"}
-            </span>
+            <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span>
           </label>
           <input type="number" value={m2Growth} onChange={(e) => setM2Growth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
@@ -802,11 +792,7 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.1" min="-1" max="1" />
         </div>
         <div>
-          <label style={styles.label}>Liquidez Global %{" "}
-            <span style={{ fontSize: "0.65rem", color: marketData?.liquidityDataQuality === "REAL" ? "#10b981" : "#ef4444", fontWeight: "normal" }}>
-              {marketData?.liquidityDataQuality === "REAL" ? "● FRED real" : "● manual"}
-            </span>
-          </label>
+          <label style={styles.label}>Liquidez Global % <span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● manual+DXY</span></label>
           <input type="number" value={liquidityGrowth} onChange={(e) => setLiquidityGrowth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
@@ -842,7 +828,7 @@ const InstitutionalDashboard: React.FC = () => {
           <p>Régimen: <strong>{liquidityOutput.regime}</strong></p>
           <p>Crec: {liquidityGrowth}%</p>
           <p>DXY Trend: {(liquidityOutput.dxyTrend * 100).toFixed(1)}%</p>
-          <p style={{ fontSize: "0.75rem", color: liquidityOutput.dataQuality === "REAL" ? "#10b981" : "#6b7280" }}>Fuente: {liquidityOutput.dataQuality === "REAL" ? "FRED WALCL+ECB" : "MANUAL"}</p>
+          <p style={{ fontSize: "0.75rem", color: "#f59e0b" }}>Fuente: manual + DXY Yahoo</p>
         </div>
         <div>
           <h4>Régimen Global</h4>
@@ -1594,7 +1580,13 @@ const InstitutionalDashboard: React.FC = () => {
                         </div>
                       )}
                     </td>
-                    <td>{asset.weight}%</td>
+{/* Motor target weight — dynamic from engine, not hardcoded */}
+                    <td>
+                      {engineResult
+                        ? ((engineResult.allocations.find(a => a.name === asset.name)?.finalAllocation ?? 0) * 100).toFixed(1)
+                        : asset.weight
+                      }%
+                    </td>
                     <td>{pesoActual.toFixed(1)}%</td>
                     <td title={attackReason}>{attack ? "⚔️" : ""}</td>
                   </tr>
