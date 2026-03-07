@@ -12,6 +12,11 @@ interface YahooChartResult {
 interface YahooResponse {
   data: Record<string, YahooChartResult>;
   errors: string[];
+  m2?: {
+    current: number;
+    growthYoY: number;
+    history: { date: string; value: number }[];
+  };
 }
 
 // Tipo completo que devuelve fetchRealMarketData — incluye todo lo que el dashboard necesita
@@ -42,6 +47,9 @@ export interface MarketData {
   covMatrix: number[][];
   // CEWS: serie semanal automática (5 años) construida desde históricos de Yahoo
   cewsHistory: CEWSDataPoint[];
+  // M2 real de FRED (growthYoY en %) — 0 si FRED no disponible
+  m2Growth: number;
+  m2GrowthSource: "FRED" | "manual";  // para mostrar en el dashboard
 }
 
 function cleanCloses(closes: number[]): number[] {
@@ -178,14 +186,18 @@ function buildCEWSHistory(
   return points;
 }
 
-export async function fetchRealMarketData(m2Growth = 5.2): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
+export async function fetchRealMarketData(): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
   const { data: response, error } = await supabase.functions.invoke<YahooResponse>('yahoo-finance');
 
   if (error || !response) {
     throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
   }
 
-  const { data: yfData, errors: fetchErrors } = response;
+  const { data: yfData, errors: fetchErrors, m2: fredM2 } = response;
+
+  // M2 real de FRED — si no está disponible, fallback al último valor conocido (5.2%)
+  // growthYoY ya está en porcentaje: 3.2 = 3.2% crecimiento YoY
+  const m2Growth = fredM2?.growthYoY ?? 5.2;
 
   // ====== PRECIOS ACTUALES ======
   const prices: Record<string, number> = {};
@@ -312,6 +324,8 @@ export async function fetchRealMarketData(m2Growth = 5.2): Promise<{ marketData:
       closesHistory,
       covMatrix,
       cewsHistory,
+      m2Growth,
+      m2GrowthSource: fredM2 ? "FRED" : "manual",
     },
     fetchErrors,
   };

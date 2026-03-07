@@ -55,6 +55,60 @@ async function fetchTicker(ticker: string): Promise<ChartResult | null> {
   }
 }
 
+// ── FRED M2 ──────────────────────────────────────────────────────────────────
+// FRED es pública — no requiere API key para series básicas.
+// M2SL = M2 Money Supply mensual en billones USD (Federal Reserve)
+// Devolvemos los últimos 5 años como array [{date, value}]
+interface M2DataPoint {
+  date: string;   // "2024-01-01"
+  value: number;  // M2 en billones USD
+}
+
+interface M2Result {
+  current: number;       // valor más reciente
+  growthYoY: number;     // crecimiento YoY en % (lo que usa el CEWS)
+  history: M2DataPoint[]; // últimos 5 años mensual
+}
+
+async function fetchM2FRED(): Promise<M2Result | null> {
+  try {
+    // FRED CSV público — sin API key necesaria
+    const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=M2SL';
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (!res.ok) {
+      console.error(`FRED M2 fetch failed: ${res.status}`);
+      return null;
+    }
+
+    const text = await res.text();
+    const lines = text.trim().split('\n').slice(1); // skip header
+
+    const allPoints: M2DataPoint[] = [];
+    for (const line of lines) {
+      const [date, val] = line.split(',');
+      const value = parseFloat(val);
+      if (date && !isNaN(value) && value > 0) {
+        allPoints.push({ date: date.trim(), value });
+      }
+    }
+
+    if (allPoints.length < 13) return null;
+
+    // Últimos 5 años (60 meses)
+    const history = allPoints.slice(-60);
+    const current = history[history.length - 1].value;
+    const yearAgo = history[history.length - 13]?.value ?? current;
+    const growthYoY = yearAgo > 0 ? ((current - yearAgo) / yearAgo) * 100 : 0;
+
+    return { current, growthYoY, history };
+  } catch (e) {
+    console.error('FRED M2 error:', e);
+    return null;
+  }
+}
+
 // @ts-ignore — Deno global disponible en el runtime de Supabase Edge Functions
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -62,12 +116,16 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const results = await Promise.allSettled(TICKERS.map(fetchTicker));
+    // Fetch Yahoo + FRED en paralelo
+    const [yahooResults, m2Data] = await Promise.all([
+      Promise.allSettled(TICKERS.map(fetchTicker)),
+      fetchM2FRED(),
+    ]);
 
     const data: Record<string, ChartResult> = {};
     const errors: string[] = [];
 
-    results.forEach((r, i) => {
+    yahooResults.forEach((r, i) => {
       const cleanTicker = TICKERS[i].replace('%5E', '^');
       if (r.status === 'fulfilled' && r.value) {
         data[cleanTicker] = r.value;
@@ -76,7 +134,7 @@ Deno.serve(async (req: Request) => {
       }
     });
 
-    return new Response(JSON.stringify({ data, errors }), {
+    return new Response(JSON.stringify({ data, errors, m2: m2Data }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {

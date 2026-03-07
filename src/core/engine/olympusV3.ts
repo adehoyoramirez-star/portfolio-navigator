@@ -16,6 +16,9 @@
 
 import { calculateMomentum } from "../factors/momentum";
 import { calculateValue, computeUniverseStats, ValueInput } from "../factors/value";
+import { calculateQuality, computeQualityUniverseStats, QualityInput } from "../factors/quality";
+import { calculateLowVol, computeLowVolUniverseStats } from "../factors/lowVolatility";
+import { computeHRP } from "../risk/hrp";
 import { getMasterRegime, MasterRegimeOutput } from "../macro/masterRegime";
 import type { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { calculateKelly } from "../portfolio/kelly";
@@ -31,7 +34,7 @@ export interface AssetInput {
   returns1m: number;
   earningsYield: number;
   volatility: number;   // decimal anualizado (0.60 = 60%)
-  sector?: string;      // NUEVO Nivel 2: para sector budgets en risk parity
+  sector?: string;
 }
 
 export interface OlympusOutput {
@@ -40,6 +43,8 @@ export interface OlympusOutput {
   momentumScore: number;
   valueScore: number;
   valuePercentileRank: number;
+  qualityScore: number;
+  lowVolScore: number;
   // Expected return
   expectedReturn: number;
   normalizedExpectedReturn: number;
@@ -114,18 +119,29 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   const corrPenalty = correlationPenalty(correlationMatrix);
 
-  // ====== CAPA 2: FACTOR SCORES ======
-  const universeStats = computeUniverseStats(assets as ValueInput[]);
+  // ====== CAPA 2: FACTOR SCORES (4 factores) ======
+  const universeStats    = computeUniverseStats(assets as ValueInput[]);
+  const qualityStats     = computeQualityUniverseStats(assets as QualityInput[]);
+  const lowVolStats      = computeLowVolUniverseStats(assets);
 
-  const rawScores = assets.map(asset => {
-    const momentum = calculateMomentum({
-      returns12m: asset.returns12m,
-      returns1m: asset.returns1m,
-      returns3m: asset.returns3m,
-    });
-    const value = calculateValue({ earningsYield: asset.earningsYield }, universeStats);
-    const rawExpectedReturn = momentum.momentumScore * 0.6 + value.valueScore * 0.4;
-    return { asset, momentum, value, rawExpectedReturn };
+  const rawScores = assets.map((asset) => {
+    const momentum  = calculateMomentum({ returns12m: asset.returns12m, returns1m: asset.returns1m, returns3m: asset.returns3m });
+    const value     = calculateValue({ earningsYield: asset.earningsYield }, universeStats);
+    const quality   = calculateQuality(asset as QualityInput, qualityStats);
+    const lowVol    = calculateLowVol(asset, lowVolStats);
+
+    // Blend de 4 factores — pesos calibrados empíricamente
+    // Momentum: 40% (fuerte señal de continuación)
+    // Value:    25% (contrarian signal)
+    // Quality:  20% (defensivo, protege en crisis)
+    // LowVol:   15% (anomalía documentada, especialmente útil en CONTRACTION/CRISIS)
+    const rawExpectedReturn =
+      momentum.momentumScore * 0.40 +
+      value.valueScore       * 0.25 +
+      quality.qualityScore   * 0.20 +
+      (lowVol.lowVolScore + lowVol.downsideVolPenalty) * 0.15;
+
+    return { asset, momentum, value, quality, lowVol, rawExpectedReturn };
   });
 
   // Z-normalizar expectedReturn del universo
@@ -134,19 +150,20 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const rawStd = Math.sqrt(allRaw.reduce((s, v) => s + (v - rawMean) ** 2, 0) / allRaw.length) || 1;
 
   // ====== CAPA 3: KELLY ======
-  const kellyAllocations = rawScores.map(({ asset, momentum, value, rawExpectedReturn }) => {
+  const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn }) => {
     const normalizedExpectedReturn = (rawExpectedReturn - rawMean) / rawStd;
     const kelly = calculateKelly({ expectedReturn: normalizedExpectedReturn, volatility: asset.volatility });
     const kellyAlloc = kelly.kellyFraction * corrPenalty * masterRegime.regimePenalty;
-    return { asset, momentum, value, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyAlloc };
+    return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyAlloc };
   });
 
   // ALL_CASH check
   const totalKelly = kellyAllocations.reduce((s, a) => s + a.kellyAlloc, 0);
   if (totalKelly === 0) {
-    const empty = kellyAllocations.map(({ asset, momentum, value, rawExpectedReturn, normalizedExpectedReturn, kelly }) => ({
+    const empty = kellyAllocations.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly }) => ({
       name: asset.name, momentumScore: momentum.momentumScore, valueScore: value.valueScore,
-      valuePercentileRank: value.percentileRank, expectedReturn: rawExpectedReturn,
+      valuePercentileRank: value.percentileRank, qualityScore: quality.qualityScore,
+      lowVolScore: lowVol.lowVolScore, expectedReturn: rawExpectedReturn,
       normalizedExpectedReturn, kellyFraction: kelly.kellyFraction, rawKelly: kelly.rawKelly,
       isCapped: kelly.isCapped, kellyAllocation: 0, markowitzAllocation: 0,
       riskParityAllocation: 0, blendedAllocation: 0, volAdjustedAllocation: 0, finalAllocation: 0,
@@ -172,7 +189,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-  // ====== CAPA 5: RISK PARITY BLEND (Nivel 2) ======
+  // ====== CAPA 5: RISK PARITY + HRP BLEND ======
   const rpInputs = assets.map(a => ({
     name: a.name,
     volatility: a.volatility,
@@ -181,16 +198,23 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const rpResult = computeRiskParityWeights(rpInputs);
   const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
 
-  // ====== BLEND FINAL: Kelly 50% + Markowitz 30% + RiskParity 20% ======
-  // Con covMatrix real: usa Markowitz. Sin ella: 50% Kelly + 50% Risk Parity
+  // HRP: usa covMatrix real si disponible, sino fallback a igual peso
+  const hrpResult = computeHRP(hasRealCovMatrix ? input.covMatrix! : [], assets.length);
+  const hrpWeights = hrpResult.weights;
+
+  // ====== BLEND FINAL: Kelly 40% + Markowitz 20% + RiskParity 15% + HRP 25% ======
+  // HRP reemplaza parte del Risk Parity estándar (más robusto out-of-sample)
+  // Con covMatrix real: blend completo. Sin ella: Kelly + RP + HRP igual pesos
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
-      return kellyNorm[i].kellyNormalized * 0.50
-           + markowitzWeights[i]           * 0.30
-           + rpWeights[i]                  * 0.20;
+      return kellyNorm[i].kellyNormalized * 0.40
+           + markowitzWeights[i]           * 0.20
+           + rpWeights[i]                  * 0.15
+           + hrpWeights[i]                 * 0.25;
     } else {
-      return kellyNorm[i].kellyNormalized * 0.50
-           + rpWeights[i]                  * 0.50;
+      return kellyNorm[i].kellyNormalized * 0.40
+           + rpWeights[i]                  * 0.30
+           + hrpWeights[i]                 * 0.30;
     }
   });
 
@@ -215,7 +239,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   });
 
   // ====== ENSAMBLAR OUTPUT FINAL ======
-  const allocations: OlympusOutput[] = kellyNorm.map(({ asset, momentum, value, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyNormalized }, i) => {
+  const allocations: OlympusOutput[] = kellyNorm.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyNormalized }, i) => {
     const blended    = blendNorm[i];
     const volAdj     = blended * volTarget.multiplier;
     const final      = volAdj * tailRisk.overlay;
@@ -225,6 +249,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       momentumScore: momentum.momentumScore,
       valueScore: value.valueScore,
       valuePercentileRank: value.percentileRank,
+      qualityScore: quality.qualityScore,
+      lowVolScore: lowVol.lowVolScore,
       expectedReturn: rawExpectedReturn,
       normalizedExpectedReturn,
       kellyFraction: kelly.kellyFraction,

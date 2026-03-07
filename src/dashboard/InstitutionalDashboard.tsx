@@ -23,6 +23,9 @@ import {
   computeCEWS, loadCEWSHistory, saveCEWSDataPoint, generateSyntheticHistory,
   CEWSDataPoint,
 } from "@/core/macro/crisisEarlyWarning";
+import { computeRegimeDuration, detectRegimeStartDate } from "@/core/macro/regimeDuration";
+import { runAllStressScenarios } from "@/core/simulation/stressScenarios";
+import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
 
 const GaugeChart = lazy(() => import("react-gauge-chart"));
 
@@ -173,8 +176,14 @@ const InstitutionalDashboard: React.FC = () => {
       // PASO 2: una sola llamada a Supabase edge function obtiene TODO:
       // precios actuales, 2 años de histórico, covMatrix real, BTC RSI/ZScore reales,
       // retornos por período (12m/3m/1m), volatilidades realizadas
-      const { marketData: md, fetchErrors } = await fetchRealMarketData(m2Growth);
+      const { marketData: md, fetchErrors } = await fetchRealMarketData();
       setMarketData(md);
+
+      // M2 real de FRED — actualizar estado automáticamente
+      // El input manual en el dashboard queda como override si el usuario lo edita
+      if (md.m2GrowthSource === "FRED") {
+        setM2Growth(parseFloat(md.m2Growth.toFixed(2)));
+      }
 
       // CEWS: poblar historial automáticamente desde Yahoo (5 años semanales)
       // Fusionar con datos manuales existentes en localStorage — Yahoo tiene prioridad
@@ -436,6 +445,44 @@ const InstitutionalDashboard: React.FC = () => {
       prevCewsLevelRef.current = cewsResult.level;
     }
   }, [cewsResult?.level]);
+
+  // ── Regime Duration ────────────────────────────────────────────────────────
+  const regimeDuration = useMemo(() => {
+    if (!engineResult) return null;
+    const regime = engineResult.regime === "ALL_CASH" ? "CRISIS" : engineResult.regime as "EXPANSION" | "CONTRACTION" | "CRISIS";
+    const regimeStartDate = detectRegimeStartDate(
+      regimeHistory.map(r => ({ timestamp: r.timestamp, regime: r.regime })),
+      regime
+    );
+    return computeRegimeDuration({ currentRegime: regime, regimeStartDate });
+  }, [engineResult?.regime, regimeHistory]);
+
+  // ── Stress Scenarios ────────────────────────────────────────────────────────
+  const stressResults = useMemo(() => {
+    if (!engineResult || totalPortfolioValue === 0) return [];
+    const weightedAssets = portfolio.assets.map(a => ({
+      ticker: a.ticker,
+      name: a.name,
+      weight: engineResult.allocations.find(al => al.name === a.name)?.finalAllocation ?? 0,
+    }));
+    return runAllStressScenarios(weightedAssets, totalPortfolioValue);
+  }, [engineResult?.allocations, portfolio.assets, totalPortfolioValue]);
+
+  // ── Walk-Forward ────────────────────────────────────────────────────────────
+  const walkForwardResult = useMemo(() => {
+    // Construir retornos semanales del portfolio desde histórico de BTC y ETFs
+    const btcCloses = marketData?.closesHistory["BTC-EUR"] ?? [];
+    if (btcCloses.length < 60) return null;
+    // Aproximar retornos semanales del portfolio: usar BTC como proxy (mayor volatilidad)
+    // En futuras versiones usar el portfolio completo ponderado
+    const weeklyReturns: number[] = [];
+    for (let i = 5; i < btcCloses.length; i += 5) {
+      if (btcCloses[i - 5] > 0) {
+        weeklyReturns.push(btcCloses[i] / btcCloses[i - 5] - 1);
+      }
+    }
+    return runWalkForward(weeklyReturns, 5);
+  }, [marketData?.closesHistory]);
 
   // availableCash debe declararse ANTES de los useMemos que la usan
   const availableCash = cashReserve + monthlyInjection;
@@ -709,7 +756,12 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={bond2y} onChange={(e) => setBond2y(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
         </div>
         <div>
-          <label style={styles.label}>M2 Growth %</label>
+          <label style={styles.label}>
+            M2 Growth %{" "}
+            <span style={{ fontSize: "0.65rem", color: marketData?.m2GrowthSource === "FRED" ? "#10b981" : "#6b7280", fontWeight: "normal" }}>
+              {marketData?.m2GrowthSource === "FRED" ? "● FRED auto" : "● manual"}
+            </span>
+          </label>
           <input type="number" value={m2Growth} onChange={(e) => setM2Growth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
@@ -1070,6 +1122,131 @@ const InstitutionalDashboard: React.FC = () => {
           )}
         </p>
       </div>
+
+      {/* NIVEL 6: Regime Duration */}
+      {regimeDuration && (
+        <div style={{
+          ...styles.card,
+          border: regimeDuration.maturityPhase === "OLD" ? "2px solid #f59e0b" : "1px solid #374151",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+            <h2 style={{ margin: 0 }}>⏱ Madurez del Régimen</h2>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <span style={{
+                padding: "0.3rem 0.8rem", borderRadius: 20, fontSize: "0.8rem", fontWeight: "bold",
+                backgroundColor: regimeDuration.maturityPhase === "YOUNG" ? "#065f46" : regimeDuration.maturityPhase === "MATURE" ? "#1e3a5f" : "#78350f",
+                color: "#fff",
+              }}>{regimeDuration.maturityPhase}</span>
+              <span style={{ padding: "0.3rem 0.8rem", borderRadius: 20, fontSize: "0.8rem", backgroundColor: "#1f2937", color: "#9ca3af" }}>
+                {regimeDuration.monthsInRegime.toFixed(1)} meses
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0.5rem", marginBottom: "0.75rem" }}>
+            <div style={{ backgroundColor: "#111827", borderRadius: 6, padding: "0.6rem 0.75rem", textAlign: "center" }}>
+              <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Semanas en régimen</div>
+              <div style={{ fontSize: "1.4rem", fontWeight: "bold" }}>{regimeDuration.weeksInRegime.toFixed(0)}</div>
+            </div>
+            <div style={{ backgroundColor: "#111827", borderRadius: 6, padding: "0.6rem 0.75rem", textAlign: "center" }}>
+              <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Ajuste penalización</div>
+              <div style={{ fontSize: "1.4rem", fontWeight: "bold", color: regimeDuration.durationAdjustment > 0 ? "#10b981" : regimeDuration.durationAdjustment < 0 ? "#ef4444" : "#9ca3af" }}>
+                {regimeDuration.durationAdjustment > 0 ? "+" : ""}{(regimeDuration.durationAdjustment * 100).toFixed(0)}%
+              </div>
+            </div>
+            <div style={{ backgroundColor: "#111827", borderRadius: 6, padding: "0.6rem 0.75rem", textAlign: "center" }}>
+              <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Preparación ataque</div>
+              <div style={{ fontSize: "1.4rem", fontWeight: "bold", color: `hsl(${regimeDuration.attackReadiness * 120}, 70%, 55%)` }}>
+                {(regimeDuration.attackReadiness * 100).toFixed(0)}%
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: "0.82rem", color: "#d1d5db", margin: 0 }}>{regimeDuration.signal}</p>
+        </div>
+      )}
+
+      {/* NIVEL 6: Stress Scenarios */}
+      {stressResults.length > 0 && (
+        <div style={styles.card}>
+          <h2>🔥 Stress Testing — Escenarios Históricos</h2>
+          <p style={{ color: "#6b7280", fontSize: "0.82rem", marginBottom: "1rem" }}>
+            Simulación de pérdidas con retornos históricos reales de los proxies en cada crisis
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem" }}>
+            {stressResults.map(s => (
+              <div key={s.scenarioId} style={{
+                backgroundColor: s.portfolioReturn < -0.30 ? "#450a0a" : s.portfolioReturn < -0.15 ? "#422006" : "#111827",
+                border: `1px solid ${s.portfolioReturn < -0.30 ? "#ef4444" : s.portfolioReturn < -0.15 ? "#f59e0b" : "#374151"}`,
+                borderRadius: 8, padding: "0.75rem",
+              }}>
+                <p style={{ fontWeight: "bold", fontSize: "0.82rem", marginBottom: "0.4rem", color: "#f9fafb" }}>{s.scenarioName}</p>
+                <div style={{ fontSize: "2rem", fontWeight: "bold", color: s.portfolioReturn < -0.20 ? "#fca5a5" : s.portfolioReturn < -0.10 ? "#fde68a" : "#10b981" }}>
+                  {(s.portfolioReturn * 100).toFixed(1)}%
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "0.25rem" }}>
+                  €{Math.abs(s.portfolioDrawdown).toFixed(0)} {s.portfolioDrawdown < 0 ? "pérdida" : "ganancia"}
+                  {" · "}{s.recoveryEstimateMonths}m recuperación
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "#4b5563", marginTop: "0.25rem" }}>
+                  Mejor: {s.bestAsset} · Peor: {s.worstAsset}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* NIVEL 6: Walk-Forward Robustness */}
+      {walkForwardResult && (
+        <div style={{
+          ...styles.card,
+          border: walkForwardResult.overfittingRisk === "LOW" ? "1px solid #10b981" : walkForwardResult.overfittingRisk === "HIGH" ? "2px solid #ef4444" : "1px solid #374151",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+            <h2 style={{ margin: 0 }}>🔬 Walk-Forward Robustness</h2>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <span style={{
+                fontSize: "2rem", fontWeight: "bold",
+                color: walkForwardResult.robustnessGrade === "A" ? "#10b981" : walkForwardResult.robustnessGrade === "B" ? "#3b82f6" : walkForwardResult.robustnessGrade === "C" ? "#f59e0b" : "#ef4444",
+              }}>{walkForwardResult.robustnessGrade}</span>
+              <span style={{ padding: "0.3rem 0.8rem", borderRadius: 20, fontSize: "0.8rem", fontWeight: "bold",
+                backgroundColor: walkForwardResult.overfittingRisk === "LOW" ? "#065f46" : walkForwardResult.overfittingRisk === "HIGH" ? "#7f1d1d" : "#1e3a5f",
+                color: "#fff" }}>
+                Overfitting: {walkForwardResult.overfittingRisk}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "0.5rem", marginBottom: "0.75rem" }}>
+            {Object.entries(walkForwardResult.parameterStability).map(([param, score]) => (
+              <div key={param} style={{ backgroundColor: "#111827", borderRadius: 6, padding: "0.6rem 0.75rem", textAlign: "center" }}>
+                <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: "0.2rem" }}>
+                  {param.replace(/([A-Z])/g, ' $1').trim()}
+                </div>
+                <div style={{ fontSize: "1.2rem", fontWeight: "bold",
+                  color: (score as number) > 0.7 ? "#10b981" : (score as number) > 0.5 ? "#f59e0b" : "#ef4444" }}>
+                  {((score as number) * 100).toFixed(0)}%
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "0.5rem", marginBottom: "0.75rem" }}>
+            {walkForwardResult.windows.map((w, i) => (
+              <div key={i} style={{ backgroundColor: "#111827", borderRadius: 6, padding: "0.5rem 0.75rem", fontSize: "0.78rem" }}>
+                <div style={{ color: "#6b7280", marginBottom: "0.2rem" }}>Ventana {i + 1}</div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>IS Sharpe: <strong style={{ color: w.inSampleMetrics.sharpe > 0 ? "#10b981" : "#ef4444" }}>{w.inSampleMetrics.sharpe.toFixed(2)}</strong></span>
+                  <span>OOS: <strong style={{ color: w.outOfSampleMetrics.sharpe > 0 ? "#10b981" : "#ef4444" }}>{w.outOfSampleMetrics.sharpe.toFixed(2)}</strong></span>
+                </div>
+                <div style={{ marginTop: "0.2rem" }}>
+                  Consistencia: <strong style={{ color: w.consistencyScore > 0.7 ? "#10b981" : w.consistencyScore > 0.5 ? "#f59e0b" : "#ef4444" }}>
+                    {(w.consistencyScore * 100).toFixed(0)}%
+                  </strong>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: "0.82rem", color: "#d1d5db", margin: 0 }}>{walkForwardResult.recommendation}</p>
+        </div>
+      )}
 
       {/* NIVEL 4: Historial de régimen */}
       {regimeHistory.length > 0 && (
