@@ -295,9 +295,10 @@ const InstitutionalDashboard: React.FC = () => {
     saveMacro({
       vix, manualPER, manualBond10y, bond2y, m2Growth,
       creditSpread, liquidityGrowth, dxy, moveIndex, btcVol,
+      btcDominance, mvrvRatio,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -383,8 +384,6 @@ const InstitutionalDashboard: React.FC = () => {
         move: moveIndex,
         dxyTrend: (dxy - 100) / 100,
         btcVol,
-        btcDominance,
-        mvrvRatio,
       },
       // Opcionales — motor degrada elegantemente si faltan
       covMatrix: marketData?.covMatrix,

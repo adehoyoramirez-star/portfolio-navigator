@@ -31,6 +31,8 @@ export interface PersistedMacro {
   dxy: number;
   moveIndex: number;
   btcVol: number;
+  btcDominance?: number;   // BTC.D % — señal adelantada de acumulación institucional
+  mvrvRatio?: number;      // MVRV ratio — señal on-chain de valoración histórica
   savedAt: string;
 }
 
