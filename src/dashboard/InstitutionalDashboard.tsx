@@ -184,17 +184,9 @@ const InstitutionalDashboard: React.FC = () => {
       // override manual después si lo necesita.
 
       // M2 y PER — input manual del usuario (no auto-seed desde FRED)
-      // S&P 500 RSI y Momentum
+      // S&P 500 RSI — Yahoo auto
       setRsi(parseFloat(md.sp500Rsi.toFixed(1)));
-      setMomentum(parseFloat(md.sp500Momentum3m.toFixed(3)));
-      // DXY
-      setDxy(parseFloat(md.dxy.toFixed(2)));
-      // BTC volatilidad realizada
-      setBtcVol(parseFloat(md.btcVolRealized.toFixed(3)));
-      // Jump parameters calibrados desde histórico BTC
-      setJumpIntensity(parseFloat(md.jumpIntensity.toFixed(2)));
-      setJumpMean(parseFloat(md.jumpMean.toFixed(3)));
-      setJumpStd(parseFloat(md.jumpStd.toFixed(3)));
+      // Momentum SP500, DXY, BTC vol, Jumps — input manual del usuario
       // Liquidez Global — input manual del usuario, no se auto-seed
 
       // CEWS: poblar historial automáticamente desde Yahoo (5 años semanales)
@@ -776,7 +768,7 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={m2Growth} onChange={(e) => setM2Growth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
-          <label style={styles.label}>Credit Spread % {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Credit Spread % {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={creditSpread} onChange={(e) => setCreditSpread(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
@@ -788,7 +780,7 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={rsi} onChange={(e) => setRsi(Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
         </div>
         <div>
-          <label style={styles.label}>Momentum S&P 500 {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Momentum S&P 500 {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.1" min="-1" max="1" />
         </div>
         <div>
@@ -796,7 +788,7 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={liquidityGrowth} onChange={(e) => setLiquidityGrowth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
-          <label style={styles.label}>DXY (Dólar) {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>DXY (Dólar) {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={dxy} onChange={(e) => setDxy(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
@@ -804,19 +796,19 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={moveIndex} onChange={(e) => setMoveIndex(Number(e.target.value))} style={styles.smallInput} step="1" />
         </div>
         <div>
-          <label style={styles.label}>Volatilidad BTC {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Volatilidad BTC {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={btcVol} onChange={(e) => setBtcVol(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="2" />
         </div>
         <div>
-          <label style={styles.label}>Jump Intensity {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Jump Intensity {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={jumpIntensity} onChange={(e) => setJumpIntensity(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="1" />
         </div>
         <div>
-          <label style={styles.label}>Jump Mean {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Jump Mean {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={jumpMean} onChange={(e) => setJumpMean(Number(e.target.value))} style={styles.smallInput} step="0.01" />
         </div>
         <div>
-          <label style={styles.label}>Jump Std {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Jump Std {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={jumpStd} onChange={(e) => setJumpStd(Number(e.target.value))} style={styles.smallInput} step="0.01" />
         </div>
       </div>
