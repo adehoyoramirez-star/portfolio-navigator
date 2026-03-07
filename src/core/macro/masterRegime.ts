@@ -11,6 +11,7 @@ import {
   dominantRegime,
   RegimeProbabilities,
 } from "./regimeProbabilistic";
+import { computeCEWS, CEWSDataPoint } from "./crisisEarlyWarning";
 
 export type MasterRegimeLabel = "EXPANSION" | "CONTRACTION" | "CRISIS";
 
@@ -26,15 +27,16 @@ export interface MasterRegimeInput {
 
 export interface MasterRegimeOutput {
   regime: MasterRegimeLabel;
-  regimePenalty: number;            // continuo [0.4, 1.0]
+  regimePenalty: number;            // continuo [0.4, 1.0] ajustado por CEWS si disponible
   crisisDetail: CrisisResult;
   stressDetail: StressResult;
-  regimeProbs: RegimeProbabilities; // NUEVO
+  regimeProbs: RegimeProbabilities;
   dominantSignal: "CRISIS_MODEL" | "STRESS_MODEL" | "PROBABILISTIC" | "CONSENSUS";
   confidence: "HIGH" | "MEDIUM" | "LOW";
+  cews?: import("./crisisEarlyWarning").CEWSOutput; // Early Warning — requiere historial
 }
 
-export function getMasterRegime(input: MasterRegimeInput): MasterRegimeOutput {
+export function getMasterRegime(input: MasterRegimeInput, cewsHistory?: CEWSDataPoint[]): MasterRegimeOutput {
   const crisis = detectCrisis(input.vix, input.yieldSpread, input.creditSpread);
   const stress = computeGlobalStress({
     vix: input.vix,
@@ -60,7 +62,24 @@ export function getMasterRegime(input: MasterRegimeInput): MasterRegimeOutput {
   const dominantSignal = getDominantSignal(crisisLabel, stressLabel, probLabel, regime);
   const confidence     = getConfidence(crisisLabel, stressLabel, probLabel);
 
-  return { regime, regimePenalty, crisisDetail: crisis, stressDetail: stress, regimeProbs, dominantSignal, confidence };
+  // CEWS: si hay historial, ajustar la penalización hacia abajo (más conservador)
+  let finalPenalty = regimePenalty;
+  let cews: import("./crisisEarlyWarning").CEWSOutput | undefined;
+  if (cewsHistory && cewsHistory.length >= 2) {
+    cews = computeCEWS(cewsHistory);
+    finalPenalty = Math.max(0.4, Math.min(1.0, regimePenalty + cews.regimePenaltyAdjustment));
+  }
+
+  return {
+    regime,
+    regimePenalty: finalPenalty,
+    crisisDetail: crisis,
+    stressDetail: stress,
+    regimeProbs,
+    dominantSignal,
+    confidence,
+    cews,
+  };
 }
 
 // ==================== HELPERS ====================

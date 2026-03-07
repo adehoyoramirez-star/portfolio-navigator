@@ -11,6 +11,8 @@ const TICKERS = [
   'BTC-EUR', 'EMXC.DE', 'IS3Q.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'ZPRR.DE',
   // Macro
   '%5EVIX', '%5ETNX', '%5EIRX',
+  // Credit spread proxy (HY bond ETF — proxy del spread HY vs IG)
+  'HYG',
   // Proxies americanos para backtest histórico (10-24 años de datos)
   'EEM',   // EMXC.DE + IS3Q.DE → MSCI Emerging Markets
   'GLD',   // PPFB.DE → Oro físico

@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { ASSETS } from '@/lib/constants';
+import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 
 interface YahooChartResult {
   ticker: string;
@@ -39,6 +40,8 @@ export interface MarketData {
   closesHistory: Record<string, number[]>;
   // Matriz de covarianza anualizada (orden = ASSETS)
   covMatrix: number[][];
+  // CEWS: serie semanal automática (5 años) construida desde históricos de Yahoo
+  cewsHistory: CEWSDataPoint[];
 }
 
 function cleanCloses(closes: number[]): number[] {
@@ -105,7 +108,77 @@ function covarianceMatrix(returnsSeries: number[][]): number[][] {
   return cov;
 }
 
-export async function fetchRealMarketData(): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
+
+// ── CEWS HISTORY BUILDER ────────────────────────────────────────────────────
+// Construye serie semanal de 5 años desde los históricos diarios de Yahoo.
+// Señales:
+//   vix          → ^VIX closes directamente
+//   yieldSpread  → ^TNX - ^IRX (10y minus 13-week T-bill, proxy de la yield curve)
+//   creditSpread → HYG z-score convertido a spread proxy (no requiere datos de FRED)
+//   m2Growth     → manual (M2 cambia mensualmente; se pasa como parámetro constante)
+//
+// HYG Credit Spread Proxy:
+//   HYG es el ETF de bonos HY más líquido del mundo. Su precio refleja
+//   directamente el estrés crediticio: cuando cae vs su MA200, los spreads se amplían.
+//   Fórmula: spread = 3.5% + (-z_score × 1.5%) con floor 1.0% y cap 9.0%
+//   Calibración histórica:
+//     z = +1.5 (expansión fuerte) → spread ≈ 1.25%
+//     z =  0   (neutral)         → spread ≈ 3.5%
+//     z = -2   (estrés)          → spread ≈ 6.5%
+//     z = -3.5 (crisis tipo 2020)→ spread ≈ 8.75%
+function buildCEWSHistory(
+  vixCloses: number[],
+  vixTimestamps: number[],
+  tnxCloses: number[],
+  irxCloses: number[],
+  hygCloses: number[],
+  lastM2Growth: number,   // último valor manual de M2 — se repite para toda la serie
+): CEWSDataPoint[] {
+  const n = Math.min(vixCloses.length, tnxCloses.length, irxCloses.length, hygCloses.length);
+  if (n < 10) return [];
+
+  // Precomputar HYG MA200 para z-score
+  const HYG_WINDOW = 200;
+  function hygZScore(i: number): number {
+    const start = Math.max(0, i - HYG_WINDOW + 1);
+    const window = hygCloses.slice(start, i + 1);
+    if (window.length < 20) return 0;
+    const m = window.reduce((a, b) => a + b, 0) / window.length;
+    const s = Math.sqrt(window.reduce((acc, v) => acc + (v - m) ** 2, 0) / window.length);
+    return s > 0 ? (hygCloses[i] - m) / s : 0;
+  }
+
+  // Muestrear cada 5 días hábiles (≈ 1 semana)
+  const STEP = 5;
+  const points: CEWSDataPoint[] = [];
+
+  for (let i = HYG_WINDOW; i < n; i += STEP) {
+    const vix = vixCloses[i];
+    const tnx = tnxCloses[i];
+    const irx = irxCloses[i];
+    const hygZ = hygZScore(i);
+
+    if (!vix || !tnx || !irx) continue;
+
+    const yieldSpread = tnx - irx;                              // 10y - 13w (proxy yield curve)
+    const creditSpread = Math.max(1.0, Math.min(9.0, 3.5 + (-hygZ * 1.5))); // HYG proxy
+
+    const ts = vixTimestamps[i] ? new Date(vixTimestamps[i] * 1000).toISOString()
+      : new Date(Date.now() - (n - i) * 24 * 3600 * 1000).toISOString();
+
+    points.push({
+      timestamp: ts,
+      vix,
+      yieldSpread,
+      creditSpread,
+      m2Growth: lastM2Growth,
+    });
+  }
+
+  return points;
+}
+
+export async function fetchRealMarketData(m2Growth = 5.2): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
   const { data: response, error } = await supabase.functions.invoke<YahooResponse>('yahoo-finance');
 
   if (error || !response) {
@@ -125,10 +198,14 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const vixData = yfData['^VIX'];
   const vixPrice = vixData?.currentPrice ?? 18;
   const vixCloses = vixData ? cleanCloses(vixData.closes) : [];
+  const vixTimestamps = vixData?.timestamps ?? [];
   const vixP80 = vixCloses.length > 50 ? percentile(vixCloses, 80) : 28;
   const vixP20 = vixCloses.length > 50 ? percentile(vixCloses, 20) : 14;
   const tnxPrice = yfData['^TNX']?.currentPrice ?? 4.25;
   const irxPrice = yfData['^IRX']?.currentPrice ?? 3.80;
+  const tnxCloses = yfData['^TNX'] ? cleanCloses(yfData['^TNX'].closes) : [];
+  const irxCloses = yfData['^IRX'] ? cleanCloses(yfData['^IRX'].closes) : [];
+  const hygCloses = yfData['HYG'] ? cleanCloses(yfData['HYG'].closes) : [];
 
   // ====== HISTÓRICO DE CIERRES LIMPIO POR ACTIVO ======
   const closesHistory: Record<string, number[]> = {};
@@ -212,6 +289,11 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     ? fallbackCovMatrix()
     : covarianceMatrix(returnsPerAsset);
 
+  // ====== CEWS HISTORY AUTOMÁTICO (5 años semanal desde Yahoo) ======
+  const cewsHistory = buildCEWSHistory(
+    vixCloses, vixTimestamps, tnxCloses, irxCloses, hygCloses, m2Growth
+  );
+
   return {
     marketData: {
       prices,
@@ -229,6 +311,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       realizedVols,
       closesHistory,
       covMatrix,
+      cewsHistory,
     },
     fetchErrors,
   };

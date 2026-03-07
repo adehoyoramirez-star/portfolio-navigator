@@ -19,6 +19,10 @@ import {
 import { computeRebalanceSuggestions, RebalanceAsset } from "@/core/portfolio/rebalancer";
 import { generateAlerts, RegimeAlert } from "@/core/alerts/regimeAlerts";
 import { computeSmartDCA } from "@/core/dca/smartDCA";
+import {
+  computeCEWS, loadCEWSHistory, saveCEWSDataPoint, generateSyntheticHistory,
+  CEWSDataPoint,
+} from "@/core/macro/crisisEarlyWarning";
 
 const GaugeChart = lazy(() => import("react-gauge-chart"));
 
@@ -146,6 +150,8 @@ const InstitutionalDashboard: React.FC = () => {
   // NIVEL 4: alertas, régimen y persistencia
   const [activeAlerts, setActiveAlerts] = useState<RegimeAlert[]>([]);
   const [regimeHistory, setRegimeHistory] = useState<RegimeHistoryEntry[]>(() => loadRegimeHistory());
+  const [cewsHistory, setCewsHistory] = useState<CEWSDataPoint[]>(() => loadCEWSHistory());
+  const [cewsPreviousLevel, setCewsPreviousLevel] = useState<import("@/core/macro/crisisEarlyWarning").CEWSLevel>("CLEAR");
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
   const previousRegimeRef = useRef<string | null>(null);
 
@@ -167,8 +173,14 @@ const InstitutionalDashboard: React.FC = () => {
       // PASO 2: una sola llamada a Supabase edge function obtiene TODO:
       // precios actuales, 2 años de histórico, covMatrix real, BTC RSI/ZScore reales,
       // retornos por período (12m/3m/1m), volatilidades realizadas
-      const { marketData: md, fetchErrors } = await fetchRealMarketData();
+      const { marketData: md, fetchErrors } = await fetchRealMarketData(m2Growth);
       setMarketData(md);
+
+      // CEWS: poblar historial automáticamente desde Yahoo (5 años semanales)
+      // Fusionar con datos manuales existentes en localStorage — Yahoo tiene prioridad
+      if (md.cewsHistory.length > 0) {
+        setCewsHistory(md.cewsHistory);
+      }
 
       if (fetchErrors.length > 0) {
         setApiError(`Datos parciales. Sin datos para: ${fetchErrors.join(", ")}`);
@@ -319,6 +331,15 @@ const InstitutionalDashboard: React.FC = () => {
     return peak > 0 ? (currentTotal - peak) / peak : 0;
   }, [marketData, portfolio.assets, totalPortfolioValue]);
 
+  // CEWS: historial efectivo — real si hay ≥4 puntos, sintético si no
+  const effectiveCEWSHistory = useMemo(() => {
+    if (cewsHistory.length >= 4) return cewsHistory;
+    return generateSyntheticHistory(vix, manualBond10y - bond2y, creditSpread, m2Growth, 12);
+  }, [cewsHistory, vix, manualBond10y, bond2y, creditSpread, m2Growth]);
+
+  // CEWS: calcular early warning (antes del motor para que el motor lo use)
+  const cewsResult = useMemo(() => computeCEWS(effectiveCEWSHistory), [effectiveCEWSHistory]);
+
   // NIVEL 2: volatilidad realizada del portfolio
   const portfolioRealizedVol = useMemo(() => {
     if (!marketData?.covMatrix || assetInputs.length === 0) return undefined;
@@ -346,12 +367,13 @@ const InstitutionalDashboard: React.FC = () => {
         dxyTrend: (dxy - 100) / 100,
         btcVol,
       },
-      // NIVEL 2: campos opcionales — el motor degrada elegantemente si faltan
+      // Opcionales — motor degrada elegantemente si faltan
       covMatrix: marketData?.covMatrix,
       portfolioDrawdown,
       portfolioRealizedVol,
+      cewsHistory: effectiveCEWSHistory,   // CEWS: historial para early warning predictivo
     });
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory]);
 
   // ==================== SEÑALES MACRO UNIFICADAS ====================
   // FIX: fromManualInputs reemplaza el useMemo inline — honesto sobre la fuente de datos
@@ -392,6 +414,28 @@ const InstitutionalDashboard: React.FC = () => {
     }
     previousRegimeRef.current = currentRegime;
   }, [engineResult?.regime, engineResult?.tailRiskActive, vix]);
+
+  // CEWS: guardar punto de datos diariamente cuando cambian las macro inputs
+  useEffect(() => {
+    if (vix === 0) return;
+    const updated = saveCEWSDataPoint({
+      vix,
+      yieldSpread: manualBond10y - bond2y,
+      creditSpread,
+      m2Growth,
+    });
+    setCewsHistory(updated);
+  }, [vix, manualBond10y, bond2y, creditSpread, m2Growth]);
+
+  // CEWS: trackear nivel anterior para detectar mejora (señal de ataque)
+  const prevCewsLevelRef = React.useRef<import("@/core/macro/crisisEarlyWarning").CEWSLevel>("CLEAR");
+  useEffect(() => {
+    if (!cewsResult) return;
+    if (cewsResult.level !== prevCewsLevelRef.current) {
+      setCewsPreviousLevel(prevCewsLevelRef.current);
+      prevCewsLevelRef.current = cewsResult.level;
+    }
+  }, [cewsResult?.level]);
 
   // availableCash debe declararse ANTES de los useMemos que la usan
   const availableCash = cashReserve + monthlyInjection;
@@ -439,13 +483,20 @@ const InstitutionalDashboard: React.FC = () => {
       tailRiskActive: engineResult?.tailRiskActive ?? false,
       tailRiskOverlay: engineResult?.tailRiskOverlay ?? 1.0,
       availableCash,
-      motorAllocations: engineResult?.allocations.map(a => ({
-        name: a.name,
-        ticker: portfolio.assets.find(pa => pa.name === a.name)?.ticker ?? a.name,
-        finalAllocation: a.finalAllocation,
-      })) ?? [],
+      motorAllocations: engineResult?.allocations.map(a => {
+        const asset = portfolio.assets.find(pa => pa.name === a.name);
+        return {
+          name: a.name,
+          ticker: asset?.ticker ?? a.name,
+          finalAllocation: a.finalAllocation,
+          price: asset?.price ?? 0,   // necesario para calcular lotes enteros
+        };
+      }) ?? [],
+      // NIVEL 5: CEWS para modo ataque
+      cewsOutput: cewsResult ?? undefined,
+      cewsPreviousLevel,
     });
-  }, [btcRsi, btcZ, btcRet1m, engineResult, availableCash, portfolio.assets]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, availableCash, portfolio.assets, cewsResult, cewsPreviousLevel]);
 
   // Legacy btcEntry — solo para compatibilidad con el panel de señales BTC
   const btcEntry = (() => {
@@ -937,6 +988,89 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* CEWS — Crisis Early Warning System */}
+      <div style={{
+        ...styles.card,
+        border: cewsResult.level === "ALERT" ? "2px solid #ef4444"
+              : cewsResult.level === "WARNING" ? "2px solid #f59e0b"
+              : cewsResult.level === "WATCH" ? "2px solid #3b82f6"
+              : "1px solid #374151",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+          <h2 style={{ margin: 0 }}>
+            {cewsResult.level === "ALERT" ? "🚨" : cewsResult.level === "WARNING" ? "⚠️" : cewsResult.level === "WATCH" ? "👁" : "✅"}
+            {" "}Crisis Early Warning System
+          </h2>
+          <div style={{
+            padding: "0.35rem 0.9rem", borderRadius: 20, fontWeight: "bold", fontSize: "0.85rem",
+            backgroundColor: cewsResult.level === "ALERT" ? "#7f1d1d"
+              : cewsResult.level === "WARNING" ? "#78350f"
+              : cewsResult.level === "WATCH" ? "#1e3a5f"
+              : "#065f46",
+            color: "#fff",
+          }}>
+            {cewsResult.level} · Score {cewsResult.score}/12
+          </div>
+        </div>
+
+        {/* Señal de alerta temprana */}
+        {cewsResult.earlyWarningActive && (
+          <div style={{ backgroundColor: "#7f1d1d", border: "1px solid #ef4444", borderRadius: 8, padding: "0.75rem 1rem", marginBottom: "1rem" }}>
+            <p style={{ fontWeight: "bold", color: "#fca5a5", marginBottom: "0.25rem" }}>🚨 ALERTA TEMPRANA ACTIVA</p>
+            <p style={{ color: "#fecaca", fontSize: "0.85rem" }}>{cewsResult.earlyWarningReason}</p>
+          </div>
+        )}
+
+        {/* 4 señales */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
+          {Object.values(cewsResult.signals).map(signal => (
+            <div key={signal.name} style={{
+              backgroundColor: signal.level === "ALERT" ? "#450a0a"
+                : signal.level === "WARNING" ? "#422006"
+                : signal.level === "WATCH" ? "#172554"
+                : "#111827",
+              border: `1px solid ${signal.level === "ALERT" ? "#ef4444" : signal.level === "WARNING" ? "#f59e0b" : signal.level === "WATCH" ? "#3b82f6" : "#374151"}`,
+              borderRadius: 8, padding: "0.75rem",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>
+                <span style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "bold" }}>{signal.name}</span>
+                <span style={{
+                  fontSize: "0.7rem", fontWeight: "bold", padding: "0.1rem 0.4rem", borderRadius: 10,
+                  backgroundColor: signal.level === "ALERT" ? "#ef4444" : signal.level === "WARNING" ? "#f59e0b" : signal.level === "WATCH" ? "#3b82f6" : "#10b981",
+                  color: "#fff",
+                }}>{signal.level}</span>
+              </div>
+              <div style={{ fontSize: "1.4rem", fontWeight: "bold", color: signal.level === "ALERT" ? "#fca5a5" : signal.level === "WARNING" ? "#fde68a" : "#e5e7eb" }}>
+                {signal.value.toFixed(signal.name.includes("VIX") || signal.name.includes("Vol") ? 0 : 2)}
+                {signal.name.includes("M2") || signal.name.includes("Yield") || signal.name.includes("Credit") ? "%" : ""}
+              </div>
+              <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.25rem" }}>
+                {signal.trend === "DETERIORATING" ? "📉 Empeorando" : signal.trend === "IMPROVING" ? "📈 Mejorando" : "➡ Estable"}
+                {" · "}Score {signal.score}/3
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Recomendación */}
+        <div style={{ backgroundColor: "#111827", borderRadius: 6, padding: "0.75rem 1rem", marginBottom: "0.75rem" }}>
+          <p style={{ fontSize: "0.85rem", color: "#d1d5db" }}>
+            <strong style={{ color: "#f9fafb" }}>Recomendación: </strong>{cewsResult.recommendation}
+          </p>
+        </div>
+
+        {/* Meta info */}
+        <p style={{ fontSize: "0.72rem", color: "#4b5563" }}>
+          {cewsHistory.length >= 4
+            ? `Basado en ${cewsHistory.length} puntos reales · ${cewsResult.weeksInWarning} semanas en zona de alerta`
+            : `Datos sintéticos (${effectiveCEWSHistory.length} puntos simulados) — el sistema acumulará datos reales con el uso diario`
+          }
+          {cewsResult.regimePenaltyAdjustment !== 0 && (
+            ` · Ajuste al régimen: ${(cewsResult.regimePenaltyAdjustment * 100).toFixed(0)}% (ya aplicado al motor)`
+          )}
+        </p>
+      </div>
+
       {/* NIVEL 4: Historial de régimen */}
       {regimeHistory.length > 0 && (
         <div style={styles.card}>
@@ -1004,6 +1138,71 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* NIVEL 5: Panel de confluencia de fondo (siempre visible cuando hay señales) */}
+      {smartDCAResult.attackConfluence > 0 && (
+        <div style={{
+          ...styles.card,
+          border: smartDCAResult.attackMode ? "2px solid #22c55e" : "1px solid #374151",
+          background: smartDCAResult.attackMode ? "linear-gradient(135deg, #052e16 0%, #111827 100%)" : undefined,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <h2 style={{ margin: 0 }}>
+              {smartDCAResult.attackMode ? "🚀" : "🎯"} Modo Ataque — Confluencia de Fondo
+            </h2>
+            <div style={{
+              padding: "0.35rem 0.9rem", borderRadius: 20, fontWeight: "bold", fontSize: "0.85rem",
+              backgroundColor: smartDCAResult.attackConfluence >= 4 ? "#14532d"
+                : smartDCAResult.attackConfluence >= 3 ? "#065f46"
+                : smartDCAResult.attackConfluence >= 2 ? "#1e3a5f" : "#374151",
+              color: "#fff",
+            }}>
+              {smartDCAResult.attackConfluence}/5 señales · Tramo {smartDCAResult.attackTranche || "—"}
+              {smartDCAResult.attackMultiplier > 1 && ` · ×${smartDCAResult.attackMultiplier} DCA`}
+            </div>
+          </div>
+
+          {/* Grid de señales de confluencia */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.6rem", marginBottom: "1rem" }}>
+            {smartDCAResult.attackSignals.map(signal => (
+              <div key={signal.name} style={{
+                backgroundColor: signal.active ? "#052e16" : "#111827",
+                border: `1px solid ${signal.active ? "#22c55e" : "#374151"}`,
+                borderRadius: 8, padding: "0.65rem",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.3rem" }}>
+                  <span style={{ fontSize: "1rem" }}>{signal.active ? "✅" : "⏳"}</span>
+                  <span style={{ fontSize: "0.75rem", fontWeight: "bold", color: signal.active ? "#86efac" : "#6b7280" }}>
+                    {signal.name}
+                  </span>
+                </div>
+                <p style={{ fontSize: "0.7rem", color: signal.active ? "#bbf7d0" : "#4b5563", margin: 0 }}>
+                  {signal.description}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* Acción de ataque si está activa */}
+          {smartDCAResult.attackMode && (
+            <div style={{ backgroundColor: "#052e16", border: "1px solid #22c55e", borderRadius: 8, padding: "0.75rem 1rem" }}>
+              <p style={{ fontWeight: "bold", color: "#86efac", marginBottom: "0.25rem" }}>
+                {smartDCAResult.action === "ATTACK_MAX" ? "🚀 ATAQUE MÁXIMO — OPORTUNIDAD DE CICLO"
+                  : smartDCAResult.action === "ATTACK_STRONG" ? "⚔️ ATAQUE FUERTE — TRAMO 2"
+                  : "🎯 ATAQUE ENTRADA — TRAMO 1"}
+              </p>
+              <p style={{ color: "#d1fae5", fontSize: "0.85rem", margin: 0 }}>{smartDCAResult.reasoning}</p>
+            </div>
+          )}
+
+          {!smartDCAResult.attackMode && (
+            <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: 0 }}>
+              Se necesitan ≥2 señales activas + régimen mejorando para activar modo ataque.
+              {smartDCAResult.attackConfluence === 1 && " Falta 1 señal más."}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* NIVEL 4: SmartDCA por activo — reemplaza sugerencias legacy */}
       {smartDCAResult.totalCashToInvest > 0 && smartDCAResult.allocationByAsset.length > 0 && (
         <div style={styles.card}>
@@ -1017,26 +1216,57 @@ const InstitutionalDashboard: React.FC = () => {
                 <tr style={{ borderBottom: "1px solid #374151", color: "#6b7280" }}>
                   <th style={{ textAlign: "left",  padding: "0.4rem 0.5rem" }}>Activo</th>
                   <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Peso motor</th>
-                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>€ a invertir</th>
-                  <th style={{ textAlign: "left",  padding: "0.4rem 0.5rem" }}>Detalle</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Participaciones</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Precio</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Coste real</th>
+                  <th style={{ textAlign: "left",  padding: "0.4rem 0.5rem" }}>Estado</th>
                 </tr>
               </thead>
               <tbody>
                 {smartDCAResult.allocationByAsset.map(a => (
-                  <tr key={a.ticker} style={{ borderBottom: "1px solid #1f2937" }}>
-                    <td style={{ padding: "0.5rem", fontWeight: "bold" }}>{a.ticker}</td>
-                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#6366f1" }}>{(a.motorWeight * 100).toFixed(1)}%</td>
-                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#10b981" }}>€{a.cashToInvest.toFixed(0)}</td>
-                    <td style={{ padding: "0.5rem", color: "#6b7280", fontSize: "0.78rem" }}>{a.reason}</td>
+                  <tr key={a.ticker} style={{
+                    borderBottom: "1px solid #1f2937",
+                    opacity: a.skipped ? 0.45 : 1,
+                  }}>
+                    <td style={{ padding: "0.5rem", fontWeight: "bold", color: a.skipped ? "#6b7280" : "#f9fafb" }}>
+                      {a.ticker}
+                      {a.isFractional && <span style={{ fontSize: "0.7rem", color: "#6366f1", marginLeft: 4 }}>FRAC</span>}
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#6366f1" }}>
+                      {(a.motorWeight * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold",
+                        color: a.skipped ? "#ef4444" : "#f9fafb" }}>
+                      {a.skipped ? "—" : a.isFractional
+                        ? a.shares.toFixed(6)
+                        : `${a.shares}×`}
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#9ca3af" }}>
+                      €{a.pricePerShare.toFixed(2)}
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right",
+                        color: a.skipped ? "#6b7280" : "#10b981", fontWeight: a.skipped ? "normal" : "bold" }}>
+                      {a.skipped ? "€0" : `€${a.actualCost.toFixed(2)}`}
+                    </td>
+                    <td style={{ padding: "0.5rem", color: "#6b7280", fontSize: "0.75rem" }}>
+                      {a.skipped
+                        ? `Necesita €${a.pricePerShare.toFixed(0)} mín.`
+                        : a.reason.split("→")[1]?.trim() ?? a.reason}
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
-                <tr style={{ borderTop: "1px solid #374151" }}>
-                  <td colSpan={2} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>Total DCA:</td>
-                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#10b981" }}>€{smartDCAResult.totalCashToInvest.toFixed(0)}</td>
-                  <td style={{ padding: "0.5rem", color: "#6b7280", fontSize: "0.78rem" }}>
-                    Score técnico: {smartDCAResult.score}/3 · Fracción: {(smartDCAResult.buyFraction * 100).toFixed(0)}%
+                <tr style={{ borderTop: "1px solid #374151", backgroundColor: "#0f172a" }}>
+                  <td colSpan={4} style={{ padding: "0.5rem 0.5rem", color: "#9ca3af", textAlign: "right" }}>
+                    Total a desembolsar:
+                  </td>
+                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#10b981", fontSize: "1rem" }}>
+                    €{smartDCAResult.totalCashToInvest.toFixed(2)}
+                  </td>
+                  <td style={{ padding: "0.5rem", color: "#6b7280", fontSize: "0.75rem" }}>
+                    {smartDCAResult.allocationByAsset.filter(a => a.skipped).length > 0 &&
+                      `${smartDCAResult.allocationByAsset.filter(a => a.skipped).length} activo(s) omitidos por lote mínimo`}
                   </td>
                 </tr>
               </tfoot>

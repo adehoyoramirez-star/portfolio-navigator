@@ -17,6 +17,7 @@
 import { calculateMomentum } from "../factors/momentum";
 import { calculateValue, computeUniverseStats, ValueInput } from "../factors/value";
 import { getMasterRegime, MasterRegimeOutput } from "../macro/masterRegime";
+import type { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
 import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBudget";
@@ -88,11 +89,12 @@ export interface OlympusEngineInput {
     btcVol: number;
     m2Growth: number;    // NUEVO Nivel 2
   };
-  // NUEVO Nivel 2: opcionales — motor funciona sin ellos (degradación elegante)
+  // Opcionales — motor funciona sin ellos (degradación elegante)
   covMatrix?: number[][];            // covarianza real de Supabase (para Markowitz)
   portfolioDrawdown?: number;        // drawdown actual (para tail risk)
   portfolioRealizedVol?: number;     // vol realizada del portfolio (para vol target)
   targetVol?: number;                // target de volatilidad (default: 14%)
+  cewsHistory?: CEWSDataPoint[];     // historial CEWS para early warning predictivo
 }
 
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
@@ -108,7 +110,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     dxyTrend: macro.dxyTrend,
     btcVol: macro.btcVol,
     m2Growth: macro.m2Growth,
-  });
+  }, input.cewsHistory);
 
   const corrPenalty = correlationPenalty(correlationMatrix);
 
