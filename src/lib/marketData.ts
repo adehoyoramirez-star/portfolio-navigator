@@ -17,6 +17,7 @@ interface YahooResponse {
     growthYoY: number;
     history: { date: string; value: number }[];
   };
+  cape?: { cape: number; source: string } | null;
 }
 
 // Tipo completo que devuelve fetchRealMarketData — incluye todo lo que el dashboard necesita
@@ -49,7 +50,23 @@ export interface MarketData {
   cewsHistory: CEWSDataPoint[];
   // M2 real de FRED (growthYoY en %) — 0 si FRED no disponible
   m2Growth: number;
-  m2GrowthSource: "FRED" | "manual";  // para mostrar en el dashboard
+  m2GrowthSource: "FRED" | "manual";
+  // S&P 500 indicadores calculados desde histórico real
+  sp500Rsi: number;          // RSI 14 días
+  sp500Momentum12m: number;  // retorno últimos 12m (menos 1m)
+  sp500Momentum3m: number;   // retorno últimos 3m
+  dxy: number;               // índice del dólar (DX-Y.NYB)
+  // PER S&P 500 — Shiller CAPE de FRED
+  per: number;
+  perSource: "FRED" | "manual";
+  // BTC vol realizada anualizada (calculada desde histórico)
+  btcVolRealized: number;
+  // Jump parameters calibrados desde histórico BTC
+  jumpIntensity: number;   // frecuencia de saltos por año
+  jumpMean: number;        // tamaño medio del salto
+  jumpStd: number;         // dispersión del salto
+  // Liquidez global calculada automáticamente
+  liquidityScore: number;
 }
 
 function cleanCloses(closes: number[]): number[] {
@@ -186,6 +203,34 @@ function buildCEWSHistory(
   return points;
 }
 
+// Generic RSI-14 from a closes array
+function calculateRSI14(closes: number[]): number {
+  if (closes.length < 15) return 50;
+  const returns = dailyReturns(closes.slice(-15));
+  const gains  = returns.filter(r => r > 0).reduce((a, b) => a + b, 0) / 14;
+  const losses = Math.abs(returns.filter(r => r < 0).reduce((a, b) => a + b, 0)) / 14;
+  const rs = losses === 0 ? 100 : gains / losses;
+  return 100 - (100 / (1 + rs));
+}
+
+// Jump parameters: calibrate from historical daily returns
+// Returns annualized intensity, mean jump size, std of jumps
+function calibrateJumps(dailyRets: number[]): { intensity: number; mean: number; stdDev: number } {
+  if (dailyRets.length < 60) return { intensity: 0.15, mean: -0.12, stdDev: 0.05 };
+  const threshold = 0.04; // moves > 4% in a day = jump
+  const jumps = dailyRets.filter(r => Math.abs(r) > threshold);
+  const intensity = (jumps.length / dailyRets.length) * 252; // annualized
+  const jumpMean  = jumps.length > 0 ? jumps.reduce((a, b) => a + b, 0) / jumps.length : -0.05;
+  const jumpStdDev = jumps.length > 1
+    ? Math.sqrt(jumps.reduce((s, v) => s + (v - jumpMean) ** 2, 0) / (jumps.length - 1))
+    : 0.05;
+  return {
+    intensity: Math.max(0.05, Math.min(3.0, intensity)),
+    mean:      Math.max(-0.30, Math.min(0.10, jumpMean)),
+    stdDev:    Math.max(0.02, Math.min(0.20, jumpStdDev)),
+  };
+}
+
 export async function fetchRealMarketData(): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
   const { data: response, error } = await supabase.functions.invoke<YahooResponse>('yahoo-finance');
 
@@ -193,11 +238,14 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
   }
 
-  const { data: yfData, errors: fetchErrors, m2: fredM2 } = response;
+  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE } = response;
 
-  // M2 real de FRED — si no está disponible, fallback al último valor conocido (5.2%)
-  // growthYoY ya está en porcentaje: 3.2 = 3.2% crecimiento YoY
+  // M2 real de FRED
   const m2Growth = fredM2?.growthYoY ?? 5.2;
+
+  // Shiller CAPE (PER ajustado al ciclo)
+  const per = fredCAPE?.cape ?? 29.5;
+  const perSource: "FRED" | "manual" = fredCAPE ? "FRED" : "manual";
 
   // ====== PRECIOS ACTUALES ======
   const prices: Record<string, number> = {};
@@ -231,7 +279,6 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
 
   // ====== BTC INDICADORES TÉCNICOS (desde histórico real, no mock) ======
   const btcCloses = closesHistory['BTC-EUR'];
-  const btcReturns = returnsPerAsset[ASSETS.indexOf('BTC-EUR')];
 
   // Z-Score 200 días
   let btcZScore = 0;
@@ -242,15 +289,46 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     btcZScore = s > 0 ? ((yfData['BTC-EUR']?.currentPrice ?? last200[last200.length - 1]) - m) / s : 0;
   }
 
-  // RSI 14 días desde retornos reales
-  let btcRsi = 50;
-  if (btcReturns.length >= 15) {
-    const recent = btcReturns.slice(-14);
-    const gains = recent.filter(r => r > 0).reduce((a, b) => a + b, 0) / 14;
-    const losses = Math.abs(recent.filter(r => r < 0).reduce((a, b) => a + b, 0)) / 14;
-    const rs = losses === 0 ? 100 : gains / losses;
-    btcRsi = 100 - (100 / (1 + rs));
-  }
+  // BTC RSI-14 (usando helper genérico)
+  const btcRsi = calculateRSI14(cleanCloses(yfData['BTC-EUR']?.closes ?? []));
+
+  // BTC vol realizada anualizada
+  const btcReturnsForVol = dailyReturns(cleanCloses(yfData['BTC-EUR']?.closes ?? []));
+  const btcVolRealized = btcReturnsForVol.length > 20
+    ? Math.sqrt(btcReturnsForVol.reduce((s, r) => { const m = 0; return s + (r - m) ** 2; }, 0)
+        / btcReturnsForVol.length * 252)
+    : 0.60;
+
+  // Jump parameters calibrados desde histórico BTC
+  const jumpParams = calibrateJumps(btcReturnsForVol);
+
+  // ── S&P 500 ────────────────────────────────────────────────────────────────
+  const sp500Closes = cleanCloses(yfData['^GSPC']?.closes ?? []);
+  const sp500Rsi = calculateRSI14(sp500Closes);
+  const sp500Returns = dailyReturns(sp500Closes);
+
+  // S&P 500 momentum: retorno 12m (excluyendo último mes = Jegadeesh-Titman)
+  const sp500_12m_start = sp500Closes[sp500Closes.length - 252 - 1];
+  const sp500_1m_start  = sp500Closes[sp500Closes.length - 21 - 1];
+  const sp500_3m_start  = sp500Closes[sp500Closes.length - 63 - 1];
+  const sp500Last       = sp500Closes[sp500Closes.length - 1];
+  const sp500Momentum12m = sp500_12m_start > 0 && sp500_1m_start > 0
+    ? (sp500_1m_start / sp500_12m_start) - 1   // 12m excluyendo último mes
+    : 0.15;
+  const sp500Momentum3m = sp500_3m_start > 0
+    ? (sp500Last / sp500_3m_start) - 1
+    : 0.05;
+
+  // ── DXY ───────────────────────────────────────────────────────────────────
+  const dxy = yfData['DX-Y.NYB']?.currentPrice ?? 103.5;
+
+  // ── Liquidez Global (automática) ──────────────────────────────────────────
+  // Proxy: M2 crecimiento positivo + VIX bajo = alta liquidez
+  // Rango normalizado [0, 1]
+  const liquidityRaw = (m2Growth / 10) * 0.6 + Math.max(0, (30 - vixPrice) / 30) * 0.4;
+  const liquidityScoreAuto = Math.max(0, Math.min(1, liquidityRaw));
+
+  void sp500Returns; // reservado para futuros cálculos
 
   // ====== RETORNOS POR PERÍODO (12m, 3m, 1m) ======
   // Aproximación: 252 días hábiles/año, 63 días/trimestre, 21 días/mes
@@ -326,6 +404,17 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       cewsHistory,
       m2Growth,
       m2GrowthSource: fredM2 ? "FRED" : "manual",
+      per,
+      perSource,
+      sp500Rsi,
+      sp500Momentum12m,
+      sp500Momentum3m,
+      dxy,
+      btcVolRealized,
+      jumpIntensity: jumpParams.intensity,
+      jumpMean:      jumpParams.mean,
+      jumpStd:       jumpParams.stdDev,
+      liquidityScore: liquidityScoreAuto,
     },
     fetchErrors,
   };

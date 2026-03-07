@@ -13,6 +13,10 @@ const TICKERS = [
   '%5EVIX', '%5ETNX', '%5EIRX',
   // Credit spread proxy (HY bond ETF — proxy del spread HY vs IG)
   'HYG',
+  // S&P 500 — para RSI, momentum y PER proxy
+  '%5EGSPC',
+  // DXY — índice del dólar americano
+  'DX-Y.NYB',
   // Proxies americanos para backtest histórico (10-24 años de datos)
   'EEM',   // EMXC.DE + IS3Q.DE → MSCI Emerging Markets
   'GLD',   // PPFB.DE → Oro físico
@@ -70,6 +74,30 @@ interface M2Result {
   history: M2DataPoint[]; // últimos 5 años mensual
 }
 
+// ── FRED Shiller CAPE (PER S&P 500 ajustado al ciclo) ────────────────────────
+async function fetchCAPEFRED(): Promise<{ cape: number; source: string } | null> {
+  try {
+    // CAPE = Cyclically Adjusted Price-Earnings ratio (Shiller)
+    // Serie FRED: CAPE (mensual, ~1881 en adelante)
+    const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=CAPE';
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) return null;
+    const text = await res.text();
+    const lines = text.trim().split('\n').slice(1);
+    // Last non-empty line
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const [, val] = lines[i].split(',');
+      const cape = parseFloat(val);
+      if (!isNaN(cape) && cape > 0) {
+        return { cape, source: 'FRED CAPE' };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchM2FRED(): Promise<M2Result | null> {
   try {
     // FRED CSV público — sin API key necesaria
@@ -116,10 +144,11 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // Fetch Yahoo + FRED en paralelo
-    const [yahooResults, m2Data] = await Promise.all([
+    // Fetch Yahoo + FRED en paralelo (M2 + CAPE)
+    const [yahooResults, m2Data, capeData] = await Promise.all([
       Promise.allSettled(TICKERS.map(fetchTicker)),
       fetchM2FRED(),
+      fetchCAPEFRED(),
     ]);
 
     const data: Record<string, ChartResult> = {};
@@ -134,7 +163,7 @@ Deno.serve(async (req: Request) => {
       }
     });
 
-    return new Response(JSON.stringify({ data, errors, m2: m2Data }), {
+    return new Response(JSON.stringify({ data, errors, m2: m2Data, cape: capeData }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {
