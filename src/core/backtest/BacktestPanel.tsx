@@ -128,6 +128,13 @@ export default function BacktestPanel({
         <span style={{ color: "#6b7280", fontSize: "0.75rem", marginLeft: "1rem" }}>
           {result.daysWithProxies}d proxies · {result.daysWithRealData}d ETFs reales
         </span>
+        {result.totalTransactionCosts > 0 && (
+          <span style={{ color: "#f59e0b", fontSize: "0.75rem", marginLeft: "1rem" }}>
+            💸 Costes transacción: −€{result.totalTransactionCosts.toFixed(0)} acum.
+            ({result.rebalanceCount} rebalanceos × {result.transactionCostBps}bps)
+            · CAGR neto ya incluye estos costes
+          </span>
+        )}
       </div>
 
       {/* Fiabilidad */}

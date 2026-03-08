@@ -1,4 +1,3 @@
-
 // ===============================================
 // ARCHIVO: src/core/backtest/backtestEngine.ts
 // NIVEL 4 — Backtest con métricas condicionales por régimen
@@ -61,6 +60,10 @@ export interface BacktestInput {
   lookbackDays?: number;
   rebalanceDays?: number;
   initialCapital?: number;
+  // Costes de transacción — hacen el backtest realista
+  // Xetra ETFs: spread ~0.05-0.15%, comisión broker ~0.05-0.10%
+  // Default 15bps (0.15%) por operación — conservador pero realista
+  transactionCostBps?: number;
 }
 
 export type BacktestRegime = "EXPANSION" | "CONTRACTION" | "CRISIS";
@@ -105,10 +108,14 @@ export interface BacktestOutput {
   dailyRecords: DailyRecord[];
   metrics: BacktestMetrics;
   benchmarkMetrics: BacktestMetrics;
-  regimeConditional: RegimeConditionalMetrics;  // NUEVO
-  regimeDays: Record<BacktestRegime, number>;   // NUEVO: cuántos días en cada régimen
+  regimeConditional: RegimeConditionalMetrics;
+  regimeDays: Record<BacktestRegime, number>;
   daysWithProxies: number;
   daysWithRealData: number;
+  // Transaction costs
+  transactionCostBps: number;        // costes aplicados en bps
+  totalTransactionCosts: number;     // coste total acumulado en € (sobre capital inicial)
+  rebalanceCount: number;            // número de rebalanceos realizados
 }
 
 // ==================== MOTOR PRINCIPAL ====================
@@ -120,7 +127,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     lookbackDays = 252,
     rebalanceDays = 21,
     initialCapital = 10_000,
+    transactionCostBps = 15,  // 15bps = 0.15% por rebalanceo — realista para Xetra ETFs
   } = input;
+  const txCostRate = transactionCostBps / 10_000; // convertir bps a decimal
+  let totalTransactionCosts = 0;
+  let rebalanceCount = 0;
 
   const backtestTickers = Object.fromEntries(
     ASSETS.map(t => [t, getBacktestTicker(t, closesHistory)])
@@ -164,13 +175,22 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   for (let t = backtestStart; t < backtestEnd; t++) {
     const dayIndex = t - backtestStart;
 
-    // Rebalanceo — incluye detección de régimen
+    // Rebalanceo — incluye detección de régimen y costes de transacción
     if (dayIndex % rebalanceDays === 0) {
       const result = computeAllocationsWithRegime(
         closesHistory, backtestTickers, macro, t, lookbackDays
       );
       currentAllocations = result.allocations;
       currentRegime = result.regime;
+      rebalanceCount++;
+
+      // Coste de transacción: se aplica sobre el valor del portfolio en el día de rebalanceo
+      // Modelamos el coste como una reducción directa del valor del portfolio
+      // En la práctica representa: spread bid-ask + comisión del broker por cada activo
+      const activeTickers = Object.values(currentAllocations).filter(w => w > 0.01).length;
+      const costThisRebalance = portfolioValue * txCostRate * activeTickers;
+      portfolioValue -= costThisRebalance;
+      totalTransactionCosts += costThisRebalance;
     }
 
     // Retorno diario
@@ -246,6 +266,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     regimeDays,
     daysWithProxies,
     daysWithRealData,
+    transactionCostBps,
+    totalTransactionCosts,
+    rebalanceCount,
   };
 }
 

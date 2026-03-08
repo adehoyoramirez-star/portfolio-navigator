@@ -98,12 +98,20 @@ export interface OlympusEngineInput {
   covMatrix?: number[][];            // covarianza real de Supabase (para Markowitz)
   portfolioDrawdown?: number;        // drawdown actual (para tail risk)
   portfolioRealizedVol?: number;     // vol realizada del portfolio (para vol target)
-  targetVol?: number;                // target de volatilidad (default: 14%)
+  targetVol?: number;                // target de volatilidad (default: 18%)
+  erpValue?: number;                 // Equity Risk Premium = EarningsYield - Bono10y (ej: -0.007)
   cewsHistory?: CEWSDataPoint[];     // historial CEWS para early warning predictivo
 }
 
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const { assets, correlationMatrix, macro } = input;
+
+  // ERP penalty: cuando las acciones pagan menos que los bonos (ERP negativo),
+  // reducimos ligeramente las allocations de renta variable.
+  // Fórmula: ERP -1% → multiplicador 0.95 | ERP +2% → multiplicador 1.04
+  // Clampeado entre 0.85 y 1.10 para evitar distorsiones extremas
+  const erpRaw = input.erpValue ?? 0.02; // default 2% si no se proporciona
+  const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
   const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
 
   // ====== CAPA 1: RÉGIMEN UNIFICADO (continuo) ======
@@ -153,7 +161,11 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn }) => {
     const normalizedExpectedReturn = (rawExpectedReturn - rawMean) / rawStd;
     const kelly = calculateKelly({ expectedReturn: normalizedExpectedReturn, volatility: asset.volatility });
-    const kellyAlloc = kelly.kellyFraction * corrPenalty * masterRegime.regimePenalty;
+    // ERP ajusta solo activos de renta variable — oro y BTC no tienen earnings yield
+    // por lo que su relación con el ERP del S&P500 es indirecta (actúan como alternativa)
+    const isEquity = asset.earningsYield > 0;
+    const erpAdj = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0); // gold/BTC ligero boost si ERP muy negativo
+    const kellyAlloc = kelly.kellyFraction * corrPenalty * masterRegime.regimePenalty * erpAdj;
     return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyAlloc };
   });
 

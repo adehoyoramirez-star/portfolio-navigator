@@ -116,7 +116,7 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
       timestamp: now,
       severity: "WARNING",
       title: `Vol Target: exposición reducida al ${(input.volTargetMultiplier * 100).toFixed(0)}%`,
-      message: `La volatilidad realizada del portfolio supera el objetivo del 14%. El motor escala exposición a ×${input.volTargetMultiplier.toFixed(2)}.`,
+      message: `La volatilidad realizada del portfolio supera el objetivo del 18%. El motor escala exposición a ×${input.volTargetMultiplier.toFixed(2)}.`,
       action: "No incrementar posiciones hasta que la volatilidad se normalice.",
       dismissible: true,
       regime: input.currentRegime,

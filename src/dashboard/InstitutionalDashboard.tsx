@@ -5,6 +5,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis
 import { calculateCorrelationMatrix } from "@/core/data/portfolioMetrics";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
+import { calculateCVaR } from "@/core/simulation/cvar";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
@@ -389,9 +390,11 @@ const InstitutionalDashboard: React.FC = () => {
       covMatrix: marketData?.covMatrix,
       portfolioDrawdown,
       portfolioRealizedVol,
+      erpValue,                            // ERP conectado al motor — ajusta Kelly en renta variable
+      liquidityGrowth,                     // para auto-generar views macro en Black-Litterman
       cewsHistory: effectiveCEWSHistory,   // CEWS: historial para early warning predictivo
     });
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory]);
 
   // ==================== SEÑALES MACRO UNIFICADAS ====================
   // FIX: fromManualInputs reemplaza el useMemo inline — honesto sobre la fuente de datos
@@ -606,6 +609,16 @@ const InstitutionalDashboard: React.FC = () => {
   }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol, jumpIntensity, jumpMean, jumpStd, years]);
 
   const { mean: meanValue, worst5, simulations } = jumpSim;
+
+  // CVaR (Expected Shortfall) — calculado sobre las 5000 simulaciones del Monte Carlo
+  // Más honesto que el VaR: nos dice la pérdida MEDIA en el peor 5% de escenarios,
+  // no solo el umbral. Estándar regulatorio Basel III/IV.
+  const cvarResult = useMemo(() => {
+    if (simulations.length === 0) return null;
+    // simulations son valores absolutos en €, necesitamos multiplicadores relativos
+    const multipliers = simulations.map(v => v / totalPortfolioValue);
+    return calculateCVaR(multipliers);
+  }, [simulations, totalPortfolioValue]);
   const target = portfolio.targetGoal;
   const successes = simulations.filter(v => v >= target).length;
   const probability = (successes / simulations.length) * 100;
@@ -1008,7 +1021,25 @@ const InstitutionalDashboard: React.FC = () => {
           <div><label htmlFor="years" style={styles.label}>Años de simulación:</label><input id="years" name="years" type="number" value={years} onChange={(e) => setYears(Number(e.target.value))} style={styles.smallInput} min="1" max="50" step="1" /></div>
           <div><p><strong>Probabilidad de alcanzar {formatCurrency(target)}:</strong> {probability.toFixed(1)}%</p></div>
           <div><p><strong>Media:</strong> {formatCurrency(meanValue)}</p></div>
-          <div><p><strong>Peor 5%:</strong> {formatCurrency(worst5)}</p></div>
+          <div><p><strong>Peor 5% (VaR):</strong> {formatCurrency(worst5)}</p></div>
+          {cvarResult && (
+            <div style={{ borderLeft: "2px solid #f59e0b", paddingLeft: "0.75rem" }}>
+              <p style={{ margin: 0 }}>
+                <strong>CVaR 95%:</strong>{" "}
+                <span style={{ color: "#f59e0b" }}>
+                  {formatCurrency(totalPortfolioValue * (1 + cvarResult.cvar95))}
+                </span>
+              </p>
+              <p style={{ margin: 0, fontSize: "0.75rem", color: "#9ca3af" }}>
+                Media del peor 5% de escenarios · Tail ratio: {cvarResult.tailRatio.toFixed(2)}x
+                {cvarResult.tailRatio > 1.5 ? " ⚠️ cola pesada" : " ✓ distribución normal"}
+              </p>
+              <p style={{ margin: 0, fontSize: "0.75rem", color: "#ef4444" }}>
+                CVaR 99%: {formatCurrency(totalPortfolioValue * (1 + cvarResult.cvar99))}
+                {" · "}Estándar Basel III
+              </p>
+            </div>
+          )}
         </div>
         <ResponsiveContainer width="100%" height={250}>
           <BarChart data={histogramData} barSize={15}>
