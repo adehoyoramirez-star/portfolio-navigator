@@ -220,7 +220,7 @@ export function runBlackLitterman(input: BLInput): BLOutput {
   const posteriorWeights = minimumVarianceBL(covMatrix, posteriorReturns, n);
 
   // PASO 5: Calcular impacto de cada view para el UI
-  const viewImpact = views.map((view, vi) => {
+  const viewImpact = views.map((view, _vi) => {
     const mainAssetIdx = assetNames.indexOf(view.assets[0]);
     return {
       view,

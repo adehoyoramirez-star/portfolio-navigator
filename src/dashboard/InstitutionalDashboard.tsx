@@ -28,6 +28,14 @@ import {
 import { computeRegimeDuration, detectRegimeStartDate } from "@/core/macro/regimeDuration";
 import { runAllStressScenarios, type StressResult } from "@/core/simulation/stressScenarios";
 import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
+import {
+  analyzeBitcoinCycle,
+  getPowerLawProjection,
+  type BitcoinCycleInputs,
+  type BitcoinCycleOutput,
+  type ElliottWavePoint,
+  type ElliottWaveLabel,
+} from "@/core/crypto/bitcoinCycleAnalyzer";
 
 const GaugeChart = lazy(() => import("react-gauge-chart"));
 
@@ -45,7 +53,6 @@ function monteCarloJumpDiffusion(
 ): { mean: number; median: number; p25: number; p75: number; worst5: number; best95: number; simulations: number[]; muUsed: number } {
   const monthlyMu = mu / 12;
   const monthlySigma = sigma / Math.sqrt(12);
-  const monthlyJumpIntensity = jumpIntensity / 12;
   const months = years * 12;
   const finalValues: number[] = [];
 
@@ -56,7 +63,10 @@ function monteCarloJumpDiffusion(
       const z = randomNormal();
       const diffusion = monthlyMu - 0.5 * monthlySigma ** 2 + monthlySigma * z;
       let jump = 0;
-      if (Math.random() < monthlyJumpIntensity) {
+      // Poisson correcto: λ es intensidad anual (eventos/año, puede ser >1)
+      // P(jump en mes) = 1 - e^(-λ/12)
+      const monthlyJumpProb = 1 - Math.exp(-jumpIntensity / 12);
+      if (Math.random() < monthlyJumpProb) {
         jump = jumpMean + jumpStd * randomNormal();
       }
       value = value * Math.exp(diffusion + jump);
@@ -150,8 +160,17 @@ const InstitutionalDashboard: React.FC = () => {
   const [btcVol, setBtcVol] = useState(0.65);                        // volatilidad BTC (65%)
   const [btcDominance, setBtcDominance] = useState(54.0);            // BTC.D % — ticker TradingView: BTC.D
   const [mvrvRatio, setMvrvRatio] = useState(1.8);                   // MVRV ratio — lookintobitcoin.com
-  const [btcRsiWeekly, setBtcRsiWeekly] = useState<number | undefined>(undefined); // RSI semanal BTC — TradingView W timeframe
-  const [prevBtcDominance, setPrevBtcDominance] = useState<number | undefined>(undefined); // BTC.D mes anterior (para detectar caída)
+  const [btcRsiWeekly, setBtcRsiWeekly] = useState<number | undefined>(undefined);
+  const [prevBtcDominance, setPrevBtcDominance] = useState<number | undefined>(undefined);
+
+  // BTC Cycle Analyzer inputs (persistidos)
+  const [puellMultiple, setPuellMultiple] = useState<number | undefined>(undefined);
+  const [hashRibbonState, setHashRibbonState] = useState<"CAPITULATION" | "RECOVERY" | "EXPANSION" | undefined>(undefined);
+  const [piCycleMa111, setPiCycleMa111] = useState<number | undefined>(undefined);
+  const [piCycleMa350x2, setPiCycleMa350x2] = useState<number | undefined>(undefined);
+  const [elliottPivots, setElliottPivots] = useState<ElliottWavePoint[]>([]);
+  const [elliottCurrentWave, setElliottCurrentWave] = useState<ElliottWaveLabel | undefined>(undefined);
+  const [elliottPivotsText, setElliottPivotsText] = useState<string>("");
 
   // Señales de techo de ciclo — inputs específicos por activo
   const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);   // $/lb — uxc.com
@@ -290,6 +309,25 @@ const InstitutionalDashboard: React.FC = () => {
       setBtcVol(savedMacro.btcVol);
       if (savedMacro.btcDominance !== undefined) setBtcDominance(savedMacro.btcDominance);
       if (savedMacro.mvrvRatio !== undefined) setMvrvRatio(savedMacro.mvrvRatio);
+      // Jump params
+      if (savedMacro.jumpIntensity !== undefined) setJumpIntensity(savedMacro.jumpIntensity);
+      if (savedMacro.jumpMean !== undefined) setJumpMean(savedMacro.jumpMean);
+      if (savedMacro.jumpStd !== undefined) setJumpStd(savedMacro.jumpStd);
+      // BTC Cycle
+      if (savedMacro.puellMultiple !== undefined) setPuellMultiple(savedMacro.puellMultiple);
+      if (savedMacro.hashRibbonState) setHashRibbonState(savedMacro.hashRibbonState as "CAPITULATION" | "RECOVERY" | "EXPANSION");
+      if (savedMacro.piCycleMa111 !== undefined) setPiCycleMa111(savedMacro.piCycleMa111);
+      if (savedMacro.piCycleMa350x2 !== undefined) setPiCycleMa350x2(savedMacro.piCycleMa350x2);
+      if (savedMacro.elliottCurrentWave) setElliottCurrentWave(savedMacro.elliottCurrentWave as ElliottWaveLabel);
+      if (savedMacro.elliottPivots && savedMacro.elliottPivots.length > 0) {
+        const pts = savedMacro.elliottPivots.map((p: { price: number; dateStr: string; type: string }) => ({
+          price: p.price,
+          date: new Date(p.dateStr),
+          label: p.type,   // stored as 'type' in PersistedMacro, maps to 'label' in ElliottWavePoint
+        }));
+        setElliottPivots(pts);
+        setElliottPivotsText(savedMacro.elliottPivots.map((p: { price: number; dateStr: string; type: string }) => `${p.price}:${p.type}`).join(", "));
+      }
     }
     refreshMarketData();
   }, []);
@@ -310,9 +348,18 @@ const InstitutionalDashboard: React.FC = () => {
       vix, manualPER, manualBond10y, bond2y, m2Growth,
       creditSpread, liquidityGrowth, dxy, moveIndex, btcVol,
       btcDominance, mvrvRatio,
+      jumpIntensity, jumpMean, jumpStd,
+      puellMultiple, hashRibbonState,
+      piCycleMa111, piCycleMa350x2,
+      elliottCurrentWave,
+      elliottPivots: elliottPivots.map((p: ElliottWavePoint) => ({
+        price: p.price,
+        dateStr: p.date ? p.date.toISOString() : new Date().toISOString(),
+        type: p.label,
+      })),
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpMean, jumpStd, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -525,6 +572,24 @@ const InstitutionalDashboard: React.FC = () => {
     };
     return detectCycleTops(cycleInputs);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, bookToBill, manualBond10y, inflationBreakeven]);
+
+  // ── BTC CYCLE ANALYZER (Power Law + Halving + Puell + Hash Ribbon + Elliott) ──
+  const btcCycleResult = useMemo((): BitcoinCycleOutput | null => {
+    const btcAssetLocal = portfolio.assets.find(a => a.ticker === "BTC-EUR");
+    if (!btcAssetLocal || btcAssetLocal.price <= 0) return null;
+    const inputs: BitcoinCycleInputs = {
+      currentPrice: btcAssetLocal.price,
+      puellMultiple,
+      hashRibbonState,
+      piCycleMa111,
+      piCycleMa350x2,
+      elliottPivots:      elliottPivots.length >= 2 ? elliottPivots : undefined,
+      elliottCurrentWave: elliottCurrentWave,
+      eurUsdRate: 1.08,
+    };
+    try { return analyzeBitcoinCycle(inputs); }
+    catch { return null; }
+  }, [portfolio.assets, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
 
   // ── AVAILABLE CASH (paso 1 — sin DCA state, resuelve la dependencia circular) ──
   // Para smartDCA siempre pasamos cashReserve + monthlyInjection (necesita el total para calcular tramos de ataque)
@@ -964,7 +1029,7 @@ const InstitutionalDashboard: React.FC = () => {
 
         <div>
           <label style={styles.label}>Jump Intensity {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
-          <input type="number" value={jumpIntensity} onChange={(e) => setJumpIntensity(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="1" />
+          <input type="number" value={jumpIntensity} onChange={(e) => setJumpIntensity(Math.max(0, Number(e.target.value)))} style={styles.smallInput} step="0.1" min="0" />
         </div>
         <div>
           <label style={styles.label}>Jump Mean {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
@@ -976,7 +1041,121 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Señales macro unificadas */}
+      {/* BTC CYCLE INPUTS — Elliott + Puell + Hash Ribbon + Pi Cycle */}
+      <div style={{ ...styles.card, border: "1px solid #1d4ed8", background: "linear-gradient(135deg, #0c1228 0%, #111827 100%)" }}>
+        <h3 style={{ color: "#60a5fa", marginBottom: "0.75rem" }}>🔬 BTC Cycle Analyzer — Inputs Avanzados</h3>
+        <p style={{ color: "#6b7280", fontSize: "0.75rem", marginBottom: "1rem" }}>
+          Opcionales. Cada campo que rellenes mejora la precisión del análisis de ciclo. Sin datos = SAFE por defecto.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
+
+          {/* Puell Multiple */}
+          <div>
+            <label style={styles.label}>
+              Puell Multiple{" "}
+              <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>lookintobitcoin.com</span>
+            </label>
+            <input type="number" placeholder="— ej: 0.8" value={puellMultiple ?? ""}
+              onChange={e => setPuellMultiple(e.target.value === "" ? undefined : Number(e.target.value))}
+              style={styles.smallInput} step="0.01" min="0" max="10" />
+            <p style={{ fontSize: "0.65rem", color: "#6b7280", margin: "0.2rem 0 0" }}>
+              {"<0.5 = mineros en pérdidas → fondo · >2 = euforia mineros → techo"}
+            </p>
+          </div>
+
+          {/* Hash Ribbon State */}
+          <div>
+            <label style={styles.label}>Hash Ribbon{" "}
+              <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>lookintobitcoin.com</span>
+            </label>
+            <select value={hashRibbonState ?? ""}
+              onChange={e => setHashRibbonState(e.target.value === "" ? undefined : e.target.value as "CAPITULATION" | "RECOVERY" | "EXPANSION")}
+              style={{ ...styles.smallInput, cursor: "pointer" }}>
+              <option value="">— sin dato</option>
+              <option value="CAPITULATION">CAPITULATION (MA30 &lt; MA60)</option>
+              <option value="RECOVERY">RECOVERY (MA30 cruzando MA60 ↑)</option>
+              <option value="EXPANSION">EXPANSION (MA30 &gt; MA60)</option>
+            </select>
+            <p style={{ fontSize: "0.65rem", color: "#6b7280", margin: "0.2rem 0 0" }}>
+              RECOVERY = señal histórica de compra · CAPITULATION = mineros apagando
+            </p>
+          </div>
+
+          {/* Pi Cycle */}
+          <div>
+            <label style={styles.label}>Pi Cycle — 111 DMA{" "}
+              <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: overlay</span>
+            </label>
+            <input type="number" placeholder="— ej: 55000" value={piCycleMa111 ?? ""}
+              onChange={e => setPiCycleMa111(e.target.value === "" ? undefined : Number(e.target.value))}
+              style={styles.smallInput} step="100" min="0" />
+          </div>
+          <div>
+            <label style={styles.label}>Pi Cycle — 350 DMA × 2</label>
+            <input type="number" placeholder="— ej: 120000" value={piCycleMa350x2 ?? ""}
+              onChange={e => setPiCycleMa350x2(e.target.value === "" ? undefined : Number(e.target.value))}
+              style={styles.smallInput} step="100" min="0" />
+            <p style={{ fontSize: "0.65rem", color: "#6b7280", margin: "0.2rem 0 0" }}>
+              Cuando 111DMA cruza 350DMA×2 → techo histórico de ciclo. Ahora separados = sin señal.
+            </p>
+          </div>
+
+          {/* Elliott Wave Pivots */}
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={styles.label}>
+              Elliott Wave — Pivotes del ciclo{" "}
+              <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>mínimo 2 puntos: PRECIO:TIPO separados por coma</span>
+            </label>
+            <input
+              type="text"
+              placeholder="ej: 15500:LOW, 73800:HIGH, 49000:LOW"
+              value={elliottPivotsText}
+              onChange={e => {
+                setElliottPivotsText(e.target.value);
+                try {
+                  const parts = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
+                  const parsed: ElliottWavePoint[] = parts.map((p, i) => {
+                    const [priceStr, typeStr] = p.split(":");
+                    const price = parseFloat(priceStr);
+                    const lbl = typeStr?.trim().toUpperCase() === "HIGH" ? "HIGH" : "LOW";
+                    const d = new Date("2022-11-21");
+                    d.setMonth(d.getMonth() + i * 6);
+                    return { price, date: d, label: lbl };
+                  });
+                  if (parsed.length >= 2 && parsed.every(p => !isNaN(p.price))) {
+                    setElliottPivots(parsed);
+                  }
+                } catch { /* parsing in progress */ }
+              }}
+              style={{ ...styles.smallInput, width: "100%", fontFamily: "monospace" }}
+            />
+            <p style={{ fontSize: "0.65rem", color: "#6b7280", margin: "0.3rem 0 0" }}>
+              Formato: <code style={{ color: "#818cf8" }}>PRECIO:LOW</code> o <code style={{ color: "#818cf8" }}>PRECIO:HIGH</code> · Ciclo actual: desde el suelo de Nov 2022 (~€15.5k) · Alternando LOW/HIGH/LOW/HIGH
+            </p>
+            {elliottPivots.length >= 2 && (
+              <p style={{ fontSize: "0.65rem", color: "#10b981", margin: "0.2rem 0 0" }}>
+                ✓ {elliottPivots.length} pivotes cargados · Onda detectada automáticamente
+              </p>
+            )}
+          </div>
+
+          {/* Override manual de onda */}
+          <div>
+            <label style={styles.label}>Override onda actual (opcional)</label>
+            <select value={elliottCurrentWave ?? ""}
+              onChange={e => setElliottCurrentWave(e.target.value === "" ? undefined : e.target.value as ElliottWaveLabel)}
+              style={{ ...styles.smallInput, cursor: "pointer" }}>
+              <option value="">— automático</option>
+              {(["1","2","3","4","5","A","B","C","UNKNOWN"] as ElliottWaveLabel[]).map(w => (
+                <option key={w} value={w}>Onda {w}</option>
+              ))}
+            </select>
+            <p style={{ fontSize: "0.65rem", color: "#6b7280", margin: "0.2rem 0 0" }}>
+              Solo si el motor algorítmico falla — confirma tú mismo el conteo visual
+            </p>
+          </div>
+        </div>
+      </div>
       <div style={{ ...styles.card, display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "1rem" }}>
         <div>
           <h4>Liquidez Global</h4>
@@ -1529,6 +1708,431 @@ const InstitutionalDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ═══════════════ BTC CYCLE ANALYZER ═══════════════ */}
+      {btcCycleResult && (() => {
+        const c = btcCycleResult;
+        const pl = c.powerLaw;
+        const hv = c.halvingPhase;
+        const ew = c.elliottWave;
+        const btcPrice = portfolio.assets.find(a => a.ticker === "BTC-EUR")?.price ?? 0;
+
+        // Proyecciones Power Law para fechas futuras
+        const plFair6m   = getPowerLawProjection(new Date(Date.now() + 180*86400000), "fair")  / 1.08;
+        const plUpper12m = getPowerLawProjection(new Date(Date.now() + 365*86400000), "upper") / 1.08;
+        const plLower12m = getPowerLawProjection(new Date(Date.now() + 365*86400000), "lower") / 1.08;
+        const btcPriceUSD = btcPrice * 1.08;
+        const discountFromFair = pl.fairValue > 0 ? (pl.fairValue - btcPriceUSD) / pl.fairValue : 0;
+
+        const scoreColor = c.cycleScore >= 75 ? "#10b981" : c.cycleScore >= 55 ? "#3b82f6" : c.cycleScore >= 40 ? "#f59e0b" : "#ef4444";
+        const zoneLabels: Record<string, string> = {
+          BUY_ZONE: "🟢 ZONA DE COMPRA", ACCUMULATION: "🔵 ACUMULACIÓN",
+          NEUTRAL: "🟡 NEUTRAL", CAUTION_ZONE: "🟠 PRECAUCIÓN", SELL_ZONE: "🔴 ZONA DE VENTA"
+        };
+        const waveColors: Record<string, string> = {
+          "1":"#10b981","3":"#10b981","5":"#f59e0b",
+          "2":"#6b7280","4":"#6b7280","A":"#ef4444","B":"#f59e0b","C":"#ef4444","UNKNOWN":"#6b7280"
+        };
+        const waveColor = waveColors[ew.currentWave] ?? "#6b7280";
+
+        // Frases de narrativa según onda
+        const elliottNarrative: Record<string, { titulo: string; que: string; como: string; target: string; alerta: string }> = {
+          "1": {
+            titulo: "Onda 1 — Primer impulso alcista",
+            que: "El mercado ha salido del suelo del bear market. La mayoría aún no lo cree — es la onda más difícil de reconocer en tiempo real.",
+            como: "Volumen bajo-moderado. Los primeros compradores entran silenciosamente. El sentimiento general sigue siendo negativo.",
+            target: "Históricamente retrocede hasta el 38–62% en la Onda 2 siguiente. No es momento de apalancar.",
+            alerta: "Invalidación si el precio cae por debajo del inicio de Onda 1."
+          },
+          "2": {
+            titulo: "Onda 2 — Corrección del primer impulso",
+            que: "Pullback normal tras Onda 1. El mercado 'prueba' a los compradores débiles. Psicológicamente parece que el rebote fue falso.",
+            como: "Retroceso del 50–78.6% de Onda 1 es lo normal. Si cierra por debajo del inicio de Onda 1 → conteo inválido.",
+            target: "El suelo de Onda 2 es históricamente la mejor zona de entrada del ciclo entero.",
+            alerta: "NO puede cruzar el inicio de Onda 1. Si lo hace, el conteo es incorrecto."
+          },
+          "3": {
+            titulo: "Onda 3 — El impulso más fuerte del ciclo",
+            que: "La onda más larga y poderosa. El público generalista empieza a comprar. FOMO institucional. Es donde se hace la mayor parte del dinero.",
+            como: "Mínimo 1.618x de Onda 1. Volumen en expansión. Noticias positivas generalizadas. RSI puede mantenerse sobrecomprado semanas.",
+            target: ew.waveTargets ? `Target Onda 3: €${ew.waveTargets.conservative?.toFixed(0) ?? "—"}` : "Extensión mínima: 1.618x Onda 1 desde el suelo de Onda 2.",
+            alerta: "Zona de techo potencial cuando RSI semanal > 85 + MVRV > 3.5 simultáneamente."
+          },
+          "4": {
+            titulo: "Onda 4 — Consolidación antes del pico final",
+            que: "Corrección lateral-alcista después de Onda 3. Los que compraron tarde en Onda 3 se impacientan y venden. Es aburrida y larga.",
+            como: `Retroceso típico 23.6–38.2% de Onda 3. Soporte clave: ${ew.correctionSupport ? `€${ew.correctionSupport.shallow.toFixed(0)} (38.2%)` : "Fibonacci 38.2% de Onda 3"}.`,
+            target: ew.waveTargets ? `Target Onda 5: €${ew.waveTargets.conservative?.toFixed(0) ?? "—"} (conservador) · €${ew.waveTargets.base?.toFixed(0) ?? "—"} (extendido)` : "Tras confirmar soporte, Onda 5 proyecta 0.618–1.0x Onda 1 desde el techo de Onda 3.",
+            alerta: "NO puede entrar en territorio de precio de Onda 1. Señal de alerta máxima si rompe soporte 61.8%."
+          },
+          "5": {
+            titulo: "Onda 5 — Último impulso alcista — PRECAUCIÓN MÁXIMA",
+            que: "El pico final del ciclo. Sentimiento eufórico, máxima cobertura mediática, nuevos máximos históricos. Es donde los institucionales distribuyen a los minoristas tardíos.",
+            como: "Divergencia bajista RSI frecuente (precio sube, RSI no confirma). Volumen puede ser menor que Onda 3. MVRV > 3.5 posible.",
+            target: ew.waveTargets ? `Target: €${ew.waveTargets.conservative?.toFixed(0) ?? "—"}–€${ew.waveTargets.base?.toFixed(0) ?? "—"}. Activar ventas escalonadas.` : "Ventas escalonadas al acercarse a Fibonacci 1.0x–1.618x desde Onda 4.",
+            alerta: "Si Pi Cycle cruza + RSI > 85 + MVRV > 4 → VENDER 50–70% de posición BTC inmediatamente."
+          },
+          "A": {
+            titulo: "Onda A — Inicio del crash correctivo",
+            que: "El mercado alcista ha terminado. Onda A es el primer impulso bajista. Muchos la interpretan como corrección sana — es una trampa.",
+            como: "Caída del 30–50% desde el techo es normal. El sentimiento pasa de eufórico a confuso. Las noticias siguen siendo positivas.",
+            target: "Esperar confirmación de Onda B (rebote) antes de aumentar exposición. No es el fondo.",
+            alerta: "No comprar agresivamente hasta confirmar el fin de la corrección ABC completa."
+          },
+          "B": {
+            titulo: "Onda B — Rebote trampa en bear market",
+            que: "El rebote más peligroso. Parece la recuperación del bull market — no lo es. Muchos reingresan aquí y pierden en la caída de Onda C.",
+            como: "Rebote del 50–78.6% de Onda A. Sentimiento mejora artificialmente. Volumen menor que en el impulso bajista anterior.",
+            target: "NO aumentar posición aquí. La Onda C siguiente puede ser más violenta que Onda A.",
+            alerta: "Si supera el 100% de Onda A → posible reconteo como impulso alcista, no corrección."
+          },
+          "C": {
+            titulo: "Onda C — Caída final — Zona de acumulación histórica",
+            que: "El pánico real. Capitulación generalizada. Las noticias son apocalípticas. Es la zona donde los ciclos anteriores formaron los mejores suelos de compra.",
+            como: "Onda C suele ser 1.0–1.618x Onda A en longitud. Puell Multiple cae bajo 0.5. Hash Ribbon entra en capitulación.",
+            target: ew.correctionSupport ? `Soporte clave: €${ew.correctionSupport.deep.toFixed(0)} (61.8%) · €${ew.correctionSupport.deep.toFixed(0)} (78.6%)` : "DCA agresivo cuando MVRV < 1 + Puell < 0.5.",
+            alerta: "Si la cartera tiene liquidez acumulada defensiva → este es el momento de desplegarla."
+          },
+          "UNKNOWN": {
+            titulo: "Onda — Sin conteo confirmado",
+            que: "No hay suficientes pivotes definidos para determinar la onda actual con precisión.",
+            como: "Introduce los puntos clave del ciclo (suelo Nov 2022, techo Ene 2024, etc.) en el campo de pivotes arriba.",
+            target: "Con 2+ pivotes el algoritmo detecta automáticamente la onda y proyecta targets de precio.",
+            alerta: "Sin conteo confirmado el sistema usa Power Law + Halving como guía principal."
+          }
+        };
+
+        const narrative = elliottNarrative[ew.currentWave] ?? elliottNarrative["UNKNOWN"];
+
+        return (
+          <div style={{ ...styles.card, border: `1px solid ${scoreColor}`, background: "linear-gradient(135deg, #080d1a 0%, #111827 100%)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem", flexWrap: "wrap", gap: "0.5rem" }}>
+              <h2 style={{ margin: 0 }}>₿ BTC Cycle Intelligence</h2>
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: "2.5rem", fontWeight: "bold", color: scoreColor, lineHeight: 1 }}>{c.cycleScore}</div>
+                  <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>/ 100</div>
+                </div>
+                <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "0.4rem 0.75rem", border: `1px solid ${scoreColor}` }}>
+                  <div style={{ color: scoreColor, fontWeight: "bold", fontSize: "0.85rem" }}>{zoneLabels[c.cycleScoreLabel]}</div>
+                  <div style={{ color: "#9ca3af", fontSize: "0.72rem" }}>{c.actionBias}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Narrativa resumen */}
+            <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid #312e81", borderRadius: 8, padding: "0.75rem 1rem", marginBottom: "1rem" }}>
+              <p style={{ color: "#c7d2fe", fontSize: "0.82rem", margin: 0, lineHeight: 1.6 }}>{c.summary}</p>
+            </div>
+
+            {/* Grid de 4 indicadores */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
+
+              {/* Power Law */}
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem" }}>
+                <div style={{ color: "#818cf8", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>📐 POWER LAW CHANNEL</div>
+                <div style={{ fontSize: "0.82rem", color: "#e5e7eb", marginBottom: "0.3rem" }}>
+                  Precio actual: <strong>€{btcPrice.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                  Valor justo: <span style={{ color: "#f59e0b" }}>€{(pl.fairValue / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                  Canal: €{(pl.lower / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })} – €{(pl.upper / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                </div>
+                <div style={{ fontSize: "0.78rem", marginTop: "0.3rem", color: discountFromFair > 0.3 ? "#10b981" : discountFromFair > 0 ? "#f59e0b" : "#ef4444" }}>
+                  {discountFromFair > 0
+                    ? `${(discountFromFair * 100).toFixed(0)}% por debajo del valor justo — históricamente buena entrada`
+                    : `${(Math.abs(discountFromFair) * 100).toFixed(0)}% por encima del valor justo — zona de precaución`}
+                </div>
+                <div style={{ marginTop: "0.5rem", borderTop: "1px solid #1f2937", paddingTop: "0.4rem" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Proyección Power Law:</div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>6m: <span style={{ color: "#d1d5db" }}>€{plFair6m.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span></div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>12m (rango): <span style={{ color: "#d1d5db" }}>€{plLower12m.toLocaleString("es-ES", { maximumFractionDigits: 0 })} – €{plUpper12m.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span></div>
+                  <div style={{ fontSize: "0.65rem", color: "#4b5563", marginTop: "0.2rem" }}>Harold Burger model (2019) · calibrado USD → convertido EUR @1.08</div>
+                </div>
+              </div>
+
+              {/* Halving Phase */}
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem" }}>
+                <div style={{ color: "#f59e0b", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>⛏ HALVING CYCLE</div>
+                <div style={{ fontSize: "0.82rem", color: "#e5e7eb", marginBottom: "0.3rem" }}>
+                  Fase: <strong style={{ color: "#f59e0b" }}>{hv.phase.replace(/_/g, " ")}</strong>
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#9ca3af", lineHeight: 1.5 }}>{hv.phaseDescription}</div>
+                <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.4rem" }}>
+                  {hv.daysSinceHalving > 0
+                    ? `${hv.daysSinceHalving} días desde el halving (${(hv.daysSinceHalving / 30).toFixed(0)} meses)`
+                    : `${Math.abs(hv.daysSinceHalving)} días para el próximo halving`}
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "#4b5563", marginTop: "0.2rem" }}>
+                  Ventana histórica de pico: {hv.historicalPeakWindow}
+                </div>
+              </div>
+
+              {/* Puell + Hash Ribbon */}
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem" }}>
+                <div style={{ color: "#10b981", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>⚡ ON-CHAIN SIGNALS</div>
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Puell Multiple:</div>
+                  <div style={{ fontSize: "0.78rem", color: c.puellMultiple.zone === "CAPITULATION" ? "#10b981" : c.puellMultiple.zone === "EUPHORIA" ? "#ef4444" : "#f59e0b" }}>
+                    {c.puellMultiple.value === null
+                      ? "Sin dato — introduce el valor en los inputs"
+                      : `${c.puellMultiple.description}`}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Hash Ribbon:</div>
+                  <div style={{ fontSize: "0.78rem", color: c.hashRibbon.buySignalActive ? "#10b981" : c.hashRibbon.state === "CAPITULATION" ? "#ef4444" : "#d1d5db" }}>
+                    {c.hashRibbon.state === "UNKNOWN"
+                      ? "Sin dato — selecciona estado en los inputs"
+                      : c.hashRibbon.description}
+                  </div>
+                </div>
+                <div style={{ marginTop: "0.5rem" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Pi Cycle Top:</div>
+                  <div style={{ fontSize: "0.78rem", color: c.piCycle.state === "CROSSED" ? "#ef4444" : "#10b981" }}>
+                    {c.piCycle.state === "CROSSED"
+                      ? "⚠️ CRUCE DETECTADO — señal histórica de techo"
+                      : c.piCycle.gapPct !== null
+                        ? `Separación: ${(c.piCycle.gapPct * 100).toFixed(0)}% · sin señal de techo`
+                        : "Sin dato — introduce 111DMA y 350DMA×2"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Elliott Wave */}
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem", border: `1px solid ${waveColor}40` }}>
+                <div style={{ color: waveColor, fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>🌊 ELLIOTT WAVE</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: "50%",
+                    background: `${waveColor}22`, border: `2px solid ${waveColor}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: "1.1rem", fontWeight: "bold", color: waveColor
+                  }}>{ew.currentWave}</div>
+                  <div>
+                    <div style={{ fontSize: "0.78rem", color: "#e5e7eb", fontWeight: "bold" }}>{narrative.titulo}</div>
+                    <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>
+                      Dirección: {ew.currentWaveDirection} · Confianza: {ew.confidence}
+                    </div>
+                  </div>
+                </div>
+                {ew.invalidationLevel && (
+                  <div style={{ fontSize: "0.72rem", color: "#ef4444", marginTop: "0.3rem" }}>
+                    🛑 Invalidación: &lt;€{ew.invalidationLevel.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* PANEL ELLIOTT DETALLADO */}
+            <div style={{ background: "rgba(0,0,0,0.3)", border: `1px solid ${waveColor}40`, borderRadius: 8, padding: "1rem", marginBottom: "1rem" }}>
+              <h4 style={{ color: waveColor, margin: "0 0 0.75rem" }}>🌊 {narrative.titulo} — Análisis Detallado</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0.75rem" }}>
+                <div>
+                  <div style={{ fontSize: "0.7rem", color: "#818cf8", fontWeight: "bold", marginBottom: "0.25rem" }}>¿QUÉ ESTÁ PASANDO?</div>
+                  <p style={{ color: "#d1d5db", fontSize: "0.78rem", margin: 0, lineHeight: 1.6 }}>{narrative.que}</p>
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.7rem", color: "#10b981", fontWeight: "bold", marginBottom: "0.25rem" }}>¿CÓMO SE RECONOCE?</div>
+                  <p style={{ color: "#d1d5db", fontSize: "0.78rem", margin: 0, lineHeight: 1.6 }}>{narrative.como}</p>
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: "bold", marginBottom: "0.25rem" }}>🎯 TARGET / ACCIÓN</div>
+                  <p style={{ color: "#d1d5db", fontSize: "0.78rem", margin: 0, lineHeight: 1.6 }}>{narrative.target}</p>
+                  {/* Targets numéricos si disponibles */}
+                  {ew.waveTargets && ew.currentWave === "4" && (
+                    <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                      {ew.waveTargets.conservative && (
+                        <div style={{ background: "rgba(245,158,11,0.1)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem" }}>
+                          <span style={{ color: "#f59e0b" }}>Onda 5 conservador:</span>{" "}
+                          <strong style={{ color: "#e5e7eb" }}>€{(ew.waveTargets.conservative / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                        </div>
+                      )}
+                      {ew.waveTargets.base && (
+                        <div style={{ background: "rgba(245,158,11,0.15)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem" }}>
+                          <span style={{ color: "#f59e0b" }}>Onda 5 extendido:</span>{" "}
+                          <strong style={{ color: "#e5e7eb" }}>€{(ew.waveTargets.base / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {ew.waveTargets && ew.currentWave === "3" && ew.waveTargets.conservative && (
+                    <div style={{ marginTop: "0.5rem", background: "rgba(16,185,129,0.1)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem" }}>
+                      <span style={{ color: "#10b981" }}>Onda 3 target 1.618x:</span>{" "}
+                      <strong style={{ color: "#e5e7eb" }}>€{(ew.waveTargets.conservative / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.7rem", color: "#ef4444", fontWeight: "bold", marginBottom: "0.25rem" }}>⚠️ ALERTAS / INVALIDACIÓN</div>
+                  <p style={{ color: "#d1d5db", fontSize: "0.78rem", margin: 0, lineHeight: 1.6 }}>{narrative.alerta}</p>
+                  {ew.invalidationLevel && (
+                    <div style={{ marginTop: "0.4rem", background: "rgba(239,68,68,0.1)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem", color: "#fca5a5" }}>
+                      Si precio &lt; €{(ew.invalidationLevel / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })} → conteo invalidado
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Pivotes del ciclo */}
+              {ew.identifiedWaves.length >= 2 && (
+                <div style={{ marginTop: "0.75rem", borderTop: "1px solid #1f2937", paddingTop: "0.75rem" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: "0.4rem" }}>PIVOTES DEL CICLO CARGADOS:</div>
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {ew.identifiedWaves.map((p, i) => (
+                      <div key={i} style={{
+                        background: p.label === "HIGH" ? "rgba(245,158,11,0.12)" : "rgba(16,185,129,0.12)",
+                        border: `1px solid ${p.label === "HIGH" ? "#f59e0b" : "#10b981"}44`,
+                        borderRadius: 4, padding: "0.2rem 0.5rem", fontSize: "0.7rem"
+                      }}>
+                        <span style={{ color: "#6b7280" }}>P{i + 1} </span>
+                        <span style={{ color: p.label === "HIGH" ? "#f59e0b" : "#10b981", fontWeight: "bold" }}>
+                          €{(p.price / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                        </span>
+                        <span style={{ color: "#4b5563" }}> {p.label}</span>
+                      </div>
+                    ))}
+                    {ew.correctionSupport && (
+                      <>
+                        <div style={{ background: "rgba(99,102,241,0.1)", border: "1px solid #4f46e544", borderRadius: 4, padding: "0.2rem 0.5rem", fontSize: "0.7rem" }}>
+                          <span style={{ color: "#818cf8" }}>38.2%: €{(ew.correctionSupport.shallow / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
+                        </div>
+                        <div style={{ background: "rgba(99,102,241,0.1)", border: "1px solid #4f46e544", borderRadius: 4, padding: "0.2rem 0.5rem", fontSize: "0.7rem" }}>
+                          <span style={{ color: "#818cf8" }}>61.8%: €{(ew.correctionSupport.deep / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Razón del conteo */}
+              <div style={{ marginTop: "0.5rem", fontSize: "0.7rem", color: "#4b5563", fontStyle: "italic" }}>
+                {ew.confidenceReason}
+              </div>
+            </div>
+
+            {/* PROYECCIÓN COMPLETA DEL CICLO */}
+            <div style={{ background: "rgba(0,0,0,0.3)", border: "1px solid #1f2937", borderRadius: 8, padding: "1rem" }}>
+              <h4 style={{ color: "#9ca3af", margin: "0 0 0.75rem", fontSize: "0.85rem" }}>📈 PROYECCIÓN DE CICLO — Cómo se anticipa el movimiento</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.6rem" }}>
+
+                <div style={{ background: "#111827", borderRadius: 6, padding: "0.6rem" }}>
+                  <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>PRECIO ACTUAL</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#e5e7eb" }}>
+                    €{btcPrice.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: discountFromFair > 0 ? "#10b981" : "#ef4444" }}>
+                    {discountFromFair > 0 ? `−${(discountFromFair * 100).toFixed(0)}% vs fair value` : `+${(Math.abs(discountFromFair) * 100).toFixed(0)}% vs fair value`}
+                  </div>
+                </div>
+
+                <div style={{ background: "#111827", borderRadius: 6, padding: "0.6rem" }}>
+                  <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>FAIR VALUE HOY (Power Law)</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#f59e0b" }}>
+                    €{(pl.fairValue / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>modelo logarítmico Harold Burger</div>
+                </div>
+
+                <div style={{ background: "#111827", borderRadius: 6, padding: "0.6rem" }}>
+                  <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>FAIR VALUE +6M (Power Law)</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#f59e0b" }}>
+                    €{plFair6m.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>crecimiento logarítmico del modelo</div>
+                </div>
+
+                <div style={{ background: "#111827", borderRadius: 6, padding: "0.6rem" }}>
+                  <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>RANGO +12M (Power Law)</div>
+                  <div style={{ fontSize: "1rem", fontWeight: "bold", color: "#d1d5db" }}>
+                    €{plLower12m.toLocaleString("es-ES", { maximumFractionDigits: 0 })} – €{plUpper12m.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>banda inferior–superior del canal</div>
+                </div>
+
+                {ew.waveTargets && (ew.currentWave === "4" || ew.currentWave === "2") && (
+                  <>
+                    <div style={{ background: "rgba(16,185,129,0.08)", border: "1px solid #10b98133", borderRadius: 6, padding: "0.6rem" }}>
+                      <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>TARGET ONDA 5 (conservador)</div>
+                      <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#10b981" }}>
+                        €{ew.waveTargets.conservative ? (ew.waveTargets.conservative / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
+                      </div>
+                      <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>0.618x Onda 1 desde techo Onda 3</div>
+                    </div>
+                    <div style={{ background: "rgba(16,185,129,0.12)", border: "1px solid #10b98155", borderRadius: 6, padding: "0.6rem" }}>
+                      <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>TARGET ONDA 5 (extendido)</div>
+                      <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#10b981" }}>
+                        €{ew.waveTargets.base ? (ew.waveTargets.base / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
+                      </div>
+                      <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>1.618x Onda 1 desde techo Onda 3</div>
+                    </div>
+                  </>
+                )}
+
+                {ew.correctionSupport && (ew.currentWave === "4" || ew.currentWave === "2" || ew.currentWave === "C") && (
+                  <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid #ef444433", borderRadius: 6, padding: "0.6rem" }}>
+                    <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>SOPORTE CORRECCIÓN</div>
+                    <div style={{ fontSize: "0.85rem", color: "#fca5a5" }}>
+                      38.2%: €{(ew.correctionSupport.shallow / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                    </div>
+                    <div style={{ fontSize: "0.85rem", color: "#ef4444" }}>
+                      61.8%: €{(ew.correctionSupport.deep / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                    </div>
+                    <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>zona de acumulación si respeta</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Condiciones para confirmar el siguiente movimiento */}
+              <div style={{ marginTop: "0.75rem", borderTop: "1px solid #1f2937", paddingTop: "0.75rem" }}>
+                <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: "0.4rem", fontWeight: "bold" }}>
+                  CONDICIONES PARA CONFIRMAR EL SIGUIENTE MOVIMIENTO:
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                  {ew.currentWave === "4" && (
+                    <>
+                      <div style={{ fontSize: "0.75rem", color: "#d1d5db" }}>
+                        ✅ <strong>Alcista (Onda 5):</strong> precio cierra sobre el máximo previo de Onda 3 + volumen en expansión + RSI semanal saliendo de sobrevendido
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "#fca5a5" }}>
+                        ⛔ <strong>Bajista (extensión correctiva):</strong> precio pierde soporte 61.8% de Onda 3 · Nivel: €{ew.correctionSupport ? (ew.correctionSupport.deep / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
+                      </div>
+                    </>
+                  )}
+                  {ew.currentWave === "2" && (
+                    <>
+                      <div style={{ fontSize: "0.75rem", color: "#d1d5db" }}>
+                        ✅ <strong>Alcista (Onda 3):</strong> precio cierra sobre el máximo de Onda 1 + RSI semanal girando al alza desde zona neutral
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "#fca5a5" }}>
+                        ⛔ <strong>Invalidación:</strong> precio cae bajo el inicio de Onda 1 · conteo descartado
+                      </div>
+                    </>
+                  )}
+                  {(ew.currentWave === "1" || ew.currentWave === "3" || ew.currentWave === "5") && (
+                    <div style={{ fontSize: "0.75rem", color: "#d1d5db" }}>
+                      ✅ <strong>Impulso activo:</strong> mantener posición · stops por debajo del último pivote bajo · escalar salidas si RSI semanal {">"} 80
+                    </div>
+                  )}
+                  {(ew.currentWave === "A" || ew.currentWave === "B" || ew.currentWave === "C") && (
+                    <div style={{ fontSize: "0.75rem", color: "#fca5a5" }}>
+                      ⚠️ <strong>Fase correctiva activa:</strong> no incrementar agresivamente · esperar confirmación de agotamiento bajista (Puell {"<"} 0.5 + Hash Ribbon en capitulación)
+                    </div>
+                  )}
+                  {ew.currentWave === "UNKNOWN" && (
+                    <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                      📌 Introduce los pivotes del ciclo en los inputs de arriba para obtener condiciones de confirmación precisas.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* CYCLE TOP — panel de alertas de techo de ciclo */}
       {cycleTopResult.hasActiveWarnings && (

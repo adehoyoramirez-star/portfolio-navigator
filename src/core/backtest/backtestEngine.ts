@@ -501,6 +501,9 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
     benchmarkMetrics: emptyMetrics(initialCapital),
     regimeConditional: { EXPANSION: emptyRM, CONTRACTION: emptyRM, CRISIS: emptyRM },
     regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
+    transactionCostBps: 15,
+    totalTransactionCosts: 0,
+    rebalanceCount: 0,
   };
 }
 

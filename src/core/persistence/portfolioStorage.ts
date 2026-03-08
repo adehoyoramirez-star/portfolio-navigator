@@ -31,8 +31,19 @@ export interface PersistedMacro {
   dxy: number;
   moveIndex: number;
   btcVol: number;
-  btcDominance?: number;   // BTC.D % — señal adelantada de acumulación institucional
-  mvrvRatio?: number;      // MVRV ratio — señal on-chain de valoración histórica
+  btcDominance?: number;
+  mvrvRatio?: number;
+  // Monte Carlo Jump Diffusion (λ Poisson — script TradingView)
+  jumpIntensity?: number;
+  jumpMean?: number;
+  jumpStd?: number;
+  // BTC Cycle Analyzer
+  puellMultiple?: number;
+  hashRibbonState?: string;
+  piCycleMa111?: number;
+  piCycleMa350x2?: number;
+  elliottCurrentWave?: string;
+  elliottPivots?: Array<{ price: number; dateStr: string; type: string }>;
   savedAt: string;
 }
 
