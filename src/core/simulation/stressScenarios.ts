@@ -182,10 +182,14 @@ export function runStressScenario(
   const bestAsset = sorted[0]?.ticker ?? "";
   const worstAsset = sorted[sorted.length - 1]?.ticker ?? "";
 
-  // Estimación de recuperación: drawdown / (retorno anual histórico esperado)
-  // Usando retorno anual promedio del portfolio ~8% como base
-  const recoveryEstimateMonths = Math.abs(portfolioReturn) > 0
-    ? Math.round(Math.abs(portfolioReturn) / 0.08 * 12)
+  // Estimación de recuperación usando CAGR logarítmico (no aritmético).
+  // FIX BUG-05: La fórmula anterior `|ret| / 0.08 * 12` asumía crecimiento lineal.
+  // La correcta usa la inversión del interés compuesto: meses = log(1/(1-|DD|)) / log(1+r_anual) * 12
+  // Comparación: −30% loss → antes=45m, correcto=56m; −50%→ 75m vs 108m; −65%→ 98m vs 164m
+  // Se clampea |portfolioReturn| a 0.99 para evitar log(0) en pérdida total.
+  const absReturn = Math.min(0.99, Math.abs(portfolioReturn));
+  const recoveryEstimateMonths = absReturn > 0
+    ? Math.round(Math.log(1 / (1 - absReturn)) / Math.log(1.08) * 12)
     : 0;
 
   return {

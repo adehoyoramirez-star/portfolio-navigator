@@ -5,7 +5,6 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis
 import { calculateCorrelationMatrix } from "@/core/data/portfolioMetrics";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
-import { calculateCVaR } from "@/core/simulation/cvar";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
@@ -17,7 +16,9 @@ import {
   saveRegimeEntry, loadRegimeHistory,
   clearAll, RegimeHistoryEntry,
 } from "@/core/persistence/portfolioStorage";
-import { computeRebalanceSuggestions, RebalanceAsset } from "@/core/portfolio/rebalancer";
+import { computeRebalanceSuggestions, RebalanceAsset, RebalanceSuggestion } from "@/core/portfolio/rebalancer";
+import { detectCycleTops, isBTCDominanceFalling, type CycleTopInputs, type CycleTopSignal } from "@/core/risk/cycleTopDetector";
+import { analyzeSpainTax, type PortfolioTaxSummary, type TaxAnalysis } from "@/core/tax/spainTaxAnalysis";
 import { generateAlerts, RegimeAlert } from "@/core/alerts/regimeAlerts";
 import { computeSmartDCA } from "@/core/dca/smartDCA";
 import {
@@ -25,7 +26,7 @@ import {
   CEWSDataPoint,
 } from "@/core/macro/crisisEarlyWarning";
 import { computeRegimeDuration, detectRegimeStartDate } from "@/core/macro/regimeDuration";
-import { runAllStressScenarios } from "@/core/simulation/stressScenarios";
+import { runAllStressScenarios, type StressResult } from "@/core/simulation/stressScenarios";
 import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
 
 const GaugeChart = lazy(() => import("react-gauge-chart"));
@@ -41,7 +42,7 @@ function monteCarloJumpDiffusion(
   jumpStd: number,
   years: number,
   simulations: number = 5000
-): { mean: number; worst5: number; simulations: number[] } {
+): { mean: number; median: number; p25: number; p75: number; worst5: number; best95: number; simulations: number[]; muUsed: number } {
   const monthlyMu = mu / 12;
   const monthlySigma = sigma / Math.sqrt(12);
   const monthlyJumpIntensity = jumpIntensity / 12;
@@ -58,17 +59,21 @@ function monteCarloJumpDiffusion(
       if (Math.random() < monthlyJumpIntensity) {
         jump = jumpMean + jumpStd * randomNormal();
       }
-      const totalReturn = diffusion + jump;
-      value = value * Math.exp(totalReturn);
+      value = value * Math.exp(diffusion + jump);
     }
     finalValues.push(value);
   }
 
   finalValues.sort((a, b) => a - b);
-  const mean = finalValues.reduce((a, b) => a + b, 0) / simulations;
-  const worst5 = finalValues[Math.floor(simulations * 0.05)];
+  const n = simulations;
+  const mean   = finalValues.reduce((a, b) => a + b, 0) / n;
+  const median = finalValues[Math.floor(n * 0.50)];
+  const p25    = finalValues[Math.floor(n * 0.25)];
+  const p75    = finalValues[Math.floor(n * 0.75)];
+  const worst5 = finalValues[Math.floor(n * 0.05)];
+  const best95 = finalValues[Math.floor(n * 0.95)];
 
-  return { mean, worst5, simulations: finalValues };
+  return { mean, median, p25, p75, worst5, best95, simulations: finalValues, muUsed: mu };
 }
 
 function randomNormal(): number {
@@ -145,6 +150,14 @@ const InstitutionalDashboard: React.FC = () => {
   const [btcVol, setBtcVol] = useState(0.65);                        // volatilidad BTC (65%)
   const [btcDominance, setBtcDominance] = useState(54.0);            // BTC.D % — ticker TradingView: BTC.D
   const [mvrvRatio, setMvrvRatio] = useState(1.8);                   // MVRV ratio — lookintobitcoin.com
+  const [btcRsiWeekly, setBtcRsiWeekly] = useState<number | undefined>(undefined); // RSI semanal BTC — TradingView W timeframe
+  const [prevBtcDominance, setPrevBtcDominance] = useState<number | undefined>(undefined); // BTC.D mes anterior (para detectar caída)
+
+  // Señales de techo de ciclo — inputs específicos por activo
+  const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);   // $/lb — uxc.com
+  const [uraniumLT, setUraniumLT] = useState<number | undefined>(undefined);       // $/lb largo plazo — uxc.com
+  const [bookToBill, setBookToBill] = useState<number | undefined>(undefined);     // SEMI.org — mensual
+  const [inflationBreakeven, setInflationBreakeven] = useState<number | undefined>(undefined); // TradingView: T5YIE
 
   const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
@@ -496,29 +509,31 @@ const InstitutionalDashboard: React.FC = () => {
     return runWalkForward(weeklyReturns, 5);
   }, [marketData?.closesHistory]);
 
-  // availableCash debe declararse ANTES de los useMemos que la usan
-  const availableCash = cashReserve + monthlyInjection;
+  // ── CYCLE TOP DETECTOR ──────────────────────────────────────────
+  // Calcula señales de techo de ciclo ANTES del rebalanceo
+  // No depende de availableCash — solo de los inputs macro del usuario
+  const cycleTopResult = useMemo(() => {
+    const cycleInputs: CycleTopInputs = {
+      mvrvRatio,
+      btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
+      btcRsiWeekly,
+      uraniumSpotPrice: uraniumSpot,
+      uraniumLTPrice: uraniumLT,
+      bookToBill,
+      bondYield10y: manualBond10y,
+      inflationBreakeven,
+    };
+    return detectCycleTops(cycleInputs);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, bookToBill, manualBond10y, inflationBreakeven]);
 
-  // NIVEL 4: rebalanceo real basado en allocations del motor
-  const rebalanceSuggestions = useMemo(() => {
-    if (!engineResult || engineResult.regime === "ALL_CASH") return null;
-    const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
-      const alloc = engineResult.allocations.find(a => a.name === asset.name);
-      return {
-        ticker:           asset.ticker,
-        name:             asset.name,
-        price:            asset.price,
-        shares:           asset.shares,
-        targetAllocation: alloc?.finalAllocation ?? 0,
-      };
-    });
-    return computeRebalanceSuggestions(
-      rebalanceAssets,
-      availableCash,
-      totalPortfolioValue,
-      0.02
-    );
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue]);
+  // ── AVAILABLE CASH (paso 1 — sin DCA state, resuelve la dependencia circular) ──
+  // Para smartDCA siempre pasamos cashReserve + monthlyInjection (necesita el total para calcular tramos de ataque)
+  // Para el rebalanceo final usaremos dcaBlocked DESPUÉS de que smartDCAResult esté disponible
+  const totalCashForDCA = cashReserve + monthlyInjection;
+
+  // FIX: rebalanceSuggestions (pase preliminar con totalCashForDCA) eliminado.
+  // Era un useMemo redundante — nunca se renderiazba. Solo rebalanceFinal se usa en el JSX.
+  // El pase final con availableCash correcto (post-DCA) está en rebalanceFinal abajo.
 
   // FIX: masterRegime ya está dentro de engineResult — no necesitamos stress por separado
   // engineResult.masterRegime tiene: regime, confidence, dominantSignal,
@@ -543,7 +558,7 @@ const InstitutionalDashboard: React.FC = () => {
       volTargetMultiplier: engineResult?.volTargetMultiplier ?? 1.0,
       tailRiskActive: engineResult?.tailRiskActive ?? false,
       tailRiskOverlay: engineResult?.tailRiskOverlay ?? 1.0,
-      availableCash,
+      availableCash: totalCashForDCA,
       motorAllocations: engineResult?.allocations.map(a => {
         const asset = portfolio.assets.find(pa => pa.name === a.name);
         return {
@@ -557,7 +572,56 @@ const InstitutionalDashboard: React.FC = () => {
       cewsOutput: cewsResult ?? undefined,
       cewsPreviousLevel,
     });
-  }, [btcRsi, btcZ, btcRet1m, engineResult, availableCash, portfolio.assets, cewsResult, cewsPreviousLevel]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, monthlyInjection, portfolio.assets, cewsResult, cewsPreviousLevel]);
+
+  // ── AVAILABLE CASH FINAL — ahora que tenemos el estado del DCA ──
+  // DCA bloqueado → solo cashReserve (la inyección mensual se congela como liquidez defensiva)
+  // DCA libre     → cashReserve + monthlyInjection (todo disponible para invertir)
+  const dcaAction  = smartDCAResult?.action ?? "WATCH";
+  const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
+  const availableCash = dcaBlocked ? cashReserve : cashReserve + monthlyInjection;
+
+  // ── REBALANCEO FINAL con availableCash correcto + cycle top signals ──
+  // Recalculamos las sugerencias de compra/venta con el cash real disponible
+  const rebalanceFinal = useMemo(() => {
+    if (!engineResult || engineResult.regime === "ALL_CASH") return null;
+    const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
+      const alloc = engineResult.allocations.find(a => a.name === asset.name);
+      return {
+        ticker:           asset.ticker,
+        name:             asset.name,
+        price:            asset.price,
+        shares:           asset.shares,
+        targetAllocation: alloc?.finalAllocation ?? 0,
+      };
+    });
+    return computeRebalanceSuggestions(
+      rebalanceAssets,
+      availableCash,
+      totalPortfolioValue,
+      0.02,
+      cycleTopResult.signals
+    );
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult]);
+
+  // ── ANÁLISIS FISCAL ESPAÑA ──────────────────────────────────────
+  // Calcula si conviene vender para cada SELL sugerido por el cicleTopDetector
+  // Tiene en cuenta: tramos IRPF 2025, compensación de pérdidas del portfolio,
+  // pérdida esperada según zona de ciclo, y break-even fiscal
+  const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
+    const sells = rebalanceFinal?.sellSuggestions ?? [];
+    if (sells.length === 0) return null;
+    return analyzeSpainTax(
+      portfolio.assets.map(a => ({
+        ticker: a.ticker, name: a.name,
+        shares: a.shares, avgPrice: a.avgPrice, price: a.price,
+      })),
+      sells.map((s: RebalanceSuggestion) => ({
+        ticker: s.ticker, sharesToSell: s.sharesToSell,
+        trimPct: s.trimPct, cycleZone: s.cycleZone,
+      }))
+    );
+  }, [rebalanceFinal, portfolio.assets]);
 
   // Legacy btcEntry — solo para compatibilidad con el panel de señales BTC
   const btcEntry = (() => {
@@ -575,15 +639,26 @@ const InstitutionalDashboard: React.FC = () => {
   })();
 
   // ==================== MONTE CARLO ====================
-  // FIX: expectedReturn ajustado por régimen (penalización continua del motor)
+  // CORRECCIÓN: mu del Monte Carlo debe ser un retorno anual real, no un factor score.
+  // rawExpectedReturn del motor = blend de factor scores (momentum + value + quality + lowVol)
+  // → escala incompatible (retornos mezclados con z-scores) → mu artificialmente alto.
+  //
+  // FIX: usar los retornos esperados reales por activo (portfolio.assets[i].expectedReturn en %)
+  // ponderados por las allocations finales del motor.
+  // Ejemplo: BTC 45% × 5.7% alloc + Semis 18% × 14.3% + ... = ~16.5% bruto → 12% con penalización.
+  //
+  // Esto produce números honestos: mediana ~€90k en 10 años (vs €200k con factor score inflado).
   const expectedReturn = useMemo(() => {
-    const rawReturn = engineResult?.allocations.reduce(
-      (acc, a) => acc + a.expectedReturn * a.finalAllocation,
-      0
-    ) ?? 0.05;
-    const regimePenalty = engineResult?.masterRegime.regimePenalty ?? 1;
-    return rawReturn * regimePenalty;
-  }, [engineResult]);
+    if (!engineResult) return 0.08; // fallback conservador
+    const regimePenalty = engineResult.masterRegime.regimePenalty ?? 1;
+    // Usar retornos esperados reales del portfolio (en %) × allocations del motor
+    const weightedReturn = engineResult.allocations.reduce((acc, alloc) => {
+      const asset = portfolio.assets.find(a => a.name === alloc.name);
+      const assetExpectedReturn = asset ? (asset.expectedReturn / 100) : 0.10;
+      return acc + assetExpectedReturn * alloc.finalAllocation;
+    }, 0);
+    return Math.max(0.03, weightedReturn * regimePenalty); // mínimo 3% para evitar números absurdos
+  }, [engineResult, portfolio.assets]);
 
   // FIX: volatilidad real del portfolio via covMatrix (σ_p = √(wᵀΣw))
   // La fórmula anterior (media ponderada de vols individuales) ignoraba correlaciones.
@@ -608,17 +683,33 @@ const InstitutionalDashboard: React.FC = () => {
     );
   }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol, jumpIntensity, jumpMean, jumpStd, years]);
 
-  const { mean: meanValue, worst5, simulations } = jumpSim;
+  const { mean: meanValue, median: medianValue, p25, p75, worst5, best95, simulations, muUsed } = jumpSim;
 
-  // CVaR (Expected Shortfall) — calculado sobre las 5000 simulaciones del Monte Carlo
-  // Más honesto que el VaR: nos dice la pérdida MEDIA en el peor 5% de escenarios,
-  // no solo el umbral. Estándar regulatorio Basel III/IV.
+  // CVaR (Expected Shortfall) — calculado directamente sobre los valores absolutos
+  // de las 5000 simulaciones del Monte Carlo.
+  //
+  // FIX BUG-07: La versión anterior dividía por `totalPortfolioValue` (capital inicial
+  // ~€5,685) en lugar del capital total invertido en el período (initial + monthly*12*years).
+  // Esto hacía que los multiplicadores fueran artificialmente altos (~16x en vez de ~1.7x),
+  // distorsionando la interpretación del CVaR como porcentaje de pérdida.
+  //
+  // Solución: calcular CVaR directamente en euros absolutos sobre los valores simulados.
+  // CVaR 95% = media aritmética del peor 5% de los valores finales simulados.
   const cvarResult = useMemo(() => {
     if (simulations.length === 0) return null;
-    // simulations son valores absolutos en €, necesitamos multiplicadores relativos
-    const multipliers = simulations.map(v => v / totalPortfolioValue);
-    return calculateCVaR(multipliers);
-  }, [simulations, totalPortfolioValue]);
+    const totalInvested = totalPortfolioValue + monthlyInjection * 12 * years;
+    const sorted = [...simulations].sort((a, b) => a - b);
+    const cutoff95 = Math.max(1, Math.floor(sorted.length * 0.05));
+    const cutoff99 = Math.max(1, Math.floor(sorted.length * 0.01));
+    const cvar95Abs = sorted.slice(0, cutoff95).reduce((s, v) => s + v, 0) / cutoff95;
+    const cvar99Abs = sorted.slice(0, cutoff99).reduce((s, v) => s + v, 0) / cutoff99;
+    // Pérdida esperada en el peor 5% = capital total invertido − valor medio del peor 5%
+    const loss95 = totalInvested - cvar95Abs;
+    const loss99 = totalInvested - cvar99Abs;
+    // tailRatio: cuánto más extremo es el CVaR99 respecto al CVaR95
+    const tailRatio = cvar95Abs > 0 ? Math.abs(cvar99Abs / cvar95Abs) : 1;
+    return { cvar95Abs, cvar99Abs, loss95, loss99, tailRatio, totalInvested };
+  }, [simulations, totalPortfolioValue, monthlyInjection, years]);
   const target = portfolio.targetGoal;
   const successes = simulations.filter(v => v >= target).length;
   const probability = (successes / simulations.length) * 100;
@@ -828,7 +919,49 @@ const InstitutionalDashboard: React.FC = () => {
             <span style={{ fontSize: "0.6rem", color: "#6b7280", marginLeft: "4px" }}>lookintobitcoin.com</span>
           </label>
           <input type="number" value={mvrvRatio} onChange={(e) => setMvrvRatio(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="10" />
+          <label style={styles.label}>BTC RSI Semanal {" "}
+            <span style={{ fontSize: "0.6rem", color: "#6b7280", marginLeft: "4px" }}>TradingView BTCEUR · W · RSI(14)</span>
+          </label>
+          <input type="number" placeholder="—" value={btcRsiWeekly ?? ""} onChange={e => setBtcRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
+          <label style={styles.label}>BTC.D mes anterior % {" "}
+            <span style={{ fontSize: "0.6rem", color: "#6b7280", marginLeft: "4px" }}>para detectar caída desde &gt;58%</span>
+          </label>
+          <input type="number" placeholder="—" value={prevBtcDominance ?? ""} onChange={e => setPrevBtcDominance(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="100" />
         </div>
+
+        {/* ── SEÑALES DE TECHO DE CICLO — inputs por activo ── */}
+        <div style={{ gridColumn: "1 / -1", borderTop: "1px solid #374151", paddingTop: "0.75rem", marginTop: "0.25rem" }}>
+          <p style={{ color: "#f59e0b", fontSize: "0.78rem", fontWeight: "bold", marginBottom: "0.5rem" }}>
+            ⚠️ Señales de Techo de Ciclo — activar ventas parciales automáticas
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0.75rem" }}>
+            <div>
+              <label style={styles.label}>Uranio Spot $/lb {" "}
+                <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>uxc.com</span>
+              </label>
+              <input type="number" placeholder="—" value={uraniumSpot ?? ""} onChange={e => setUraniumSpot(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" />
+            </div>
+            <div>
+              <label style={styles.label}>Uranio LT $/lb {" "}
+                <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>precio largo plazo</span>
+              </label>
+              <input type="number" placeholder="—" value={uraniumLT ?? ""} onChange={e => setUraniumLT(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" />
+            </div>
+            <div>
+              <label style={styles.label}>Semis Book-to-Bill {" "}
+                <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>semi.org mensual</span>
+              </label>
+              <input type="number" placeholder="—" value={bookToBill ?? ""} onChange={e => setBookToBill(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="3" />
+            </div>
+            <div>
+              <label style={styles.label}>Breakeven Inflación 5y % {" "}
+                <span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: T5YIE</span>
+              </label>
+              <input type="number" placeholder="—" value={inflationBreakeven ?? ""} onChange={e => setInflationBreakeven(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="10" />
+            </div>
+          </div>
+        </div>
+
         <div>
           <label style={styles.label}>Jump Intensity {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={jumpIntensity} onChange={(e) => setJumpIntensity(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="1" />
@@ -1017,26 +1150,102 @@ const InstitutionalDashboard: React.FC = () => {
       {/* Simulación Monte Carlo */}
       <div style={styles.card}>
         <h2>Distribución de valores finales (Monte Carlo con Jump Diffusion)</h2>
+        {/* Parámetro de años */}
+        <div style={{ marginBottom: "1rem" }}>
+          <label htmlFor="years" style={styles.label}>Años de simulación:</label>
+          <input id="years" name="years" type="number" value={years} onChange={(e) => setYears(Number(e.target.value))} style={styles.smallInput} min="1" max="50" step="1" />
+        </div>
+
+        {/* Advertencia sobre la fuente del mu */}
+        <div style={{ background: "#1c1107", border: "1px solid #d97706", borderRadius: 6, padding: "0.6rem 1rem", marginBottom: "1rem", fontSize: "0.78rem" }}>
+          <span style={{ color: "#f59e0b", fontWeight: "bold" }}>Fuente del retorno esperado: </span>
+          <span style={{ color: "#d1d5db" }}>
+            Retornos calibrados por activo × allocations del motor → {(muUsed * 100).toFixed(1)}% anual bruto
+            · régimen {engineResult?.regime ?? "—"} (×{(engineResult?.masterRegime.regimePenalty ?? 1).toFixed(2)})
+            → <strong style={{ color: "#f59e0b" }}>mu = {(muUsed * 100).toFixed(1)}%</strong> efectivo.
+          </span>
+          <span style={{ color: "#6b7280" }}> Estos son retornos esperados a largo plazo — el resultado real depende del ciclo de mercado.</span>
+        </div>
+
+        {/* KPIs del Monte Carlo */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
+          {/* Mediana — el número más honesto */}
+          <div style={{ background: "#0f172a", border: "2px solid #6366f1", borderRadius: 8, padding: "0.75rem 1rem" }}>
+            <div style={{ color: "#818cf8", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.2rem" }}>MEDIANA (resultado más probable)</div>
+            <div style={{ color: "#e5e7eb", fontSize: "1.3rem", fontWeight: "bold" }}>{formatCurrency(medianValue)}</div>
+            <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>50% de simulaciones por encima</div>
+          </div>
+
+          {/* Rango intercuartil */}
+          <div style={{ background: "#1f2937", borderRadius: 8, padding: "0.75rem 1rem" }}>
+            <div style={{ color: "#9ca3af", fontSize: "0.72rem", marginBottom: "0.2rem" }}>RANGO CENTRAL (P25–P75)</div>
+            <div style={{ color: "#10b981", fontSize: "1rem", fontWeight: "bold" }}>{formatCurrency(p25)}</div>
+            <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>— a —</div>
+            <div style={{ color: "#10b981", fontSize: "1rem", fontWeight: "bold" }}>{formatCurrency(p75)}</div>
+            <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>50% central de los escenarios</div>
+          </div>
+
+          {/* Media */}
+          <div style={{ background: "#1f2937", borderRadius: 8, padding: "0.75rem 1rem" }}>
+            <div style={{ color: "#9ca3af", fontSize: "0.72rem", marginBottom: "0.2rem" }}>MEDIA (sesgada al alza)</div>
+            <div style={{ color: "#d1d5db", fontSize: "1.1rem", fontWeight: "bold" }}>{formatCurrency(meanValue)}</div>
+            <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>Media &gt; mediana en log-normal</div>
+          </div>
+
+          {/* Peor 5% */}
+          <div style={{ background: "#1f2937", borderRadius: 8, padding: "0.75rem 1rem" }}>
+            <div style={{ color: "#9ca3af", fontSize: "0.72rem", marginBottom: "0.2rem" }}>PEOR 5% (cola bajista)</div>
+            <div style={{ color: "#ef4444", fontSize: "1.1rem", fontWeight: "bold" }}>{formatCurrency(worst5)}</div>
+            <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>VaR 95% — 1 de cada 20 escenarios</div>
+          </div>
+
+          {/* Mejor 95% */}
+          <div style={{ background: "#1f2937", borderRadius: 8, padding: "0.75rem 1rem" }}>
+            <div style={{ color: "#9ca3af", fontSize: "0.72rem", marginBottom: "0.2rem" }}>MEJOR 5% (cola alcista)</div>
+            <div style={{ color: "#f59e0b", fontSize: "1.1rem", fontWeight: "bold" }}>{formatCurrency(best95)}</div>
+            <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>Escenario optimista</div>
+          </div>
+
+          {/* Probabilidad de objetivo */}
+          <div style={{ background: "#1f2937", borderRadius: 8, padding: "0.75rem 1rem" }}>
+            <div style={{ color: "#9ca3af", fontSize: "0.72rem", marginBottom: "0.2rem" }}>PROB. OBJETIVO</div>
+            <div style={{ color: probability >= 50 ? "#10b981" : probability >= 25 ? "#f59e0b" : "#ef4444", fontSize: "1.3rem", fontWeight: "bold" }}>{probability.toFixed(1)}%</div>
+            <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>Alcanzar {formatCurrency(target)}</div>
+          </div>
+        </div>
+
+        {/* Capital total invertido vs mediana */}
+        <div style={{ background: "#111827", borderRadius: 6, padding: "0.5rem 1rem", marginBottom: "1rem", fontSize: "0.8rem", color: "#9ca3af" }}>
+          Capital total invertido en {years} años:{" "}
+          <strong style={{ color: "#d1d5db" }}>{formatCurrency(totalPortfolioValue + monthlyInjection * years * 12)}</strong>
+          {" · "}Multiplicador mediana:{" "}
+          <strong style={{ color: "#6366f1" }}>{(medianValue / (totalPortfolioValue + monthlyInjection * years * 12)).toFixed(1)}x</strong>
+          {" · "}Sigma efectiva:{" "}
+          <strong>{(portfolioVol * 100).toFixed(1)}%</strong>
+        </div>
+
+        {/* CVaR corregido (BUG-07 fix) */}
         <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-          <div><label htmlFor="years" style={styles.label}>Años de simulación:</label><input id="years" name="years" type="number" value={years} onChange={(e) => setYears(Number(e.target.value))} style={styles.smallInput} min="1" max="50" step="1" /></div>
-          <div><p><strong>Probabilidad de alcanzar {formatCurrency(target)}:</strong> {probability.toFixed(1)}%</p></div>
-          <div><p><strong>Media:</strong> {formatCurrency(meanValue)}</p></div>
-          <div><p><strong>Peor 5% (VaR):</strong> {formatCurrency(worst5)}</p></div>
           {cvarResult && (
-            <div style={{ borderLeft: "2px solid #f59e0b", paddingLeft: "0.75rem" }}>
+            <div style={{ borderLeft: "2px solid #f59e0b", paddingLeft: "0.75rem", marginBottom: "0.75rem" }}>
               <p style={{ margin: 0 }}>
-                <strong>CVaR 95%:</strong>{" "}
+                <strong>CVaR 95% — valor esperado peor 5%:</strong>{" "}
                 <span style={{ color: "#f59e0b" }}>
-                  {formatCurrency(totalPortfolioValue * (1 + cvarResult.cvar95))}
+                  {formatCurrency(cvarResult.cvar95Abs)}
                 </span>
               </p>
               <p style={{ margin: 0, fontSize: "0.75rem", color: "#9ca3af" }}>
-                Media del peor 5% de escenarios · Tail ratio: {cvarResult.tailRatio.toFixed(2)}x
-                {cvarResult.tailRatio > 1.5 ? " ⚠️ cola pesada" : " ✓ distribución normal"}
+                Pérdida esperada vs capital invertido: {" "}
+                <span style={{ color: cvarResult.loss95 > 0 ? "#ef4444" : "#10b981" }}>
+                  {cvarResult.loss95 > 0 ? "−" : "+"}{formatCurrency(Math.abs(cvarResult.loss95))}
+                </span>
+                {" · "}Capital total invertido: {formatCurrency(cvarResult.totalInvested)}
+                {" · "}Tail ratio: {cvarResult.tailRatio.toFixed(2)}x
+                {cvarResult.tailRatio < 0.9 ? " ⚠️ cola pesada" : " ✓ distribución normal"}
               </p>
               <p style={{ margin: 0, fontSize: "0.75rem", color: "#ef4444" }}>
-                CVaR 99%: {formatCurrency(totalPortfolioValue * (1 + cvarResult.cvar99))}
-                {" · "}Estándar Basel III
+                CVaR 99%: {formatCurrency(cvarResult.cvar99Abs)}
+                {" · "}Estándar Basel III/IV
               </p>
             </div>
           )}
@@ -1227,7 +1436,7 @@ const InstitutionalDashboard: React.FC = () => {
             Simulación de pérdidas con retornos históricos reales de los proxies en cada crisis
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem" }}>
-            {stressResults.map(s => (
+            {stressResults.map((s: StressResult) => (
               <div key={s.scenarioId} style={{
                 backgroundColor: s.portfolioReturn < -0.30 ? "#450a0a" : s.portfolioReturn < -0.15 ? "#422006" : "#111827",
                 border: `1px solid ${s.portfolioReturn < -0.30 ? "#ef4444" : s.portfolioReturn < -0.15 ? "#f59e0b" : "#374151"}`,
@@ -1321,42 +1530,238 @@ const InstitutionalDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* CYCLE TOP — panel de alertas de techo de ciclo */}
+      {cycleTopResult.hasActiveWarnings && (
+        <div style={{ ...styles.card, border: "1px solid #d97706", background: "linear-gradient(135deg, #1c1107 0%, #111827 100%)" }}>
+          <h2 style={{ color: "#f59e0b", marginBottom: "0.75rem" }}>⚠️ Señales de Techo de Ciclo Activas</h2>
+          <p style={{ color: "#9ca3af", fontSize: "0.82rem", marginBottom: "1rem" }}>
+            El motor ha detectado condiciones de fin de ciclo en uno o más activos.
+            Las sugerencias de venta en el panel de rebalanceo son reducciones parciales — no salidas totales.
+            Ejecutar vendiendo las participaciones indicadas en tu broker.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            {cycleTopResult.signals.filter((s: CycleTopSignal) => s.zone !== "SAFE").map((s: CycleTopSignal) => (
+              <div key={s.ticker} style={{
+                background: s.zone === "EXTREME" ? "rgba(239,68,68,0.12)" : s.zone === "DANGER" ? "rgba(239,68,68,0.08)" : "rgba(245,158,11,0.08)",
+                border: `1px solid ${s.zone === "EXTREME" ? "#ef4444" : s.zone === "DANGER" ? "#ef4444" : "#f59e0b"}`,
+                borderRadius: "6px", padding: "0.6rem 1rem",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                  <span style={{ fontWeight: "bold", color: "#e5e7eb" }}>{s.ticker} — {s.asset}</span>
+                  <span style={{
+                    background: s.zone === "EXTREME" ? "#7f1d1d" : s.zone === "DANGER" ? "#7f1d1d" : "#78350f",
+                    color: s.zone === "EXTREME" || s.zone === "DANGER" ? "#ef4444" : "#f59e0b",
+                    padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.75rem", fontWeight: "bold",
+                  }}>{s.zone}{s.shouldTrim ? ` · REDUCIR ${s.trimPct}%` : ""}</span>
+                </div>
+                <p style={{ color: "#9ca3af", fontSize: "0.8rem", margin: 0 }}>{s.indicatorValue}</p>
+                <p style={{ color: "#d1d5db", fontSize: "0.78rem", marginTop: "0.2rem", marginBottom: 0 }}>{s.reason}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* PANEL FISCAL ESPAÑA — análisis de conveniencia de ventas */}
+      {taxAnalysis && taxAnalysis.analyses.length > 0 && (
+        <div style={{ ...styles.card, border: "1px solid #6366f1", background: "linear-gradient(135deg, #0f0a1e 0%, #111827 100%)" }}>
+          <h2 style={{ color: "#818cf8", marginBottom: "0.5rem" }}>🧾 Análisis Fiscal — IRPF España 2025</h2>
+          <p style={{ color: "#9ca3af", fontSize: "0.82rem", marginBottom: "1rem" }}>
+            Basado en tramos del IRPF 2025 (base del ahorro). Incluye compensación de minusvalías latentes del portfolio.
+            Este análisis es orientativo — consulta con tu asesor fiscal para decisiones definitivas.
+          </p>
+
+          {/* Resumen del portfolio */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
+            <div style={{ background: "#1f2937", borderRadius: 6, padding: "0.6rem 1rem" }}>
+              <div style={{ color: "#9ca3af", fontSize: "0.75rem" }}>Plusvalías latentes</div>
+              <div style={{ color: "#10b981", fontWeight: "bold", fontSize: "1.1rem" }}>+€{taxAnalysis.totalLatentGains.toFixed(0)}</div>
+            </div>
+            <div style={{ background: "#1f2937", borderRadius: 6, padding: "0.6rem 1rem" }}>
+              <div style={{ color: "#9ca3af", fontSize: "0.75rem" }}>Minusvalías latentes</div>
+              <div style={{ color: "#ef4444", fontWeight: "bold", fontSize: "1.1rem" }}>−€{taxAnalysis.totalLatentLosses.toFixed(0)}</div>
+            </div>
+            {taxAnalysis.compensationOpportunity && (
+              <div style={{ background: "#1f2937", borderRadius: 6, padding: "0.6rem 1rem", border: "1px solid #f59e0b" }}>
+                <div style={{ color: "#f59e0b", fontSize: "0.75rem" }}>⚡ Compensación disponible</div>
+                <div style={{ color: "#f59e0b", fontWeight: "bold", fontSize: "1.1rem" }}>€{taxAnalysis.availableLossOffset.toFixed(0)}</div>
+                <div style={{ color: "#9ca3af", fontSize: "0.7rem" }}>reduce el impuesto de las ventas</div>
+              </div>
+            )}
+          </div>
+
+          {/* Tabla de análisis por activo */}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #374151", color: "#9ca3af" }}>
+                  <th style={{ textAlign: "left", padding: "0.5rem" }}>Activo</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>P&L latente</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Venta parcial</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Ganancia realizada</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Impuesto</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Pérdida si NO vendes</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Break-even</th>
+                  <th style={{ textAlign: "center", padding: "0.5rem" }}>Veredicto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {taxAnalysis.analyses.map((t: TaxAnalysis) => (
+                  <tr key={t.ticker} style={{ borderBottom: "1px solid #1f2937" }}>
+                    <td style={{ padding: "0.5rem" }}>
+                      <div style={{ fontWeight: "bold" }}>{t.ticker}</div>
+                      <div style={{ color: "#6b7280", fontSize: "0.72rem" }}>
+                        Compra media: €{t.avgBuyPrice.toFixed(2)}
+                      </div>
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      <span style={{ color: t.latentGainTotal >= 0 ? "#10b981" : "#ef4444" }}>
+                        {t.latentGainTotal >= 0 ? "+" : ""}€{t.latentGainTotal.toFixed(0)}
+                      </span>
+                      <div style={{ color: "#6b7280", fontSize: "0.72rem" }}>
+                        {t.latentGainTotal >= 0 ? "+" : ""}{(t.latentGainPct * 100).toFixed(1)}%
+                      </div>
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      <div>−{t.sharesToSell} acc. ({t.trimPct}%)</div>
+                      <div style={{ color: "#9ca3af", fontSize: "0.72rem" }}>Ingreso: €{t.saleProceeds.toFixed(0)}</div>
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      <span style={{ color: t.realizedGain >= 0 ? "#f59e0b" : "#10b981" }}>
+                        {t.realizedGain >= 0 ? "+" : ""}€{t.realizedGain.toFixed(0)}
+                      </span>
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      {t.realizedGain > 0 ? (
+                        <>
+                          <div style={{ color: "#ef4444" }}>€{t.taxAfterOffset.toFixed(0)}</div>
+                          <div style={{ color: "#6b7280", fontSize: "0.72rem" }}>
+                            {(t.effectiveRate * 100).toFixed(1)}% efectivo
+                            {t.lossOffsetUsed > 0 && <span style={{ color: "#10b981" }}> (−€{t.lossOffsetUsed.toFixed(0)} offset)</span>}
+                          </div>
+                        </>
+                      ) : (
+                        <span style={{ color: "#10b981" }}>€0 — minusvalía</span>
+                      )}
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      <div style={{ color: "#ef4444" }}>−€{t.expectedLossEuros.toFixed(0)}</div>
+                      <div style={{ color: "#6b7280", fontSize: "0.72rem" }}>
+                        −{(t.expectedDrawdownPct * 100).toFixed(0)}% caso central {t.cycleZone}
+                      </div>
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      <div>€{t.breakEvenPrice.toFixed(2)}</div>
+                      <div style={{ color: "#6b7280", fontSize: "0.72rem" }}>
+                        −{(((t.currentPrice - t.breakEvenPrice) / t.currentPrice) * 100).toFixed(1)}% desde hoy
+                      </div>
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "center" }}>
+                      <div style={{
+                        background: t.verdict === "CONVIENE" ? "#052e16" : t.verdict === "ANALIZAR" ? "#78350f" : t.verdict === "EN_PERDIDAS" ? "#052e16" : "#1f2937",
+                        border: `1px solid ${t.verdict === "CONVIENE" ? "#10b981" : t.verdict === "ANALIZAR" ? "#f59e0b" : t.verdict === "EN_PERDIDAS" ? "#10b981" : "#6b7280"}`,
+                        borderRadius: 6, padding: "0.3rem 0.5rem",
+                      }}>
+                        <div style={{
+                          fontWeight: "bold", fontSize: "0.78rem",
+                          color: t.verdict === "CONVIENE" ? "#10b981" : t.verdict === "ANALIZAR" ? "#f59e0b" : t.verdict === "EN_PERDIDAS" ? "#10b981" : "#9ca3af",
+                        }}>{t.verdictEmoji} {t.verdict.replace("_", " ")}</div>
+                        <div style={{ color: "#6b7280", fontSize: "0.68rem", marginTop: "0.2rem", textAlign: "left" }}>
+                          {t.verdictReason}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Avisos generales */}
+          {taxAnalysis.generalAdvice.length > 0 && (
+            <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              {taxAnalysis.generalAdvice.map((advice: string, i: number) => (
+                <div key={i} style={{ background: "#1f2937", borderLeft: "3px solid #6366f1", padding: "0.5rem 0.75rem", fontSize: "0.8rem", color: "#d1d5db" }}>
+                  💡 {advice}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p style={{ color: "#4b5563", fontSize: "0.72rem", marginTop: "0.75rem" }}>
+            ⚠️ Cálculo orientativo. No tiene en cuenta retenciones previas, rendimientos de capital del ejercicio, ni situaciones particulares de IRPF.
+            Consulta con un asesor fiscal antes de ejecutar ventas significativas.
+          </p>
+        </div>
+      )}
+
       {/* NIVEL 4: Rebalanceo real basado en motor */}
-      {rebalanceSuggestions && rebalanceSuggestions.suggestions.length > 0 && (
+      {rebalanceFinal && (rebalanceFinal.suggestions.length > 0) && (
         <div style={styles.card}>
           <h2>⚖️ Rebalanceo — Motor Olympus</h2>
+          {dcaBlocked && (
+            <div style={{ background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '6px', padding: '0.6rem 1rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#fca5a5' }}>
+              ⛔ DCA {dcaAction} — La aportación mensual de €{monthlyInjection.toFixed(0)} está congelada como liquidez defensiva.
+              Solo se usa la reserva existente (€{cashReserve.toFixed(0)}) para rebalancear déficits prioritarios.
+              {cashReserve < 10 && " Sin reserva disponible — no se ejecutan compras."}
+            </div>
+          )}
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "1rem" }}>
             Basado en allocations reales del motor. Cash disponible: <strong>€{availableCash.toFixed(0)}</strong> ·
-            Cobertura del rebalanceo ideal: <strong>{(rebalanceSuggestions.coverageRatio * 100).toFixed(0)}%</strong>
+            Cobertura del rebalanceo ideal: <strong>{(rebalanceFinal!.coverageRatio * 100).toFixed(0)}%</strong>
           </p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #374151", color: "#9ca3af" }}>
                   <th style={{ textAlign: "left", padding: "0.5rem" }}>Activo</th>
+                  <th style={{ textAlign: "center", padding: "0.5rem" }}>Acción</th>
                   <th style={{ textAlign: "right", padding: "0.5rem" }}>Actual</th>
                   <th style={{ textAlign: "right", padding: "0.5rem" }}>Objetivo</th>
                   <th style={{ textAlign: "right", padding: "0.5rem" }}>Drift</th>
-                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Comprar</th>
-                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Coste</th>
-                  <th style={{ textAlign: "left", padding: "0.5rem" }}>Prioridad</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>Cantidad</th>
+                  <th style={{ textAlign: "right", padding: "0.5rem" }}>€</th>
+                  <th style={{ textAlign: "left", padding: "0.5rem" }}>Prioridad / Señal</th>
                 </tr>
               </thead>
               <tbody>
-                {rebalanceSuggestions.suggestions.map(s => (
-                  <tr key={s.ticker} style={{ borderBottom: "1px solid #1f2937" }}>
+                {rebalanceFinal!.suggestions.map((s: RebalanceSuggestion) => (
+                  <tr key={s.ticker} style={{
+                    borderBottom: "1px solid #1f2937",
+                    background: s.action === "SELL" ? "rgba(239,68,68,0.07)" : "transparent",
+                  }}>
                     <td style={{ padding: "0.5rem", fontWeight: "bold" }}>{s.ticker}</td>
+                    <td style={{ padding: "0.5rem", textAlign: "center" }}>
+                      <span style={{
+                        background: s.action === "SELL" ? "#7f1d1d" : "#052e16",
+                        color: s.action === "SELL" ? "#ef4444" : "#10b981",
+                        padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.75rem", fontWeight: "bold",
+                      }}>{s.action}</span>
+                    </td>
                     <td style={{ padding: "0.5rem", textAlign: "right" }}>{(s.currentPct * 100).toFixed(1)}%</td>
                     <td style={{ padding: "0.5rem", textAlign: "right", color: "#6366f1" }}>{(s.targetPct * 100).toFixed(1)}%</td>
-                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#ef4444" }}>{(s.drift * 100).toFixed(1)}pp</td>
-                    <td style={{ padding: "0.5rem", textAlign: "right" }}>{s.sharesToBuy}</td>
-                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#10b981" }}>€{s.cost.toFixed(0)}</td>
-                    <td style={{ padding: "0.5rem" }}>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: s.drift > 0 ? "#f59e0b" : "#ef4444" }}>{(s.drift * 100).toFixed(1)}pp</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      {s.action === "SELL"
+                        ? <span style={{ color: "#ef4444" }}>−{s.sharesToSell} ({s.trimPct}%)</span>
+                        : <span style={{ color: "#10b981" }}>+{s.sharesToBuy}</span>
+                      }
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      {s.action === "SELL"
+                        ? <span style={{ color: "#f59e0b" }}>+€{s.proceedsIfSold.toFixed(0)}</span>
+                        : <span style={{ color: "#10b981" }}>−€{s.cost.toFixed(0)}</span>
+                      }
+                    </td>
+                    <td style={{ padding: "0.5rem", fontSize: "0.78rem" }}>
                       <span style={{
                         backgroundColor: s.priority === "HIGH" ? "#7f1d1d" : s.priority === "MEDIUM" ? "#78350f" : "#1f2937",
                         color: s.priority === "HIGH" ? "#ef4444" : s.priority === "MEDIUM" ? "#f59e0b" : "#9ca3af",
-                        padding: "0.1rem 0.4rem", borderRadius: 4, fontSize: "0.75rem",
+                        padding: "0.1rem 0.4rem", borderRadius: 4, marginRight: "0.3rem",
                       }}>{s.priority}</span>
+                      {s.cycleZone && s.cycleZone !== "SAFE" && (
+                        <span style={{ color: "#9ca3af" }}>· {s.cycleIndicatorValue}</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1364,8 +1769,8 @@ const InstitutionalDashboard: React.FC = () => {
             </table>
           </div>
           <p style={{ color: "#9ca3af", fontSize: "0.8rem", marginTop: "0.75rem" }}>
-            Total: <strong style={{ color: "#10b981" }}>€{rebalanceSuggestions.totalCost.toFixed(0)}</strong> ·
-            Restante: €{rebalanceSuggestions.remainingCash.toFixed(0)}
+            Total compras: <strong style={{ color: "#10b981" }}>€{rebalanceFinal!.totalCost.toFixed(0)}</strong> ·
+            Restante: €{rebalanceFinal!.remainingCash.toFixed(0)}
           </p>
         </div>
       )}

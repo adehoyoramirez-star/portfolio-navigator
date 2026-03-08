@@ -26,6 +26,7 @@ import { correlationPenalty } from "../portfolio/correlation";
 import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBudget";
 import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
+import { runBlackLitterman, generateViewsFromEngine, BLView } from "../portfolio/blackLitterman";
 
 export interface AssetInput {
   name: string;
@@ -100,6 +101,8 @@ export interface OlympusEngineInput {
   portfolioRealizedVol?: number;     // vol realizada del portfolio (para vol target)
   targetVol?: number;                // target de volatilidad (default: 18%)
   erpValue?: number;                 // Equity Risk Premium = EarningsYield - Bono10y (ej: -0.007)
+  blViews?: BLView[];                // Black-Litterman investor views (auto-generadas si no se pasan)
+  liquidityGrowth?: number;          // liquidez global YoY% — para auto-generar views macro BL
   cewsHistory?: CEWSDataPoint[];     // historial CEWS para early warning predictivo
 }
 
@@ -214,16 +217,56 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const hrpResult = computeHRP(hasRealCovMatrix ? input.covMatrix! : [], assets.length);
   const hrpWeights = hrpResult.weights;
 
-  // ====== BLEND FINAL: Kelly 40% + Markowitz 20% + RiskParity 15% + HRP 25% ======
+  // ====== CAPA 5B: BLACK-LITTERMAN ======
+  // Genera views automáticas desde los factor scores del motor si no se pasan explícitamente.
+  // Las views mezclan el equilibrio de mercado (covarianza implícita) con las señales del motor.
+  let blWeights: number[] = assets.map(() => 1 / assets.length); // fallback: equal weight
+  if (hasRealCovMatrix && input.covMatrix) {
+    try {
+      const blViews = input.blViews ?? generateViewsFromEngine(
+        rawScores.map(s => ({
+          name: s.asset.name,
+          // FIX BUG-01: AssetInput has no ticker field — use name as the identifier.
+          // Previously `s.asset.ticker` was always `undefined`, making the P matrix
+          // all-zeros → omega=0 → division by zero → silent catch → equal-weight fallback.
+          ticker: s.asset.name,
+          momentumScore: s.momentum.momentumScore,
+          valuePercentileRank: s.value.percentileRank,
+        })),
+        masterRegime.regime,
+        input.liquidityGrowth ?? 0
+      );
+      // Pesos de mercado actuales = pesos blendNorm actuales (antes de BL) o equal weight
+      const marketWeights = assets.map(() => 1 / assets.length);
+      const blResult = runBlackLitterman({
+        // FIX BUG-01: use name (not ticker) as the asset identifier — consistent with views above.
+        assetNames: assets.map(a => a.name),
+        covMatrix: input.covMatrix,
+        marketWeights,
+        views: blViews,
+        riskAversion: masterRegime.regime === 'CRISIS' ? 4.0 : masterRegime.regime === 'CONTRACTION' ? 3.0 : 2.5,
+        tau: 0.05,
+      });
+      blWeights = blResult.posteriorWeights;
+    } catch {
+      blWeights = assets.map(() => 1 / assets.length);
+    }
+  }
+
+  // ====== BLEND FINAL: Kelly 35% + Markowitz 15% + RiskParity 10% + HRP 20% + BL 20% ======
   // HRP reemplaza parte del Risk Parity estándar (más robusto out-of-sample)
   // Con covMatrix real: blend completo. Sin ella: Kelly + RP + HRP igual pesos
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
-      return kellyNorm[i].kellyNormalized * 0.40
-           + markowitzWeights[i]           * 0.20
-           + rpWeights[i]                  * 0.15
-           + hrpWeights[i]                 * 0.25;
+      // Con covMatrix real: blend completo con Black-Litterman
+      // BL añade 20% — reduce Markowitz y Kelly ligeramente para cederle espacio
+      return kellyNorm[i].kellyNormalized * 0.35
+           + markowitzWeights[i]           * 0.15
+           + rpWeights[i]                  * 0.10
+           + hrpWeights[i]                 * 0.20
+           + blWeights[i]                  * 0.20;
     } else {
+      // Sin covMatrix: Kelly + RP + HRP (BL necesita covMatrix real)
       return kellyNorm[i].kellyNormalized * 0.40
            + rpWeights[i]                  * 0.30
            + hrpWeights[i]                 * 0.30;

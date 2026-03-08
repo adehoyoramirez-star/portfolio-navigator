@@ -60,8 +60,16 @@ export function computeVolTargetMultiplier(input: VolTargetInput): VolTargetOutp
   }
 
   // Target ajustado por régimen: en crisis queremos menos riesgo incluso con vol baja
-  // Mapeo: penalty 1.0→factor 1.0, 0.7→0.85, 0.4→0.60
-  const regimeFactor = 0.4 + (regimePenalty - 0.4) * (0.6 / 0.6);
+  // Remapeo lineal: penalty [0.4, 1.0] → regimeFactor [0.60, 1.0]
+  //   penalty=1.0 (expansion)   → regimeFactor=1.0  → targetVol × 1.0  (sin penalización)
+  //   penalty=0.7 (contraction) → regimeFactor=0.80 → targetVol × 0.80
+  //   penalty=0.4 (crisis)      → regimeFactor=0.60 → targetVol × 0.60
+  //
+  // FIX BUG-03: la fórmula anterior `0.4 + (penalty-0.4)*(0.6/0.6)` se simplificaba
+  // algebraicamente a `regimeFactor = regimePenalty` (identidad matemática, rango [0.4,1.0]).
+  // Resultado incorrecto: CONTRACTION daba 12.6% target (debería ser 14.4%),
+  // CRISIS daba 7.2% (debería ser 10.8%) — motor 33-50% más conservador de lo diseñado.
+  const regimeFactor = 0.60 + (regimePenalty - 0.4) * (0.40 / 0.60);
   const adjustedTarget = targetVol * regimeFactor;
 
   // Multiplicador base
