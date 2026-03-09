@@ -17,6 +17,8 @@ const TICKERS = [
   '%5EGSPC',
   // DXY — índice del dólar americano
   'DX-Y.NYB',
+  // Brent Crude Oil — geopolitical shock detector (referente europeo/global)
+  'BZ=F',
   // Proxies americanos para backtest histórico (10-24 años de datos)
   'EEM',   // EMXC.DE + IS3Q.DE → MSCI Emerging Markets
   'GLD',   // PPFB.DE → Oro físico
