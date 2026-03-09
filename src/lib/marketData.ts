@@ -74,6 +74,9 @@ export interface MarketData {
   // Liquidez global calculada automáticamente
   liquidityScore: number;
   liquidityDataQuality: "REAL" | "MANUAL";
+  // Brent Crude Oil $/barril — auto Yahoo Finance (BZ=F) — referente europeo/global
+  wtiOil: number;
+  wtiSource: "YAHOO" | "MANUAL";
 }
 
 function cleanCloses(closes: number[]): number[] {
@@ -329,6 +332,11 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   // ── DXY ───────────────────────────────────────────────────────────────────
   const dxy = yfData['DX-Y.NYB']?.currentPrice ?? 103.5;
 
+  // ── BRENT CRUDE OIL (BZ=F) — referente europeo/global ──────────────────
+  const wtiRaw = yfData['BZ=F']?.currentPrice ?? 0;
+  const wtiOil = wtiRaw > 0 ? wtiRaw : 0;
+  const wtiSource: "YAHOO" | "MANUAL" = wtiRaw > 0 ? "YAHOO" : "MANUAL";
+
   // ── Liquidez Global REAL (bancos centrales desde FRED) ──────────────────────
   const liquidityOutput = centralBanks
     ? globalLiquiditySignal({
@@ -436,6 +444,8 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       jumpStd:       jumpParams.stdDev,
       liquidityScore: liquidityScoreAuto,
       liquidityDataQuality: liquidityOutput.dataQuality,
+      wtiOil,
+      wtiSource,
     },
     fetchErrors,
   };

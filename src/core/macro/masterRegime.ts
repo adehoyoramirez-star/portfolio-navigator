@@ -23,6 +23,7 @@ export interface MasterRegimeInput {
   dxyTrend: number;
   btcVol: number;
   m2Growth: number; // NUEVO Nivel 2
+  wtiOil?: number;  // WTI Crude $/barril — auto Yahoo Finance (CL=F)
 }
 
 export interface MasterRegimeOutput {
@@ -44,6 +45,7 @@ export function getMasterRegime(input: MasterRegimeInput, cewsHistory?: CEWSData
     move: input.move,
     dxyTrend: input.dxyTrend,
     btcVol: input.btcVol,
+    wtiOil: input.wtiOil,
   });
   const regimeProbs = detectRegimeProbabilistic(input.vix, input.yieldSpread, input.m2Growth);
 
@@ -68,6 +70,12 @@ export function getMasterRegime(input: MasterRegimeInput, cewsHistory?: CEWSData
   if (cewsHistory && cewsHistory.length >= 2) {
     cews = computeCEWS(cewsHistory);
     finalPenalty = Math.max(0.4, Math.min(1.0, regimePenalty + cews.regimePenaltyAdjustment));
+  }
+
+  // WTI OIL: penalización geopolítica multiplicativa — aplicada encima de todo lo demás
+  // Si petróleo en crisis ($110+) el motor es más conservador independientemente del régimen
+  if (stress.wtiPenalty < 1.0) {
+    finalPenalty = Math.max(0.4, finalPenalty * stress.wtiPenalty);
   }
 
   return {

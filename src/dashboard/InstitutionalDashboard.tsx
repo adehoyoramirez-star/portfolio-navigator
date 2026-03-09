@@ -157,6 +157,7 @@ const InstitutionalDashboard: React.FC = () => {
   const [liquidityGrowth, setLiquidityGrowth] = useState(3.2);       // % crecimiento liquidez global
   const [dxy, setDxy] = useState(103);                               // Dollar index
   const [moveIndex, setMoveIndex] = useState(120);                   // MOVE index
+  const [wtiOil, setWtiOil] = useState<number>(75);                  // WTI Crude $/barril — auto Yahoo (CL=F)
   const [btcVol, setBtcVol] = useState(0.65);                        // volatilidad BTC (65%)
   const [btcDominance, setBtcDominance] = useState(54.0);            // BTC.D % — ticker TradingView: BTC.D
   const [mvrvRatio, setMvrvRatio] = useState(1.8);                   // MVRV ratio — lookintobitcoin.com
@@ -238,6 +239,9 @@ const InstitutionalDashboard: React.FC = () => {
       setVix(md.vix);
       setManualBond10y(md.tnx);
       setBond2y(md.irx);
+
+      // WTI Crude Oil — auto desde Yahoo Finance (CL=F)
+      if (md.wtiOil > 0) setWtiOil(md.wtiOil);
       const liq = liquidityScore({
         m2Growth,
         vix: md.vix,
@@ -445,6 +449,7 @@ const InstitutionalDashboard: React.FC = () => {
         move: moveIndex,
         dxyTrend: (dxy - 100) / 100,
         btcVol,
+        wtiOil,           // ← WTI Crude: penalización geopolítica automática
       },
       // Opcionales — motor degrada elegantemente si faltan
       covMatrix: marketData?.covMatrix,
@@ -454,7 +459,7 @@ const InstitutionalDashboard: React.FC = () => {
       liquidityGrowth,                     // para auto-generar views macro en Black-Litterman
       cewsHistory: effectiveCEWSHistory,   // CEWS: historial para early warning predictivo
     });
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory]);
 
   // ==================== SEÑALES MACRO UNIFICADAS ====================
   // FIX: fromManualInputs reemplaza el useMemo inline — honesto sobre la fuente de datos
@@ -972,6 +977,26 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={moveIndex} onChange={(e) => setMoveIndex(Number(e.target.value))} style={styles.smallInput} step="1" />
         </div>
         <div>
+          <label style={styles.label}>
+            Brent Crude Oil $/barril{" "}
+            <span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto (BZ=F)</span>
+          </label>
+          <input type="number" value={wtiOil} onChange={(e) => setWtiOil(Math.max(0, Number(e.target.value)))} style={{
+            ...styles.smallInput,
+            borderColor: wtiOil >= 115 ? "#ef4444" : wtiOil >= 95 ? "#f59e0b" : wtiOil >= 75 ? "#fcd34d" : "#374151",
+            boxShadow: wtiOil >= 115 ? "0 0 0 2px #ef444444" : "none",
+          }} step="0.5" min="0" />
+          <p style={{ fontSize: "0.65rem", margin: "0.2rem 0 0", color: wtiOil >= 115 ? "#ef4444" : wtiOil >= 95 ? "#f59e0b" : "#6b7280" }}>
+            {wtiOil >= 115 ? "🔴 CRISIS ENERGÉTICA — penalización ×0.50 al motor"
+             : wtiOil >= 95  ? "🟠 SHOCK GEOPOLÍTICO — penalización ×0.70 al motor"
+             : wtiOil >= 75  ? "🟡 Tensión elevada — penalización ×0.85 al motor"
+             : "🟢 Normal — sin penalización por petróleo"}
+          </p>
+          <p style={{ fontSize: "0.6rem", color: "#4b5563", margin: "0.15rem 0 0" }}>
+            {"<$75 normal · $75–95 tensión · $95–115 shock · >$115 crisis · Brent = referente europeo/global"}
+          </p>
+        </div>
+        <div>
           <label style={styles.label}>Volatilidad BTC {" "}<span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={btcVol} onChange={(e) => setBtcVol(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="2" />
           <label style={styles.label}>BTC Dominance % {" "}
@@ -1171,6 +1196,11 @@ const InstitutionalDashboard: React.FC = () => {
               <p>Motor: <strong style={{ color: engineResult.regime === "CRISIS" ? "#ef4444" : engineResult.regime === "CONTRACTION" ? "#f59e0b" : "#10b981" }}>{engineResult.regime}</strong></p>
               <p>Crisis prob: {engineResult.masterRegime.crisisDetail.crisisProbability.toFixed(1)}%</p>
               <p>Stress score: {engineResult.masterRegime.stressDetail.score} / {engineResult.masterRegime.stressDetail.regime}</p>
+              {engineResult.masterRegime.stressDetail.wtiShock !== "NONE" && (
+                <p style={{ color: engineResult.masterRegime.stressDetail.wtiShock === "CRISIS" ? "#ef4444" : engineResult.masterRegime.stressDetail.wtiShock === "SHOCK" ? "#f59e0b" : "#fcd34d", fontSize: "0.78rem", fontWeight: "bold" }}>
+                  🛢 WTI {engineResult.masterRegime.stressDetail.wtiShock} — ×{engineResult.masterRegime.stressDetail.wtiPenalty.toFixed(2)} penalización extra
+                </p>
+              )}
               <p style={{ fontSize: "0.75rem", color: "#6b7280" }}>Confianza: {engineResult.meta.confidence} · Señal: {engineResult.meta.dominantSignal}</p>
             </>
           ) : <p style={{ color: "#6b7280" }}>Calculando...</p>}

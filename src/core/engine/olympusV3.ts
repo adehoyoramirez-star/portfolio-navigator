@@ -94,6 +94,7 @@ export interface OlympusEngineInput {
     dxyTrend: number;
     btcVol: number;
     m2Growth: number;    // NUEVO Nivel 2
+    wtiOil?: number;     // WTI Crude $/barril — geopolitical shock detector
   };
   // Opcionales — motor funciona sin ellos (degradación elegante)
   covMatrix?: number[][];            // covarianza real de Supabase (para Markowitz)
@@ -126,6 +127,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     dxyTrend: macro.dxyTrend,
     btcVol: macro.btcVol,
     m2Growth: macro.m2Growth,
+    wtiOil: macro.wtiOil,
   }, input.cewsHistory);
 
   const corrPenalty = correlationPenalty(correlationMatrix);
