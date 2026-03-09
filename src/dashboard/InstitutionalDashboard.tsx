@@ -239,9 +239,6 @@ const InstitutionalDashboard: React.FC = () => {
       setVix(md.vix);
       setManualBond10y(md.tnx);
       setBond2y(md.irx);
-
-      // WTI Crude Oil — auto desde Yahoo Finance (CL=F)
-      if (md.wtiOil > 0) setWtiOil(md.wtiOil);
       const liq = liquidityScore({
         m2Growth,
         vix: md.vix,
@@ -979,7 +976,7 @@ const InstitutionalDashboard: React.FC = () => {
         <div>
           <label style={styles.label}>
             Brent Crude Oil $/barril{" "}
-            <span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto (BZ=F)</span>
+            <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span>
           </label>
           <input type="number" value={wtiOil} onChange={(e) => setWtiOil(Math.max(0, Number(e.target.value)))} style={{
             ...styles.smallInput,
@@ -993,7 +990,7 @@ const InstitutionalDashboard: React.FC = () => {
              : "🟢 Normal — sin penalización por petróleo"}
           </p>
           <p style={{ fontSize: "0.6rem", color: "#4b5563", margin: "0.15rem 0 0" }}>
-            {"<$75 normal · $75–95 tensión · $95–115 shock · >$115 crisis · Brent = referente europeo/global"}
+            {"<$75 normal · $75–95 tensión · $95–115 shock · >$115 crisis · Fuente: oilprice.com o TradingView UKOIL"}
           </p>
         </div>
         <div>
