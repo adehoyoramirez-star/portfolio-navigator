@@ -32,6 +32,7 @@ export interface CycleTopInputs {
   // Oro
   bondYield10y: number;        // ya disponible en dashboard
   inflationBreakeven?: number; // TradingView: T5YIE — breakeven inflación 5 años EEUU
+  brentOil?: number;           // $/barril — si >$95 la guerra/inflación protege al oro → override HOLD
 }
 
 export interface CycleTopSignal {
@@ -227,7 +228,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── ORO ──────────────────────────────────────────────────────────
 function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { bondYield10y, inflationBreakeven } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil } = inputs;
 
   if (inflationBreakeven === undefined) {
     return {
@@ -274,14 +275,31 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
     reason = `Tipo real ${realRate.toFixed(2)}% — tipos reales negativos. Entorno favorable para el oro.`;
   }
 
+  // ── BRENT CRUDE OVERRIDE ──────────────────────────────────────────────────
+  // Petróleo alto → inflación real sube → tipo real efectivo cae → oro protege
+  // En shock/crisis energética la señal de venta de oro se cancela o reduce
+  // porque el Brent es el termómetro más rápido de inflación geopolítica real
+  if (brentOil !== undefined && brentOil >= 95 && trimPct > 0) {
+    const brentLabel = brentOil >= 115 ? "CRISIS ENERGÉTICA" : "SHOCK GEOPOLÍTICO";
+    reason = `Brent $${brentOil.toFixed(0)} — ${brentLabel}. Señal de venta suspendida: petróleo alto genera inflación real que protege al oro. Tipo real nominal: ${realRate.toFixed(2)}%.`;
+    multiplier = Math.max(multiplier, 0.85);
+    trimPct    = 0;
+    zone       = "SAFE";
+  } else if (brentOil !== undefined && brentOil >= 75 && trimPct > 0) {
+    // Tensión elevada — suavizar señal de venta 20pp pero no eliminarla
+    reason = `Tipo real ${realRate.toFixed(2)}% — presión sobre el oro, pero Brent $${brentOil.toFixed(0)} (tensión geopolítica) reduce el riesgo. Vigilar.`;
+    trimPct = Math.max(0, trimPct - 20);
+    if (trimPct === 0) { multiplier = 1.0; zone = "SAFE"; }
+  }
+
   return {
     asset: "Gold (ETC)",
     ticker: "PPFB.DE",
     allocationMultiplier: multiplier,
     zone,
     reason,
-    indicator: "Tipo Real = Bono 10y − Breakeven 5y",
-    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real`,
+    indicator: "Tipo Real + Brent Crude Oil",
+    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"}`,
     shouldTrim: trimPct > 0,
     trimPct,
   };

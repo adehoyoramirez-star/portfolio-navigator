@@ -220,8 +220,8 @@ const InstitutionalDashboard: React.FC = () => {
       // override manual después si lo necesita.
 
       // M2 y PER — input manual del usuario (no auto-seed desde FRED)
-      // S&P 500 RSI — Yahoo auto
-      setRsi(parseFloat(md.sp500Rsi.toFixed(1)));
+      // S&P 500 RSI — Yahoo devuelve siempre ~50 por datos insuficientes → manual desde TradingView
+      // setRsi(parseFloat(md.sp500Rsi.toFixed(1)));  // DESACTIVADO — usar TradingView SPX D RSI(14)
       // Momentum SP500, DXY, BTC vol, Jumps — input manual del usuario
       // Liquidez Global — input manual del usuario, no se auto-seed
 
@@ -571,9 +571,10 @@ const InstitutionalDashboard: React.FC = () => {
       bookToBill,
       bondYield10y: manualBond10y,
       inflationBreakeven,
+      brentOil: wtiOil > 0 ? wtiOil : undefined,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, bookToBill, manualBond10y, inflationBreakeven]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, bookToBill, manualBond10y, inflationBreakeven, wtiOil]);
 
   // ── BTC CYCLE ANALYZER (Power Law + Halving + Puell + Hash Ribbon + Elliott) ──
   const btcCycleResult = useMemo((): BitcoinCycleOutput | null => {
@@ -954,7 +955,10 @@ const InstitutionalDashboard: React.FC = () => {
           <input type="number" value={vix} onChange={(e) => setVix(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
-          <label style={styles.label}>RSI S&P 500 {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>RSI S&P 500 {" "}
+            <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>● manual</span>
+            <span style={{ fontSize: "0.6rem", color: "#6b7280", marginLeft: "4px" }}>TradingView: SPX · D · RSI(14)</span>
+          </label>
           <input type="number" value={rsi} onChange={(e) => setRsi(Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
         </div>
         <div>
@@ -1974,13 +1978,13 @@ const InstitutionalDashboard: React.FC = () => {
                       {ew.waveTargets.conservative && (
                         <div style={{ background: "rgba(245,158,11,0.1)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem" }}>
                           <span style={{ color: "#f59e0b" }}>Onda 5 conservador:</span>{" "}
-                          <strong style={{ color: "#e5e7eb" }}>€{(ew.waveTargets.conservative / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                          <strong style={{ color: "#e5e7eb" }}>€{ew.waveTargets.conservative.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
                         </div>
                       )}
                       {ew.waveTargets.base && (
                         <div style={{ background: "rgba(245,158,11,0.15)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem" }}>
                           <span style={{ color: "#f59e0b" }}>Onda 5 extendido:</span>{" "}
-                          <strong style={{ color: "#e5e7eb" }}>€{(ew.waveTargets.base / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                          <strong style={{ color: "#e5e7eb" }}>€{ew.waveTargets.base.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
                         </div>
                       )}
                     </div>
@@ -1988,7 +1992,7 @@ const InstitutionalDashboard: React.FC = () => {
                   {ew.waveTargets && ew.currentWave === "3" && ew.waveTargets.conservative && (
                     <div style={{ marginTop: "0.5rem", background: "rgba(16,185,129,0.1)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem" }}>
                       <span style={{ color: "#10b981" }}>Onda 3 target 1.618x:</span>{" "}
-                      <strong style={{ color: "#e5e7eb" }}>€{(ew.waveTargets.conservative / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                      <strong style={{ color: "#e5e7eb" }}>€{ew.waveTargets.conservative.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
                     </div>
                   )}
                 </div>
@@ -1997,7 +2001,7 @@ const InstitutionalDashboard: React.FC = () => {
                   <p style={{ color: "#d1d5db", fontSize: "0.78rem", margin: 0, lineHeight: 1.6 }}>{narrative.alerta}</p>
                   {ew.invalidationLevel && (
                     <div style={{ marginTop: "0.4rem", background: "rgba(239,68,68,0.1)", borderRadius: 4, padding: "0.25rem 0.5rem", fontSize: "0.72rem", color: "#fca5a5" }}>
-                      Si precio &lt; €{(ew.invalidationLevel / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })} → conteo invalidado
+                      Si precio &lt; €{ew.invalidationLevel.toLocaleString("es-ES", { maximumFractionDigits: 0 })} → conteo invalidado
                     </div>
                   )}
                 </div>
@@ -2016,7 +2020,7 @@ const InstitutionalDashboard: React.FC = () => {
                       }}>
                         <span style={{ color: "#6b7280" }}>P{i + 1} </span>
                         <span style={{ color: p.label === "HIGH" ? "#f59e0b" : "#10b981", fontWeight: "bold" }}>
-                          €{(p.price / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                          €{p.price.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
                         </span>
                         <span style={{ color: "#4b5563" }}> {p.label}</span>
                       </div>
@@ -2024,10 +2028,10 @@ const InstitutionalDashboard: React.FC = () => {
                     {ew.correctionSupport && (
                       <>
                         <div style={{ background: "rgba(99,102,241,0.1)", border: "1px solid #4f46e544", borderRadius: 4, padding: "0.2rem 0.5rem", fontSize: "0.7rem" }}>
-                          <span style={{ color: "#818cf8" }}>38.2%: €{(ew.correctionSupport.shallow / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
+                          <span style={{ color: "#818cf8" }}>38.2%: €{ew.correctionSupport.shallow.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
                         </div>
                         <div style={{ background: "rgba(99,102,241,0.1)", border: "1px solid #4f46e544", borderRadius: 4, padding: "0.2rem 0.5rem", fontSize: "0.7rem" }}>
-                          <span style={{ color: "#818cf8" }}>61.8%: €{(ew.correctionSupport.deep / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
+                          <span style={{ color: "#818cf8" }}>61.8%: €{ew.correctionSupport.deep.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
                         </div>
                       </>
                     )}
@@ -2085,14 +2089,14 @@ const InstitutionalDashboard: React.FC = () => {
                     <div style={{ background: "rgba(16,185,129,0.08)", border: "1px solid #10b98133", borderRadius: 6, padding: "0.6rem" }}>
                       <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>TARGET ONDA 5 (conservador)</div>
                       <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#10b981" }}>
-                        €{ew.waveTargets.conservative ? (ew.waveTargets.conservative / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
+                        €{ew.waveTargets.conservative ? ew.waveTargets.conservative.toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
                       </div>
                       <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>0.618x Onda 1 desde techo Onda 3</div>
                     </div>
                     <div style={{ background: "rgba(16,185,129,0.12)", border: "1px solid #10b98155", borderRadius: 6, padding: "0.6rem" }}>
                       <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>TARGET ONDA 5 (extendido)</div>
                       <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#10b981" }}>
-                        €{ew.waveTargets.base ? (ew.waveTargets.base / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
+                        €{ew.waveTargets.base ? ew.waveTargets.base.toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
                       </div>
                       <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>1.618x Onda 1 desde techo Onda 3</div>
                     </div>
@@ -2103,10 +2107,10 @@ const InstitutionalDashboard: React.FC = () => {
                   <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid #ef444433", borderRadius: 6, padding: "0.6rem" }}>
                     <div style={{ fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.25rem" }}>SOPORTE CORRECCIÓN</div>
                     <div style={{ fontSize: "0.85rem", color: "#fca5a5" }}>
-                      38.2%: €{(ew.correctionSupport.shallow / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                      38.2%: €{ew.correctionSupport.shallow.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
                     </div>
                     <div style={{ fontSize: "0.85rem", color: "#ef4444" }}>
-                      61.8%: €{(ew.correctionSupport.deep / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                      61.8%: €{ew.correctionSupport.deep.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
                     </div>
                     <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>zona de acumulación si respeta</div>
                   </div>
@@ -2125,7 +2129,7 @@ const InstitutionalDashboard: React.FC = () => {
                         ✅ <strong>Alcista (Onda 5):</strong> precio cierra sobre el máximo previo de Onda 3 + volumen en expansión + RSI semanal saliendo de sobrevendido
                       </div>
                       <div style={{ fontSize: "0.75rem", color: "#fca5a5" }}>
-                        ⛔ <strong>Bajista (extensión correctiva):</strong> precio pierde soporte 61.8% de Onda 3 · Nivel: €{ew.correctionSupport ? (ew.correctionSupport.deep / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
+                        ⛔ <strong>Bajista (extensión correctiva):</strong> precio pierde soporte 61.8% de Onda 3 · Nivel: €{ew.correctionSupport ? ew.correctionSupport.deep.toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
                       </div>
                     </>
                   )}
