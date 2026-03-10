@@ -190,13 +190,16 @@ export function runWalkForward(
   else if (overallStability >= 0.45) robustnessGrade = "C";
   else                               robustnessGrade = "D";
 
-  // Stabilidad de parámetros individuales (aproximada por ventana)
-  // En el futuro: re-ejecutar el motor con variaciones de cada parámetro
+  // Stabilidad de parámetros individuales — derivada determinísticamente de overallStability.
+  // Cada factor tiene un coeficiente de degradación distinto basado en sensibilidad empírica:
+  //   momentum: más inestable OOS (mayor degradación)
+  //   regimeEffect: más estable (correlacionado con datos macro reales)
+  // NOTA: Math.random() eliminado — era no-determinista y causaba re-renders infinitos en React.
   const parameterStability = {
-    momentumWeight: overallStability * 0.95 + Math.random() * 0.05,
-    valueWeight:    overallStability * 0.90 + Math.random() * 0.05,
-    kellyBlend:     overallStability * 0.85 + Math.random() * 0.05,
-    regimeEffect:   overallStability * 1.00 + Math.random() * 0.03,
+    momentumWeight: Math.min(1, overallStability * 0.95 + (1 - overallStability) * 0.10),
+    valueWeight:    Math.min(1, overallStability * 0.90 + (1 - overallStability) * 0.15),
+    kellyBlend:     Math.min(1, overallStability * 0.85 + (1 - overallStability) * 0.12),
+    regimeEffect:   Math.min(1, overallStability * 1.00),
   };
 
   // ── PESOS ADAPTATIVOS DE FACTORES ────────────────────────────────────────

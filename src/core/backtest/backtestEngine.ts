@@ -291,15 +291,27 @@ function computeAllocationsWithRegime(
   const regime: BacktestRegime = vixProxy > 35 ? "CRISIS" : vixProxy > 25 ? "CONTRACTION" : "EXPANSION";
   const regimePenalty = regime === "CRISIS" ? 0.4 : regime === "CONTRACTION" ? 0.7 : 1.0;
 
+  // Cachear retornos por activo — evita 3 llamadas duplicadas a periodReturn por activo
+  // (antes se llamaba 3x en assetFactors + 3x en qualityStats + 3x en forEach = 9x por activo)
+  const returnCache = new Map<string, { r12m: number; r3m: number; r1m: number }>();
+  const getReturns = (ticker: string) => {
+    if (!returnCache.has(ticker)) {
+      const closes = closesHistory[backtestTickers[ticker]] ?? [];
+      returnCache.set(ticker, {
+        r12m: periodReturn(closes, t, 252),
+        r3m:  periodReturn(closes, t, 63),
+        r1m:  periodReturn(closes, t, 21),
+      });
+    }
+    return returnCache.get(ticker)!;
+  };
+
   const assetFactors = ASSETS.map(ticker => {
     const bticker = backtestTickers[ticker];
     const closes  = closesHistory[bticker] ?? [];
+    const { r12m, r3m, r1m } = getReturns(ticker);
 
-    const ret12m = periodReturn(closes, t, 252);
-    const ret3m  = periodReturn(closes, t, 63);
-    const ret1m  = periodReturn(closes, t, 21);
-
-    const momentum = calculateMomentum({ returns12m: ret12m, returns3m: ret3m, returns1m: ret1m });
+    const momentum = calculateMomentum({ returns12m: r12m, returns3m: r3m, returns1m: r1m });
 
     const window   = closes.slice(Math.max(0, t - lookbackDays), t);
     const dailyRet = dailyReturns(window);
@@ -314,22 +326,18 @@ function computeAllocationsWithRegime(
     assetFactors.map(a => ({ earningsYield: a.earningsYield }))
   );
   // BUG-04 FIX: incluir quality y lowVol igual que el motor live
-  // Antes: blend momentum×0.6 + value×0.4 (solo 2 factores — diferente al live)
-  // Ahora: mismo pipeline calibrateExpectedReturn(4 factores) → Kelly recibe μ anualizado real
+  // Usa returnCache — sin recalcular periodReturn (ya cacheado arriba)
   const qualityStats = computeQualityUniverseStats(
-    assetFactors.map(a => ({
-      volatility: a.vol,
-      returns12m: periodReturn(closesHistory[backtestTickers[a.ticker]] ?? [], t, 252),
-      returns3m:  periodReturn(closesHistory[backtestTickers[a.ticker]] ?? [], t, 63),
-      returns1m:  periodReturn(closesHistory[backtestTickers[a.ticker]] ?? [], t, 21),
-    }))
+    assetFactors.map(a => {
+      const { r12m, r3m, r1m } = getReturns(a.ticker);
+      return { volatility: a.vol, returns12m: r12m, returns3m: r3m, returns1m: r1m };
+    })
   );
   const lowVolStats = computeLowVolUniverseStats(
-    assetFactors.map(a => ({
-      volatility: a.vol,
-      returns12m: periodReturn(closesHistory[backtestTickers[a.ticker]] ?? [], t, 252),
-      returns3m:  periodReturn(closesHistory[backtestTickers[a.ticker]] ?? [], t, 63),
-    }))
+    assetFactors.map(a => {
+      const { r12m, r3m } = getReturns(a.ticker);
+      return { volatility: a.vol, returns12m: r12m, returns3m: r3m };
+    })
   );
   const corrMatrix = computeWindowCorrelation(closesHistory, backtestTickers, t, 63);
   const corrPen    = correlationPenalty(corrMatrix);
@@ -338,22 +346,14 @@ function computeAllocationsWithRegime(
   let totalRaw = 0;
 
   assetFactors.forEach(({ ticker, momentum, vol, earningsYield }) => {
+    const { r12m, r3m, r1m } = getReturns(ticker);
     const value   = calculateValue({ earningsYield }, universeStats);
     const quality = calculateQuality(
-      {
-        volatility: vol,
-        returns12m: periodReturn(closesHistory[backtestTickers[ticker]] ?? [], t, 252),
-        returns3m:  periodReturn(closesHistory[backtestTickers[ticker]] ?? [], t, 63),
-        returns1m:  periodReturn(closesHistory[backtestTickers[ticker]] ?? [], t, 21),
-      },
+      { volatility: vol, returns12m: r12m, returns3m: r3m, returns1m: r1m },
       qualityStats
     );
     const lowVol  = calculateLowVol(
-      {
-        volatility: vol,
-        returns12m: periodReturn(closesHistory[backtestTickers[ticker]] ?? [], t, 252),
-        returns3m:  periodReturn(closesHistory[backtestTickers[ticker]] ?? [], t, 63),
-      },
+      { volatility: vol, returns12m: r12m, returns3m: r3m },
       lowVolStats
     );
     const calibrated = calibrateExpectedReturn({
