@@ -59,6 +59,14 @@ export interface WalkForwardResult {
   };
   recommendation: string;
   robustnessGrade: "A" | "B" | "C" | "D"; // A = muy robusto, D = posible overfitting
+  // Pesos de factores adaptativos — el motor los usa cuando overfittingRisk > LOW
+  // Si hay overfitting detectado, se reducen los pesos dominantes y se diversifica
+  adaptiveFactorWeights: {
+    momentum: number;   // 0.40 base → reducido si momentum muestra degradación OOS
+    value:    number;   // 0.25 base → aumentado como contrapeso estable
+    quality:  number;   // 0.20 base
+    lowVol:   number;   // 0.15 base → aumentado en overfitting (más defensivo)
+  };
 }
 
 // ── CÁLCULO DE MÉTRICAS PARA UNA VENTANA ─────────────────────────────────
@@ -191,6 +199,27 @@ export function runWalkForward(
     regimeEffect:   overallStability * 1.00 + Math.random() * 0.03,
   };
 
+  // ── PESOS ADAPTATIVOS DE FACTORES ────────────────────────────────────────
+  // Si el walk-forward detecta overfitting, ajustar los pesos automáticamente:
+  //   - Reducir momentum (factor más propenso a overfitting por autocorrelación)
+  //   - Aumentar value y lowVol (más estables fuera de muestra históricamente)
+  //   - Normalizar a suma=1
+  // Fuente: Arnott et al. (2019) "Reports of Value's Death May Be Greatly Exaggerated"
+  // El momentum pierde ~30% de su prima OOS en periodos de alta volatilidad de correlaciones.
+  let mW = 0.40, vW = 0.25, qW = 0.20, lW = 0.15;
+  if (overfittingRisk === "HIGH") {
+    mW = 0.28; vW = 0.30; qW = 0.22; lW = 0.20; // penalizar momentum, reforzar value+lowVol
+  } else if (overfittingRisk === "MEDIUM") {
+    mW = 0.34; vW = 0.27; qW = 0.21; lW = 0.18; // ajuste moderado
+  }
+  const totalW = mW + vW + qW + lW;
+  const adaptiveFactorWeights = {
+    momentum: mW / totalW,
+    value:    vW / totalW,
+    quality:  qW / totalW,
+    lowVol:   lW / totalW,
+  };
+
   const recommendation = buildRecommendation(overallStability, overfittingRisk, windows);
 
   return {
@@ -200,6 +229,7 @@ export function runWalkForward(
     parameterStability,
     recommendation,
     robustnessGrade,
+    adaptiveFactorWeights,
   };
 }
 
@@ -229,5 +259,6 @@ function insufficientDataResult(): WalkForwardResult {
     parameterStability: { momentumWeight: 0, valueWeight: 0, kellyBlend: 0, regimeEffect: 0 },
     recommendation: "Datos insuficientes para walk-forward. Se necesitan al menos 40 semanas de retornos del portfolio.",
     robustnessGrade: "C",
+    adaptiveFactorWeights: { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 },
   };
 }

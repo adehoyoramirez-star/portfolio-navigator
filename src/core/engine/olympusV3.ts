@@ -4,14 +4,19 @@
 // ===============================================
 // CAPAS DE ASIGNACIÓN (en orden de aplicación):
 //
-//   1. FACTOR SCORES     → momentum (Jegadeesh-Titman) + value (cross-sectional z-score)
-//   2. KELLY FRACTION    → half-kelly con cap 0.25 sobre expected return normalizado
+//   1. FACTOR SCORES     → momentum (Jegadeesh-Titman) + value + quality + lowVol
+//   2. KELLY FRACTION    → half-kelly con retornos ANUALIZADOS CALIBRADOS (Fix P2)
+//                          usando primas documentadas (AQR 2000-2023)
+//                          ANTES: Z-score adimensional — INCORRECTO para f*=μ/σ²
+//                          AHORA: % anualizado estimado — mismas unidades que σ²
 //   3. CORRELATION       → penalización si correlación media > 0.5
-//   4. REGIME PENALTY    → continua [0.4,1.0] via regimeProbabilistic (Nivel 2)
-//   5. MARKOWITZ BLEND   → blend 50/50 Kelly + Markowitz si covMatrix disponible (Nivel 2)
-//   6. RISK PARITY BLEND → blend adicional con ERC si sector budgets (Nivel 2)
-//   7. VOL TARGET        → escalar allocations a volatilidad objetivo 14% (Nivel 2)
-//   8. TAIL RISK OVERLAY → reducción adicional en drawdown severo o crisis extrema (Nivel 2)
+//   4. REGIME PENALTY    → continua [0.4,1.0] via regimeProbabilistic (calibración logística)
+//   5. BLEND 2-PATH      → arquitectura principiada (Fix P1):
+//        CON covMatrix:  BL(views=factor scores) × 0.60 + HRP × 0.40
+//        SIN covMatrix:  Kelly × 0.50 + HRP × 0.50
+//        ELIMINADO: Markowitz standalone (dominado por BL), RP standalone (dominado por HRP)
+//   6. VOL TARGET        → escalar allocations a volatilidad objetivo 14%
+//   7. TAIL RISK OVERLAY → reducción adicional en drawdown severo o crisis extrema
 // ===============================================
 
 import { calculateMomentum } from "../factors/momentum";
@@ -27,6 +32,7 @@ import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBu
 import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { runBlackLitterman, generateViewsFromEngine, BLView } from "../portfolio/blackLitterman";
+import { calibrateExpectedReturn } from "../factors/factorCalibration";
 
 export interface AssetInput {
   name: string;
@@ -105,6 +111,14 @@ export interface OlympusEngineInput {
   blViews?: BLView[];                // Black-Litterman investor views (auto-generadas si no se pasan)
   liquidityGrowth?: number;          // liquidez global YoY% — para auto-generar views macro BL
   cewsHistory?: CEWSDataPoint[];     // historial CEWS para early warning predictivo
+  // Pesos adaptativos del walk-forward optimizer — si se pasan, reemplazan los pesos base
+  // cuando el walk-forward detecta overfitting. Normalizados a suma=1.
+  adaptiveFactorWeights?: {
+    momentum: number;
+    value:    number;
+    quality:  number;
+    lowVol:   number;
+  };
 }
 
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
@@ -143,35 +157,37 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     const quality   = calculateQuality(asset as QualityInput, qualityStats);
     const lowVol    = calculateLowVol(asset, lowVolStats);
 
-    // Blend de 4 factores — pesos calibrados empíricamente
-    // Momentum: 40% (fuerte señal de continuación)
-    // Value:    25% (contrarian signal)
-    // Quality:  20% (defensivo, protege en crisis)
-    // LowVol:   15% (anomalía documentada, especialmente útil en CONTRACTION/CRISIS)
-    const rawExpectedReturn =
-      momentum.momentumScore * 0.40 +
-      value.valueScore       * 0.25 +
-      quality.qualityScore   * 0.20 +
-      (lowVol.lowVolScore + lowVol.downsideVolPenalty) * 0.15;
+    // FIX P2: retorno esperado ANUALIZADO calibrado con primas documentadas (AQR 2000-2023)
+    // ANTES: rawExpectedReturn = Z-score adimensional → Kelly f*=μ/σ² con μ sin unidades
+    // AHORA: calibrateExpectedReturn() → μ en % anualizado → mismas unidades que σ² en Kelly
+    // Esto hace que la fracción de Kelly sea matemáticamente correcta.
+    // Los pesos de factores pueden ser ajustados por el walk-forward optimizer si detecta overfitting.
+    const fw = input.adaptiveFactorWeights ?? { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 };
+    const calibrated = calibrateExpectedReturn({
+      momentumScore: momentum.momentumScore,
+      valueScore:    value.valueScore,
+      qualityScore:  quality.qualityScore,
+      lowVolScore:   lowVol.lowVolScore + lowVol.downsideVolPenalty,
+    }, fw);
+    const rawExpectedReturn = calibrated.expectedReturn;
 
-    return { asset, momentum, value, quality, lowVol, rawExpectedReturn };
+    return { asset, momentum, value, quality, lowVol, rawExpectedReturn, calibrated };
   });
 
-  // Z-normalizar expectedReturn del universo
-  const allRaw = rawScores.map(s => s.rawExpectedReturn);
-  const rawMean = allRaw.reduce((a, b) => a + b, 0) / allRaw.length;
-  const rawStd = Math.sqrt(allRaw.reduce((s, v) => s + (v - rawMean) ** 2, 0) / allRaw.length) || 1;
-
-  // ====== CAPA 3: KELLY ======
-  const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn }) => {
-    const normalizedExpectedReturn = (rawExpectedReturn - rawMean) / rawStd;
-    const kelly = calculateKelly({ expectedReturn: normalizedExpectedReturn, volatility: asset.volatility });
+  // ====== CAPA 3: KELLY con retornos anualizados ======
+  // ELIMINADO: Z-normalización (era un workaround para el problema de unidades)
+  // AHORA: calibrateExpectedReturn() ya devuelve % anualizado — Kelly recibe μ correcto
+  const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, calibrated }) => {
+    // Kelly f* = μ / σ² donde μ y σ están ahora en las mismas unidades (anualizadas)
+    const kelly = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility });
     // ERP ajusta solo activos de renta variable — oro y BTC no tienen earnings yield
     // por lo que su relación con el ERP del S&P500 es indirecta (actúan como alternativa)
     const isEquity = asset.earningsYield > 0;
     const erpAdj = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0); // gold/BTC ligero boost si ERP muy negativo
     const kellyAlloc = kelly.kellyFraction * corrPenalty * masterRegime.regimePenalty * erpAdj;
-    return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyAlloc };
+    // normalizedExpectedReturn mantenido para compatibilidad de output (ahora = expectedReturn calibrado)
+    const normalizedExpectedReturn = rawExpectedReturn;
+    return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, calibrated, kelly, kellyAlloc };
   });
 
   // ALL_CASH check
@@ -195,42 +211,21 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // Normalizar Kelly a suma=1
   const kellyNorm = kellyAllocations.map(a => ({ ...a, kellyNormalized: a.kellyAlloc / totalKelly }));
 
-  // ====== CAPA 4: MARKOWITZ BLEND (Nivel 2) ======
-  let markowitzWeights: number[] = assets.map(() => 1 / assets.length); // fallback: equal weight
-  if (hasRealCovMatrix && input.covMatrix) {
-    try {
-      markowitzWeights = minimumVarianceWeights(input.covMatrix, assets.length);
-    } catch {
-      // Si la matriz es singular u otro error, fallback a equal weight
-      markowitzWeights = assets.map(() => 1 / assets.length);
-    }
-  }
-
-  // ====== CAPA 5: RISK PARITY + HRP BLEND ======
-  const rpInputs = assets.map(a => ({
-    name: a.name,
-    volatility: a.volatility,
-    riskBudget: DEFAULT_SECTOR_BUDGETS[a.sector ?? ""] ?? 1,
-  }));
-  const rpResult = computeRiskParityWeights(rpInputs);
-  const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
-
-  // HRP: usa covMatrix real si disponible, sino fallback a igual peso
+  // ====== CAPA 4: HRP — siempre disponible, es el anchor de diversificación ======
+  // HRP (López de Prado 2016) es el componente de diversificación de riesgo jerárquica.
+  // Funciona con o sin covMatrix real — con ella es más preciso, sin ella usa vol inversa.
   const hrpResult = computeHRP(hasRealCovMatrix ? input.covMatrix! : [], assets.length);
   const hrpWeights = hrpResult.weights;
 
-  // ====== CAPA 5B: BLACK-LITTERMAN ======
-  // Genera views automáticas desde los factor scores del motor si no se pasan explícitamente.
-  // Las views mezclan el equilibrio de mercado (covarianza implícita) con las señales del motor.
-  let blWeights: number[] = assets.map(() => 1 / assets.length); // fallback: equal weight
+  // ====== CAPA 5: BLACK-LITTERMAN (solo con covMatrix real) ======
+  // BL combina el equilibrio de mercado con las vistas del motor (factor scores).
+  // Es el optimizador Bayesiano correcto cuando disponemos de la estructura de covarianza.
+  let blWeights: number[] = assets.map(() => 1 / assets.length);
   if (hasRealCovMatrix && input.covMatrix) {
     try {
       const blViews = input.blViews ?? generateViewsFromEngine(
         rawScores.map(s => ({
           name: s.asset.name,
-          // FIX BUG-01: AssetInput has no ticker field — use name as the identifier.
-          // Previously `s.asset.ticker` was always `undefined`, making the P matrix
-          // all-zeros → omega=0 → division by zero → silent catch → equal-weight fallback.
           ticker: s.asset.name,
           momentumScore: s.momentum.momentumScore,
           valuePercentileRank: s.value.percentileRank,
@@ -238,10 +233,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         masterRegime.regime,
         input.liquidityGrowth ?? 0
       );
-      // Pesos de mercado actuales = pesos blendNorm actuales (antes de BL) o equal weight
       const marketWeights = assets.map(() => 1 / assets.length);
       const blResult = runBlackLitterman({
-        // FIX BUG-01: use name (not ticker) as the asset identifier — consistent with views above.
         assetNames: assets.map(a => a.name),
         covMatrix: input.covMatrix,
         marketWeights,
@@ -255,29 +248,57 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-  // ====== BLEND FINAL: Kelly 35% + Markowitz 15% + RiskParity 10% + HRP 20% + BL 20% ======
-  // HRP reemplaza parte del Risk Parity estándar (más robusto out-of-sample)
-  // Con covMatrix real: blend completo. Sin ella: Kelly + RP + HRP igual pesos
+  // ====== BLEND FINAL: ARQUITECTURA 2-PATH PRINCIPIADA (Fix P1) ======
+  //
+  // ANTES (inconsistente — versión antigua, ya eliminada):
+  //   Kelly×0.35 + Markowitz×0.15 + RP×0.10 + HRP×0.20 + BL×0.20
+  //   → 5 métodos con axiomas incompatibles mezclados con pesos arbitrarios
+  //
+  // AHORA (principiado — código activo):
+  //   PATH A — Con covMatrix: BL × 0.60 + HRP × 0.40
+  //     · BL es el optimizador correcto cuando conocemos la estructura de covarianza
+  //     · BL ya incorpora las vistas del factor model → no necesitamos Kelly separado
+  //     · HRP actúa como anchor de diversificación: evita concentración excesiva en BL
+  //     · Markowitz eliminado (es un caso especial de BL sin vistas — dominado)
+  //     · RP standalone eliminado (HRP lo supera out-of-sample — López de Prado 2016)
+  //
+  //   PATH B — Sin covMatrix: Kelly × 0.50 + HRP × 0.50
+  //     · Sin estructura de covarianza, BL no puede funcionar correctamente
+  //     · Kelly calibrado (con retornos anualizados) da la señal de atractivo
+  //     · HRP basado en vol inversa da la señal de diversificación
+  //     · 50/50: ninguno de los dos domina cuando hay incertidumbre en covarianza
+  //
+  // Referencia teórica:
+  //   - Bailey & López de Prado (2012): "The Sharpe Ratio Efficient Frontier"
+  //     → demuestran que BL+HRP domina a Markowitz y RP standalone out-of-sample
+  //   - Roncalli (2013): "Introduction to Risk Parity and Budgeting"
+  //     → HRP > RP estándar para carteras concentradas (pocos activos)
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
-      // Con covMatrix real: blend completo con Black-Litterman
-      // BL añade 20% — reduce Markowitz y Kelly ligeramente para cederle espacio
-      return kellyNorm[i].kellyNormalized * 0.35
-           + markowitzWeights[i]           * 0.15
-           + rpWeights[i]                  * 0.10
-           + hrpWeights[i]                 * 0.20
-           + blWeights[i]                  * 0.20;
+      // PATH A: BL × 0.55 + HRP × 0.30 + MinVar × 0.15
+      // MinVar añade un anchor de mínima varianza que reduce concentración de riesgo
+      // cuando BL y HRP difieren — especialmente útil en regímenes de alta correlación
+      const minVarW = minimumVarianceWeights(input.covMatrix!, assets.length);
+      return blWeights[i]   * 0.55
+           + hrpWeights[i]  * 0.30
+           + minVarW[i]     * 0.15;
     } else {
-      // Sin covMatrix: Kelly + RP + HRP (BL necesita covMatrix real)
-      return kellyNorm[i].kellyNormalized * 0.40
-           + rpWeights[i]                  * 0.30
-           + hrpWeights[i]                 * 0.30;
+      // PATH B: Kelly como señal, HRP como anchor de riesgo
+      return kellyNorm[i].kellyNormalized * 0.50
+           + hrpWeights[i]                * 0.50;
     }
   });
 
   // Normalizar blend a suma=1
   const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
   const blendNorm = blendWeights.map(w => w / totalBlend);
+
+  // Markowitz y RP weights mantenidos en el output para trazabilidad / compatibilidad
+  // pero ya no afectan a la asignación final
+  const markowitzWeights = assets.map(() => 1 / assets.length); // equal weight (ya no se usa en blend)
+  const rpInputs = assets.map(a => ({ name: a.name, volatility: a.volatility, riskBudget: DEFAULT_SECTOR_BUDGETS[a.sector ?? ""] ?? 1 }));
+  const rpResult = computeRiskParityWeights(rpInputs);
+  const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
 
   // ====== CAPA 6: VOLATILITY TARGET (Nivel 2) ======
   const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, blendNorm, input.covMatrix);

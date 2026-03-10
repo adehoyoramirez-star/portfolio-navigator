@@ -49,41 +49,101 @@ function monteCarloJumpDiffusion(
   jumpMean: number,
   jumpStd: number,
   years: number,
-  simulations: number = 5000
+  simulations: number = 5000,
+  // Parámetros multivariante opcionales — si se pasan, se usan activos individuales con correlaciones reales
+  multivariate?: {
+    weights: number[];          // pesos del portfolio [suma=1]
+    mus: number[];              // retornos esperados anualizados por activo
+    sigmas: number[];           // volatilidades anualizadas por activo
+    covMatrix: number[][];      // covarianza anualizada n×n
+    jumpIntensityBTC: number;   // λ solo para BTC (los ETFs tienen menos saltos bruscos)
+    jumpMean: number;
+    jumpStd: number;
+    btcIdx: number;             // índice del activo BTC en el array
+  }
 ): { mean: number; median: number; p25: number; p75: number; worst5: number; best95: number; simulations: number[]; muUsed: number } {
-  const monthlyMu = mu / 12;
-  const monthlySigma = sigma / Math.sqrt(12);
   const months = years * 12;
   const finalValues: number[] = [];
 
-  for (let sim = 0; sim < simulations; sim++) {
-    let value = initialCapital;
-    for (let m = 0; m < months; m++) {
-      value += monthlyContribution;
-      const z = randomNormal();
-      const diffusion = monthlyMu - 0.5 * monthlySigma ** 2 + monthlySigma * z;
-      let jump = 0;
-      // Poisson correcto: λ es intensidad anual (eventos/año, puede ser >1)
-      // P(jump en mes) = 1 - e^(-λ/12)
-      const monthlyJumpProb = 1 - Math.exp(-jumpIntensity / 12);
-      if (Math.random() < monthlyJumpProb) {
-        jump = jumpMean + jumpStd * randomNormal();
+  if (multivariate && multivariate.covMatrix.length > 1 && multivariate.weights.length > 1) {
+    // ── SIMULACIÓN MULTIVARIANTE (Cholesky) ──────────────────────────────────
+    // Descomposición de Cholesky de la covMatrix mensualizada para correlaciones reales.
+    // Esto captura la dinámica de correlación entre activos (ej: todos bajan juntos en crisis).
+    const n = multivariate.weights.length;
+    const monthlyMus = multivariate.mus.map(m => m / 12);
+    const monthlySigmas = multivariate.sigmas.map(s => s / Math.sqrt(12));
+    // Covarianza mensualizada
+    const monthlyCov = multivariate.covMatrix.map(row => row.map(v => v / 12));
+    // Cholesky decomposition: L tal que L*Lᵀ = Σ
+    const L = choleskyDecomposition(monthlyCov, n);
+
+    for (let sim = 0; sim < simulations; sim++) {
+      const assetValues = multivariate.weights.map((w) => initialCapital * w);
+      for (let m = 0; m < months; m++) {
+        // Generar n normales independientes y correlacionarlas via Cholesky
+        const z = Array.from({ length: n }, () => randomNormal());
+        const correlated = Array.from({ length: n }, (_, i) =>
+          L[i].reduce((s, lij, j) => s + lij * z[j], 0)
+        );
+        // Añadir contribución mensual proporcional al peso objetivo
+        for (let i = 0; i < n; i++) {
+          assetValues[i] += monthlyContribution * multivariate.weights[i];
+          const muI = monthlyMus[i] - 0.5 * monthlySigmas[i] ** 2;
+          let jump = 0;
+          // Jump diffusion solo en BTC; otros activos tienen distribución más normal
+          if (i === multivariate.btcIdx) {
+            const pJump = 1 - Math.exp(-multivariate.jumpIntensityBTC / 12);
+            if (Math.random() < pJump) jump = multivariate.jumpMean + multivariate.jumpStd * randomNormal();
+          }
+          assetValues[i] = assetValues[i] * Math.exp(muI + correlated[i] + jump);
+        }
       }
-      value = value * Math.exp(diffusion + jump);
+      finalValues.push(assetValues.reduce((s, v) => s + v, 0));
     }
-    finalValues.push(value);
+  } else {
+    // ── SIMULACIÓN UNIVARIANTE (fallback cuando no hay covMatrix) ────────────
+    const monthlyMu = mu / 12;
+    const monthlySigma = sigma / Math.sqrt(12);
+    for (let sim = 0; sim < simulations; sim++) {
+      let value = initialCapital;
+      for (let m = 0; m < months; m++) {
+        value += monthlyContribution;
+        const diffusion = monthlyMu - 0.5 * monthlySigma ** 2 + monthlySigma * randomNormal();
+        const pJump = 1 - Math.exp(-jumpIntensity / 12);
+        const jump = Math.random() < pJump ? jumpMean + jumpStd * randomNormal() : 0;
+        value = value * Math.exp(diffusion + jump);
+      }
+      finalValues.push(value);
+    }
   }
 
   finalValues.sort((a, b) => a - b);
-  const n = simulations;
-  const mean   = finalValues.reduce((a, b) => a + b, 0) / n;
-  const median = finalValues[Math.floor(n * 0.50)];
-  const p25    = finalValues[Math.floor(n * 0.25)];
-  const p75    = finalValues[Math.floor(n * 0.75)];
-  const worst5 = finalValues[Math.floor(n * 0.05)];
-  const best95 = finalValues[Math.floor(n * 0.95)];
-
+  const nSim = finalValues.length;
+  const mean   = finalValues.reduce((a, b) => a + b, 0) / nSim;
+  const median = finalValues[Math.floor(nSim * 0.50)];
+  const p25    = finalValues[Math.floor(nSim * 0.25)];
+  const p75    = finalValues[Math.floor(nSim * 0.75)];
+  const worst5 = finalValues[Math.floor(nSim * 0.05)];
+  const best95 = finalValues[Math.floor(nSim * 0.95)];
   return { mean, median, p25, p75, worst5, best95, simulations: finalValues, muUsed: mu };
+}
+
+// Cholesky decomposition: L tal que L*Lᵀ = A (A debe ser definida positiva)
+// Si A no es numericamente definitiva positiva, regularización diagonal mínima.
+function choleskyDecomposition(A: number[][], n: number): number[][] {
+  const L: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = A[i][j];
+      for (let k = 0; k < j; k++) sum -= L[i][k] * L[j][k];
+      if (i === j) {
+        L[i][j] = Math.sqrt(Math.max(sum, 1e-10)); // regularización si no es def. positiva
+      } else {
+        L[i][j] = L[j][j] > 1e-12 ? sum / L[j][j] : 0;
+      }
+    }
+  }
+  return L;
 }
 
 function randomNormal(): number {
@@ -433,6 +493,17 @@ const InstitutionalDashboard: React.FC = () => {
     return Math.sqrt(Math.max(0, variance));
   }, [marketData?.covMatrix, assetInputs, portfolio.assets, totalPortfolioValue]);
 
+  // ── Walk-Forward (declarado ANTES de engineResult — sus adaptive weights alimentan el motor) ──
+  const walkForwardResult = useMemo(() => {
+    const btcCloses = marketData?.closesHistory["BTC-EUR"] ?? [];
+    if (btcCloses.length < 60) return null;
+    const weeklyReturns: number[] = [];
+    for (let i = 5; i < btcCloses.length; i += 5) {
+      if (btcCloses[i - 5] > 0) weeklyReturns.push(btcCloses[i] / btcCloses[i - 5] - 1);
+    }
+    return runWalkForward(weeklyReturns, 5);
+  }, [marketData?.closesHistory]);
+
   const engineResult = useMemo(() => {
     if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
     return runOlympusEngine({
@@ -455,8 +526,11 @@ const InstitutionalDashboard: React.FC = () => {
       erpValue,                            // ERP conectado al motor — ajusta Kelly en renta variable
       liquidityGrowth,                     // para auto-generar views macro en Black-Litterman
       cewsHistory: effectiveCEWSHistory,   // CEWS: historial para early warning predictivo
+      // Walk-forward adaptive weights — si hay overfitting detectado, ajustar pesos de factores
+      // automáticamente para reducir la dependencia en momentum (factor más propenso a overfitting)
+      adaptiveFactorWeights: walkForwardResult?.adaptiveFactorWeights,
     });
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights]);
 
   // ==================== SEÑALES MACRO UNIFICADAS ====================
   // FIX: fromManualInputs reemplaza el useMemo inline — honesto sobre la fuente de datos
@@ -541,22 +615,6 @@ const InstitutionalDashboard: React.FC = () => {
     }));
     return runAllStressScenarios(weightedAssets, totalPortfolioValue);
   }, [engineResult?.allocations, portfolio.assets, totalPortfolioValue]);
-
-  // ── Walk-Forward ────────────────────────────────────────────────────────────
-  const walkForwardResult = useMemo(() => {
-    // Construir retornos semanales del portfolio desde histórico de BTC y ETFs
-    const btcCloses = marketData?.closesHistory["BTC-EUR"] ?? [];
-    if (btcCloses.length < 60) return null;
-    // Aproximar retornos semanales del portfolio: usar BTC como proxy (mayor volatilidad)
-    // En futuras versiones usar el portfolio completo ponderado
-    const weeklyReturns: number[] = [];
-    for (let i = 5; i < btcCloses.length; i += 5) {
-      if (btcCloses[i - 5] > 0) {
-        weeklyReturns.push(btcCloses[i] / btcCloses[i - 5] - 1);
-      }
-    }
-    return runWalkForward(weeklyReturns, 5);
-  }, [marketData?.closesHistory]);
 
   // ── CYCLE TOP DETECTOR ──────────────────────────────────────────
   // Calcula señales de techo de ciclo ANTES del rebalanceo
@@ -691,6 +749,39 @@ const InstitutionalDashboard: React.FC = () => {
     );
   }, [rebalanceFinal, portfolio.assets]);
 
+  // ── TAX-AWARE REBALANCE — integrar fiscal en las órdenes de venta ──────────
+  // Si el análisis fiscal dice NO_CONVIENE para una venta, la marcamos como bloqueada
+  // y añadimos el contexto fiscal al reason para que el usuario tome una decisión informada.
+  // La señal de ciclo se mantiene (el riesgo no desaparece), pero se recomienda alternativa.
+  const taxAwareRebalance = useMemo(() => {
+    if (!rebalanceFinal || !taxAnalysis) return rebalanceFinal;
+    const modifiedSells = rebalanceFinal.sellSuggestions.map((sell: RebalanceSuggestion) => {
+      const taxInfo = taxAnalysis.analyses.find(t => t.ticker === sell.ticker);
+      if (!taxInfo) return sell;
+      // Enriquecer el reason con información fiscal real
+      const taxLabel = taxInfo.verdict === "NO_CONVIENE"
+        ? `⚠️ FISCAL: Pagar ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF NO compensa (ratio ${taxInfo.taxVsLossRatio.toFixed(1)}x). Espera corrección adicional.`
+        : taxInfo.verdict === "EN_PERDIDAS"
+        ? `✅ FISCAL: Posición en pérdidas — venta sin impuesto. Aprovecha para compensar ganancias.`
+        : taxInfo.verdict === "CONVIENE"
+        ? `✅ FISCAL: Coste fiscal ${taxInfo.taxAfterOffset.toFixed(0)}€ (${(taxInfo.effectiveRate * 100).toFixed(1)}% ef.) — conviene vender antes de mayor caída.`
+        : `🟡 FISCAL: Analizar — ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF. Breakeven precio: ${taxInfo.breakEvenPrice.toFixed(0)}€.`;
+      return {
+        ...sell,
+        reason: `${sell.reason} | ${taxLabel}`,
+        // Si NO_CONVIENE y no hay pérdidas que compensar, bajar prioridad a LOW
+        priority: (taxInfo.verdict === "NO_CONVIENE" && taxAnalysis.availableLossOffset < taxInfo.taxGross * 0.5)
+          ? "LOW" as const
+          : sell.priority,
+      };
+    });
+    return {
+      ...rebalanceFinal,
+      suggestions: [...modifiedSells, ...rebalanceFinal.buySuggestions],
+      sellSuggestions: modifiedSells,
+    };
+  }, [rebalanceFinal, taxAnalysis]);
+
   // Legacy btcEntry — solo para compatibilidad con el panel de señales BTC
   const btcEntry = (() => {
     let score = 0;
@@ -738,18 +829,41 @@ const InstitutionalDashboard: React.FC = () => {
        );
 
   const jumpSim = useMemo(() => {
+    // ── MC MULTIVARIANTE: si tenemos covMatrix real, simulamos activos individualmente
+    // con sus correlaciones reales (Cholesky decomposition).
+    // Esto captura que en una crisis todos los activos se correlacionan al alza,
+    // lo que el MC univariante infraestima sistemáticamente.
+    const hasCovMatrix = marketData?.covMatrix && marketData.covMatrix.length > 1;
+    const hasEngineAllocs = engineResult && engineResult.allocations.length > 0;
+
+    if (hasCovMatrix && hasEngineAllocs && ASSETS.length > 1) {
+      const weights = ASSETS.map(ticker => {
+        const alloc = engineResult!.allocations.find(a => a.name === portfolio.assets.find(p => p.ticker === ticker)?.name);
+        return alloc?.finalAllocation ?? (1 / ASSETS.length);
+      });
+      const mus    = ASSETS.map((_, i) => marketData!.expectedReturns?.[i] ?? expectedReturn);
+      const sigmas = ASSETS.map((_, i) => (marketData!.realizedVols?.[i] ?? portfolioVol));
+      const btcIdx = ASSETS.indexOf('BTC-EUR' as any);
+
+      return monteCarloJumpDiffusion(
+        totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol,
+        jumpIntensity, jumpMean, jumpStd, years, 5000,
+        {
+          weights, mus, sigmas,
+          covMatrix: marketData!.covMatrix,
+          jumpIntensityBTC: jumpIntensity,
+          jumpMean, jumpStd,
+          btcIdx: btcIdx >= 0 ? btcIdx : 0,
+        }
+      );
+    }
+
+    // Fallback: MC univariante (sin covMatrix)
     return monteCarloJumpDiffusion(
-      totalPortfolioValue,
-      monthlyInjection,
-      expectedReturn,
-      portfolioVol,
-      jumpIntensity,
-      jumpMean,
-      jumpStd,
-      years,
-      5000
+      totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol,
+      jumpIntensity, jumpMean, jumpStd, years, 5000
     );
-  }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol, jumpIntensity, jumpMean, jumpStd, years]);
+  }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol, jumpIntensity, jumpMean, jumpStd, years, marketData?.covMatrix, engineResult]);
 
   const { mean: meanValue, median: medianValue, p25, p75, worst5, best95, simulations, muUsed } = jumpSim;
 
@@ -1719,6 +1833,29 @@ const InstitutionalDashboard: React.FC = () => {
             ))}
           </div>
           <p style={{ fontSize: "0.82rem", color: "#d1d5db", margin: 0 }}>{walkForwardResult.recommendation}</p>
+          {/* Adaptive factor weights — mostrar solo si se están aplicando ajustes */}
+          {walkForwardResult.overfittingRisk !== "LOW" && walkForwardResult.adaptiveFactorWeights && (
+            <div style={{ marginTop: "0.75rem", padding: "0.5rem 0.75rem", background: "rgba(245,158,11,0.08)", border: "1px solid #b45309", borderRadius: 6 }}>
+              <div style={{ fontSize: "0.78rem", color: "#fbbf24", fontWeight: "bold", marginBottom: "0.3rem" }}>
+                ⚙️ Pesos de factores ajustados automáticamente (overfitting {walkForwardResult.overfittingRisk}):
+              </div>
+              <div style={{ display: "flex", gap: "1rem", fontSize: "0.78rem", color: "#d1d5db" }}>
+                {Object.entries(walkForwardResult.adaptiveFactorWeights).map(([factor, weight]) => (
+                  <span key={factor}>
+                    <span style={{ color: "#9ca3af" }}>{factor}:</span>{" "}
+                    <span style={{ color: weight < 0.35 && factor === "momentum" ? "#f59e0b" : "#e5e7eb", fontWeight: "bold" }}>
+                      {(weight * 100).toFixed(0)}%
+                    </span>
+                    {factor === "momentum" && weight < 0.38 && <span style={{ color: "#f59e0b" }}> ↓</span>}
+                    {factor === "lowVol" && weight > 0.16 && <span style={{ color: "#10b981" }}> ↑</span>}
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.3rem" }}>
+                El motor aplica estos pesos automáticamente hasta que el walk-forward detecte robustez LOW.
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2331,7 +2468,7 @@ const InstitutionalDashboard: React.FC = () => {
       )}
 
       {/* NIVEL 4: Rebalanceo real basado en motor */}
-      {rebalanceFinal && (rebalanceFinal.suggestions.length > 0) && (
+      {taxAwareRebalance && (taxAwareRebalance.suggestions.length > 0) && (
         <div style={styles.card}>
           <h2>⚖️ Rebalanceo — Motor Olympus</h2>
           {dcaBlocked && (
@@ -2343,7 +2480,7 @@ const InstitutionalDashboard: React.FC = () => {
           )}
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "1rem" }}>
             Basado en allocations reales del motor. Cash disponible: <strong>€{availableCash.toFixed(0)}</strong> ·
-            Cobertura del rebalanceo ideal: <strong>{(rebalanceFinal!.coverageRatio * 100).toFixed(0)}%</strong>
+            Cobertura del rebalanceo ideal: <strong>{(taxAwareRebalance!.coverageRatio * 100).toFixed(0)}%</strong>
           </p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
@@ -2360,7 +2497,7 @@ const InstitutionalDashboard: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {rebalanceFinal!.suggestions.map((s: RebalanceSuggestion) => (
+                {taxAwareRebalance!.suggestions.map((s: RebalanceSuggestion) => (
                   <tr key={s.ticker} style={{
                     borderBottom: "1px solid #1f2937",
                     background: s.action === "SELL" ? "rgba(239,68,68,0.07)" : "transparent",
@@ -2404,8 +2541,8 @@ const InstitutionalDashboard: React.FC = () => {
             </table>
           </div>
           <p style={{ color: "#9ca3af", fontSize: "0.8rem", marginTop: "0.75rem" }}>
-            Total compras: <strong style={{ color: "#10b981" }}>€{rebalanceFinal!.totalCost.toFixed(0)}</strong> ·
-            Restante: €{rebalanceFinal!.remainingCash.toFixed(0)}
+            Total compras: <strong style={{ color: "#10b981" }}>€{taxAwareRebalance!.totalCost.toFixed(0)}</strong> ·
+            Restante: €{taxAwareRebalance!.remainingCash.toFixed(0)}
           </p>
         </div>
       )}

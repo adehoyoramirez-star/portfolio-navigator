@@ -395,11 +395,18 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   });
 
   // ====== VOLATILIDADES REALIZADAS ANUALIZADAS ======
+  // Blend 70% EWMA (lambda=0.94, reactivo a régimen reciente) + 30% histórica larga.
+  // El EWMA reacciona 3-4x más rápido que la vol histórica en cambios de régimen,
+  // mejorando la señal de Vol Target y el sizing de Kelly en mercados volátiles.
   const realizedVols = returnsPerAsset.map(r => {
-    if (r.length < 20) return 0.25; // fallback razonable
+    if (r.length < 20) return 0.25;
     const m = mean(r);
-    const variance = r.reduce((s, v) => s + (v - m) ** 2, 0) / (r.length - 1);
-    return Math.sqrt(variance * 252);
+    const historicVol = Math.sqrt(r.reduce((s, v) => s + (v - m) ** 2, 0) / (r.length - 1) * 252);
+    // EWMA lambda=0.94 (RiskMetrics standard) — pondera más los retornos recientes
+    let ewmaVariance = 0;
+    for (const ret of r) ewmaVariance = 0.94 * ewmaVariance + 0.06 * ret ** 2;
+    const ewmaVol = Math.sqrt(ewmaVariance * 252);
+    return ewmaVol * 0.70 + historicVol * 0.30;
   });
 
   // ====== MATRIZ DE COVARIANZA ======
