@@ -129,10 +129,15 @@ function computeConsistency(is: WFMetrics, oos: WFMetrics): number {
   // Dirección: ¿IS y OOS tienen el mismo signo de retorno?
   const sameDirection = Math.sign(is.totalReturn) === Math.sign(oos.totalReturn) ? 1 : 0.2;
 
+  // Deterioro OOS vs IS: si OOS rinde mucho menos que IS, bajar score
+  const absIs = Math.abs(is.totalReturn) + 1e-6;
+  const returnRatio = Math.max(0, Math.min(1, (oos.totalReturn + absIs) / (2 * absIs)));
+
   return Math.max(0, Math.min(1,
-    sharpeConsistency * 0.50 +
-    winRateConsistency * 0.30 +
-    sameDirection * 0.20
+    sharpeConsistency * 0.45 +
+    winRateConsistency * 0.25 +
+    sameDirection * 0.10 +
+    returnRatio * 0.20
   ));
 }
 
@@ -179,9 +184,20 @@ export function runWalkForward(
 
   // Overfitting risk
   let overfittingRisk: "LOW" | "MEDIUM" | "HIGH";
-  if (overallStability >= 0.70)      overfittingRisk = "LOW";
-  else if (overallStability >= 0.50) overfittingRisk = "MEDIUM";
+  if (overallStability >= 0.80)      overfittingRisk = "LOW";
+  else if (overallStability >= 0.60) overfittingRisk = "MEDIUM";
   else                               overfittingRisk = "HIGH";
+
+  // Drift guardrail: si el rendimiento de la segunda mitad cae mucho vs la primera,
+  // evitamos clasificar como LOW aunque la consistencia por ventanas salga alta.
+  const splitIdx = Math.floor(portfolioWeeklyReturns.length / 2);
+  const firstHalf = portfolioWeeklyReturns.slice(0, splitIdx);
+  const secondHalf = portfolioWeeklyReturns.slice(splitIdx);
+  const meanFirst = firstHalf.reduce((a, b) => a + b, 0) / Math.max(1, firstHalf.length);
+  const meanSecond = secondHalf.reduce((a, b) => a + b, 0) / Math.max(1, secondHalf.length);
+  if (meanFirst > 0 && meanSecond < meanFirst * 0.75 && overfittingRisk === "LOW") {
+    overfittingRisk = "MEDIUM";
+  }
 
   // Grade
   let robustnessGrade: "A" | "B" | "C" | "D";
@@ -190,16 +206,13 @@ export function runWalkForward(
   else if (overallStability >= 0.45) robustnessGrade = "C";
   else                               robustnessGrade = "D";
 
-  // Stabilidad de parámetros individuales — derivada determinísticamente de overallStability.
-  // Cada factor tiene un coeficiente de degradación distinto basado en sensibilidad empírica:
-  //   momentum: más inestable OOS (mayor degradación)
-  //   regimeEffect: más estable (correlacionado con datos macro reales)
-  // NOTA: Math.random() eliminado — era no-determinista y causaba re-renders infinitos en React.
+  // Stabilidad de parámetros individuales (aproximada por ventana)
+  // En el futuro: re-ejecutar el motor con variaciones de cada parámetro
   const parameterStability = {
-    momentumWeight: Math.min(1, overallStability * 0.95 + (1 - overallStability) * 0.10),
-    valueWeight:    Math.min(1, overallStability * 0.90 + (1 - overallStability) * 0.15),
-    kellyBlend:     Math.min(1, overallStability * 0.85 + (1 - overallStability) * 0.12),
-    regimeEffect:   Math.min(1, overallStability * 1.00),
+    momentumWeight: Math.min(1, overallStability * 0.95 + 0.03),
+    valueWeight:    Math.min(1, overallStability * 0.90 + 0.03),
+    kellyBlend:     Math.min(1, overallStability * 0.85 + 0.03),
+    regimeEffect:   Math.min(1, overallStability * 1.00 + 0.02),
   };
 
   // ── PESOS ADAPTATIVOS DE FACTORES ────────────────────────────────────────

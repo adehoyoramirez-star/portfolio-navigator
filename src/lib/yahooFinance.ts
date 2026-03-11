@@ -22,7 +22,7 @@ async function fetchYahoo(
   interval: string = '1d',
   retries: number = 2
 ): Promise<any> {
-  const url = `/api/yahoo/${encodeURIComponent(ticker)}?range=${range}&interval=${interval}`;
+  const url = `/api/yahoo?ticker=${encodeURIComponent(ticker)}&range=${range}&interval=${interval}`;
   const errors: string[] = [];
 
   for (let attempt = 0; attempt <= retries; attempt++) {

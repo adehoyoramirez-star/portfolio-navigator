@@ -78,6 +78,11 @@ export function getMasterRegime(input: MasterRegimeInput, cewsHistory?: CEWSData
     finalPenalty = Math.max(0.4, finalPenalty * stress.wtiPenalty);
   }
 
+  // En régimen CRISIS no permitimos una penalización demasiado laxa
+  if (regime === "CRISIS") {
+    finalPenalty = Math.min(finalPenalty, 0.55);
+  }
+
   return {
     regime,
     regimePenalty: finalPenalty,
