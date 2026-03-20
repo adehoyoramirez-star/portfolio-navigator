@@ -1,0 +1,14 @@
+﻿name: Olympus Auto-Pilot
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger
+        env:
+          URL: https://yrirandgftnuvdzatwgc.supabase.co/functions/v1/auto-pilot
+          TOKEN: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlyaXJhbmRnZnRudXZkemF0d2djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5NTk3MDgsImV4cCI6MjA4NDUzNTcwOH0.sBqkJvkBuirvVt1fa3UpZBBradaYn_68ZZ3nmoiJXeM
+        run: curl -X POST "$URL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{}"
