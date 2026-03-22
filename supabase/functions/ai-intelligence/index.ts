@@ -1,11 +1,5 @@
 // @ts-ignore — Deno types
 /// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
-// =====================================================================
-// ai-intelligence — 100% GRATUITO con Gemini Flash
-// 3 roles paralelos: Macro Strategist · Elliott Analyst · Market Sentinel
-// GEMINI_API_KEY gratis en aistudio.google.com/apikey
-// Límite free tier: 1,500 peticiones/día — suficiente para uso diario
-// =====================================================================
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,23 +13,22 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 let cache = null;
 const CACHE_TTL = 15 * 60 * 1000;
 
+const sf = (n, d = 1) => (n != null && isFinite(n) ? Number(n).toFixed(d) : 'N/D');
+
 function ctxHash(ctx) {
-  return `${ctx.regime}-${Math.round(ctx.vix)}-${Math.round(ctx.btcRsi)}-${ctx.fearGreed}-${Math.round(ctx.creditSpread * 10)}`;
+  return `${ctx.regime}-${Math.round(ctx.vix??0)}-${Math.round(ctx.btcRsi??0)}-${ctx.fearGreed??0}`;
 }
 
 function macroSummary(ctx) {
-  return `FECHA: ${new Date().toISOString().slice(0, 10)}
-RÉGIMEN: ${ctx.regime} | penalty=${(ctx.regimePenalty*100).toFixed(0)}% | conf=${ctx.confidence} | P(crisis)=${(ctx.probCrisis*100).toFixed(0)}%
-MACRO: VIX=${ctx.vix.toFixed(1)} MOVE=${ctx.move.toFixed(0)} Bond10y=${ctx.bond10y.toFixed(2)}% Bond2y=${ctx.bond2y.toFixed(2)}% CreditSprd=${ctx.creditSpread.toFixed(2)}% M2=${ctx.m2Growth.toFixed(1)}% DXY=${ctx.dxy.toFixed(1)} Brent=$${ctx.brent.toFixed(0)} BE5y=${ctx.breakeven?.toFixed(2)??"N/D"}%
-CRYPTO: BTC=$${ctx.btcPrice.toLocaleString()} RSI14d=${ctx.btcRsi.toFixed(0)} RSIweek=${ctx.btcRsiWeekly.toFixed(0)} DOM=${ctx.btcDominance.toFixed(1)}% MVRV=${ctx.mvrv.toFixed(2)} Puell=${ctx.puell?.toFixed(2)??"N/D"} HashRibbon=${ctx.hashRibbon??"N/D"}
-TÉCNICO: Pi111=${ctx.piCycleMa111?.toFixed(0)??"N/D"} Pi350x2=${ctx.piCycleMa350x2?.toFixed(0)??"N/D"} sep=${ctx.piCycleSeparation?.toFixed(1)??"N/D"}% Elliott=${ctx.elliottWave??"N/D"}
-PORTFOLIO: EUR${ctx.totalValue.toFixed(0)} vol=${(ctx.portfolioVol*100).toFixed(1)}% dd=${(ctx.drawdown*100).toFixed(1)}% mu=${(ctx.muEffective*100).toFixed(1)}%
-ALLOCATIONS: ${ctx.allocations.map(a=>`${a.name}=${(a.pct*100).toFixed(1)}%`).join(' ')}
-FEAR_GREED: ${ctx.fearGreed}/${ctx.fearGreedLabel}
-${ctx.contradictions?.length>0?"CONTRADICCIONES: "+ctx.contradictions.join(" | "):""}`.trim();
+  return `FECHA: ${new Date().toISOString().slice(0,10)}
+REGIMEN: ${ctx.regime??'N/D'} | penalty=${sf((ctx.regimePenalty??0)*100,0)}% | P(crisis)=${sf((ctx.probCrisis??0)*100,0)}%
+MACRO: VIX=${sf(ctx.vix)} MOVE=${sf(ctx.move,0)} Bond10y=${sf(ctx.bond10y,2)}% Bond2y=${sf(ctx.bond2y,2)}% CreditSprd=${sf(ctx.creditSpread,2)}% M2=${sf(ctx.m2Growth)}% DXY=${sf(ctx.dxy)} Brent=$${sf(ctx.brent,0)}
+CRYPTO: BTC=${sf(ctx.btcPrice,0)} RSI=${sf(ctx.btcRsi,0)} DOM=${sf(ctx.btcDominance)}% MVRV=${sf(ctx.mvrv,2)} FearGreed=${ctx.fearGreed??'N/D'}/${ctx.fearGreedLabel??'N/D'}
+PORTFOLIO: EUR${sf(ctx.totalValue??0,0)} vol=${sf((ctx.portfolioVol??0)*100)}% dd=${sf((ctx.drawdown??0)*100)}% mu=${sf((ctx.muEffective??0)*100)}%
+${Array.isArray(ctx.contradictions)&&ctx.contradictions.length>0?'CONTRADICCIONES: '+ctx.contradictions.join(' | '):''}`.trim();
 }
 
-async function callGemini(prompt, maxTokens = 500) {
+async function callGemini(prompt, maxTokens=500) {
   if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada');
   for (const model of GEMINI_MODELS) {
     try {
@@ -48,82 +41,81 @@ async function callGemini(prompt, maxTokens = 500) {
           generationConfig: { maxOutputTokens: maxTokens, temperature: 0.25 },
         }),
       });
-      if (res.status === 429 || res.status === 503) continue;
+      if (res.status===429||res.status===503) continue;
       if (!res.ok) throw new Error(`${model}: ${res.status}`);
       const json = await res.json();
       const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
-      return text.replace(/```json|```/g, '').trim();
-    } catch (e) {
-      if (GEMINI_MODELS.indexOf(model) === GEMINI_MODELS.length - 1) throw e;
+      return text.replace(/```json|```/g,'').trim();
+    } catch(e) {
+      if (GEMINI_MODELS.indexOf(model)===GEMINI_MODELS.length-1) throw e;
     }
   }
   throw new Error('All Gemini models failed');
 }
 
-async function runMacroStrategist(ctx) {
-  const now = new Date().toISOString();
-  if (!GEMINI_KEY) return { regimeNarrative:'Configura GEMINI_API_KEY en Supabase Secrets (gratis: aistudio.google.com/apikey)', macroValidation:'', btcCycleSummary:'', model:'gemini-flash', cachedAt:now, error:'no_api_key' };
-  const prompt = `Eres un Macro Strategist senior de hedge fund institucional europeo.
-Responde SOLO este JSON sin markdown:
-{"regimeNarrative":"<3 frases sobre régimen macro actual>","macroValidation":"<2 frases sobre coherencia de señales>","btcCycleSummary":"<2 frases sobre ciclo BTC usando MVRV/FearGreed/PiCycle/HashRibbon>"}
+async function runMacro(ctx) {
+  const raw = await callGemini(`Eres estratega macro senior de hedge fund. Responde SOLO en JSON sin markdown:
+{"regimeNarrative":"<3 frases sobre el regimen macro actual>","macroValidation":"<2 frases sobre coherencia de senales>","btcCycleSummary":"<2 frases sobre ciclo BTC>"}
 
-${macroSummary(ctx)}`;
-  try {
-    const p = JSON.parse(await callGemini(prompt, 500));
-    return { regimeNarrative:p.regimeNarrative??'', macroValidation:p.macroValidation??'', btcCycleSummary:p.btcCycleSummary??'', model:'gemini-flash (macro)', cachedAt:now };
-  } catch(e) {
-    return { regimeNarrative:'', macroValidation:'', btcCycleSummary:'', model:'gemini-flash', cachedAt:now, error:String(e).slice(0,150) };
-  }
+${macroSummary(ctx)}`, 400);
+  return JSON.parse(raw);
 }
 
-async function runElliottAnalyst(ctx) {
-  const now = new Date().toISOString();
-  if (!GEMINI_KEY) return { elliottAnalysis:'Configura GEMINI_API_KEY (gratis: aistudio.google.com)', rebalanceAdvice:'', contradictionAnalysis:'', model:'gemini-flash', cachedAt:now, error:'no_api_key' };
-  const prompt = `Eres un analista cuantitativo especializado en Elliott y portfolio quant.
-Responde SOLO este JSON sin markdown:
-{"elliottAnalysis":"<análisis onda Elliott ${ctx.elliottWave??'no determinada'} y proyección 2-4 semanas>","rebalanceAdvice":"<recomendación concreta de rebalanceo — qué reducir/aumentar en BPS>","contradictionAnalysis":"<análisis contradicciones macro o 'Sin contradicciones materiales'>"}
+async function runElliott(ctx) {
+  const raw = await callGemini(`Eres analista tecnico de ciclos crypto. Responde SOLO en JSON sin markdown:
+{"elliottAnalysis":"<3 frases sobre Elliott y proyeccion>","rebalanceAdvice":"<2 frases de rebalanceo concreto>","contradictionAnalysis":"<2 frases sobre senales contradictorias>"}
 
-${macroSummary(ctx)}`;
-  try {
-    const p = JSON.parse(await callGemini(prompt, 500));
-    return { elliottAnalysis:p.elliottAnalysis??'', rebalanceAdvice:p.rebalanceAdvice??'', contradictionAnalysis:p.contradictionAnalysis??'', model:'gemini-flash (quant)', cachedAt:now };
-  } catch(e) {
-    return { elliottAnalysis:'', rebalanceAdvice:'', contradictionAnalysis:'', model:'gemini-flash', cachedAt:now, error:String(e).slice(0,150) };
-  }
+${macroSummary(ctx)}`, 400);
+  return JSON.parse(raw);
 }
 
-async function runMarketSentinel(ctx) {
-  const now = new Date().toISOString();
-  const autoBS = (ctx.vix>35 && ctx.creditSpread>6)||(ctx.move>150)||(ctx.mvrv>7)||(ctx.contradictions?.length>=3 && ctx.probCrisis>0.65);
-  if (!GEMINI_KEY) return { marketSentiment:'Configura GEMINI_API_KEY (gratis: aistudio.google.com)', topNarratives:[], blackSwanAlert:autoBS, blackSwanReason:autoBS?`Auto: VIX=${ctx.vix.toFixed(1)} MVRV=${ctx.mvrv.toFixed(2)}`:null, model:'gemini-flash', cachedAt:now, error:'no_api_key' };
-  const prompt = `Eres un Market Sentinel institucional — detector de sentimiento y riesgo de cola.
-Responde SOLO este JSON sin markdown:
-{"marketSentiment":"<2-3 frases sobre sentimiento real y narrativa que mueve precios>","topNarratives":["<narrativa 1>","<narrativa 2>","<narrativa 3>"],"blackSwanAlert":${autoBS},"blackSwanReason":${autoBS?'"<riesgo cola específico>"':'null'}}
+async function runSentinel(ctx) {
+  const bsAlert = (ctx.vix??0)>35&&(ctx.creditSpread??0)>6 || (ctx.mvrv??0)>7;
+  const raw = await callGemini(`Eres analista de riesgo sistemico. Responde SOLO en JSON sin markdown:
+{"marketSentiment":"<2 frases del sentimiento actual>","topNarratives":["narrativa1","narrativa2","narrativa3"],"blackSwanAlert":${bsAlert},"blackSwanReason":${bsAlert?'"<describe riesgo>"':'null'}}
 
-Estado actual: VIX=${ctx.vix.toFixed(1)}, CreditSprd=${ctx.creditSpread.toFixed(2)}%, MOVE=${ctx.move.toFixed(0)}, MVRV=${ctx.mvrv.toFixed(2)}, P(crisis)=${(ctx.probCrisis*100).toFixed(0)}%
-${macroSummary(ctx)}`;
-  try {
-    const p = JSON.parse(await callGemini(prompt, 400));
-    return { marketSentiment:p.marketSentiment??'', topNarratives:Array.isArray(p.topNarratives)?p.topNarratives.slice(0,3):[], blackSwanAlert:p.blackSwanAlert===true||autoBS, blackSwanReason:p.blackSwanAlert?(p.blackSwanReason??null):null, model:'gemini-flash (sentinel)', cachedAt:now };
-  } catch(e) {
-    return { marketSentiment:'', topNarratives:[], blackSwanAlert:autoBS, blackSwanReason:autoBS?`Auto-alerta: VIX=${ctx.vix.toFixed(1)}, MVRV=${ctx.mvrv.toFixed(2)}`:null, model:'gemini-flash', cachedAt:now, error:String(e).slice(0,150) };
-  }
+${macroSummary(ctx)}`, 400);
+  return JSON.parse(raw);
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (req.method==='OPTIONS') return new Response(null,{headers:corsHeaders});
+
   let ctx;
-  try { ctx = await req.json(); } catch { return new Response(JSON.stringify({error:'Invalid JSON'}),{status:400,headers:{...corsHeaders,'Content-Type':'application/json'}}); }
+  try { ctx = await req.json(); }
+  catch { return new Response(JSON.stringify({error:'Invalid JSON'}),{status:400,headers:{...corsHeaders,'Content-Type':'application/json'}}); }
 
   const hash = ctxHash(ctx);
   const now = Date.now();
-  if (cache && cache.expiresAt > now && cache.hash === hash) {
-    return new Response(JSON.stringify({...cache.result, cacheHit:true}), { headers:{...corsHeaders,'Content-Type':'application/json'} });
+  if (cache && cache.expiresAt>now && cache.hash===hash) {
+    return new Response(JSON.stringify({...cache.result,cacheHit:true}),{headers:{...corsHeaders,'Content-Type':'application/json'}});
   }
 
-  const [gemini, claude, grok] = await Promise.all([runMacroStrategist(ctx), runElliottAnalyst(ctx), runMarketSentinel(ctx)]);
-  const output = { gemini, claude, grok, fetchedAt:new Date().toISOString(), cacheHit:false };
-  cache = { result:output, hash, expiresAt:now+CACHE_TTL };
+  if (!GEMINI_KEY) {
+    return new Response(JSON.stringify({
+      gemini:{error:'GEMINI_API_KEY no configurada en Supabase Secrets'},
+      claude:null, grok:null,
+      fetchedAt:new Date().toISOString(), cacheHit:false,
+    }),{headers:{...corsHeaders,'Content-Type':'application/json'}});
+  }
 
-  return new Response(JSON.stringify(output), { headers:{...corsHeaders,'Content-Type':'application/json'} });
+  const [r1,r2,r3] = await Promise.allSettled([runMacro(ctx),runElliott(ctx),runSentinel(ctx)]);
+  const ts = new Date().toISOString();
+
+  const gemini = r1.status==='fulfilled'
+    ? {...r1.value, model:'gemini-2.0-flash', cachedAt:ts}
+    : {error:String(r1.reason).slice(0,200), model:'gemini', cachedAt:ts};
+
+  const claude = r2.status==='fulfilled'
+    ? {...r2.value, model:'gemini-2.0-flash (Elliott)', cachedAt:ts}
+    : {error:String(r2.reason).slice(0,200), model:'gemini', cachedAt:ts};
+
+  const grok = r3.status==='fulfilled'
+    ? {...r3.value, model:'gemini-2.0-flash (Sentinel)', cachedAt:ts}
+    : {marketSentiment:'', topNarratives:[], blackSwanAlert:false, blackSwanReason:null, error:String(r3.reason).slice(0,200), model:'gemini', cachedAt:ts};
+
+  const output = {gemini, claude, grok, fetchedAt:ts, cacheHit:false};
+  cache = {result:output, hash, expiresAt:now+CACHE_TTL};
+
+  return new Response(JSON.stringify(output),{headers:{...corsHeaders,'Content-Type':'application/json'}});
 });
