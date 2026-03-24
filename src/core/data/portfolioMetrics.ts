@@ -1,4 +1,5 @@
-import { Asset } from "@/data/portfolio";
+// FIX BUG-IMPORT-PATH: la ruta canónica es @/core/types/portfolio (no @/data/portfolio que es un duplicado obsoleto)
+import { Asset } from "@/core/types/portfolio";
 
 /**
  * Calcula la volatilidad realizada a partir de un array de retornos diarios.

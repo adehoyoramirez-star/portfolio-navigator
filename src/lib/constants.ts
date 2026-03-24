@@ -13,7 +13,7 @@ export type Asset = typeof ASSETS[number];
 export const SECTOR_MAP: Record<Asset, string> = {
   "BTC-EUR": "crypto",
   "EMXC.DE": "emerging",
-  "IS3Q.DE": "emerging",
+  "IS3Q.DE": "equity",    // FIX BUG-SECTOR-IS3Q: era "emerging" — IS3Q es MSCI World Momentum (mercados DESARROLLADOS, no emergentes)
   "PPFB.DE": "gold",
   "URNU.DE": "uranium",
   "VVSM.DE": "semis",

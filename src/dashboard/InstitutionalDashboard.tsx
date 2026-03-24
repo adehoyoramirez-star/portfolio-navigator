@@ -195,6 +195,19 @@ const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"
 
 // ==================== COMPONENTE PRINCIPAL ====================
 const InstitutionalDashboard: React.FC = () => {
+  // FIX BUG-PERSIST-RACE: esta bandera impide que el efecto de auto-guardado
+  // sobreescriba el localStorage con los datos iniciales del código ANTES de
+  // que el efecto de carga haya leído los datos del usuario desde localStorage.
+  // Sin esta bandera, el orden de ejecución era:
+  //   1. Render inicial → estado = initialPortfolio (datos del código)
+  //   2. savePortfolio() dispara con shares erróneos  ← BUG
+  //   3. loadPortfolio() lee → pero ya fue sobreescrito
+  // Con la bandera:
+  //   1. isLoadedRef.current = false → savePortfolio() no hace nada
+  //   2. useEffect de carga → lee localStorage, actualiza estado, marca isLoadedRef.current = true
+  //   3. A partir de aquí savePortfolio() funciona normalmente
+  const isLoadedRef = useRef(false);
+
   const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
   const [cashReserve, setCashReserve] = useState(portfolio.cashReserve);
   const [monthlyInjection, setMonthlyInjection] = useState(portfolio.monthlyInjection);
@@ -588,10 +601,15 @@ const InstitutionalDashboard: React.FC = () => {
       }
     }
     refreshMarketData();
+    // FIX BUG-PERSIST-RACE: sólo después de cargar el estado persistido activamos
+    // el auto-guardado. Así el primer ciclo de render no sobreescribe localStorage.
+    isLoadedRef.current = true;
   }, []);
 
   // NIVEL 4: auto-guardar portfolio cuando cambia
+  // FIX BUG-PERSIST-RACE: solo guardar si la carga inicial ya terminó
   useEffect(() => {
+    if (!isLoadedRef.current) return;
     savePortfolio({
       positions: portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice })),
       cashReserve,
