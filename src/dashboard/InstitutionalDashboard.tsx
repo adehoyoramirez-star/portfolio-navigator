@@ -770,7 +770,15 @@ const InstitutionalDashboard: React.FC = () => {
       volTargetMultiplier: engineResult.volTargetMultiplier,
     });
     if (newAlerts.length > 0) {
-      setActiveAlerts(prev => [...newAlerts, ...prev].slice(0, 10));
+      // FIX BUG-ALERT-SPAM: deduplicación por tipo base — evita repetir la misma alerta
+      // en renders consecutivos (el id lleva Date.now() que siempre varía, por eso
+      // comparamos solo el prefijo sin el timestamp numérico final)
+      setActiveAlerts(prev => {
+        const existingTypes = new Set(prev.map(a => a.id.replace(/_\d+$/, '')));
+        const dedupedNew = newAlerts.filter(a => !existingTypes.has(a.id.replace(/_\d+$/, '')));
+        if (dedupedNew.length === 0) return prev;
+        return [...dedupedNew, ...prev].slice(0, 10);
+      });
 
       // Guardar cambios de régimen en historial persistido
       if (currentRegime !== previousRegimeRef.current) {
@@ -833,7 +841,9 @@ const InstitutionalDashboard: React.FC = () => {
       }
     }
     previousRegimeRef.current = currentRegime;
-  }, [engineResult, vix, portfolioDrawdown, portfolio]);
+  // FIX BUG-ALERT-SPAM: 'portfolio' era objeto que se recreaba en cada render de precios → efecto disparado 10+ veces
+  // Reemplazado por 'totalPortfolioValue' (número primitivo) que solo cambia cuando el valor real cambia
+  }, [engineResult, vix, portfolioDrawdown, totalPortfolioValue]);
 
   // CEWS: guardar punto de datos diariamente cuando cambian las macro inputs
   useEffect(() => {
