@@ -1,6 +1,14 @@
+// app/src/dashboard/supabaseClient.ts
 import { createClient } from '@supabase/supabase-js'
 
-export const supabase = createClient(
-  'https://yrirandgftnuvdzatwgc.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlyaXJhbmRnZnRudXZkemF0d2djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5NTk3MDgsImV4cCI6MjA4NDUzNTcwOH0.sBqkJvkBuirvVt1fa3UpZBBradaYn_68ZZ3nmoiJXeM'
-)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    'Faltan variables de entorno VITE_SUPABASE_URL y/o VITE_SUPABASE_ANON_KEY. ' +
+    'Crea un archivo .env.local en la raíz del proyecto con esas variables.'
+  );
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
