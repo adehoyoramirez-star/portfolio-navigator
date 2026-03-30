@@ -45,22 +45,27 @@ export const VOLATILITY_CONFIG = {
 // ── CEWS (Crisis Early Warning System) ─────────────────────────────────────
 export const CEWS_CONFIG = {
   // Umbrales de alerta por señal
+  // FIX: keys must be camelCase with lowercase sub-properties to match
+  // how crisisEarlyWarning.ts reads them (THRESHOLDS.yieldSpread.warning, etc.)
+  // The previous YIELD_SPREAD / WARNING (SCREAMING_SNAKE_CASE) caused
+  // THRESHOLDS.yieldSpread to be undefined → TypeError: Cannot read properties
+  // of undefined (reading 'warning')
   THRESHOLDS: {
-    YIELD_SPREAD: {
-      WARNING: 0.0,    // curva plana
-      DANGER: -0.5,   // curva invertida -50bps
+    yieldSpread: {
+      warning: 0.0,    // curva plana
+      danger: -0.5,    // curva invertida -50bps
     },
-    CREDIT_SPREAD: {
-      WARNING: 2.0,    // spreads elevados
-      DANGER: 3.5,     // estrés sistémico (Lehman: 6%, COVID: 4.5%)
+    creditSpread: {
+      warning: 2.0,    // spreads elevados
+      danger: 3.5,     // estrés sistémico (Lehman: 6%, COVID: 4.5%)
     },
-    M2_GROWTH: {
-      WARNING: 2.0,   // crecimiento muy bajo
-      DANGER: 0.0,    // contracción (históricamente raro y peligroso)
+    m2Growth: {
+      warning: 2.0,    // crecimiento muy bajo
+      danger: 0.0,     // contracción (históricamente raro y peligroso)
     },
-    VIX_CLUSTER: {
-      WARNING: 25,    // volatilidad elevada
-      DANGER: 35,     // pánico
+    vixCluster: {
+      warning: 25,     // volatilidad elevada
+      danger: 35,      // pánico
     },
   },
 
