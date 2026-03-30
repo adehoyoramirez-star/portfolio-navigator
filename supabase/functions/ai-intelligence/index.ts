@@ -6,20 +6,27 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// === API KEYS ===
 const GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') ?? '';
 const GEMINI_MODELS = ['gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'];
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-let cache = null;
+const CLAUDE_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
+const CLAUDE_URL = 'https://api.anthropic.com/v1/messages';
+
+const GROK_KEY = Deno.env.get('XAI_API_KEY') ?? '';
+const GROK_URL = 'https://api.x.ai/v1/chat/completions';
+
+let cache: any = null;
 const CACHE_TTL = 15 * 60 * 1000;
 
-const sf = (n, d = 1) => (n != null && isFinite(n) ? Number(n).toFixed(d) : 'N/D');
+const sf = (n: number, d = 1) => (n != null && isFinite(n) ? Number(n).toFixed(d) : 'N/D');
 
-function ctxHash(ctx) {
+function ctxHash(ctx: any) {
   return `${ctx.regime}-${Math.round(ctx.vix??0)}-${Math.round(ctx.btcRsi??0)}-${ctx.fearGreed??0}`;
 }
 
-function macroSummary(ctx) {
+function macroSummary(ctx: any) {
   return `FECHA: ${new Date().toISOString().slice(0,10)}
 REGIMEN: ${ctx.regime??'N/D'} | penalty=${sf((ctx.regimePenalty??0)*100,0)}% | P(crisis)=${sf((ctx.probCrisis??0)*100,0)}%
 MACRO: VIX=${sf(ctx.vix)} MOVE=${sf(ctx.move,0)} Bond10y=${sf(ctx.bond10y,2)}% Bond2y=${sf(ctx.bond2y,2)}% CreditSprd=${sf(ctx.creditSpread,2)}% M2=${sf(ctx.m2Growth)}% DXY=${sf(ctx.dxy)} Brent=$${sf(ctx.brent,0)}
@@ -28,7 +35,7 @@ PORTFOLIO: EUR${sf(ctx.totalValue??0,0)} vol=${sf((ctx.portfolioVol??0)*100)}% d
 ${Array.isArray(ctx.contradictions)&&ctx.contradictions.length>0?'CONTRADICCIONES: '+ctx.contradictions.join(' | '):''}`.trim();
 }
 
-async function callGemini(prompt, maxTokens=500) {
+async function callGemini(prompt: string, maxTokens=500) {
   if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada');
   for (const model of GEMINI_MODELS) {
     try {
@@ -53,35 +60,94 @@ async function callGemini(prompt, maxTokens=500) {
   throw new Error('All Gemini models failed');
 }
 
-async function runMacro(ctx) {
-  const raw = await callGemini(`Eres estratega macro senior de hedge fund. Responde SOLO en JSON sin markdown:
+async function callClaude(prompt: string, maxTokens=500) {
+  if (!CLAUDE_KEY) throw new Error('ANTHROPIC_API_KEY no configurada');
+  const res = await fetch(CLAUDE_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': CLAUDE_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Claude: ${res.status}`);
+  const json = await res.json();
+  return json.content?.[0]?.text?.replace(/```json|```/g,'').trim() ?? '{}';
+}
+
+async function callGrok(prompt: string, maxTokens=500) {
+  if (!GROK_KEY) throw new Error('XAI_API_KEY no configurada');
+  const res = await fetch(GROK_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GROK_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'grok-2-latest',
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Grok: ${res.status}`);
+  const json = await res.json();
+  return json.choices?.[0]?.message?.content?.replace(/```json|```/g,'').trim() ?? '{}';
+}
+
+async function runMacro(ctx: any) {
+  const prompt = `Eres estratega macro senior de hedge fund. Responde SOLO en JSON sin markdown:
 {"regimeNarrative":"<3 frases sobre el regimen macro actual>","macroValidation":"<2 frases sobre coherencia de senales>","btcCycleSummary":"<2 frases sobre ciclo BTC>"}
 
-${macroSummary(ctx)}`, 400);
-  return JSON.parse(raw);
+${macroSummary(ctx)}`;
+
+  // Intentar Claude primero, luego Gemini como fallback
+  try {
+    const raw = await callClaude(prompt, 400);
+    return JSON.parse(raw);
+  } catch {
+    const raw = await callGemini(prompt, 400);
+    return JSON.parse(raw);
+  }
 }
 
-async function runElliott(ctx) {
-  const raw = await callGemini(`Eres analista tecnico de ciclos crypto. Responde SOLO en JSON sin markdown:
+async function runElliott(ctx: any) {
+  const prompt = `Eres analista tecnico de ciclos crypto. Responde SOLO en JSON sin markdown:
 {"elliottAnalysis":"<3 frases sobre Elliott y proyeccion>","rebalanceAdvice":"<2 frases de rebalanceo concreto>","contradictionAnalysis":"<2 frases sobre senales contradictorias>"}
 
-${macroSummary(ctx)}`, 400);
+${macroSummary(ctx)}`;
+
+  // Usar Gemini para analisis tecnico
+  const raw = await callGemini(prompt, 400);
   return JSON.parse(raw);
 }
 
-async function runSentinel(ctx) {
+async function runSentinel(ctx: any) {
   const bsAlert = (ctx.vix??0)>35&&(ctx.creditSpread??0)>6 || (ctx.mvrv??0)>7;
-  const raw = await callGemini(`Eres analista de riesgo sistemico. Responde SOLO en JSON sin markdown:
+  const prompt = `Eres analista de riesgo sistemico. Responde SOLO en JSON sin markdown:
 {"marketSentiment":"<2 frases del sentimiento actual>","topNarratives":["narrativa1","narrativa2","narrativa3"],"blackSwanAlert":${bsAlert},"blackSwanReason":${bsAlert?'"<describe riesgo>"':'null'}}
 
-${macroSummary(ctx)}`, 400);
-  return JSON.parse(raw);
+${macroSummary(ctx)}`;
+
+  // Intentar Grok primero (mejor para riesgo/black swan), luego Gemini fallback
+  try {
+    const raw = await callGrok(prompt, 400);
+    return JSON.parse(raw);
+  } catch {
+    const raw = await callGemini(prompt, 400);
+    return JSON.parse(raw);
+  }
 }
 
-Deno.serve(async (req) => {
+// @ts-ignore
+Deno.serve(async (req: Request) => {
   if (req.method==='OPTIONS') return new Response(null,{headers:corsHeaders});
 
-  let ctx;
+  let ctx: any;
   try { ctx = await req.json(); }
   catch { return new Response(JSON.stringify({error:'Invalid JSON'}),{status:400,headers:{...corsHeaders,'Content-Type':'application/json'}}); }
 
@@ -91,28 +157,32 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({...cache.result,cacheHit:true}),{headers:{...corsHeaders,'Content-Type':'application/json'}});
   }
 
-  if (!GEMINI_KEY) {
+  const ts = new Date().toISOString();
+
+  // Verificar si al menos una API key está configurada
+  const hasAnyKey = GEMINI_KEY || CLAUDE_KEY || GROK_KEY;
+
+  if (!hasAnyKey) {
     return new Response(JSON.stringify({
-      gemini:{error:'GEMINI_API_KEY no configurada en Supabase Secrets'},
+      gemini:{error:'Ninguna API key configurada (GEMINI/CLAUDE/GROK)'},
       claude:null, grok:null,
-      fetchedAt:new Date().toISOString(), cacheHit:false,
+      fetchedAt:ts, cacheHit:false,
     }),{headers:{...corsHeaders,'Content-Type':'application/json'}});
   }
 
   const [r1,r2,r3] = await Promise.allSettled([runMacro(ctx),runElliott(ctx),runSentinel(ctx)]);
-  const ts = new Date().toISOString();
 
   const gemini = r1.status==='fulfilled'
     ? {...r1.value, model:'gemini-2.0-flash', cachedAt:ts}
     : {error:String(r1.reason).slice(0,200), model:'gemini', cachedAt:ts};
 
   const claude = r2.status==='fulfilled'
-    ? {...r2.value, model:'gemini-2.0-flash (Elliott)', cachedAt:ts}
-    : {error:String(r2.reason).slice(0,200), model:'gemini', cachedAt:ts};
+    ? {...r2.value, model:'claude-sonnet-4-20250514', cachedAt:ts}
+    : {error:String(r2.reason).slice(0,200), model:'claude', cachedAt:ts};
 
   const grok = r3.status==='fulfilled'
-    ? {...r3.value, model:'gemini-2.0-flash (Sentinel)', cachedAt:ts}
-    : {marketSentiment:'', topNarratives:[], blackSwanAlert:false, blackSwanReason:null, error:String(r3.reason).slice(0,200), model:'gemini', cachedAt:ts};
+    ? {...r3.value, model:'grok-2-latest', cachedAt:ts}
+    : {marketSentiment:'', topNarratives:[], blackSwanAlert:false, blackSwanReason:null, error:String(r3.reason).slice(0,200), model:'grok', cachedAt:ts};
 
   const output = {gemini, claude, grok, fetchedAt:ts, cacheHit:false};
   cache = {result:output, hash, expiresAt:now+CACHE_TTL};
