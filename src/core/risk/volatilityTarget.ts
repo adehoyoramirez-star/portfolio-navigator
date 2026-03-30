@@ -11,6 +11,8 @@
 // Si vol realizada < target: aumentar exposición (hasta cap)
 // ===============================================
 
+import { VOLATILITY_CONFIG } from "@/core/config/engineConfig";
+
 export interface VolTargetInput {
   targetVol: number;    // volatilidad objetivo en decimal (ej: 0.14 = 14%)
   realizedVol: number;  // volatilidad realizada de la cartera en decimal
@@ -24,13 +26,12 @@ export interface VolTargetOutput {
   isScaledUp: boolean;    // true si se está aumentando exposición
 }
 
-// Volatilidad objetivo del portfolio. 14% es un nivel típico para un
-// portfolio multi-activo con exposición a cripto moderada.
-export const DEFAULT_TARGET_VOL = 0.18; // Subido de 0.14 a 0.18 — perfil acumulación largo plazo con BTC en cartera
+// Volatilidad objetivo del portfolio (desde config centralizada)
+export const DEFAULT_TARGET_VOL = VOLATILITY_CONFIG.DEFAULT_TARGET_VOL;
 
-// Caps institucionales: nunca apalancar >1.5x ni reducir <0.3x
-const VOL_MULTIPLIER_MAX = 1.5;
-const VOL_MULTIPLIER_MIN = 0.3;
+// Caps institucionales (desde config centralizada)
+const VOL_MULTIPLIER_MAX = VOLATILITY_CONFIG.MULTIPLIER_MAX;
+const VOL_MULTIPLIER_MIN = VOLATILITY_CONFIG.MULTIPLIER_MIN;
 
 /**
  * Calcula el multiplicador de volatility targeting para escalar allocations.

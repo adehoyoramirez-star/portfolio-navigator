@@ -14,6 +14,8 @@
 //   4. Volatility Clustering (VIX)  → picos cada vez más frecuentes = régimen de miedo
 // ===============================================
 
+import { CEWS_CONFIG } from "@/core/config/engineConfig";
+
 export type CEWSLevel = "CLEAR" | "WATCH" | "WARNING" | "ALERT";
 
 export interface CEWSDataPoint {
@@ -51,25 +53,8 @@ export interface CEWSOutput {
   recommendation: string;
 }
 
-// ── UMBRALES ──────────────────────────────────────────────────────────────
-const THRESHOLDS = {
-  yieldSpread: {
-    warning: 0.0,    // curva plana
-    danger:  -0.5,   // curva invertida -50bps (señal de recesión clásica)
-  },
-  creditSpread: {
-    warning: 2.0,    // spreads elevados
-    danger:  3.5,    // estrés sistémico (Lehman: 6%, COVID: 4.5%)
-  },
-  m2Growth: {
-    warning: 2.0,    // crecimiento M2 muy bajo
-    danger:  0.0,    // contracción de M2 (históricamente rarísimo, muy peligroso)
-  },
-  vixCluster: {
-    warning: 25,     // volatilidad elevada
-    danger:  35,     // pánico. Por encima de 35 el mercado está disfuncional.
-  },
-};
+// ── UMBRALES (desde config centralizada) ───────────────────────────────────
+const THRESHOLDS = CEWS_CONFIG.THRESHOLDS;
 
 // ── ANÁLISIS DE SEÑAL INDIVIDUAL ─────────────────────────────────────────
 function analyzeYieldCurve(history: CEWSDataPoint[]): CEWSSignal {
@@ -341,9 +326,18 @@ function emptyCEWS(): CEWSOutput {
   };
 }
 
-// ── GESTIÓN DEL HISTORIAL (localStorage) ──────────────────────────────────
+// ── GESTIÓN DEL HISTORIAL (localStorage + Supabase) ────────────────────────
 const CEWS_STORAGE_KEY = "olympus_cews_history_v1";
+const CEWS_SUPABASE_TABLE = "cews_history";
 
+// Tipo para la configuración de persistencia
+export interface CEWSPersistenceConfig {
+  useLocalStorage: boolean;
+  useSupabase: boolean;
+  userId?: string; // Requerido si useSupabase=true
+}
+
+// ── LocalStorage (fallback, siempre disponible) ───────────────────────────
 export function loadCEWSHistory(): CEWSDataPoint[] {
   try {
     const raw = localStorage.getItem(CEWS_STORAGE_KEY);
@@ -376,6 +370,161 @@ export function saveCEWSDataPoint(point: Omit<CEWSDataPoint, "timestamp">): CEWS
 
 export function clearCEWSHistory(): void {
   try { localStorage.removeItem(CEWS_STORAGE_KEY); } catch { /* noop */ }
+}
+
+// ── Supabase Persistence (MED-03) ───────────────────────────────────────────
+// Permite persistir el historial CEWS en la nube para acceso multi-dispositivo
+// y respaldo ante pérdida de localStorage
+
+interface SupabaseCEWSRow {
+  id?: string;
+  user_id: string;
+  timestamp: string;
+  vix: number;
+  yield_spread: number;
+  credit_spread: number;
+  m2_growth: number;
+  created_at?: string;
+}
+
+/**
+ * Convierte CEWSDataPoint a formato Supabase
+ */
+function toSupabaseRow(point: CEWSDataPoint, userId: string): SupabaseCEWSRow {
+  return {
+    user_id: userId,
+    timestamp: point.timestamp,
+    vix: point.vix,
+    yield_spread: point.yieldSpread,
+    credit_spread: point.creditSpread,
+    m2_growth: point.m2Growth,
+  };
+}
+
+/**
+ * Convierte fila Supabase a CEWSDataPoint
+ */
+function fromSupabaseRow(row: SupabaseCEWSRow): CEWSDataPoint {
+  return {
+    timestamp: row.timestamp,
+    vix: row.vix,
+    yieldSpread: row.yield_spread,
+    creditSpread: row.credit_spread,
+    m2Growth: row.m2_growth,
+  };
+}
+
+/**
+ * Carga historial desde Supabase (requiere cliente Supabase)
+ * Uso: import { supabase } from '@/integrations/supabase/client'
+ */
+export async function loadCEWSHistoryFromSupabase(
+  supabaseClient: { from: (table: string) => {
+    select: (cols: string, opts?: { head?: boolean }) => {
+      eq: (col: string, val: string) => {
+        order: (col: string, opts: { ascending: boolean }) => {
+          limit: (n: number) => Promise<{ data: unknown[] | null; error: unknown }>
+        }
+      }
+    }
+  } },
+  userId: string
+): Promise<CEWSDataPoint[]> {
+  try {
+    const { data, error } = await supabaseClient
+      .from(CEWS_SUPABASE_TABLE)
+      .select('timestamp, vix, yield_spread, credit_spread, m2_growth')
+      .eq('user_id', userId)
+      .order('timestamp', { ascending: true })
+      .limit(168);
+
+    if (error || !data) {
+      console.warn('[CEWS] Error loading from Supabase:', error);
+      return [];
+    }
+
+    return (data as SupabaseCEWSRow[]).map(fromSupabaseRow);
+  } catch (e) {
+    console.warn('[CEWS] Exception loading from Supabase:', e);
+    return [];
+  }
+}
+
+/**
+ * Guarda un punto en Supabase
+ */
+export async function saveCEWSDataPointToSupabase(
+  supabaseClient: { from: (table: string) => {
+    insert: (rows: unknown[]) => Promise<{ error: unknown }>
+  } },
+  point: Omit<CEWSDataPoint, 'timestamp'>,
+  userId: string
+): Promise<boolean> {
+  try {
+    const newPoint: CEWSDataPoint = {
+      ...point,
+      timestamp: new Date().toISOString(),
+    };
+
+    const { error } = await supabaseClient
+      .from(CEWS_SUPABASE_TABLE)
+      .insert([toSupabaseRow(newPoint, userId)]);
+
+    if (error) {
+      console.warn('[CEWS] Error saving to Supabase:', error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[CEWS] Exception saving to Supabase:', e);
+    return false;
+  }
+}
+
+/**
+ * Sincroniza localStorage con Supabase (carga datos de la nube si localStorage está vacío)
+ */
+export async function syncCEWSHistory(
+  supabaseClient: Parameters<typeof loadCEWSHistoryFromSupabase>[0],
+  userId: string
+): Promise<CEWSDataPoint[]> {
+  const localHistory = loadCEWSHistory();
+
+  // Si localStorage tiene datos, usarlos (ya están sincronizados)
+  if (localHistory.length > 0) {
+    return localHistory;
+  }
+
+  // Si localStorage está vacío, cargar desde Supabase
+  const cloudHistory = await loadCEWSHistoryFromSupabase(supabaseClient, userId);
+
+  // Guardar en localStorage para próximas consultas
+  if (cloudHistory.length > 0) {
+    try {
+      localStorage.setItem(CEWS_STORAGE_KEY, JSON.stringify(cloudHistory));
+    } catch { /* noop */ }
+  }
+
+  return cloudHistory;
+}
+
+/**
+ * Guarda en ambos: localStorage (síncrono) y Supabase (async)
+ */
+export async function saveCEWSDataPointWithSync(
+  supabaseClient: Parameters<typeof loadCEWSHistoryFromSupabase>[0],
+  point: Omit<CEWSDataPoint, 'timestamp'>,
+  userId: string
+): Promise<CEWSDataPoint[]> {
+  // Guardar en localStorage primero (síncrono, siempre disponible)
+  const updated = saveCEWSDataPoint(point);
+
+  // Intentar guardar en Supabase (async, no bloquea)
+  saveCEWSDataPointToSupabase(supabaseClient, point, userId).catch(() => {
+    // Error ya logueado en la función
+  });
+
+  return updated;
 }
 
 // ── DATOS SINTÉTICOS PARA DEMOSTRACIÓN ───────────────────────────────────

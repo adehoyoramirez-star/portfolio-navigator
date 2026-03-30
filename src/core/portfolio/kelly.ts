@@ -14,6 +14,8 @@
 // Sports Betting, and the Stock Market" — recomienda half-kelly para mercados reales
 // ===============================================
 
+import { KELLY_CONFIG } from "@/core/config/engineConfig";
+
 export interface KellyInput {
   expectedReturn: number; // retorno esperado normalizado (output de olympusV3)
   volatility: number;     // volatilidad anualizada en decimal (ej: 0.60 = 60%)
@@ -26,9 +28,9 @@ export interface KellyResult {
   isCapped: boolean;     // true si el cap de 0.25 estuvo activo
 }
 
-// Cap institucional: ningún activo puede tener más del 25% de asignación base
-// antes de la normalización del portfolio
-const KELLY_CAP = 0.25;
+// Cap institucional (desde config centralizada)
+const KELLY_CAP = KELLY_CONFIG.CAP;
+const KELLY_HALF_FRACTION = KELLY_CONFIG.HALF_FRACTION;
 
 /**
  * Calcula la fracción de Kelly con ajuste institucional (half-Kelly).
@@ -44,7 +46,7 @@ export function calculateKelly(input: KellyInput): KellyResult {
   const rawKelly = variance > 0 ? expectedReturn / variance : 0;
 
   // Half-Kelly: usar la mitad del óptimo teórico
-  const halfKelly = rawKelly * 0.5;
+  const halfKelly = rawKelly * KELLY_HALF_FRACTION;
 
   // Cap a 25% máximo, floor en 0 (nunca posición corta via Kelly)
   const cappedKelly = Math.max(0, Math.min(KELLY_CAP, halfKelly));

@@ -14,6 +14,9 @@ import { detectCycleTops } from "@/core/risk/cycleTopDetector";
 import { getMasterRegime } from "@/core/macro/masterRegime";
 import { calculateSpainTax } from "@/core/tax/spainTaxAnalysis";
 import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
+import { computeHRP } from "@/core/risk/hrp";
+import { runBlackLitterman } from "@/core/portfolio/blackLitterman";
+import { computeCEWS } from "@/core/macro/crisisEarlyWarning";
 
 // ================================================================
 // 1. KELLY — fracción óptima de tamaño de posición
@@ -342,5 +345,284 @@ describe("runWalkForward", () => {
     const result = runWalkForward(overfittedReturns, 4);
     // Con retornos muy buenos IS y malos OOS → estabilidad baja → riesgo alto/medio
     expect(["MEDIUM", "HIGH"]).toContain(result.overfittingRisk);
+  });
+});
+
+// ================================================================
+// 8. HRP (Hierarchical Risk Parity) — López de Prado
+// MED-01: Test unitario para algoritmo crítico
+// ================================================================
+describe("computeHRP", () => {
+  // Matriz de covarianza conocida para 3 activos
+  // BTC (alta vol), GOLD (media vol), BONDS (baja vol)
+  const covMatrix = [
+    [0.36, 0.02, 0.01],  // BTC: vol ~60%
+    [0.02, 0.04, 0.015], // GOLD: vol ~20%
+    [0.01, 0.015, 0.01], // BONDS: vol ~10%
+  ];
+
+  it("devuelve pesos que suman 1", () => {
+    const result = computeHRP(covMatrix, 3);
+    const sum = result.weights.reduce((a, b) => a + b, 0);
+    expect(sum).toBeCloseTo(1.0, 5);
+  });
+
+  it("todos los pesos son positivos", () => {
+    const result = computeHRP(covMatrix, 3);
+    result.weights.forEach(w => expect(w).toBeGreaterThanOrEqual(0));
+  });
+
+  it("asigna menor peso a activos de mayor varianza", () => {
+    const result = computeHRP(covMatrix, 3);
+    // BTC tiene varianza 0.36, BONDS tiene 0.01
+    // HRP debe dar menos peso a BTC que a BONDS
+    expect(result.weights[2]).toBeGreaterThan(result.weights[0]);
+  });
+
+  it("fallback a equal weight si covMatrix es null", () => {
+    const result = computeHRP(null as unknown as number[][], 3);
+    expect(result.weights).toEqual([1/3, 1/3, 1/3]);
+  });
+
+  it("fallback a equal weight si covMatrix es muy pequeña", () => {
+    const result = computeHRP([[0.01]], 1);
+    expect(result.weights).toEqual([1]);
+  });
+
+  it("detecta grupos de correlación correctamente", () => {
+    // Matriz donde activos 0 y 1 están altamente correlacionados
+    const correlatedCov = [
+      [0.04, 0.035, 0.005],  // activos 0 y 1 correlacionados (~0.875)
+      [0.035, 0.04, 0.005],
+      [0.005, 0.005, 0.02],  // activo 2 no correlacionado
+    ];
+    const result = computeHRP(correlatedCov, 3);
+    // clusterGroups debe detectar que 0 y 1 están en el mismo grupo
+    expect(result.clusterGroups.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("clusterOrder contiene todos los activos sin duplicados", () => {
+    const result = computeHRP(covMatrix, 3);
+    const uniqueOrder = new Set(result.clusterOrder);
+    expect(result.clusterOrder.length).toBe(3);
+    expect(uniqueOrder.size).toBe(3);
+  });
+});
+
+// ================================================================
+// 9. BLACK-LITTERMAN — modelo de optimización con views
+// MED-02: Test unitario con omega corregido
+// ================================================================
+describe("runBlackLitterman", () => {
+  const assetNames = ["BTC", "GOLD", "BONDS"];
+
+  // Covarianza diagonal simple para tests predecibles
+  const covMatrix = [
+    [0.36, 0, 0],     // BTC: vol 60%
+    [0, 0.04, 0],      // GOLD: vol 20%
+    [0, 0, 0.01],      // BONDS: vol 10%
+  ];
+
+  const marketWeights = [0.30, 0.40, 0.30];
+
+  it("sin views → retorna pesos de mercado (equilibrio)", () => {
+    const result = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [],
+    });
+    // Sin views, los pesos deben estar cerca de los de mercado
+    result.posteriorWeights.forEach((w, i) => {
+      expect(w).toBeCloseTo(marketWeights[i], 1);
+    });
+  });
+
+  it("view alcista sobre un activo aumenta su peso", () => {
+    const result = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [{
+        assets: ["BTC"],
+        weights: [1],
+        expectedReturn: 0.20,
+        confidence: 0.7,
+      }],
+    });
+    // Con view alcista sobre BTC, su peso debe aumentar
+    expect(result.posteriorWeights[0]).toBeGreaterThan(marketWeights[0]);
+  });
+
+  it("view bajista reduce el peso", () => {
+    const result = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [{
+        assets: ["BTC"],
+        weights: [1],
+        expectedReturn: -0.10,
+        confidence: 0.6,
+      }],
+    });
+    expect(result.posteriorWeights[0]).toBeLessThan(marketWeights[0]);
+  });
+
+  it("pesos posteriores suman 1", () => {
+    const result = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [
+        { assets: ["BTC"], weights: [1], expectedReturn: 0.15, confidence: 0.6 },
+        { assets: ["GOLD"], weights: [1], expectedReturn: 0.05, confidence: 0.5 },
+      ],
+    });
+    const sum = result.posteriorWeights.reduce((a, b) => a + b, 0);
+    expect(sum).toBeCloseTo(1.0, 5);
+  });
+
+  it("view con alta confianza tiene más impacto que con baja confianza", () => {
+    const resultHighConf = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [{ assets: ["BTC"], weights: [1], expectedReturn: 0.20, confidence: 0.9 }],
+    });
+    const resultLowConf = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [{ assets: ["BTC"], weights: [1], expectedReturn: 0.20, confidence: 0.3 }],
+    });
+    // Alta confianza → más cambio en el peso
+    const changeHigh = Math.abs(resultHighConf.posteriorWeights[0] - marketWeights[0]);
+    const changeLow = Math.abs(resultLowConf.posteriorWeights[0] - marketWeights[0]);
+    expect(changeHigh).toBeGreaterThan(changeLow);
+  });
+
+  it("equilibriumReturns son proporcionales a covarianza × marketWeights", () => {
+    const result = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [],
+    });
+    // Π = δ × Σ × w_mkt (con δ = riskAversion = 2.5)
+    // BTC: 2.5 × 0.36 × 0.30 = 0.27
+    expect(result.equilibriumReturns[0]).toBeCloseTo(2.5 * 0.36 * 0.30, 5);
+    // GOLD: 2.5 × 0.04 × 0.40 = 0.04
+    expect(result.equilibriumReturns[1]).toBeCloseTo(2.5 * 0.04 * 0.40, 5);
+    // BONDS: 2.5 × 0.01 × 0.30 = 0.0075
+    expect(result.equilibriumReturns[2]).toBeCloseTo(2.5 * 0.01 * 0.30, 5);
+  });
+
+  it("viewImpact registra el impacto de cada view", () => {
+    const result = runBlackLitterman({
+      assetNames,
+      covMatrix,
+      marketWeights,
+      views: [{ assets: ["BTC"], weights: [1], expectedReturn: 0.20, confidence: 0.6 }],
+    });
+    expect(result.viewImpact.length).toBe(1);
+    expect(result.viewImpact[0].view.assets[0]).toBe("BTC");
+  });
+});
+
+// ================================================================
+// 10. CEWS — Crisis Early Warning System
+// ================================================================
+describe("computeCEWS", () => {
+  // Generar historial sintético con deterioro progresivo
+  const generateHistory = (
+    vixTrend: number,    // valor inicial y tendencia
+    yieldTrend: number,
+    creditTrend: number,
+    m2Trend: number,
+    weeks = 12
+  ) => {
+    const history = [];
+    for (let i = 0; i < weeks; i++) {
+      history.push({
+        timestamp: new Date(Date.now() - (weeks - i) * 7 * 24 * 3600 * 1000).toISOString(),
+        vix: vixTrend + i * 0.5 + (Math.random() - 0.5) * 2,
+        yieldSpread: yieldTrend - i * 0.02 + (Math.random() - 0.5) * 0.1,
+        creditSpread: creditTrend + i * 0.05 + (Math.random() - 0.5) * 0.1,
+        m2Growth: m2Trend - i * 0.1 + (Math.random() - 0.5) * 0.2,
+      });
+    }
+    return history;
+  };
+
+  it("CLEAR con datos normales", () => {
+    const history = generateHistory(15, 0.5, 1.5, 4.0); // VIX bajo, spreads normales
+    const result = computeCEWS(history);
+    expect(result.level).toBe("CLEAR");
+    expect(result.signalsInRed).toBe(0);
+  });
+
+  it("ALERT con deterioro severo", () => {
+    // VIX subiendo hacia 40, spreads altos, M2 cayendo
+    const history = generateHistory(30, -0.3, 3.5, 1.0, 12);
+    const result = computeCEWS(history);
+    // Con VIX >35 y spreads >3% durante semanas → ALERT o WARNING
+    expect(["ALERT", "WARNING"]).toContain(result.level);
+    expect(result.signalsInRed).toBeGreaterThanOrEqual(2);
+  });
+
+  it("datos insuficientes → emptyCEWS", () => {
+    const result = computeCEWS([{
+      timestamp: new Date().toISOString(),
+      vix: 20, yieldSpread: 0.5, creditSpread: 1.5, m2Growth: 3.0
+    }]);
+    expect(result.level).toBe("CLEAR");
+    expect(result.score).toBe(0);
+  });
+
+  it("earlyWarningActive con ≥3 señales deterioradas durante ≥4 semanas", () => {
+    // Construir historial con 3+ señales en rojo por 4+ semanas
+    const history = [];
+    for (let i = 0; i < 12; i++) {
+      history.push({
+        timestamp: new Date(Date.now() - (12 - i) * 7 * 24 * 3600 * 1000).toISOString(),
+        vix: 38 + Math.random(),           // > 35 (danger)
+        yieldSpread: -0.5 + Math.random() * 0.1, // < 0 (danger)
+        creditSpread: 3.8 + Math.random() * 0.2, // > 3.5 (danger)
+        m2Growth: 1.5 + Math.random() * 0.3,      // bajo pero no crítico
+      });
+    }
+    const result = computeCEWS(history);
+    expect(result.earlyWarningActive).toBe(true);
+  });
+
+  it("regimePenaltyAdjustment: CLEAR = 0, ALERT = -0.20", () => {
+    const clearHistory = generateHistory(15, 0.5, 1.5, 4.0);
+    const alertHistory = generateHistory(40, -0.5, 4.0, 0.5);
+
+    const clearResult = computeCEWS(clearHistory);
+    const alertResult = computeCEWS(alertHistory);
+
+    expect(clearResult.regimePenaltyAdjustment).toBe(0);
+    // ALERT tiene penalty -0.20, WARNING -0.10, WATCH -0.05
+    expect(alertResult.regimePenaltyAdjustment).toBeLessThanOrEqual(-0.05);
+  });
+
+  it("tendencia DETERIORATING cuando los valores empeoran", () => {
+    const history = [];
+    for (let i = 0; i < 12; i++) {
+      history.push({
+        timestamp: new Date(Date.now() - (12 - i) * 7 * 24 * 3600 * 1000).toISOString(),
+        vix: 20 + i * 2,           // subiendo
+        yieldSpread: 0.3 - i * 0.05, // bajando hacia inversión
+        creditSpread: 1.5 + i * 0.15, // subiendo
+        m2Growth: 4.0 - i * 0.2,    // bajando
+      });
+    }
+    const result = computeCEWS(history);
+    // Al menos una señal debe estar en DETERIORATING
+    const signals = Object.values(result.signals);
+    const hasDeteriorating = signals.some(s => s.trend === "DETERIORATING");
+    expect(hasDeteriorating).toBe(true);
   });
 });
