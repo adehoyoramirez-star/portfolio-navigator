@@ -32,7 +32,8 @@ export type DCAAction =
   | "FULL_BUY"
   | "ATTACK_ENTRY"    // fondo probable — entrar con 1.5x del DCA normal
   | "ATTACK_STRONG"   // fondo confirmándose — 2.5x + liquidez acumulada parcial
-  | "ATTACK_MAX";     // señal máxima de ciclo — desplegar toda la liquidez acumulada
+  | "ATTACK_MAX"      // señal máxima de ciclo — desplegar toda la liquidez acumulada
+  | "BTC_CYCLE_OVERRIDE"; // FIX V4: señales on-chain ≥4/7 → compra BTC aunque macro sea CRISIS
 
 export interface SmartDCAInput {
   // Señales técnicas BTC
@@ -366,6 +367,44 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // ── Detectar confluencia de fondo SIEMPRE (para mostrar progreso)
   const attackSignals = detectBottomConfluence(input);
   const attackConfluence = attackSignals.filter(s => s.active).length;
+
+  // ── FIX V4: BTC CYCLE OVERRIDE ───────────────────────────────────────────
+  // Problema anterior: regime !== "CRISIS" bloqueaba el ataque incluso con
+  // señales on-chain extremadamente fuertes. Históricamente los mejores
+  // suelos de BTC ocurren exactamente durante CRISIS macro (2018, 2020, 2022).
+  //
+  // Solución: si ≥4/7 señales de ciclo están activas Y tail risk no está activo,
+  // se permite una compra BTC-only del 25% del cash disponible — independiente
+  // del régimen macro. Este es el "Motor B" (BTC Overlay) operando autónomamente.
+  //
+  // Umbrales intencionalmente altos (4/7) para evitar falsas señales:
+  // Con 2-3 señales → esperar. Con 4+ → la convergencia es estadísticamente significativa.
+  const btcCycleOverride =
+    attackConfluence >= 4 &&
+    !tailRiskActive &&           // si hay tail risk activo el mercado está disfuncional
+    regime === "CRISIS";         // solo necesario cuando el macro bloquea todo lo demás
+
+  if (btcCycleOverride) {
+    const btcOnlyAssets = motorAllocations.filter(a => a.ticker === "BTC-EUR");
+    const btcCash = availableCash * 0.25; // 25% del cash — entrada parcial, no total
+    const btcAllocations = buildAllocations(btcCash, btcOnlyAssets, "BTC-OVERRIDE:");
+    const actualBtcCost = btcAllocations.reduce((s, a) => s + a.actualCost, 0);
+
+    return {
+      action: "BTC_CYCLE_OVERRIDE",
+      score: attackConfluence,
+      buyFraction: availableCash > 0 ? actualBtcCost / availableCash : 0.25,
+      totalCashToInvest: actualBtcCost,
+      allocationByAsset: btcAllocations,
+      reasoning: `⚡ BTC CYCLE OVERRIDE — ${attackConfluence}/7 señales on-chain activas. Motor B (BTC ciclo) operando independiente del macro CRISIS. Entrada parcial €${actualBtcCost.toFixed(0)} (25% del cash). Históricamente los suelos de BTC ocurren en CRISIS macro.`,
+      blockReason: undefined,
+      attackMode: true,
+      attackConfluence,
+      attackSignals,
+      attackMultiplier: 1.0,
+      attackTranche: 1,
+    };
+  }
 
   // ── MODO ATAQUE: tiene prioridad sobre bloqueos defensivos normales
   const attackPossible =

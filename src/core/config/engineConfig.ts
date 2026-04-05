@@ -16,12 +16,14 @@ export const ENGINE_CONFIG_VERSION = "3.5.1";
 
 // ── KELLY CRITERION ───────────────────────────────────────────────────────
 export const KELLY_CONFIG = {
-  // Cap institucional: ningún activo puede tener >25% antes de normalización
+  // Cap institucional: ningún activo puede tener >20% antes de normalización
+  // FIX V4: reducido de 0.25 → 0.20 per recomendación del walk-forward optimizer
+  // (overfitting HIGH detectado con cap 0.25 — mayor HRP blend necesario)
   // Referencia: Thorp (2006) - half-kelly reduce volatilidad ~30% con pérdida mínima
-  CAP: 0.25,
+  CAP: 0.20,
   HALF_FRACTION: 0.5, // usar mitad del Kelly óptimo
 
-  // Justificación: con 7 activos, permitir >25% destruye diversificación
+  // Justificación: con 7 activos, permitir >20% destruye diversificación
   // y concentra riesgo en un solo activo
 } as const;
 
@@ -64,7 +66,9 @@ export const CEWS_CONFIG = {
       danger: 0.0,     // contracción (históricamente raro y peligroso)
     },
     vixCluster: {
-      warning: 25,     // volatilidad elevada
+      // FIX V4: bajado de 25→22 para detectar el régimen de volatilidad actual
+      // VIX=25.6 no disparaba WATCH con umbral 25 → sistema ciego al estrés real
+      warning: 22,     // volatilidad elevada
       danger: 35,      // pánico
     },
   },

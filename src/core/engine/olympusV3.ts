@@ -23,8 +23,13 @@
 // ===============================================
 
 // FIX REG-02: versión del motor — incluir en decision_log para reproducibilidad
-export const ENGINE_VERSION = "v3.5.1";
+export const ENGINE_VERSION = "v4.0.0";
 // Changelog:
+//   v4.0.0: FIX V4 — tres cambios estructurales:
+//     1. BTC_CYCLE_OVERRIDE: señales on-chain ≥4/7 pueden comprar BTC en CRISIS macro
+//     2. Kelly cap reducido 0.25→0.20 (per recomendación walk-forward overfitting HIGH)
+//     3. Blend rebalanceado: HRP 0.30→0.45, BL 0.55→0.40 (mayor robustez out-of-sample)
+//     4. VIX CEWS threshold 25→22 (detecta régimen actual VIX=25.6)
 //   v3.5.1: Fix MATH-01 (crisis thresholds), MATH-02 (BL omega), MATH-03 (jump diffusion),
 //           MATH-NEW-01 (RSI Wilder's EMA), MATH-NEW-02 (regimeDuration conectado),
 //           SEC-02/03/04 (CORS + rate limit + input validation)
@@ -245,15 +250,19 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   }
 
   // ====== BLEND FINAL: ARQUITECTURA 2-PATH ======
+  // FIX V4: aumentado peso HRP de 0.30→0.45 y reducido BL de 0.55→0.40
+  // Justificación: walk-forward calificación C con overfitting 58%
+  // HRP es más robusto out-of-sample (no necesita predecir retornos)
+  // BL depende de covMatrix histórica que cambia en crisis → menos fiable
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
       const minVarW = minimumVarianceWeights(input.covMatrix!, assets.length);
-      return blWeights[i]  * 0.55
-           + hrpWeights[i] * 0.30
-           + minVarW[i]    * 0.15;
+      return blWeights[i]  * 0.40   // BL: 0.55→0.40 (menos dependencia de covMatrix)
+           + hrpWeights[i] * 0.45   // HRP: 0.30→0.45 (más robusto out-of-sample)
+           + minVarW[i]    * 0.15;  // MinVar: sin cambio
     } else {
-      return kellyNorm[i].kellyNormalized * 0.50
-           + hrpWeights[i]               * 0.50;
+      return kellyNorm[i].kellyNormalized * 0.40  // Kelly: 0.50→0.40
+           + hrpWeights[i]               * 0.60; // HRP: 0.50→0.60
     }
   });
 
