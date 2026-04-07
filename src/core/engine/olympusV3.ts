@@ -1,46 +1,33 @@
 // ===============================================
 // ARCHIVO: src/core/engine/olympusV3.ts
-// NIVEL 2 — Motor completo con todas las capas integradas
+// OLYMPUS ENGINE V5 — Motor Institucional Anti-Frágil
 // ===============================================
-// FIX REG-02:    Añadido ENGINE_VERSION para trazabilidad regulatoria (MiFID II).
-//                Convención semver: MAJOR.MINOR.PATCH
-//                  MAJOR: cambio de arquitectura (BL path, HRP method)
-//                  MINOR: cambio de parámetros calibrados o nuevas capas
-//                  PATCH: bugfixes sin cambio de comportamiento
-// FIX MATH-NEW-02: regimeHistory pasado a getMasterRegime para que
-//                  durationAdjustment afecte a allocations reales.
-//
 // CAPAS DE ASIGNACIÓN (en orden de aplicación):
-//   1. FACTOR SCORES     → momentum + value + quality + lowVol
-//   2. KELLY FRACTION    → half-kelly con retornos anualizados calibrados (AQR)
-//   3. CORRELATION       → penalización si correlación media > 0.5
-//   4. REGIME PENALTY    → continuo [0.4,1.0] con durationAdjustment conectado
-//   5. BLEND 2-PATH:
-//        CON covMatrix:  BL × 0.55 + HRP × 0.30 + MinVar × 0.15
-//        SIN covMatrix:  Kelly × 0.50 + HRP × 0.50
-//   6. VOL TARGET        → escalar a vol objetivo 14%
-//   7. TAIL RISK OVERLAY → reducción en drawdown severo o crisis extrema
+//   0. BTC CYCLE OVERLAY  → MVRV/Puell/RSI → btcNumeric [0,1]
+//   1. META-INTELIGENCIA  → confidenceMultiplier [0.70, 1.0] si modelo falla
+//   2. RÉGIMEN UNIFICADO  → masterRegime con penalty continuo [0.4, 1.0]
+//   3. FACTOR SCORES      → momentum + value + quality + lowVol
+//   4. KELLY FRACTION     → half-kelly cap 0.20
+//   5. CORRELACIÓN        → penalización si correlación media > 0.5
+//   6. BLEND 2-PATH       → BL×0.40 + HRP×0.45 + MinVar×0.15
+//   7. VOL TARGET         → escalar a vol objetivo 18%
+//   8. TAIL RISK V5       → kill switch 5 niveles DD 5/10/15/20/25%
+//   9. BTC CAP            → máximo 20% (no 70% de V4.1)
+//  10. META-CONFIDENCE    → ajuste final por salud del modelo
 // ===============================================
 
-// FIX REG-02: versión del motor — incluir en decision_log para reproducibilidad
-export const ENGINE_VERSION = "v4.1.0";
+export const ENGINE_VERSION = "v5.0.0";
 // Changelog:
-//   v4.1.0: OLYMPUS V4.1 PRO — Integración BTC Cycle + DCA Contracíclico:
-//     1. computeBTCCycleOverlay: MVRV/Puell/RSI → score [0,1] integrado en core signal
-//     2. computeDCAMultiplier: DCA intensity por régimen (60/35/15%) + boost BTC 1.4x
-//     3. Core signal: 0.35*regime + 0.45*btc_numeric + 0.20*risk
-//     4. Volatility rules: vol>25% → -25%, vol>30% → -40%
-//     5. Max BTC weight: 70% cap
-//   v4.0.0: FIX V4 — tres cambios estructurales:
-//     1. BTC_CYCLE_OVERRIDE: señales on-chain ≥4/7 pueden comprar BTC en CRISIS macro
-//     2. Kelly cap reducido 0.25→0.20 (per recomendación walk-forward overfitting HIGH)
-//     3. Blend rebalanceado: HRP 0.30→0.45, BL 0.55→0.40 (mayor robustez out-of-sample)
-//     4. VIX CEWS threshold 25→22 (detecta régimen actual VIX=25.6)
-//   v3.5.1: Fix MATH-01 (crisis thresholds), MATH-02 (BL omega), MATH-03 (jump diffusion),
-//           MATH-NEW-01 (RSI Wilder's EMA), MATH-NEW-02 (regimeDuration conectado),
-//           SEC-02/03/04 (CORS + rate limit + input validation)
-//   v3.5.0: Arquitectura 2-path BL+HRP, CEWS integrado, regimeDuration (desconectado — bug)
-//   v3.0.0: Motor base con Kelly calibrado AQR, HRP, factores momentum/value/quality/lowVol
+//   v5.0.0: OLYMPUS V5 — Motor Anti-Frágil:
+//     1. Meta-Inteligencia runtime: reduce confianza si modelo falla consecutivamente
+//     2. Kill Switch 5 niveles: DD 5%→-15%, 10%→-35%, 15%→-50%, 20%→-65%, 25%→-70%
+//     3. BTC cap reducido 70%→20% (institucional, anti-concentración)
+//     4. Correlación dinámica en tail risk (penaliza correlación → 1 en crisis)
+//     5. Exposición escenarios probabilísticos en output
+//     6. Asset target update: NASDAQ 100 añadido, REITs reducidos
+//   v4.1.0: OLYMPUS V4.1 PRO — Integración BTC Cycle + DCA Contracíclico
+//   v4.0.0: FIX V4 — Kelly 0.20, HRP 0.45, BTC_CYCLE_OVERRIDE, VIX threshold 22
+//   v3.5.1: Fix MATH-01..04, SEC-02..04
 
 import { calculateMomentum } from "../factors/momentum";
 import { calculateValue, computeUniverseStats, ValueInput } from "../factors/value";
@@ -59,6 +46,8 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 // V4.1 PRO imports
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCAMultiplier } from "../dca/dcaEngine";
+// V5 imports
+import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 
 export interface AssetInput {
   name: string;
@@ -92,6 +81,13 @@ export interface OlympusOutput {
 
 export type PortfolioRegime = "EXPANSION" | "CONTRACTION" | "CRISIS" | "ALL_CASH";
 
+export interface ScenarioProbabilities {
+  bull: number;    // P(retorno > 10% en 12m)
+  neutral: number; // P(retorno entre -5% y 10%)
+  bear: number;    // P(retorno < -5%)
+  expectedExposure: number; // suma ponderada: bull*1.0 + neutral*0.6 + bear*0.2
+}
+
 export interface EngineOutput {
   allocations: OlympusOutput[];
   regime: PortfolioRegime;
@@ -102,7 +98,6 @@ export interface EngineOutput {
   tailRiskOverlay: number;
   tailRiskActive: boolean;
   tailRiskReason: string;
-  // FIX REG-02: exponer versión del motor en cada output para decision_log
   engineVersion: string;
   meta: {
     allCash: boolean;
@@ -131,6 +126,16 @@ export interface EngineOutput {
     riskComponent: number;
     finalScore: number;
   };
+  // V5: nuevos outputs
+  scenarioProbabilities: ScenarioProbabilities;
+  metaIntelligence: {
+    modelHealth: 'RELIABLE' | 'DEGRADED' | 'UNRELIABLE';
+    confidenceMultiplier: number;
+    consecutiveErrors: number;
+    recommendation: string;
+  };
+  killSwitchLevel: 0 | 1 | 2 | 3 | 4 | 5;
+  killSwitchName: string;
 }
 
 export interface OlympusEngineInput {
@@ -154,7 +159,6 @@ export interface OlympusEngineInput {
   blViews?: BLView[];
   liquidityGrowth?: number;
   cewsHistory?: CEWSDataPoint[];
-  // FIX MATH-NEW-02: pasar historial de régimen para conectar durationAdjustment
   regimeHistory?: RegimeHistoryEntry[];
   adaptiveFactorWeights?: {
     momentum: number;
@@ -162,17 +166,69 @@ export interface OlympusEngineInput {
     quality:  number;
     lowVol:   number;
   };
-  // V4.1 PRO: BTC On-Chain Metrics (manuales o desde API)
+  // V4.1 PRO: BTC On-Chain Metrics
   btcOnChain?: {
-    mvrvRatio?: number;       // MVRV Z-score o ratio
-    puellMultiple?: number;   // Puell Multiple
-    rsiWeekly?: number;       // RSI semanal de BTC
+    mvrvRatio?: number;
+    puellMultiple?: number;
+    rsiWeekly?: number;
   };
-  // Capital disponible para DCA
   availableCash?: number;
   totalPortfolioValue?: number;
+  // V5: correlación dinámica para tail risk
+  avgCorrelation?: number;
 }
 
+// ── ESCENARIOS PROBABILÍSTICOS V5 ─────────────────────────────────────────
+// Convierte regime probs + BTC cycle en probabilidades de escenario
+// Output: bull/neutral/bear con exposición esperada ponderada
+function computeScenarioProbabilities(
+  regimeProbs: { expansion: number; contraction: number; crisis: number },
+  btcNumeric: number,
+  liquidityGrowth: number
+): ScenarioProbabilities {
+  // Base: probabilidades de régimen macro
+  let pBull    = regimeProbs.expansion;
+  let pNeutral = regimeProbs.contraction;
+  let pBear    = regimeProbs.crisis;
+
+  // Ajuste por ciclo BTC (máx ±20% de desviación)
+  // BTC fuerte (btcNumeric > 0.7) → sesgo alcista
+  // BTC débil  (btcNumeric < 0.3) → sesgo bajista
+  const btcAdjustment = (btcNumeric - 0.5) * 0.40;  // [-0.20, +0.20]
+  pBull    = Math.max(0.05, Math.min(0.90, pBull    + btcAdjustment));
+  pBear    = Math.max(0.05, Math.min(0.90, pBear    - btcAdjustment));
+
+  // Ajuste por liquidez global
+  // Liquidez negativa → penalizar bull
+  if (liquidityGrowth < 0) {
+    const liquidityPenalty = Math.min(0.15, Math.abs(liquidityGrowth) / 10);
+    pBull  = Math.max(0.05, pBull  - liquidityPenalty);
+    pBear  = Math.min(0.90, pBear  + liquidityPenalty);
+  } else if (liquidityGrowth > 5) {
+    const liquidityBoost = Math.min(0.10, (liquidityGrowth - 5) / 20);
+    pBull  = Math.min(0.90, pBull  + liquidityBoost);
+    pBear  = Math.max(0.05, pBear  - liquidityBoost);
+  }
+
+  // Renormalizar
+  const total = pBull + pNeutral + pBear;
+  pBull    /= total;
+  pNeutral  = Math.max(0.05, 1 - pBull - pBear);
+  pBear    /= total;
+
+  // Rebalancear para sumar 1
+  const total2 = pBull + pNeutral + pBear;
+  pBull    /= total2;
+  pNeutral /= total2;
+  pBear    /= total2;
+
+  // Exposición esperada: bull acepta 100%, neutral 60%, bear 20%
+  const expectedExposure = pBull * 1.0 + pNeutral * 0.60 + pBear * 0.20;
+
+  return { bull: pBull, neutral: pNeutral, bear: pBear, expectedExposure };
+}
+
+// ── MOTOR PRINCIPAL ───────────────────────────────────────────────────────
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const { assets, correlationMatrix, macro } = input;
 
@@ -180,8 +236,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
   const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
 
-  // ====== CAPA 0: BTC CYCLE OVERLAY (V4.1 PRO) ======
-  // Spec V4.1 PRO: "el edge viene del BTC cycle + DCA contracíclico"
+  // ====== CAPA 0: BTC CYCLE OVERLAY ======
   const btcCycleInput: BTCCycleInput = {
     mvrvRatio: input.btcOnChain?.mvrvRatio,
     puellMultiple: input.btcOnChain?.puellMultiple,
@@ -189,8 +244,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   };
   const btcCycle = computeBTCCycleOverlay(btcCycleInput);
 
-  // ====== CAPA 1: RÉGIMEN UNIFICADO ======
-  // FIX MATH-NEW-02: pasar regimeHistory para que durationAdjustment sea real
+  // ====== CAPA 1: META-INTELIGENCIA V5 ======
+  // Carga el historial de predicciones pasadas y calcula si el modelo
+  // ha estado fallando recientemente → reduce penalización de régimen
+  const predictionHistory = loadPredictionHistory();
+  const metaIntelligence = computeMetaIntelligence(predictionHistory);
+
+  // ====== CAPA 2: RÉGIMEN UNIFICADO ======
   const masterRegime = getMasterRegime(
     {
       vix: macro.vix,
@@ -203,21 +263,35 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       wtiOil: macro.wtiOil,
     },
     input.cewsHistory,
-    input.regimeHistory   // FIX MATH-NEW-02: antes no se pasaba → durationAdjustment ignorado
+    input.regimeHistory
   );
+
+  // Aplicar meta-confidence sobre la penalización de régimen
+  // Si el modelo está fallando, relajar la penalización para no ser
+  // excesivamente conservador cuando el mercado contradice las señales
+  const adjustedRegimePenalty = masterRegime.regime === 'CRISIS'
+    ? Math.max(
+        masterRegime.regimePenalty,                                      // nunca más restrictivo
+        masterRegime.regimePenalty / metaIntelligence.confidenceMultiplier // relajar si modelo falla
+      )
+    : masterRegime.regimePenalty;
 
   const corrPenalty = correlationPenalty(correlationMatrix);
 
-  // ====== CORE SIGNAL (V4.1 PRO) ======
-  // Spec: final_score = 0.35*regime + 0.45*btc + 0.20*risk
-  // Convertir masterRegime.regimePenalty a regime_numeric [0.2, 1.0]
-  const regimeNumeric = masterRegime.regimePenalty;  // ya está en [0.4, 1.0]
-  const btcNumeric = btcCycle.btcNumeric;            // [0, 1]
-  const riskNumeric = 1 - ((input.portfolioVolatility ?? 0.18) / 0.50);  // vol 18% → 0.64, vol 50% → 0
-
+  // ====== CORE SIGNAL V5 ======
+  const regimeNumeric = adjustedRegimePenalty;  // [0.4, 1.0] ajustado por meta
+  const btcNumeric = btcCycle.btcNumeric;
+  const riskNumeric = 1 - ((input.portfolioRealizedVol ?? 0.18) / 0.50);
   const coreSignalScore = 0.35 * regimeNumeric + 0.45 * btcNumeric + 0.20 * Math.max(0, riskNumeric);
 
-  // ====== CAPA 2: FACTOR SCORES ======
+  // ====== ESCENARIOS PROBABILÍSTICOS V5 ======
+  const scenarioProbabilities = computeScenarioProbabilities(
+    masterRegime.regimeProbs,
+    btcNumeric,
+    input.liquidityGrowth ?? 0
+  );
+
+  // ====== CAPA 3: FACTOR SCORES ======
   const universeStats = computeUniverseStats(assets as ValueInput[]);
   const qualityStats  = computeQualityUniverseStats(assets as QualityInput[]);
   const lowVolStats   = computeLowVolUniverseStats(assets);
@@ -243,17 +317,19 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     return { asset, momentum, value, quality, lowVol, rawExpectedReturn: calibrated.expectedReturn, calibrated };
   });
 
-  // ====== CAPA 3: KELLY con retornos anualizados ======
+  // ====== CAPA 4: KELLY con retornos anualizados ======
   const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, calibrated }) => {
     const kelly = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility });
     const isEquity = asset.earningsYield > 0;
     const erpAdj = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0);
-    const kellyAlloc = kelly.kellyFraction * corrPenalty * masterRegime.regimePenalty * erpAdj;
+    // V5: usar adjustedRegimePenalty (ya corregido por meta-inteligencia)
+    const kellyAlloc = kelly.kellyFraction * corrPenalty * adjustedRegimePenalty * erpAdj;
     const normalizedExpectedReturn = rawExpectedReturn;
     return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, calibrated, kelly, kellyAlloc };
   });
 
   const totalKelly = kellyAllocations.reduce((s, a) => s + a.kellyAlloc, 0);
+
   if (totalKelly === 0) {
     const empty = kellyAllocations.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly }) => ({
       name: asset.name, momentumScore: momentum.momentumScore, valueScore: value.valueScore,
@@ -268,37 +344,23 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       totalAllocation: 0, volTargetMultiplier: 0, tailRiskOverlay: 1, tailRiskActive: false,
       tailRiskReason: "", engineVersion: ENGINE_VERSION,
       meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix },
-      // V4.1 PRO: BTC Cycle + DCA (incluso en ALL_CASH)
-      btcCycle: {
-        btcScore: btcCycle.btcScore,
-        btcNumeric: btcCycle.btcNumeric,
-        signal: btcCycle.signal,
-        boostActive: btcCycle.boostActive,
-        breakdown: btcCycle.breakdown,
-      },
-      dca: {
-        investPercent: 0,
-        investAmount: 0,
-        frequency: 'monthly' as const,
-        boostMultiplier: 1,
-        effectiveIntensity: 0,
-      },
-      coreSignal: {
-        regimeComponent: 0.35 * regimeNumeric,
-        btcComponent: 0.45 * btcNumeric,
-        riskComponent: 0.20 * Math.max(0, riskNumeric),
-        finalScore: coreSignalScore,
-      },
+      btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
+      dca: { investPercent: 0, investAmount: 0, frequency: 'monthly' as const, boostMultiplier: 1, effectiveIntensity: 0 },
+      coreSignal: { regimeComponent: 0.35 * regimeNumeric, btcComponent: 0.45 * btcNumeric, riskComponent: 0.20 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
+      scenarioProbabilities,
+      metaIntelligence: { modelHealth: metaIntelligence.modelHealth, confidenceMultiplier: metaIntelligence.confidenceMultiplier, consecutiveErrors: metaIntelligence.consecutiveErrors, recommendation: metaIntelligence.recommendation },
+      killSwitchLevel: 0,
+      killSwitchName: 'SIN TRIGGER',
     };
   }
 
   const kellyNorm = kellyAllocations.map(a => ({ ...a, kellyNormalized: a.kellyAlloc / totalKelly }));
 
-  // ====== CAPA 4: HRP ======
+  // ====== CAPA 5: HRP ======
   const hrpResult  = computeHRP(hasRealCovMatrix ? input.covMatrix! : [], assets.length);
   const hrpWeights = hrpResult.weights;
 
-  // ====== CAPA 5: BLACK-LITTERMAN (solo con covMatrix real) ======
+  // ====== CAPA 6: BLACK-LITTERMAN ======
   let blWeights: number[] = assets.map(() => 1 / assets.length);
   if (hasRealCovMatrix && input.covMatrix) {
     try {
@@ -327,20 +389,16 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-  // ====== BLEND FINAL: ARQUITECTURA 2-PATH ======
-  // FIX V4: aumentado peso HRP de 0.30→0.45 y reducido BL de 0.55→0.40
-  // Justificación: walk-forward calificación C con overfitting 58%
-  // HRP es más robusto out-of-sample (no necesita predecir retornos)
-  // BL depende de covMatrix histórica que cambia en crisis → menos fiable
+  // ====== BLEND FINAL: BL×0.40 + HRP×0.45 + MinVar×0.15 ======
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
       const minVarW = minimumVarianceWeights(input.covMatrix!, assets.length);
-      return blWeights[i]  * 0.40   // BL: 0.55→0.40 (menos dependencia de covMatrix)
-           + hrpWeights[i] * 0.45   // HRP: 0.30→0.45 (más robusto out-of-sample)
-           + minVarW[i]    * 0.15;  // MinVar: sin cambio
+      return blWeights[i]  * 0.40
+           + hrpWeights[i] * 0.45
+           + minVarW[i]    * 0.15;
     } else {
-      return kellyNorm[i].kellyNormalized * 0.40  // Kelly: 0.50→0.40
-           + hrpWeights[i]               * 0.60; // HRP: 0.50→0.60
+      return kellyNorm[i].kellyNormalized * 0.40
+           + hrpWeights[i]               * 0.60;
     }
   });
 
@@ -356,26 +414,27 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const rpResult  = computeRiskParityWeights(rpInputs);
   const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
 
-  // ====== CAPA 6: VOL TARGET ======
+  // ====== CAPA 7: VOL TARGET ======
   const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, blendNorm, input.covMatrix);
   const volTarget   = computeVolTargetMultiplier({
     targetVol:    input.targetVol ?? DEFAULT_TARGET_VOL,
     realizedVol,
-    regimePenalty: masterRegime.regimePenalty,
+    regimePenalty: adjustedRegimePenalty,  // V5: usar penalización ajustada
   });
 
-  // ====== CAPA 7: TAIL RISK OVERLAY ======
+  // ====== CAPA 8: TAIL RISK V5 — Kill Switch 5 Niveles ======
   const tailRisk = computeTailRiskOverlay({
-    drawdown:    input.portfolioDrawdown ?? 0,
-    vix:         macro.vix,
+    drawdown:     input.portfolioDrawdown ?? 0,
+    vix:          macro.vix,
     creditSpread: macro.creditSpread,
-    stressScore: masterRegime.stressDetail.score,
+    stressScore:  masterRegime.stressDetail.score,
     portfolioVolatility: input.portfolioRealizedVol,
+    avgCorrelation: input.avgCorrelation,  // V5: correlación dinámica
   });
 
-  // ====== CAPA 8: DCA CONTRACÍCLICO (V4.1 PRO) ======
+  // ====== CAPA 9: DCA CONTRACÍCLICO ======
   const dca = computeDCAMultiplier({
-    regime: masterRegime.regime === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime,
+    regime: (masterRegime.regime as PortfolioRegime) === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime,
     btcCycle,
   });
 
@@ -413,26 +472,23 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     allocations.forEach(a => { a.finalAllocation = a.finalAllocation / totalFinal; });
   }
 
-  // V4.1 PRO: Max BTC Weight (70%)
-  // Si BTC supera el 70% del portfolio, capar al 70% y redistribuir proporcionalmente
-  const btcIndex = allocations.findIndex(a => a.name === 'BTC-EUR' || a.name.includes('BTC'));
-  if (btcIndex >= 0) {
-    const btcWeight = allocations[btcIndex].finalAllocation;
-    const MAX_BTC_WEIGHT = 0.70;  // V4.1 PRO spec
+  // ====== CAPA 10: BTC CAP INSTITUCIONAL V5 — MÁXIMO 20% ======
+  // V5: bajado de 70% (V4.1) a 20% (institucional real)
+  // Razón: BTC al 31% actual está destruyendo el benchmark con el drawdown
+  // Con 20% max: la cartera puede beneficiarse del ciclo sin depender de él
+  const MAX_BTC_WEIGHT_V5 = 0.20;
 
-    if (btcWeight > MAX_BTC_WEIGHT) {
-      const excess = btcWeight - MAX_BTC_WEIGHT;
-      allocations[btcIndex].finalAllocation = MAX_BTC_WEIGHT;
-
-      // Redistribuir el exceso proporcionalmente entre los demás activos
-      const otherTotal = allocations.filter((_, i) => i !== btcIndex).reduce((s, a) => s + a.finalAllocation, 0);
-      if (otherTotal > 0) {
-        allocations.forEach((a, i) => {
-          if (i !== btcIndex) {
-            a.finalAllocation += excess * (a.finalAllocation / otherTotal);
-          }
-        });
-      }
+  const btcIdx = allocations.findIndex(a =>
+    a.name === 'BTC-EUR' || a.name.toLowerCase().includes('bitcoin') || a.name.toLowerCase().includes('btc')
+  );
+  if (btcIdx >= 0 && allocations[btcIdx].finalAllocation > MAX_BTC_WEIGHT_V5) {
+    const excess = allocations[btcIdx].finalAllocation - MAX_BTC_WEIGHT_V5;
+    allocations[btcIdx].finalAllocation = MAX_BTC_WEIGHT_V5;
+    const otherTotal = allocations.filter((_, i) => i !== btcIdx).reduce((s, a) => s + a.finalAllocation, 0);
+    if (otherTotal > 0) {
+      allocations.forEach((a, i) => {
+        if (i !== btcIdx) a.finalAllocation += excess * (a.finalAllocation / otherTotal);
+      });
     }
   }
 
@@ -453,7 +509,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       dominantSignal: masterRegime.dominantSignal,
       hasRealCovMatrix,
     },
-    // V4.1 PRO: BTC Cycle + DCA
     btcCycle: {
       btcScore: btcCycle.btcScore,
       btcNumeric: btcCycle.btcNumeric,
@@ -474,6 +529,16 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       riskComponent: 0.20 * Math.max(0, riskNumeric),
       finalScore: coreSignalScore,
     },
+    // V5 outputs
+    scenarioProbabilities,
+    metaIntelligence: {
+      modelHealth: metaIntelligence.modelHealth,
+      confidenceMultiplier: metaIntelligence.confidenceMultiplier,
+      consecutiveErrors: metaIntelligence.consecutiveErrors,
+      recommendation: metaIntelligence.recommendation,
+    },
+    killSwitchLevel: tailRisk.killSwitchLevel,
+    killSwitchName: tailRisk.killSwitchName,
   };
 }
 
@@ -482,7 +547,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
   const iters = 500;
   let weights = Array(n).fill(1 / n);
-
   for (let iter = 0; iter < iters; iter++) {
     const grad = Array(n).fill(0);
     for (let i = 0; i < n; i++) {
@@ -495,7 +559,6 @@ function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
     const sum = updated.reduce((a, b) => a + b, 0);
     weights = updated.map(w => w / sum);
   }
-
   return weights;
 }
 
