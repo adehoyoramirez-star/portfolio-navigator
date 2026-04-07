@@ -23,8 +23,14 @@
 // ===============================================
 
 // FIX REG-02: versión del motor — incluir en decision_log para reproducibilidad
-export const ENGINE_VERSION = "v4.0.0";
+export const ENGINE_VERSION = "v4.1.0";
 // Changelog:
+//   v4.1.0: OLYMPUS V4.1 PRO — Integración BTC Cycle + DCA Contracíclico:
+//     1. computeBTCCycleOverlay: MVRV/Puell/RSI → score [0,1] integrado en core signal
+//     2. computeDCAMultiplier: DCA intensity por régimen (60/35/15%) + boost BTC 1.4x
+//     3. Core signal: 0.35*regime + 0.45*btc_numeric + 0.20*risk
+//     4. Volatility rules: vol>25% → -25%, vol>30% → -40%
+//     5. Max BTC weight: 70% cap
 //   v4.0.0: FIX V4 — tres cambios estructurales:
 //     1. BTC_CYCLE_OVERRIDE: señales on-chain ≥4/7 pueden comprar BTC en CRISIS macro
 //     2. Kelly cap reducido 0.25→0.20 (per recomendación walk-forward overfitting HIGH)
@@ -50,6 +56,9 @@ import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatili
 import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { runBlackLitterman, generateViewsFromEngine, BLView } from "../portfolio/blackLitterman";
 import { calibrateExpectedReturn } from "../factors/factorCalibration";
+// V4.1 PRO imports
+import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
+import { computeDCAMultiplier } from "../dca/dcaEngine";
 
 export interface AssetInput {
   name: string;
@@ -101,6 +110,27 @@ export interface EngineOutput {
     dominantSignal: string;
     hasRealCovMatrix: boolean;
   };
+  // V4.1 PRO: BTC Cycle + DCA
+  btcCycle?: {
+    btcScore: number;
+    btcNumeric: number;
+    signal: 'STRONG_BUY' | 'BUY' | 'ACCUMULATE' | 'HOLD' | 'REDUCE';
+    boostActive: boolean;
+    breakdown: { mvrvScore: number; puellScore: number; rsiScore: number };
+  };
+  dca?: {
+    investPercent: number;
+    investAmount: number;
+    frequency: 'weekly' | 'biweekly' | 'monthly';
+    boostMultiplier: number;
+    effectiveIntensity: number;
+  };
+  coreSignal: {
+    regimeComponent: number;
+    btcComponent: number;
+    riskComponent: number;
+    finalScore: number;
+  };
 }
 
 export interface OlympusEngineInput {
@@ -132,6 +162,15 @@ export interface OlympusEngineInput {
     quality:  number;
     lowVol:   number;
   };
+  // V4.1 PRO: BTC On-Chain Metrics (manuales o desde API)
+  btcOnChain?: {
+    mvrvRatio?: number;       // MVRV Z-score o ratio
+    puellMultiple?: number;   // Puell Multiple
+    rsiWeekly?: number;       // RSI semanal de BTC
+  };
+  // Capital disponible para DCA
+  availableCash?: number;
+  totalPortfolioValue?: number;
 }
 
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
@@ -140,6 +179,15 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const erpRaw = input.erpValue ?? 0.02;
   const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
   const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
+
+  // ====== CAPA 0: BTC CYCLE OVERLAY (V4.1 PRO) ======
+  // Spec V4.1 PRO: "el edge viene del BTC cycle + DCA contracíclico"
+  const btcCycleInput: BTCCycleInput = {
+    mvrvRatio: input.btcOnChain?.mvrvRatio,
+    puellMultiple: input.btcOnChain?.puellMultiple,
+    rsiWeekly: input.btcOnChain?.rsiWeekly,
+  };
+  const btcCycle = computeBTCCycleOverlay(btcCycleInput);
 
   // ====== CAPA 1: RÉGIMEN UNIFICADO ======
   // FIX MATH-NEW-02: pasar regimeHistory para que durationAdjustment sea real
@@ -159,6 +207,15 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   );
 
   const corrPenalty = correlationPenalty(correlationMatrix);
+
+  // ====== CORE SIGNAL (V4.1 PRO) ======
+  // Spec: final_score = 0.35*regime + 0.45*btc + 0.20*risk
+  // Convertir masterRegime.regimePenalty a regime_numeric [0.2, 1.0]
+  const regimeNumeric = masterRegime.regimePenalty;  // ya está en [0.4, 1.0]
+  const btcNumeric = btcCycle.btcNumeric;            // [0, 1]
+  const riskNumeric = 1 - ((input.portfolioVolatility ?? 0.18) / 0.50);  // vol 18% → 0.64, vol 50% → 0
+
+  const coreSignalScore = 0.35 * regimeNumeric + 0.45 * btcNumeric + 0.20 * Math.max(0, riskNumeric);
 
   // ====== CAPA 2: FACTOR SCORES ======
   const universeStats = computeUniverseStats(assets as ValueInput[]);
@@ -211,6 +268,27 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       totalAllocation: 0, volTargetMultiplier: 0, tailRiskOverlay: 1, tailRiskActive: false,
       tailRiskReason: "", engineVersion: ENGINE_VERSION,
       meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix },
+      // V4.1 PRO: BTC Cycle + DCA (incluso en ALL_CASH)
+      btcCycle: {
+        btcScore: btcCycle.btcScore,
+        btcNumeric: btcCycle.btcNumeric,
+        signal: btcCycle.signal,
+        boostActive: btcCycle.boostActive,
+        breakdown: btcCycle.breakdown,
+      },
+      dca: {
+        investPercent: 0,
+        investAmount: 0,
+        frequency: 'monthly' as const,
+        boostMultiplier: 1,
+        effectiveIntensity: 0,
+      },
+      coreSignal: {
+        regimeComponent: 0.35 * regimeNumeric,
+        btcComponent: 0.45 * btcNumeric,
+        riskComponent: 0.20 * Math.max(0, riskNumeric),
+        finalScore: coreSignalScore,
+      },
     };
   }
 
@@ -292,6 +370,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     vix:         macro.vix,
     creditSpread: macro.creditSpread,
     stressScore: masterRegime.stressDetail.score,
+    portfolioVolatility: input.portfolioRealizedVol,
+  });
+
+  // ====== CAPA 8: DCA CONTRACÍCLICO (V4.1 PRO) ======
+  const dca = computeDCAMultiplier({
+    regime: masterRegime.regime === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime,
+    btcCycle,
   });
 
   // ====== OUTPUT FINAL ======
@@ -328,6 +413,29 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     allocations.forEach(a => { a.finalAllocation = a.finalAllocation / totalFinal; });
   }
 
+  // V4.1 PRO: Max BTC Weight (70%)
+  // Si BTC supera el 70% del portfolio, capar al 70% y redistribuir proporcionalmente
+  const btcIndex = allocations.findIndex(a => a.name === 'BTC-EUR' || a.name.includes('BTC'));
+  if (btcIndex >= 0) {
+    const btcWeight = allocations[btcIndex].finalAllocation;
+    const MAX_BTC_WEIGHT = 0.70;  // V4.1 PRO spec
+
+    if (btcWeight > MAX_BTC_WEIGHT) {
+      const excess = btcWeight - MAX_BTC_WEIGHT;
+      allocations[btcIndex].finalAllocation = MAX_BTC_WEIGHT;
+
+      // Redistribuir el exceso proporcionalmente entre los demás activos
+      const otherTotal = allocations.filter((_, i) => i !== btcIndex).reduce((s, a) => s + a.finalAllocation, 0);
+      if (otherTotal > 0) {
+        allocations.forEach((a, i) => {
+          if (i !== btcIndex) {
+            a.finalAllocation += excess * (a.finalAllocation / otherTotal);
+          }
+        });
+      }
+    }
+  }
+
   return {
     allocations,
     regime: masterRegime.regime,
@@ -338,12 +446,33 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     tailRiskOverlay: tailRisk.overlay,
     tailRiskActive: tailRisk.isActive,
     tailRiskReason: tailRisk.triggerReason,
-    engineVersion: ENGINE_VERSION, // FIX REG-02
+    engineVersion: ENGINE_VERSION,
     meta: {
       allCash: false,
       confidence: masterRegime.confidence,
       dominantSignal: masterRegime.dominantSignal,
       hasRealCovMatrix,
+    },
+    // V4.1 PRO: BTC Cycle + DCA
+    btcCycle: {
+      btcScore: btcCycle.btcScore,
+      btcNumeric: btcCycle.btcNumeric,
+      signal: btcCycle.signal,
+      boostActive: btcCycle.boostActive,
+      breakdown: btcCycle.breakdown,
+    },
+    dca: {
+      investPercent: dca.effectiveIntensity,
+      investAmount: (input.totalPortfolioValue ?? 0) * dca.effectiveIntensity,
+      frequency: dca.frequency,
+      boostMultiplier: dca.boostMultiplier,
+      effectiveIntensity: dca.effectiveIntensity,
+    },
+    coreSignal: {
+      regimeComponent: 0.35 * regimeNumeric,
+      btcComponent: 0.45 * btcNumeric,
+      riskComponent: 0.20 * Math.max(0, riskNumeric),
+      finalScore: coreSignalScore,
     },
   };
 }
