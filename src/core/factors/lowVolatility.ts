@@ -12,7 +12,7 @@
 //
 // Para tu portfolio:
 //   Oro (PPFB.DE) → vol ~15%, factor muy positivo
-//   REITs (ZPRR.DE) → vol ~16%, factor positivo
+//   NASDAQ 100 (XNAS.DE) → vol ~20%, factor neutral-negativo por alta vol
 //   BTC → vol ~60%, factor muy negativo (compensado por otros factores)
 //   Uranio (URNU.DE) → vol ~35%, factor neutral
 //

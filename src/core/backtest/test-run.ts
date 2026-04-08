@@ -1,65 +1,52 @@
-// --- ARCHIVO: src/core/backtest/test-run.ts ---
-import { runBacktest } from "./backtestEngine.ts";
+// ===============================================
+// ARCHIVO: src/core/backtest/test-run.ts
+// TEST TRIMESTRAL - ESTRATEGIA DE BAJA ROTACIÓN
+// ===============================================
+import { runBacktest } from "./backtestEngine";
 
-const generatePanicHistory = () => {
+const generateHistory = () => {
   const data: number[] = [];
   let price = 100;
-  
-  // 1. 50 días de subida constante (EXPANSIÓN)
-  for (let i = 0; i < 50; i++) {
-    price *= 1.005; 
-    data.push(price);
-  }
-  
-  // 2. 50 días de VOLATILIDAD EXTREMA (CRISIS)
-  // Metemos saltos bruscos para engañar al "VIX Local" de tu código
-  for (let i = 0; i < 50; i++) {
-    const pánico = i % 2 === 0 ? 0.92 : 1.05; // Un día cae 8%, otro rebota 5%
-    price *= pánico;
-    data.push(price);
-  }
+  for (let i = 0; i < 50; i++) { price *= 1.005; data.push(price); } // Calma
+  for (let i = 0; i < 50; i++) { price *= (i % 2 === 0 ? 0.92 : 1.05); data.push(price); } // Huracán
+  for (let i = 0; i < 40; i++) { price *= 1.02; data.push(price); } // Recuperación
   return data;
 };
 
-const history = generatePanicHistory();
-
+const history = generateHistory();
 const mockHistory: Record<string, number[]> = {
-  'IS3Q.DE': history, 
-  'BTC-EUR': history,
-  'EMXC.DE': history,
-  'PPFB.DE': history,
-  'URNU.DE': history,
-  'VVSM.DE': history,
-  'ZPRR.DE': history,
+  'IS3Q.DE': history, 'BTC-EUR': history, 'EMXC.DE': history,
+  'PPFB.DE': history, 'URNU.DE': history, 'VVSM.DE': history, 'XNAS.DE': history,
 };
 
 const input = {
   closesHistory: mockHistory,
   macro: { vix: 18, creditSpread: 0.5 },
-  lookbackDays: 10,   // Ventana corta para que reaccione rápido al pánico
-  rebalanceDays: 1,  
+  lookbackDays: 20,
+  rebalanceDays: 63,  // <--- REBALANCEO CADA 3 MESES
   initialCapital: 10000,
   transactionCostBps: 15
 };
 
-console.log("🚀 Iniciando Test de Pánico Extremo...");
+console.log("🚀 Iniciando Simulación Trimestral Predator...");
 
 try {
-  const results = runBacktest(input);
-  console.log("\n--- AUDITORÍA DE REGÍMENES ---");
-  
-  const { EXPANSION, CRISIS, CONTRACTION } = results.regimeConditional;
+  const result = runBacktest(input);
+  const m = result.metrics;
 
-  console.log(`📈 EXPANSIÓN -> Días: ${EXPANSION.totalDays} | MaxDD: ${(EXPANSION.maxDrawdown * 100).toFixed(2)}%`);
-  console.log(`🟠 CONTRACCIÓN -> Días: ${CONTRACTION.totalDays} | MaxDD: ${(CONTRACTION.maxDrawdown * 100).toFixed(2)}%`);
-  console.log(`📉 CRISIS     -> Días: ${CRISIS.totalDays}    | MaxDD: ${(CRISIS.maxDrawdown * 100).toFixed(2)}%`);
+  console.log("\n" + "=".repeat(50));
+  console.log("📊 RESULTADOS FINALES (REBALANCEO CADA 3 MESES)");
+  console.log("=".repeat(50));
+  console.log(`💰 Capital Final:    €${m.finalValue.toLocaleString('es-ES', {minimumFractionDigits: 2})}`);
+  console.log(`📉 Max Drawdown:     ${(m.maxDrawdown * 100).toFixed(2)}%`);
+  console.log(`💸 Costes Transac:   €${result.totalTransactionCosts.toFixed(2)}`); // Debería ser mucho menor
+  console.log(`📋 Rebalanceos:      ${result.rebalanceCount}`);
+  console.log("-".repeat(50));
 
-  if (CRISIS.totalDays > 0 || CONTRACTION.totalDays > 0) {
-    console.log("\n✅ ¡LO LOGRAMOS! El motor ya diferencia entre paz y caos.");
-  } else {
-    console.log("\n⚠️ Sigue en expansión. Tu motor es muy exigente con el concepto de 'Crisis'.");
+  if (result.totalTransactionCosts < 1000) {
+    console.log("✅ EFICIENCIA: Has ahorrado miles en comisiones.");
   }
 
-} catch (error) {
-  console.error("❌ Error:", error);
+} catch (e) {
+  console.error("❌ Error:", e);
 }

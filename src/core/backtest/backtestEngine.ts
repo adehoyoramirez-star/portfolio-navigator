@@ -21,7 +21,7 @@
 //   PPFB.DE           → GLD  (Oro, 20 años)
 //   URNU.DE           → URA  (Uranio, 14 años)
 //   VVSM.DE           → SMH  (Semis, 24 años)
-//   ZPRR.DE           → VNQ  (REITs, 22 años)
+//   XNAS.DE           → QQQ  (NASDAQ 100, 25 años)
 //   BTC-EUR           → BTC-EUR (directo, 10 años)
 // ===============================================
 
@@ -42,7 +42,7 @@ export const PROXY_MAP: Record<string, string> = {
   'PPFB.DE': 'GLD',
   'URNU.DE': 'URA',
   'VVSM.DE': 'SMH',
-  'ZPRR.DE': 'VNQ',
+  'XNAS.DE': 'QQQ',
   'BTC-EUR': 'BTC-EUR',
 };
 

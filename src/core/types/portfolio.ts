@@ -144,12 +144,12 @@ export const portfolio: Portfolio = {
       history: generateMockHistory(72.10)
     },
     {
-      ticker: "ZPRR.DE",
-      name: "US REITs",
+      ticker: "XNAS.DE",
+      name: "NASDAQ 100",
       weight: 8.6,
       currentWeight: 10.6,
-      shares: 6,
-      avgPrice: 61.67,
+      shares: 0,
+      avgPrice: 0,
       price: 65.40,
       volatility: 25,
       expectedReturn: 9,    // AUDIT-FIX: era 11% → 9% (ajustado tipos altos 2024-2025)

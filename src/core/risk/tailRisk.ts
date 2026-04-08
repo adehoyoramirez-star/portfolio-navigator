@@ -126,10 +126,10 @@ export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
 
   // ── 2. VOLATILITY REDUCTION (V4.1 PRO compat) ─────────────────────────
   let volatilityReduction = 0;
-  if (portfolioVol > 0.35) {
-    volatilityReduction = 0.45;   // -45% si vol extrema > 35%
-  } else if (portfolioVol > 0.30) {
-    volatilityReduction = 0.35;   // -35% si vol > 30%
+  if (portfolioVol > 0.30) {
+    volatilityReduction = 0.40;   // -45% si vol extrema > 35%
+  } else if (portfolioVol > 0.25) {
+    volatilityReduction = 0.25;   // -35% si vol > 30%
   } else if (portfolioVol > 0.25) {
     volatilityReduction = 0.20;   // -20% si vol > 25%
   }

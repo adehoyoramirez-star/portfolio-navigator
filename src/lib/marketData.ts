@@ -512,7 +512,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   //
   // Priors de largo plazo (consenso académico / Damodaran 2024):
   //   BTC: 15% anual (ajustado ciclo, no 68% del bull run 2023)
-  //   Semis: 14%   MSCI Momentum: 11%   Uranium: 10%   EM: 8%   Gold: 6%   REITs: 9%
+  //   Semis: 14%   MSCI Momentum: 11%   Uranium: 10%   EM: 8%   Gold: 6%   NASDAQ: 12%
   //
   // φ = 0.65 — ponderación estándar para series de 2 años (Ledoit-Wolf criterion)
   //   Con n=500 obs y k=7 activos: φ_óptimo ≈ (k+2)/(k+2+n*(μ-μ_prior)²/σ²) ~ 0.6-0.7
@@ -529,7 +529,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     'URNU.DE':  0.10,   // 10% — Uranio: demanda nuclear estructural, pero ilíquido
     'EMXC.DE':  0.08,   //  8% — EM ex-China: prima EM ~3% sobre DM, China excluida
     'PPFB.DE':  0.06,   //  6% — Oro: retorno real histórico ~2-4%, inflación ~2%
-    'ZPRR.DE':  0.09,   //  9% — US REITs: equity-like + renta, ajustado tipos altos 2024
+    'XNAS.DE':  0.12,   // 12% — NASDAQ 100: prima growth/tech histórica, proxy QQQ
   };
 
   const SHRINKAGE_FACTOR = 0.65; // φ — peso al prior de LP (James-Stein estándar para T≈500 días)

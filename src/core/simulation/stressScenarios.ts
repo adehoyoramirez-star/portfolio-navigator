@@ -20,7 +20,7 @@
 //   PPFB.DE     → GLD (20 años)
 //   URNU.DE     → URA (14 años)
 //   VVSM.DE     → SMH (24 años)
-//   ZPRR.DE     → VNQ (22 años)
+//   XNAS.DE     → QQQ (25 años)
 // ===============================================
 
 export interface StressScenario {
@@ -151,7 +151,7 @@ const PROXY_MAP: Record<string, string> = {
   "PPFB.DE": "GLD",
   "URNU.DE": "URA",
   "VVSM.DE": "SMH",
-  "ZPRR.DE": "VNQ",
+  "XNAS.DE": "QQQ",
 };
 
 // ── CÁLCULO DE STRESS ────────────────────────────────────────────────────────

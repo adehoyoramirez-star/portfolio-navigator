@@ -5,7 +5,7 @@ export const ASSETS = [
   "PPFB.DE",
   "URNU.DE",
   "VVSM.DE",
-  "ZPRR.DE"
+  "XNAS.DE"
 ] as const;
 
 export type Asset = typeof ASSETS[number];
@@ -17,7 +17,7 @@ export const SECTOR_MAP: Record<Asset, string> = {
   "PPFB.DE": "gold",
   "URNU.DE": "uranium",
   "VVSM.DE": "semis",
-  "ZPRR.DE": "real_estate"
+  "XNAS.DE": "equity"
 };
 
 export const SECTOR_CAP = 0.35;
@@ -31,5 +31,5 @@ export const DEFAULT_POSITIONS = {
   "PPFB.DE": { shares: 4, avgPrice: 69.39 },
   "URNU.DE": { shares: 13, avgPrice: 26.48 },
   "VVSM.DE": { shares: 2, avgPrice: 52.01 },
-  "ZPRR.DE": { shares: 6, avgPrice: 61.67 }
+  "XNAS.DE": { shares: 6, avgPrice: 61.67 }
 };

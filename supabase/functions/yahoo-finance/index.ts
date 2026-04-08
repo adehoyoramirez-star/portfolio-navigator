@@ -8,7 +8,7 @@ const corsHeaders = {
 
 const TICKERS = [
   // Portfolio real
-  'BTC-EUR', 'EMXC.DE', 'IS3Q.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'ZPRR.DE',
+  'BTC-EUR', 'EMXC.DE', 'IS3Q.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'XNAS.DE',
   // Macro — tiempo real
   '%5EVIX', '%5ETNX', '%5EIRX',
   // MOVE Index — volatilidad bonos USA (CBOE)
@@ -28,7 +28,7 @@ const TICKERS = [
   'GLD',   // PPFB.DE → Oro físico
   'URA',   // URNU.DE → Uranio global
   'SMH',   // VVSM.DE → Semiconductores
-  'VNQ',   // ZPRR.DE → REITs globales
+  'QQQ',   // XNAS.DE → Nasdaq-100
 ];
 
 interface ChartResult {
