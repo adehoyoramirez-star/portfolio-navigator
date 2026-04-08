@@ -21,7 +21,7 @@ export function detectCrisis(
 ): CrisisResult {
   const vixComponent = vix;
   // creditSpread y yieldSpread llegan en tanto por uno (0.04 = 4%)
-  const creditComponent = creditSpread * 300;
+  const creditComponent = creditSpread * 3;
   const curveComponent = Math.max(0, -yieldSpread) * 100;
 
   const crisisScore = vixComponent * 0.4 + creditComponent * 0.4 + curveComponent * 0.2;

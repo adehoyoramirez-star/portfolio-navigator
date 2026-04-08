@@ -529,7 +529,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     'URNU.DE':  0.10,   // 10% — Uranio: demanda nuclear estructural, pero ilíquido
     'EMXC.DE':  0.08,   //  8% — EM ex-China: prima EM ~3% sobre DM, China excluida
     'PPFB.DE':  0.06,   //  6% — Oro: retorno real histórico ~2-4%, inflación ~2%
-    'XNAS.DE':  0.12,   // 12% — NASDAQ 100: prima growth/tech histórica, proxy QQQ
+    'XNAS.DE':  0.15,   // 15% — NASDAQ 100: prima growth/tech histórica, proxy QQQ
   };
 
   const SHRINKAGE_FACTOR = 0.65; // φ — peso al prior de LP (James-Stein estándar para T≈500 días)
