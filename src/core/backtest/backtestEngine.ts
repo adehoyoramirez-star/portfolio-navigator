@@ -16,13 +16,17 @@
 //   }
 //   rollingMetrics: DailyRecord ahora incluye rolling252Sharpe y regime
 //
-// PROXIES AMERICANOS (sin cambio):
-//   EMXC.DE + IS3Q.DE → EEM  (MSCI EM, 20 años)
-//   PPFB.DE           → GLD  (Oro, 20 años)
-//   URNU.DE           → URA  (Uranio, 14 años)
-//   VVSM.DE           → SMH  (Semis, 24 años)
-//   XNAS.DE           → QQQ  (NASDAQ 100, 25 años)
-//   BTC-EUR           → BTC-EUR (directo, 10 años)
+// PROXIES AMERICANOS:
+//   EMXC.DE → EEM   (MSCI Emerging Markets, 20 años)
+//   IS3Q.DE → QUAL  (iShares MSCI USA Quality Factor, 2013+)
+//             FIX-PROXY-IS3Q: antes usaba EEM (Emerging Markets) — INCORRECTO
+//             IS3Q es MSCI World QUALITY (mercados desarrollados, factor quality)
+//             QUAL es el proxy más cercano disponible en EEUU
+//   PPFB.DE → GLD   (Oro, 20 años)
+//   URNU.DE → URA   (Uranio, 14 años)
+//   VVSM.DE → SMH   (Semis, 24 años)
+//   XNAS.DE → QQQ   (NASDAQ 100, 25 años)
+//   BTC-EUR → BTC-EUR (directo, 10 años)
 // ===============================================
 
 import { ASSETS } from "@/lib/constants";
@@ -38,7 +42,7 @@ import { correlationPenalty } from "../portfolio/correlation";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
-  'IS3Q.DE': 'EEM',
+  'IS3Q.DE': 'QUAL',  // FIX-PROXY-IS3Q: era EEM (EM) → QUAL (MSCI Quality Factor)
   'PPFB.DE': 'GLD',
   'URNU.DE': 'URA',
   'VVSM.DE': 'SMH',

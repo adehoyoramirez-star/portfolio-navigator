@@ -525,7 +525,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const LONG_RUN_PRIORS: Record<string, number> = {
     'BTC-EUR':  0.15,   // 15% — prima cripto ajustada ciclo (no bull-run)
     'VVSM.DE':  0.14,   // 14% — semiconductores: ciclo AI, pero valoración ya alta
-    'IS3Q.DE':  0.11,   // 11% — MSCI World Momentum: prima momentum documentada ~3% sobre market
+    'IS3Q.DE':  0.11,   // 11% — MSCI World Quality Factor: prima quality documentada ~2-3% sobre market (ROE alto, deuda baja)
     'URNU.DE':  0.10,   // 10% — Uranio: demanda nuclear estructural, pero ilíquido
     'EMXC.DE':  0.08,   //  8% — EM ex-China: prima EM ~3% sobre DM, China excluida
     'PPFB.DE':  0.06,   //  6% — Oro: retorno real histórico ~2-4%, inflación ~2%

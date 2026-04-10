@@ -57,6 +57,10 @@ export interface AssetInput {
   earningsYield: number;
   volatility: number;   // decimal anualizado (0.60 = 60%)
   sector?: string;
+  // FIX-IS3Q-QUALITY: rol del factor del activo
+  // "quality" → bonus calidad (IS3Q.DE)
+  // "momentum" | "value" | "crypto" | "commodity" | otros → sin bonus
+  factorRole?: string;
 }
 
 export interface OlympusOutput {
@@ -303,7 +307,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       returns3m:  asset.returns3m,
     });
     const value   = calculateValue({ earningsYield: asset.earningsYield }, universeStats);
-    const quality = calculateQuality(asset as QualityInput, qualityStats);
+    const quality = calculateQuality(
+      { ...asset as QualityInput, isQualityFactor: asset.factorRole === "quality" },
+      qualityStats
+    );
     const lowVol  = calculateLowVol(asset, lowVolStats);
 
     const fw = input.adaptiveFactorWeights ?? { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 };

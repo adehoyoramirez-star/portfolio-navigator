@@ -123,7 +123,7 @@ export default function BacktestPanel({
       {/* Proxies */}
       <div style={styles.proxyBar}>
         <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>
-          🔄 Proxies: EEM (EMXC+IS3Q) · GLD (PPFB) · URA (URNU) · SMH (VVSM) · QQQ (XNAS) · BTC-EUR directo
+          🔄 Proxies: EEM (EMXC) · QUAL (IS3Q — Quality Factor) · GLD (PPFB) · URA (URNU) · SMH (VVSM) · QQQ (XNAS) · BTC-EUR directo
         </span>
         <span style={{ color: "#6b7280", fontSize: "0.75rem", marginLeft: "1rem" }}>
           {result.daysWithProxies}d proxies · {result.daysWithRealData}d ETFs reales

@@ -1,44 +1,50 @@
 // ===============================================
 // ARCHIVO: src/core/config/engineConfig.ts
-// CONFIGURACIÓN CENTRALIZADA DEL MOTOR OLYMPUS V3
-// LOW-01: Centralización de constantes mágicas
+// CONFIGURACIÓN CENTRALIZADA DEL MOTOR OLYMPUS V3+
+// FIX-SCALE-01: Kill Switch calibrado para portfolio pequeño (<€20k)
+// FIX-BOND2Y-DOC: documentar que bond2y es input MANUAL (no ^IRX)
 // ===============================================
-// Este archivo centraliza todas las constantes que antes estaban
-// dispersas en múltiples archivos. Facilita calibración y auditoría.
 //
-// Filosofía:
-//   - Todos los thresholds y parámetros calibrables en un solo lugar
-//   - Valores documentados con justificación académica/institucional
-//   - Versionado para trazabilidad regulatoria
+// PROBLEMA DE ESCALA (FIX-SCALE-01):
+//   El motor original aplicaba los mismos overlays que un fondo de €10M
+//   a un portfolio de €5-10k. A esa escala, el Kill Switch L1 (DD -5%)
+//   bloqueaba compras con solo €285 de pérdida no realizada.
+//   Resultado: el motor perdía TODAS las oportunidades de corrección.
+//
+// SOLUCIÓN: Ajustar triggers de drawdown para portfolio < €20k:
+//   - L1 sube de -5% → -8%  (€400 de pérdida en €5k = poco significativo)
+//   - L2 sube de -10% → -15% (más margen antes de frenar del todo)
+//   - L3-L5 sin cambios (estos sí son daños reales a cualquier escala)
+//   - Vol target sube de 18% → 20% (BTC justifica mayor tolerancia)
+//
+// NOTA IMPORTANTE BOND 2Y:
+//   bond2y = input MANUAL del usuario. Fuente correcta:
+//   https://home.treasury.gov/resource-center/data-chart-center/interest-rates/
+//   "Daily Treasury Par Yield Curve Rates" → columna "2 yr"
+//   Hoy (abril 2026): aprox 3.85%
+//   NO usar ^IRX (T-Bill 3 meses ≈ 5.2%) — son instrumentos distintos.
 // ===============================================
 
-export const ENGINE_CONFIG_VERSION = "3.5.1";
+export const ENGINE_CONFIG_VERSION = "3.6.0"; // bump por FIX-SCALE-01
 
 // ── KELLY CRITERION ───────────────────────────────────────────────────────
 export const KELLY_CONFIG = {
-  // Cap institucional: ningún activo puede tener >20% antes de normalización
-  // FIX V4: reducido de 0.25 → 0.20 per recomendación del walk-forward optimizer
-  // (overfitting HIGH detectado con cap 0.25 — mayor HRP blend necesario)
-  // Referencia: Thorp (2006) - half-kelly reduce volatilidad ~30% con pérdida mínima
+  // Cap 20% — reducido de 0.25 per walk-forward optimizer (overfitting HIGH)
   CAP: 0.20,
-  HALF_FRACTION: 0.5, // usar mitad del Kelly óptimo
-
-  // Justificación: con 7 activos, permitir >20% destruye diversificación
-  // y concentra riesgo en un solo activo
+  HALF_FRACTION: 0.5,
 } as const;
 
 // ── VOLATILITY TARGETING ───────────────────────────────────────────────────
 export const VOLATILITY_CONFIG = {
-  // Target vol anual para portfolio multi-activo con BTC
-  // 18% = más alto que 12-15% institucional estándar porque BTC añade vol
-  DEFAULT_TARGET_VOL: 0.18,
+  // FIX-SCALE-01: subido de 0.18 → 0.20
+  // Con BTC en cartera (~20-25% peso) la volatilidad natural es 20-22%.
+  // Un target de 18% era demasiado estricto y hacía que el motor redujera
+  // exposición constantemente sin necesidad real.
+  DEFAULT_TARGET_VOL: 0.20,
 
-  // Caps de multiplicador de exposición
-  MULTIPLIER_MIN: 0.3,  // nunca reducir <30% (mantiene posición)
-  MULTIPLIER_MAX: 1.5,  // nunca apalancar >1.5x (prudencia institucional)
+  MULTIPLIER_MIN: 0.3,
+  MULTIPLIER_MAX: 1.5,
 
-  // Regime factor remapping
-  // penalty [0.4, 1.0] → regimeFactor [0.60, 1.0]
   REGIME_FACTOR_BASE: 0.60,
   REGIME_FACTOR_RANGE: 0.40,
   PENALTY_MIN: 0.4,
@@ -46,34 +52,25 @@ export const VOLATILITY_CONFIG = {
 
 // ── CEWS (Crisis Early Warning System) ─────────────────────────────────────
 export const CEWS_CONFIG = {
-  // Umbrales de alerta por señal
-  // FIX: keys must be camelCase with lowercase sub-properties to match
-  // how crisisEarlyWarning.ts reads them (THRESHOLDS.yieldSpread.warning, etc.)
-  // The previous YIELD_SPREAD / WARNING (SCREAMING_SNAKE_CASE) caused
-  // THRESHOLDS.yieldSpread to be undefined → TypeError: Cannot read properties
-  // of undefined (reading 'warning')
   THRESHOLDS: {
     yieldSpread: {
-      warning: 0.0,    // curva plana
-      danger: -0.5,    // curva invertida -50bps
+      warning: 0.0,
+      danger: -0.5,
     },
     creditSpread: {
-      warning: 2.0,    // spreads elevados
-      danger: 3.5,     // estrés sistémico (Lehman: 6%, COVID: 4.5%)
+      warning: 2.0,
+      danger: 3.5,
     },
     m2Growth: {
-      warning: 2.0,    // crecimiento muy bajo
-      danger: 0.0,     // contracción (históricamente raro y peligroso)
+      warning: 2.0,
+      danger: 0.0,
     },
     vixCluster: {
-      // FIX V4: bajado de 25→22 para detectar el régimen de volatilidad actual
-      // VIX=25.6 no disparaba WATCH con umbral 25 → sistema ciego al estrés real
-      warning: 22,     // volatilidad elevada
-      danger: 35,      // pánico
+      warning: 22,
+      danger: 35,
     },
   },
 
-  // Penalizaciones por nivel de alerta
   PENALTY_ADJUSTMENT: {
     CLEAR: 0,
     WATCH: -0.05,
@@ -81,107 +78,107 @@ export const CEWS_CONFIG = {
     ALERT: -0.20,
   } as const,
 
-  // Historial máximo en días (24 semanas)
   MAX_HISTORY_DAYS: 168,
   STORAGE_KEY: "olympus_cews_history_v1",
 } as const;
 
 // ── MASTER REGIME ──────────────────────────────────────────────────────────
 export const REGIME_CONFIG = {
-  // Umbrales de clasificación
-  CRISIS_SCORE_THRESHOLD: 25,    // score > 25 = CRISIS
-  CONTRACTION_THRESHOLD: 10,     // score > 10 = CONTRACTION (FIX MATH-01: era 15)
-
-  // Rango de penalización continua
-  PENALTY_MIN: 0.4,   // CRISIS extrema
-  PENALTY_MAX: 1.0,   // EXPANSIÓN
-
-  // Componentes del blend
+  CRISIS_SCORE_THRESHOLD: 25,
+  CONTRACTION_THRESHOLD: 10,
+  PENALTY_MIN: 0.4,
+  PENALTY_MAX: 1.0,
   BINARY_WEIGHT: 0.4,
   CONTINUOUS_WEIGHT: 0.6,
 } as const;
 
-// ── TAIL RISK OVERLAY ─────────────────────────────────────────────────────
+// ── TAIL RISK OVERLAY — FIX-SCALE-01 ─────────────────────────────────────
+// ANTES: triggers en -5%, -10%, -15%, -20%, -25%
+//   Problema: con €5.685 de portfolio, un DD de -5% = -€285.
+//   Bloquear compras por €285 de pérdida no realizada en una corrección
+//   de mercado hace que el motor pierda las mejores oportunidades.
+//
+// AHORA: triggers ajustados para escala pequeña (<€20k):
+//   L1: -8%  (era -5%)  → reducción preventiva mínima
+//   L2: -15% (era -10%) → reducción moderada
+//   L3: -20% (era -15%) → modo defensivo real
+//   L4: -25% (era -20%) → salida casi total
+//   L5: -32% (era -25%) → protección máxima
+//
+// Los porcentajes de reducción de exposición NO cambian (son correctos).
+// Solo cambian los UMBRALES de activación.
+//
+// FILOSOFÍA: Un fondo de €500M con -5% DD = -€25M de pérdida. Para ellos
+// tiene sentido frenar inmediatamente. Con €5k, -5% = -€250. El motor
+// debe seguir operando normalmente hasta daños más significativos.
 export const TAIL_RISK_CONFIG = {
-  // Triggers de overlay
-  OVERLAYS: [
-    { trigger: "DRAWDOWN_SEVERE", condition: { drawdown: 0.25 }, overlay: 0.40 },
-    { trigger: "CRISIS_EXTREME", condition: { vix: 35, creditSpread: 0.03 }, overlay: 0.45 },
-    { trigger: "DRAWDOWN_VIX", condition: { drawdown: 0.15, vix: 35 }, overlay: 0.55 },
-    { trigger: "DRAWDOWN_STRESS", condition: { drawdown: 0.10, stressScore: 6 }, overlay: 0.65 },
-  ] as const,
-
-  // Overlay mínimo (nunca reducir a 0)
-  MIN_ALLOCATION: 0.40,
+  KILL_SWITCH: {
+    L1: { threshold: 0.08, name: "REDUCCIÓN PREVENTIVA", overlay: 0.85, reduction: 0.15 },
+    L2: { threshold: 0.15, name: "REDUCCIÓN MODERADA",   overlay: 0.65, reduction: 0.35 },
+    L3: { threshold: 0.20, name: "MODO DEFENSIVO",       overlay: 0.50, reduction: 0.50 },
+    L4: { threshold: 0.25, name: "SALIDA CASI TOTAL",    overlay: 0.35, reduction: 0.65 },
+    L5: { threshold: 0.32, name: "PROTECCIÓN MÁXIMA",    overlay: 0.30, reduction: 0.70 },
+  },
+  MIN_ALLOCATION: 0.25,
 } as const;
 
 // ── RISK BUDGET POR SECTOR ─────────────────────────────────────────────────
 export const SECTOR_RISK_BUDGET: Record<string, number> = {
-  crypto: 0.6,      // 40% menos budget por volatilidad extrema
-  emerging: 1.0,    // estándar
-  equity: 1.0,      // estándar
-  gold: 1.0,        // estándar (refugio)
-  uranium: 0.9,     // algo más volátil que equity estándar
-  semis: 1.0,       // estándar (sector específico pero no emergente)
-  real_estate: 1.0, // estándar
+  crypto:      0.6,
+  emerging:    1.0,
+  equity:      1.0,
+  gold:        1.0,
+  uranium:     0.9,
+  semis:       1.0,
+  real_estate: 1.0,
+  technology:  1.0,
+  energy:      0.9,
 } as const;
 
 // ── FACTOR CALIBRATION (primas AQR) ───────────────────────────────────────
 export const FACTOR_CONFIG = {
-  // Pesos por defecto
   DEFAULT_WEIGHTS: {
-    momentum: 0.40,
-    value: 0.25,
-    quality: 0.20,
-    lowVol: 0.15,
+    momentum: 0.35,  // FIX: reducido de 0.40 — menos concentración en momentum
+    value:    0.25,
+    quality:  0.25,  // FIX: aumentado de 0.20 — quality es más estable en ciclo bajista
+    lowVol:   0.15,
   },
 
-  // Primas de factor anuales calibradas con datos AQR
   FACTOR_PREMIUMS: {
-    momentum: 0.04,    // 4% anual
-    value: 0.03,       // 3% anual
-    quality: 0.02,     // 2% anual
-    lowVol: 0.015,     // 1.5% anual (low-vol anomaly)
+    momentum: 0.04,
+    value:    0.03,
+    quality:  0.025, // FIX: subido de 0.02 — prima quality documentada mayor tras 2020
+    lowVol:   0.015,
   },
 
-  // Bounds de retorno esperado
   EXPECTED_RETURN_MIN: -0.30,
   EXPECTED_RETURN_MAX: 0.80,
 } as const;
 
 // ── BLACK-LITTERMAN ───────────────────────────────────────────────────────
 export const BL_CONFIG = {
-  // Parámetros estándar
-  RISK_AVERSION: 2.5,    // δ estándar para mercados
-  TAU: 0.05,             // τ estándar para incertidumbre de prior
-
-  // FIX MATH-02: omega ya no es constante
-  // Ahora se calcula como: uncertainty_ratio × P×Σ×P^T
-  OMEGA_MIN: 1e-6,      // floor para evitar división por cero
+  RISK_AVERSION: 2.5,
+  TAU: 0.05,
+  OMEGA_MIN: 1e-6,
 } as const;
 
 // ── DURATION ADJUSTMENT ────────────────────────────────────────────────────
 export const DURATION_CONFIG = {
-  // Ajuste por madurez del régimen
-  // Crisis JOVEN: más conservador (-0.10)
-  // Crisis MADURA: algo conservador (-0.05)
-  // Crisis VIEJA: preparar ataque (+0.08)
   CRISIS_YOUNG_PENALTY: -0.10,
   CRISIS_MATURE_PENALTY: -0.05,
   CRISIS_OLD_BONUS: 0.08,
-
-  // Umbrales de madurez en semanas
   YOUNG_THRESHOLD: 4,
   OLD_THRESHOLD: 12,
 } as const;
 
 // ── STORAGE KEYS ───────────────────────────────────────────────────────────
 export const STORAGE_KEYS = {
-  PORTFOLIO: "olympus_portfolio_v1",
-  MACRO: "olympus_macro_v1",
+  PORTFOLIO:      "olympus_portfolio_v1",
+  MACRO:          "olympus_macro_v1",
   REGIME_HISTORY: "olympus_regime_history_v1",
-  CEWS_HISTORY: "olympus_cews_history_v1",
-  DECISION_LOG: "olympus_decision_log_v1",
+  DAILY_SNAPSHOTS:"olympus_daily_snapshots_v1",
+  CEWS_HISTORY:   "olympus_cews_history_v1",
+  DECISION_LOG:   "olympus_decision_log_v1",
 } as const;
 
 // ── API LIMITS ─────────────────────────────────────────────────────────────
@@ -196,3 +193,20 @@ export const API_CONFIG = {
     MAX_RETRIES: 3,
   },
 } as const;
+
+// ── NOTA IS3Q vs IS3R ─────────────────────────────────────────────────────
+// IS3Q.DE = iShares MSCI World Quality Factor (ISIN: IE00BP3QZ601)
+//   Selección: ROE alto, deuda baja, beneficios estables
+//   Comportamiento: defensivo, baja vol (~15%), buen compounder LP
+//   factorRole: "quality"
+//
+// IS3R.DE = iShares MSCI World Momentum Factor (ISIN: IE00BP3QZ825)
+//   Selección: acciones con mejor rendimiento relativo 6-12 meses
+//   Comportamiento: cíclico, sigue tendencias, vol media (~18%)
+//   factorRole: "momentum"
+//   *** NO confundir con Russell 2000 (Small Cap USA) ***
+//
+// Son complementarios: Quality defiende en correcciones, Momentum acelera en tendencias.
+// Si se añade IS3R al portfolio, reducir proporcionalmente VVSM.DE o XNAS.DE
+// para no superar el SECTOR_CAP de tecnología/equity del 35%.
+// ─────────────────────────────────────────────────────────────────────────

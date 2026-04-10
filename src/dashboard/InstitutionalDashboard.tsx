@@ -35,6 +35,8 @@ import {
   saveMacro, loadMacro,
   saveRegimeEntry, loadRegimeHistory,
   clearAll, RegimeHistoryEntry,
+  // FIX-HISTORY-01: nuevas funciones de snapshot diario
+  saveDailySnapshot, loadDailySnapshots, snapshotsToRegimeHistory,
 } from "@/core/persistence/portfolioStorage";
 import {
   computeRebalanceSuggestions,
@@ -303,7 +305,12 @@ const InstitutionalDashboard: React.FC = () => {
 
   // NIVEL 4: alertas, régimen y persistencia
   const [activeAlerts, setActiveAlerts] = useState<RegimeAlert[]>([]);
-  const [regimeHistory, setRegimeHistory] = useState<RegimeHistoryEntry[]>(() => loadRegimeHistory());
+  // FIX-HISTORY-01: priorizar snapshots diarios sobre log de cambios
+  const [regimeHistory, setRegimeHistory] = useState<RegimeHistoryEntry[]>(() => {
+    const snapshots = loadDailySnapshots();
+    if (snapshots.length >= 3) return snapshotsToRegimeHistory(snapshots);
+    return loadRegimeHistory();
+  });
   const [cewsHistory, setCewsHistory] = useState<CEWSDataPoint[]>(() => loadCEWSHistory());
   const [cewsPreviousLevel, setCewsPreviousLevel] = useState<import("@/core/macro/crisisEarlyWarning").CEWSLevel>("CLEAR");
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
@@ -337,7 +344,17 @@ const InstitutionalDashboard: React.FC = () => {
 
       setVix(md.vix);
       setManualBond10y(md.tnx);
-      setBond2y(md.irx);
+      // FIX-BOND2Y-01: NO sobreescribir bond2y con md.irx
+      // ^IRX = T-Bill 13 semanas (~3 meses, actualmente ~5.2%)
+      // bond2y = Bono del Tesoro USA 2 años (actualmente ~3.8-4.0%)
+      // Son instrumentos DISTINTOS — usarlos indistintamente produce
+      // un yield spread (10Y - "2Y") incorrecto que puede cambiar el régimen
+      // de CONTRACTION a EXPANSION o viceversa.
+      // SOLUCIÓN: bond2y permanece como input MANUAL.
+      // El usuario debe consultar: https://finance.yahoo.com/quote/%5EIRX (3M)
+      // o bien la web del US Treasury para el 2Y real.
+      // El valor por defecto (3.0%) es razonable como prior hasta que el usuario
+      // lo actualice manualmente. El motor usa yieldSpread = bond10y - bond2y.
 
       if (md.dxy > 0) setDxy(parseFloat(md.dxy.toFixed(2)));
       if (md.wtiOil > 0) setWtiOil(parseFloat(md.wtiOil.toFixed(2)));
@@ -712,6 +729,9 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       earningsYield: asset.earningsYield ?? 0,
       volatility: asset.volatility / 100,
       sector: asset.sector,
+      // FIX-IS3Q-QUALITY: propagar factorRole al motor para que
+      // calculateQuality() aplique el bonus a IS3Q.DE
+      factorRole: asset.factorRole,
     }));
   }, [portfolio.assets]);
 
@@ -826,6 +846,24 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         };
         saveRegimeEntry(entry);
         setRegimeHistory(loadRegimeHistory());
+
+        // FIX-HISTORY-01: guardar snapshot diario cuando cambia régimen
+        // saveDailySnapshot() solo guarda si no existe ya uno del día de hoy
+        // (el primer snapshot del día es el definitivo — no se sobrescribe)
+        saveDailySnapshot({
+          regime: currentRegime,
+          regimePenalty: engineResult.masterRegime.regimePenalty,
+          vix,
+          bond10y: manualBond10y,
+          bond2y,
+          creditSpread,
+          m2Growth,
+          btcDominance: btcDominance ?? 0,
+          mvrvRatio: mvrvRatio ?? 0,
+          portfolioValue: portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0),
+          drawdown: portfolioDrawdown ?? 0,
+          confidence: engineResult.meta.confidence,
+        });
       }
 
       // ── PASO 7: Alertas Push Telegram ────────────────────────────────────
@@ -1462,7 +1500,14 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
           <input type="number" value={manualBond10y} onChange={(e) => setManualBond10y(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
         </div>
         <div>
-          <label style={styles.label}>Bono USA 2y % {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Bono USA 2y % {" "}
+            <span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>
+              ● manual — treasury.gov
+            </span>
+            <span style={{ fontSize: "0.6rem", color: "#6b7280", display: "block", marginTop: 2 }}>
+              ⚠️ NO usar ^IRX (3M). Valor real: treasury.gov → "2 yr"
+            </span>
+          </label>
           <input type="number" value={bond2y} onChange={(e) => setBond2y(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
         </div>
         <div>
@@ -1916,8 +1961,12 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
               <p><strong>Scores por activo:</strong></p>
               {engineResult.allocations.map(a => (
                 <p key={a.name} style={{ fontSize: "0.82rem" }}>
-                  {a.name}: Mom <span style={{ color: a.momentumScore > 0 ? "#10b981" : "#ef4444" }}>{a.momentumScore.toFixed(2)}</span> · Val p{(a.valuePercentileRank * 100).toFixed(0)}
-                  {a.isCapped && <span style={{ color: "#f59e0b" }}> ⚠️</span>}
+                  {a.name}: {/* FIX-IS3Q-QUALITY: mostrar Qual para assets de quality, Mom para el resto */}
+                  {a.qualityScore > a.momentumScore && a.qualityScore > 0.2
+                    ? <>Qual <span style={{ color: a.qualityScore > 0 ? "#10b981" : "#ef4444" }}>{a.qualityScore.toFixed(2)}</span></>
+                    : <>Mom <span style={{ color: a.momentumScore > 0 ? "#10b981" : "#ef4444" }}>{a.momentumScore.toFixed(2)}</span></>
+                  } · Val p{(a.valuePercentileRank * 100).toFixed(0)}
+                  {a.isCapped && <span style={{ color: "#f59e0b" }}> ⚠️cap</span>}
                 </p>
               ))}
             </div>

@@ -49,10 +49,10 @@ async function getRealPrice(ticker: string): Promise<number> {
 // --- 4. Portfolio con precios dinámicos ---
 async function buildPortfolio(): Promise<Portfolio> {
   const assetsData: Omit<Asset, "price" | "history">[] = [
-    { ticker: "XNAS.DE", name: "NASDAQ 100", weight: 8.6, currentWeight: 10.6, shares: 0, avgPrice: 0, volatility: 25, expectedReturn: 9, sector: "Real Estate" },
+    { ticker: "XNAS.DE", name: "NASDAQ 100", weight: 8.6, currentWeight: 10.6, shares: 0, avgPrice: 0, volatility: 25, expectedReturn: 9, sector: "Technology" },
     { ticker: "BTC-EUR", name: "Bitcoin", weight: 23.9, currentWeight: 9.2, shares: 0.031285, avgPrice: 88010.99, volatility: 60, expectedReturn: 15, sector: "Crypto" },
     { ticker: "VVSM.DE", name: "Semiconductors", weight: 12.5, currentWeight: 9.1, shares: 2, avgPrice: 52.01, volatility: 35, expectedReturn: 14, sector: "Technology" },
-    { ticker: "IS3Q.DE", name: "MSCI World Momentum", weight: 20.0, currentWeight: 26.6, shares: 26, avgPrice: 67.53, volatility: 18, expectedReturn: 11, sector: "Equity" },
+    { ticker: "IS3Q.DE", name: "MSCI World Quality", weight: 20.0, currentWeight: 26.6, shares: 26, avgPrice: 67.53, volatility: 15, expectedReturn: 11, sector: "Equity" },
     { ticker: "URNU.DE", name: "Uranium", weight: 15.0, currentWeight: 15.5, shares: 13, avgPrice: 26.48, volatility: 40, expectedReturn: 10, sector: "Energy" },
     { ticker: "EMXC.DE", name: "Emerging Markets", weight: 10.0, currentWeight: 10.0, shares: 31, avgPrice: 28.93, volatility: 22, expectedReturn: 8, sector: "Emerging" },
     { ticker: "PPFB.DE", name: "Gold (ETC)", weight: 10.0, currentWeight: 5.0, shares: 4, avgPrice: 69.39, volatility: 30, expectedReturn: 6, sector: "Commodities" }
