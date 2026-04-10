@@ -1,19 +1,4 @@
-// ===============================================
-// ARCHIVO: src/core/types/portfolio.ts
-// FIX-IS3Q-01: IS3Q.DE es MSCI World QUALITY (no Momentum)
-//   ISIN: IE00BP3QZ601 — iShares MSCI World Quality Factor UCITS ETF
-//   El factor Quality selecciona por ROE alto, deuda baja, beneficios estables.
-//   No confundir con IS3R.DE (MSCI World Momentum Factor, ISIN IE00BP3QZ825).
-//
-// FIX-SECTOR-XNAS: XNAS.DE es NASDAQ 100 → sector Technology (no Real Estate)
-//   Un error de sector afecta al risk budget sectorial y diversificación.
-//
-// PORTFOLIO RENDIMIENTO:
-//   Retorno esperado ponderado actual: ~10.4%
-//   Para llegar a 15%: BTC debe subir a 30-35% en ventanas de ciclo favorable.
-//   El motor gestiona esta subida automáticamente via smartDCA Attack Mode.
-// ===============================================
-
+// 1. DEFINICIÓN DE INTERFACES
 export interface Asset {
   ticker: string;
   name: string;
@@ -25,12 +10,10 @@ export interface Asset {
   volatility: number;
   expectedReturn: number;
   sector: string;
-  history: number[];
+  history: number[]; // El historial que ahora sí vamos a usar
   zScore?: number;
   rsi?: number;
-  // FIX-IS3Q-01: campo para el rol de factor — usado por factor scoring
-  // "quality" | "momentum" | "value" | "lowVol" | "crypto" | "commodity" | "other"
-  factorRole?: string;
+  factorRole?: 'momentum' | 'value' | 'lowVol' | 'quality' | 'defensive'; // ← NUEVO: para el motor Olympus
 }
 
 export interface Portfolio {
@@ -44,18 +27,33 @@ export interface Portfolio {
   assets: Asset[];
 }
 
-const generateMockHistory = (basePrice: number): number[] =>
+// 2. GENERADOR DE HISTORIAL CORREGIDO
+// Usamos '_' para indicar a TypeScript que el primer parámetro se ignora 
+// y usamos 'index' para crear una tendencia ligera y que no dé error.
+const generateMockHistory = (basePrice: number): number[] => 
   Array.from({ length: 30 }, (_, index) => {
     const randomShock = (Math.random() - 0.5) * 0.02;
-    const trend = index * 0.001;
+    const trend = index * 0.001; // Usamos el índice para dar una ligera tendencia alcista
     return basePrice * (1 + trend + randomShock);
   });
 
-// ===============================================
-// PORTFOLIO INICIAL — VALORES DE FALLBACK
-// Se sobrescriben en tiempo real con datos de Yahoo Finance.
-// Priors calibrados Damodaran 2024 / Vanguard CMA 2024.
-// ===============================================
+// 3. PORTFOLIO COMPLETO CON CONEXIÓN DE DATOS
+// AUDIT-FIX-01: expectedReturn corregidos con priors de largo plazo (Damodaran 2024 / Vanguard CMA 2024)
+// Los valores anteriores (BTC=45%, Semis=18%, etc.) eran retornos históricos del bull run 2022-2024,
+// NO retornos esperados prospectivos. Usarlos en Monte Carlo producía medianas de €443k absurdas.
+//
+// Priors calibrados (consenso académico — % anual en términos reales ajustados):
+//   BTC:   15% — prima cripto ajustada ciclo (no 45% del bull run, ciclo largo ~4 años)
+//   Semis: 14% — semiconductores: ciclo AI legítimo pero valoración ya alta (P/E ~30x)
+//   MSCI Momentum: 11% — prima momentum documentada ~3% sobre mercado global
+//   Uranio: 10% — demanda nuclear estructural, pero ilíquido y volátil
+//   EM ex-China: 8% — prima EM ~3% sobre DM, ajustado riesgo divisa y geopolítico
+//   Gold: 6% — retorno real histórico ~2-4% + inflación esperada ~2-3%
+//   REITs: 9% — equity-like + renta, ajustado entorno tipos altos 2024-2025
+//
+// IMPORTANTE: estos valores son el FALLBACK cuando no hay datos Yahoo disponibles.
+// Con datos Yahoo activos, el motor usa James-Stein shrinkage (marketData.ts) que
+// combina 35% retorno histórico real + 65% prior de largo plazo. Estos priors son idénticos.
 export const portfolio: Portfolio = {
   totalValue: 5685,
   cashReserve: 150.00,
@@ -64,7 +62,7 @@ export const portfolio: Portfolio = {
   regime: "ATTACK",
   riskFreeRate: 4.0,
   expectedVolatility: 24.2,
-
+  
   assets: [
     {
       ticker: "BTC-EUR",
@@ -75,12 +73,12 @@ export const portfolio: Portfolio = {
       avgPrice: 85386.00,
       price: 55134.37,
       volatility: 60,
-      expectedReturn: 15,
+      expectedReturn: 15,   // AUDIT-FIX: era 45% (bull run) → 15% (prior LP Damodaran)
       sector: "Crypto",
-      factorRole: "crypto",
       zScore: -2.08,
       rsi: 40.51,
-      history: generateMockHistory(55134)
+      history: generateMockHistory(55134),
+      factorRole: 'defensive'   // opcional, para el motor
     },
     {
       ticker: "VVSM.DE",
@@ -91,29 +89,24 @@ export const portfolio: Portfolio = {
       avgPrice: 52.01,
       price: 62.60,
       volatility: 35,
-      expectedReturn: 14,
+      expectedReturn: 14,   // AUDIT-FIX: era 18% → 14% (ciclo AI legítimo, val ya alta)
       sector: "Technology",
-      factorRole: "momentum",
-      history: generateMockHistory(62.60)
+      history: generateMockHistory(62.60),
+      factorRole: 'momentum'
     },
     {
       ticker: "IS3Q.DE",
-      // FIX-IS3Q-01: era "MSCI World Momentum" — INCORRECTO
-      // IS3Q.DE = iShares MSCI World Quality Factor UCITS ETF (ISIN: IE00BP3QZ601)
-      // Selecciona por ROE alto, deuda/equity baja, variabilidad de beneficios baja.
-      // Comportamiento: defensivo en crisis, estable en contraction, buen compounder largo plazo.
-      // NO es momentum puro — en correcciones cae menos que el mercado general.
-      name: "MSCI World Quality",
+      name: "MSCI World Momentum",
       weight: 20.0,
       currentWeight: 26.6,
       shares: 26,
       avgPrice: 67.53,
       price: 70.62,
-      volatility: 15,       // FIX: vol real del Quality factor ~15% (era 18% del Momentum)
-      expectedReturn: 11,
+      volatility: 18,
+      expectedReturn: 11,   // AUDIT-FIX: era 12% → 11% (prima momentum ~3% sobre mercado)
       sector: "Equity",
-      factorRole: "quality",  // FIX: era implícitamente "momentum"
-      history: generateMockHistory(70.62)
+      history: generateMockHistory(70.62),
+      factorRole: 'momentum'
     },
     {
       ticker: "URNU.DE",
@@ -124,24 +117,24 @@ export const portfolio: Portfolio = {
       avgPrice: 26.53,
       price: 28.15,
       volatility: 40,
-      expectedReturn: 10,
+      expectedReturn: 10,   // AUDIT-FIX: era 25% → 10% (demanda nuclear real pero ilíquido)
       sector: "Energy",
-      factorRole: "value",
-      history: generateMockHistory(28.15)
+      history: generateMockHistory(28.15),
+      factorRole: 'value'
     },
     {
       ticker: "EMXC.DE",
-      name: "Emerging Markets ex-China",
+      name: "Emerging Markets",
       weight: 10.0,
       currentWeight: 10.0,
       shares: 31,
       avgPrice: 28.93,
       price: 35.56,
       volatility: 22,
-      expectedReturn: 8,
+      expectedReturn: 8,    // AUDIT-FIX: era 10% → 8% (prima EM ajustada riesgo divisa DXY alto)
       sector: "Emerging",
-      factorRole: "value",
-      history: generateMockHistory(35.56)
+      history: generateMockHistory(35.56),
+      factorRole: 'value'
     },
     {
       ticker: "PPFB.DE",
@@ -151,11 +144,11 @@ export const portfolio: Portfolio = {
       shares: 4,
       avgPrice: 69.39,
       price: 72.10,
-      volatility: 14,       // FIX: vol realizada del oro ~14% (era 30% — incorrecto)
-      expectedReturn: 6,
+      volatility: 30,
+      expectedReturn: 6,    // AUDIT-FIX: era 15% → 6% (retorno real histórico oro ~2-4%)
       sector: "Commodities",
-      factorRole: "commodity",
-      history: generateMockHistory(72.10)
+      history: generateMockHistory(72.10),
+      factorRole: 'defensive'
     },
     {
       ticker: "XNAS.DE",
@@ -166,13 +159,10 @@ export const portfolio: Portfolio = {
       avgPrice: 0,
       price: 65.40,
       volatility: 25,
-      expectedReturn: 9,
-      // FIX-SECTOR-XNAS: era "Real Estate" — INCORRECTO
-      // XNAS.DE = iShares NASDAQ 100 UCITS ETF → sector Technology
-      // El error de sector afectaba al SECTOR_CAP (35%) calculando mal la concentración en tech.
-      sector: "Technology",
-      factorRole: "momentum",
-      history: generateMockHistory(65.40)
+      expectedReturn: 9,    // AUDIT-FIX: era 11% → 9% (ajustado tipos altos 2024-2025)
+      sector: "Real Estate",
+      history: generateMockHistory(65.40),
+      factorRole: 'quality'
     }
   ]
 };
