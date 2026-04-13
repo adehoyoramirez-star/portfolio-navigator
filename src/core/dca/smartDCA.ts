@@ -93,10 +93,13 @@ export interface SmartDCAOutput {
   blockReason?: string;
   // Modo ataque
   attackMode: boolean;
-  attackConfluence: number;        // 0-5: cuántas señales de fondo activas
-  attackSignals: AttackSignal[];   // detalle de cada señal
+  attackConfluence: number;        // 0-5: cuántas señales de fondo activas (para modo ataque)
+  attackSignals: AttackSignal[];   // detalle de cada señal (7 señales totales)
   attackMultiplier: number;        // 1x / 1.5x / 2.5x / 4x
   attackTranche: 0 | 1 | 2 | 3;  // 0=no ataque, 1-3=tramo
+  // BTC Cycle Override (7 señales on-chain)
+  btcCycleOverrideActive: boolean; // true si ≥4/7 señales on-chain activas
+  btcCycleConfluence: number;      // 0-7: señales on-chain para override
 }
 
 // ── SEÑALES DE CONFLUENCIA DE FONDO ───────────────────────────────────────
@@ -364,11 +367,21 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
 
   const defensiveLiquidity = input.accumulatedDefensiveLiquidity ?? 0;
 
-  // ── Detectar confluencia de fondo SIEMPRE (para mostrar progreso)
+  // ── Detectar confluencia de fondo SIEMPRE (7 señales totales)
   const attackSignals = detectBottomConfluence(input);
-  const attackConfluence = attackSignals.filter(s => s.active).length;
+  const btcCycleConfluence = attackSignals.filter(s => s.active).length; // 0-7
 
-  // ── FIX V4: BTC CYCLE OVERRIDE ───────────────────────────────────────────
+  // ── MODO ATAQUE: usa solo 5 señales (excluye BTC.D y MVRV que son para override)
+  // Las 5 señales de modo ataque son:
+  //   1. BTC Sobreventa extrema (RSI<35 Y Z<-1.5)
+  //   2. CEWS Recuperándose
+  //   3. Régimen Mejorando
+  //   4. Divergencia de Momentum
+  //   5. VIX Normalizándose
+  const attackModeSignals = attackSignals.slice(0, 5);
+  const attackConfluence = attackModeSignals.filter(s => s.active).length; // 0-5
+
+  // ── FIX V4: BTC CYCLE OVERRIDE — usa las 7 señales completas ─────────────
   // Problema anterior: regime !== "CRISIS" bloqueaba el ataque incluso con
   // señales on-chain extremadamente fuertes. Históricamente los mejores
   // suelos de BTC ocurren exactamente durante CRISIS macro (2018, 2020, 2022).
@@ -380,7 +393,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // Umbrales intencionalmente altos (4/7) para evitar falsas señales:
   // Con 2-3 señales → esperar. Con 4+ → la convergencia es estadísticamente significativa.
   const btcCycleOverride =
-    attackConfluence >= 4 &&
+    btcCycleConfluence >= 4 &&
     !tailRiskActive &&           // si hay tail risk activo el mercado está disfuncional
     regime === "CRISIS";         // solo necesario cuando el macro bloquea todo lo demás
 
@@ -392,21 +405,23 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
 
     return {
       action: "BTC_CYCLE_OVERRIDE",
-      score: attackConfluence,
+      score: btcCycleConfluence,
       buyFraction: availableCash > 0 ? actualBtcCost / availableCash : 0.25,
       totalCashToInvest: actualBtcCost,
       allocationByAsset: btcAllocations,
-      reasoning: `⚡ BTC CYCLE OVERRIDE — ${attackConfluence}/7 señales on-chain activas. Motor B (BTC ciclo) operando independiente del macro CRISIS. Entrada parcial €${actualBtcCost.toFixed(0)} (25% del cash). Históricamente los suelos de BTC ocurren en CRISIS macro.`,
+      reasoning: `⚡ BTC CYCLE OVERRIDE — ${btcCycleConfluence}/7 señales on-chain activas. Motor B (BTC ciclo) operando independiente del macro CRISIS. Entrada parcial €${actualBtcCost.toFixed(0)} (25% del cash). Históricamente los suelos de BTC ocurren en CRISIS macro.`,
       blockReason: undefined,
       attackMode: true,
-      attackConfluence,
+      attackConfluence: btcCycleConfluence, // mostrar las 7 para contexto
       attackSignals,
       attackMultiplier: 1.0,
       attackTranche: 1,
+      btcCycleOverrideActive: true,
+      btcCycleConfluence,
     };
   }
 
-  // ── MODO ATAQUE: tiene prioridad sobre bloqueos defensivos normales
+  // ── MODO ATAQUE: usa las 5 señales de confluencia de fondo ───────────────
   const attackPossible =
     attackConfluence >= 2 &&
     regime !== "CRISIS" &&
@@ -414,14 +429,16 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     regimePenalty >= 0.55;
 
   if (attackPossible) {
-    const attackResult = computeAttackMode(attackSignals, availableCash, defensiveLiquidity, motorAllocations);
+    const attackResult = computeAttackMode(attackModeSignals, availableCash, defensiveLiquidity, motorAllocations);
     if (attackResult.action !== "WAIT") {
       return {
         ...attackResult,
         score: attackConfluence,
         attackMode: true,
         attackConfluence,
-        attackSignals,
+        attackSignals: attackModeSignals, // mostrar solo las 5 de modo ataque
+        btcCycleOverrideActive: false,
+        btcCycleConfluence,
       };
     }
   }
@@ -438,7 +455,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     return emptyOutput("BLOCK_TAIL_RISK",
       "Tail Risk Overlay activo. El motor ha detectado condiciones de mercado disfuncionales.",
       `Overlay: ×${tailRiskOverlay.toFixed(2)} — No hacer compras hasta que el overlay se desactive.`,
-      attackSignals, attackConfluence
+      attackModeSignals, attackConfluence, btcCycleConfluence
     );
   }
 
@@ -446,7 +463,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     return emptyOutput("BLOCK_CRISIS",
       `Régimen CRISIS (penalización ×${regimePenalty.toFixed(2)}). El motor reduce exposición al 40%.`,
       "Mantener liquidez. No comprar hasta que el régimen mejore a CONTRACTION o EXPANSION.",
-      attackSignals, attackConfluence
+      attackModeSignals, attackConfluence, btcCycleConfluence
     );
   }
 
@@ -454,7 +471,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     return emptyOutput("BLOCK_VOL",
       `Volatilidad del portfolio supera el objetivo del 18% (×${volTargetMultiplier.toFixed(2)}).`,
       "Esperar normalización de volatilidad antes de añadir capital.",
-      attackSignals, attackConfluence
+      attackModeSignals, attackConfluence, btcCycleConfluence
     );
   }
 
@@ -488,9 +505,11 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     reasoning,
     attackMode: false,
     attackConfluence,
-    attackSignals,
+    attackSignals: attackModeSignals,
     attackMultiplier: 1,
     attackTranche: 0,
+    btcCycleOverrideActive: false,
+    btcCycleConfluence,
   };
 }
 
@@ -500,12 +519,15 @@ function emptyOutput(
   reasoning: string,
   blockReason: string,
   attackSignals: AttackSignal[],
-  attackConfluence: number
+  attackConfluence: number,
+  btcCycleConfluence: number
 ): SmartDCAOutput {
   return {
     action, score: 0, buyFraction: 0, totalCashToInvest: 0,
     allocationByAsset: [], reasoning, blockReason,
     attackMode: false, attackConfluence, attackSignals,
     attackMultiplier: 1, attackTranche: 0,
+    btcCycleOverrideActive: false,
+    btcCycleConfluence,
   };
 }
