@@ -512,7 +512,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   //
   // Priors de largo plazo (consenso académico / Damodaran 2024):
   //   BTC: 15% anual (ajustado ciclo, no 68% del bull run 2023)
-  //   Semis: 14%   MSCI Momentum: 11%   Uranium: 10%   EM: 8%   Gold: 6%   NASDAQ: 12%
+  //   Semis: 14%   MSCI Quality: 11%   Uranium: 10%   EM: 8%   Gold: 6%   NASDAQ: 12%
   //
   // φ = 0.65 — ponderación estándar para series de 2 años (Ledoit-Wolf criterion)
   //   Con n=500 obs y k=7 activos: φ_óptimo ≈ (k+2)/(k+2+n*(μ-μ_prior)²/σ²) ~ 0.6-0.7

@@ -7,7 +7,7 @@
 //   - Señales técnicas BTC para timing
 //
 // ATAQUE (Nivel 5):
-//   - Detecta confluencia de fondo (5 señales)
+//   - Detecta confluencia de fondo (7 señales)
 //   - Sabe cuánta liquidez acumuló durante la defensa
 //   - Entra en 3 tramos de forma escalonada
 //   - Multiplica el DCA mensual hasta 4x en oportunidades de ciclo
@@ -93,17 +93,14 @@ export interface SmartDCAOutput {
   blockReason?: string;
   // Modo ataque
   attackMode: boolean;
-  attackConfluence: number;        // 0-5: cuántas señales de fondo activas (para modo ataque)
-  attackSignals: AttackSignal[];   // detalle de cada señal (7 señales totales)
+  attackConfluence: number;        // 0-5: cuántas señales de fondo activas
+  attackSignals: AttackSignal[];   // detalle de cada señal
   attackMultiplier: number;        // 1x / 1.5x / 2.5x / 4x
   attackTranche: 0 | 1 | 2 | 3;  // 0=no ataque, 1-3=tramo
-  // BTC Cycle Override (7 señales on-chain)
-  btcCycleOverrideActive: boolean; // true si ≥4/7 señales on-chain activas
-  btcCycleConfluence: number;      // 0-7: señales on-chain para override
 }
 
 // ── SEÑALES DE CONFLUENCIA DE FONDO ───────────────────────────────────────
-// Las 5 señales que juntas indican un fondo de ciclo real
+// Las 7 señales que juntas indican un fondo de ciclo real
 function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio } = input;
 
@@ -297,28 +294,31 @@ function computeAttackMode(
 
   const activeCount = signals.filter(s => s.active).length;
 
-  // Tramo 1: 2 señales → entrada exploratoria
-  if (activeCount === 2) {
+  // Tramo 1: 2-3/7 señales (≈30-45%) → entrada exploratoria
+  // Señales empezando a alinearse — entrar con cautela
+  if (activeCount >= 2 && activeCount <= 3) {
     const fraction = 0.40; // 40% del cash disponible
     const totalCash = availableCash * fraction + defensiveLiquidity * 0.10; // + 10% de la liquidez acumulada
     return buildAttackOutput("ATTACK_ENTRY", totalCash, 1, 1.5, availableCash, motorAllocations,
-      `MODO ATAQUE TRAMO 1 — ${activeCount}/5 señales de fondo. Entrada exploratoria €${totalCash.toFixed(0)} (1.5x DCA). Las señales de ciclo se están alineando.`
+      `MODO ATAQUE TRAMO 1 — ${activeCount}/7 señales de fondo. Entrada exploratoria €${totalCash.toFixed(0)} (1.5x DCA). Las señales de ciclo se están alineando.`
     );
   }
 
-  // Tramo 2: 3 señales → entrada media con liquidez acumulada parcial
-  if (activeCount === 3) {
+  // Tramo 2: 4-5/7 señales (≈57-71%) → entrada media con liquidez acumulada parcial
+  // Confluencia clara — desplegar capital defensivo parcialmente
+  if (activeCount >= 4 && activeCount <= 5) {
     const totalCash = availableCash * 0.60 + defensiveLiquidity * 0.35; // + 35% liquidez acumulada
     return buildAttackOutput("ATTACK_STRONG", totalCash, 2, 2.5, availableCash, motorAllocations,
-      `MODO ATAQUE TRAMO 2 — ${activeCount}/5 señales confirmadas. €${totalCash.toFixed(0)} incluyendo ${(defensiveLiquidity * 0.35).toFixed(0)}€ de liquidez defensiva acumulada.`
+      `MODO ATAQUE TRAMO 2 — ${activeCount}/7 señales confirmadas. €${totalCash.toFixed(0)} incluyendo ${(defensiveLiquidity * 0.35).toFixed(0)}€ de liquidez defensiva acumulada.`
     );
   }
 
-  // Tramo 3: 4-5 señales → despliegue máximo, oportunidad generacional
-  if (activeCount >= 4) {
+  // Tramo 3: ≥6/7 señales (≈86-100%) → despliegue máximo, oportunidad generacional
+  // Convergencia histórica — prácticamente todos los indicadores de ciclo alineados
+  if (activeCount >= 6) {
     const totalCash = availableCash + defensiveLiquidity * 0.80; // casi toda la liquidez acumulada
     return buildAttackOutput("ATTACK_MAX", totalCash, 3, 4.0, availableCash, motorAllocations,
-      `🚀 MODO ATAQUE MÁXIMO — ${activeCount}/5 señales. OPORTUNIDAD DE CICLO. Desplegando €${totalCash.toFixed(0)} (${defensiveLiquidity > 0 ? `incluye €${(defensiveLiquidity * 0.80).toFixed(0)} acumulados en defensa` : "DCA ×4"}). Esta es la ventana que el CEWS estaba esperando.`
+      `🚀 MODO ATAQUE MÁXIMO — ${activeCount}/7 señales. OPORTUNIDAD DE CICLO. Desplegando €${totalCash.toFixed(0)} (${defensiveLiquidity > 0 ? `incluye €${(defensiveLiquidity * 0.80).toFixed(0)} acumulados en defensa` : "DCA ×4"}). Esta es la ventana que el CEWS estaba esperando.`
     );
   }
 
@@ -328,7 +328,7 @@ function computeAttackMode(
     buyFraction: 0,
     totalCashToInvest: 0,
     allocationByAsset: [],
-    reasoning: `${activeCount}/5 señales de fondo activas — insuficiente para modo ataque. Mantener liquidez.`,
+    reasoning: `${activeCount}/7 señales de fondo activas — insuficiente para modo ataque. Mantener liquidez.`,
     attackMultiplier: 1,
     attackTranche: 0,
   };
@@ -367,21 +367,11 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
 
   const defensiveLiquidity = input.accumulatedDefensiveLiquidity ?? 0;
 
-  // ── Detectar confluencia de fondo SIEMPRE (7 señales totales)
+  // ── Detectar confluencia de fondo SIEMPRE (para mostrar progreso)
   const attackSignals = detectBottomConfluence(input);
-  const btcCycleConfluence = attackSignals.filter(s => s.active).length; // 0-7
+  const attackConfluence = attackSignals.filter(s => s.active).length;
 
-  // ── MODO ATAQUE: usa solo 5 señales (excluye BTC.D y MVRV que son para override)
-  // Las 5 señales de modo ataque son:
-  //   1. BTC Sobreventa extrema (RSI<35 Y Z<-1.5)
-  //   2. CEWS Recuperándose
-  //   3. Régimen Mejorando
-  //   4. Divergencia de Momentum
-  //   5. VIX Normalizándose
-  const attackModeSignals = attackSignals.slice(0, 5);
-  const attackConfluence = attackModeSignals.filter(s => s.active).length; // 0-5
-
-  // ── FIX V4: BTC CYCLE OVERRIDE — usa las 7 señales completas ─────────────
+  // ── FIX V4: BTC CYCLE OVERRIDE ───────────────────────────────────────────
   // Problema anterior: regime !== "CRISIS" bloqueaba el ataque incluso con
   // señales on-chain extremadamente fuertes. Históricamente los mejores
   // suelos de BTC ocurren exactamente durante CRISIS macro (2018, 2020, 2022).
@@ -393,7 +383,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // Umbrales intencionalmente altos (4/7) para evitar falsas señales:
   // Con 2-3 señales → esperar. Con 4+ → la convergencia es estadísticamente significativa.
   const btcCycleOverride =
-    btcCycleConfluence >= 4 &&
+    attackConfluence >= 4 &&
     !tailRiskActive &&           // si hay tail risk activo el mercado está disfuncional
     regime === "CRISIS";         // solo necesario cuando el macro bloquea todo lo demás
 
@@ -405,23 +395,21 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
 
     return {
       action: "BTC_CYCLE_OVERRIDE",
-      score: btcCycleConfluence,
+      score: attackConfluence,
       buyFraction: availableCash > 0 ? actualBtcCost / availableCash : 0.25,
       totalCashToInvest: actualBtcCost,
       allocationByAsset: btcAllocations,
-      reasoning: `⚡ BTC CYCLE OVERRIDE — ${btcCycleConfluence}/7 señales on-chain activas. Motor B (BTC ciclo) operando independiente del macro CRISIS. Entrada parcial €${actualBtcCost.toFixed(0)} (25% del cash). Históricamente los suelos de BTC ocurren en CRISIS macro.`,
+      reasoning: `⚡ BTC CYCLE OVERRIDE — ${attackConfluence}/7 señales on-chain activas. Motor B (BTC ciclo) operando independiente del macro CRISIS. Entrada parcial €${actualBtcCost.toFixed(0)} (25% del cash). Históricamente los suelos de BTC ocurren en CRISIS macro.`,
       blockReason: undefined,
       attackMode: true,
-      attackConfluence: btcCycleConfluence, // mostrar las 7 para contexto
+      attackConfluence,
       attackSignals,
       attackMultiplier: 1.0,
       attackTranche: 1,
-      btcCycleOverrideActive: true,
-      btcCycleConfluence,
     };
   }
 
-  // ── MODO ATAQUE: usa las 5 señales de confluencia de fondo ───────────────
+  // ── MODO ATAQUE: tiene prioridad sobre bloqueos defensivos normales
   const attackPossible =
     attackConfluence >= 2 &&
     regime !== "CRISIS" &&
@@ -429,16 +417,14 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     regimePenalty >= 0.55;
 
   if (attackPossible) {
-    const attackResult = computeAttackMode(attackModeSignals, availableCash, defensiveLiquidity, motorAllocations);
+    const attackResult = computeAttackMode(attackSignals, availableCash, defensiveLiquidity, motorAllocations);
     if (attackResult.action !== "WAIT") {
       return {
         ...attackResult,
         score: attackConfluence,
         attackMode: true,
         attackConfluence,
-        attackSignals: attackModeSignals, // mostrar solo las 5 de modo ataque
-        btcCycleOverrideActive: false,
-        btcCycleConfluence,
+        attackSignals,
       };
     }
   }
@@ -455,7 +441,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     return emptyOutput("BLOCK_TAIL_RISK",
       "Tail Risk Overlay activo. El motor ha detectado condiciones de mercado disfuncionales.",
       `Overlay: ×${tailRiskOverlay.toFixed(2)} — No hacer compras hasta que el overlay se desactive.`,
-      attackModeSignals, attackConfluence, btcCycleConfluence
+      attackSignals, attackConfluence
     );
   }
 
@@ -463,7 +449,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     return emptyOutput("BLOCK_CRISIS",
       `Régimen CRISIS (penalización ×${regimePenalty.toFixed(2)}). El motor reduce exposición al 40%.`,
       "Mantener liquidez. No comprar hasta que el régimen mejore a CONTRACTION o EXPANSION.",
-      attackModeSignals, attackConfluence, btcCycleConfluence
+      attackSignals, attackConfluence
     );
   }
 
@@ -471,7 +457,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     return emptyOutput("BLOCK_VOL",
       `Volatilidad del portfolio supera el objetivo del 18% (×${volTargetMultiplier.toFixed(2)}).`,
       "Esperar normalización de volatilidad antes de añadir capital.",
-      attackModeSignals, attackConfluence, btcCycleConfluence
+      attackSignals, attackConfluence
     );
   }
 
@@ -493,7 +479,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const actualTotal = allocationByAsset.reduce((s, a) => s + a.actualCost, 0);
 
   const reasoning = action === "WAIT"
-    ? `Sin señales técnicas. Régimen ${regime} (×${regimePenalty.toFixed(2)}). ${attackConfluence > 0 ? `${attackConfluence}/5 señales de ataque acumulándose.` : ""}`
+    ? `Sin señales técnicas. Régimen ${regime} (×${regimePenalty.toFixed(2)}). ${attackConfluence > 0 ? `${attackConfluence}/7 señales de ataque acumulándose.` : ""}`
     : `${technicalScore}/3 señales BTC: ${signals.join(", ")}. ${regime === "CONTRACTION" ? "Compra reducida." : ""} €${totalCash.toFixed(0)} por motor.`;
 
   return {
@@ -505,11 +491,9 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     reasoning,
     attackMode: false,
     attackConfluence,
-    attackSignals: attackModeSignals,
+    attackSignals,
     attackMultiplier: 1,
     attackTranche: 0,
-    btcCycleOverrideActive: false,
-    btcCycleConfluence,
   };
 }
 
@@ -519,15 +503,12 @@ function emptyOutput(
   reasoning: string,
   blockReason: string,
   attackSignals: AttackSignal[],
-  attackConfluence: number,
-  btcCycleConfluence: number
+  attackConfluence: number
 ): SmartDCAOutput {
   return {
     action, score: 0, buyFraction: 0, totalCashToInvest: 0,
     allocationByAsset: [], reasoning, blockReason,
     attackMode: false, attackConfluence, attackSignals,
     attackMultiplier: 1, attackTranche: 0,
-    btcCycleOverrideActive: false,
-    btcCycleConfluence,
   };
 }

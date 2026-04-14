@@ -1,8 +1,8 @@
-// src/core/types/portfolio.ts
+// 1. DEFINICIÓN DE INTERFACES
 export interface Asset {
   ticker: string;
   name: string;
-  weight: number;           // peso objetivo (nuevo)
+  weight: number;
   currentWeight: number;
   price: number;
   shares: number;
@@ -10,14 +10,10 @@ export interface Asset {
   volatility: number;
   expectedReturn: number;
   sector: string;
-  history: number[];
+  history: number[]; // El historial que ahora sí vamos a usar
   zScore?: number;
   rsi?: number;
-  factorRole?: 'momentum' | 'value' | 'lowVol' | 'quality' | 'defensive';
-  return12m?: number;
-  return3m?: number;
-  return1m?: number;
-  earningsYield?: number;
+  factorRole?: 'momentum' | 'value' | 'lowVol' | 'quality' | 'defensive'; // ← NUEVO: para el motor Olympus
 }
 
 export interface Portfolio {
@@ -31,147 +27,142 @@ export interface Portfolio {
   assets: Asset[];
 }
 
-// Generador de historial (mock)
+// 2. GENERADOR DE HISTORIAL CORREGIDO
+// Usamos '_' para indicar a TypeScript que el primer parámetro se ignora 
+// y usamos 'index' para crear una tendencia ligera y que no dé error.
 const generateMockHistory = (basePrice: number): number[] => 
-  Array.from({ length: 30 }, (_, idx) => basePrice * (1 + idx * 0.001 + (Math.random() - 0.5) * 0.02));
+  Array.from({ length: 30 }, (_, index) => {
+    const randomShock = (Math.random() - 0.5) * 0.02;
+    const trend = index * 0.001; // Usamos el índice para dar una ligera tendencia alcista
+    return basePrice * (1 + trend + randomShock);
+  });
 
+// 3. PORTFOLIO COMPLETO CON CONEXIÓN DE DATOS
+// AUDIT-FIX-01: expectedReturn corregidos con priors de largo plazo (Damodaran 2024 / Vanguard CMA 2024)
+// Los valores anteriores (BTC=45%, Semis=18%, etc.) eran retornos históricos del bull run 2022-2024,
+// NO retornos esperados prospectivos. Usarlos en Monte Carlo producía medianas de €443k absurdas.
+//
+// Priors calibrados (consenso académico — % anual en términos reales ajustados):
+//   BTC:   15% — prima cripto ajustada ciclo (no 45% del bull run, ciclo largo ~4 años)
+//   Semis: 14% — semiconductores: ciclo AI legítimo pero valoración ya alta (P/E ~30x)
+//   MSCI Quality: 11% — prima quality documentada ~3% sobre mercado global (IS3Q.DE)
+//   Uranio: 10% — demanda nuclear estructural, pero ilíquido y volátil
+//   EM ex-China: 8% — prima EM ~3% sobre DM, ajustado riesgo divisa y geopolítico
+//   Gold: 6% — retorno real histórico ~2-4% + inflación esperada ~2-3%
+//   NASDAQ 100 (XNAS.DE): 9% — growth/tech ajustado tipos altos 2024-2025
+//
+// IMPORTANTE: estos valores son el FALLBACK cuando no hay datos Yahoo disponibles.
+// Con datos Yahoo activos, el motor usa James-Stein shrinkage (marketData.ts) que
+// combina 35% retorno histórico real + 65% prior de largo plazo. Estos priors son idénticos.
 export const portfolio: Portfolio = {
-  totalValue: 6186.88,   // actualizado según tu PDF
-  cashReserve: 300.00,
+  totalValue: 5685,
+  cashReserve: 150.00,
   monthlyInjection: 400.0,
   targetGoal: 150000,
-  regime: "NEUTRAL",
+  regime: "ATTACK",
   riskFreeRate: 4.0,
-  expectedVolatility: 18.0,  // objetivo de volatilidad
-
+  expectedVolatility: 24.2,
+  
   assets: [
-    {
-      ticker: "IS3Q.DE",
-      name: "MSCI World Quality",
-      weight: 25.0,
-      currentWeight: 29.3,
-      shares: 26,
-      avgPrice: 67.53,
-      price: 69.67,
-      volatility: 18,
-      expectedReturn: 11,
-      sector: "Equity",
-      history: generateMockHistory(69.67),
-      factorRole: 'quality',
-      return12m: 0.2089,
-      return3m: 0.00086,
-      return1m: 0.0078,
-      earningsYield: 0.04,
-    },
     {
       ticker: "BTC-EUR",
       name: "Bitcoin",
-      weight: 15.0,
-      currentWeight: 31.2,
-      shares: 0.031286,
-      avgPrice: 87989.74,
-      price: 61605.14,
+      weight: 23.9,
+      currentWeight: 9.2,
+      shares: 0.033994,
+      avgPrice: 85386.00,
+      price: 55134.37,
       volatility: 60,
-      expectedReturn: 15,
+      expectedReturn: 15,   // AUDIT-FIX: era 45% (bull run) → 15% (prior LP Damodaran)
       sector: "Crypto",
-      history: generateMockHistory(61605),
-      factorRole: 'momentum',
-      zScore: -0.97,
-      rsi: 40,
-      return12m: -0.3697,
-      return3m: 0.3184,
-      return1m: 0.1082,
-      earningsYield: 0,
-    },
-    {
-      ticker: "PPFB.DE",
-      name: "Gold (ETC)",
-      weight: 15.0,
-      currentWeight: 6.4,
-      shares: 5,
-      avgPrice: 71.08,
-      price: 79.48,
-      volatility: 30,
-      expectedReturn: 6,
-      sector: "Commodities",
-      history: generateMockHistory(79.48),
-      factorRole: 'defensive',
-      return12m: 0.4842,
-      return3m: 0.0701,
-      return1m: -0.0696,
-      earningsYield: 0,
-    },
-    {
-      ticker: "XNAS.DE",
-      name: "NASDAQ 100",
-      weight: 15.0,
-      currentWeight: 0.0,
-      shares: 0,
-      avgPrice: 0,
-      price: 49.43,
-      volatility: 25,
-      expectedReturn: 9,
-      sector: "Growth",
-      history: generateMockHistory(49.43),
-      factorRole: 'momentum',
-      return12m: 0.3027,
-      return3m: -0.0221,
-      return1m: 0.00233,
-      earningsYield: 0.02,
-    },
-    {
-      ticker: "URNU.DE",
-      name: "Uranium",
-      weight: 10.0,
-      currentWeight: 10.7,
-      shares: 25,
-      avgPrice: 25.89,
-      price: 26.50,
-      volatility: 40,
-      expectedReturn: 10,
-      sector: "Energy",
-      history: generateMockHistory(26.50),
-      factorRole: 'value',
-      return12m: 0.0,
-      return3m: 0.01416,
-      return1m: 0.01767,
-      earningsYield: 0,
-    },
-    {
-      ticker: "EMXC.DE",
-      name: "Emerging Markets ex China",
-      weight: 10.0,
-      currentWeight: 17.2,
-      shares: 31,
-      avgPrice: 28.93,
-      price: 34.36,
-      volatility: 22,
-      expectedReturn: 8,
-      sector: "Emerging",
-      history: generateMockHistory(34.36),
-      factorRole: 'value',
-      return12m: 0.5676,
-      return3m: 0.1073,
-      return1m: 0.04805,
-      earningsYield: 0.05,
+      zScore: -2.08,
+      rsi: 40.51,
+      history: generateMockHistory(55134),
+      factorRole: 'defensive'   // opcional, para el motor
     },
     {
       ticker: "VVSM.DE",
       name: "Semiconductors",
-      weight: 10.0,
-      currentWeight: 5.2,
-      shares: 5,
-      avgPrice: 55.38,
-      price: 64.66,
+      weight: 12.5,
+      currentWeight: 9.1,
+      shares: 2,
+      avgPrice: 52.01,
+      price: 62.60,
       volatility: 35,
-      expectedReturn: 14,
+      expectedReturn: 14,   // AUDIT-FIX: era 18% → 14% (ciclo AI legítimo, val ya alta)
       sector: "Technology",
-      history: generateMockHistory(64.66),
-      factorRole: 'momentum',
-      return12m: 1.1539,
-      return3m: 0.1594,
-      return1m: 0.1066,
-      earningsYield: 0.03,
+      history: generateMockHistory(62.60),
+      factorRole: 'momentum'
     },
-  ],
+    {
+      ticker: "IS3Q.DE",
+      name: "MSCI World Quality",
+      weight: 20.0,
+      currentWeight: 26.6,
+      shares: 26,
+      avgPrice: 67.53,
+      price: 70.62,
+      volatility: 18,
+      expectedReturn: 11,   // AUDIT-FIX: era 12% → 11% (prima quality ~3% sobre mercado)
+      sector: "Equity",
+      history: generateMockHistory(70.62),
+      factorRole: 'quality'
+    },
+    {
+      ticker: "URNU.DE",
+      name: "Uranium",
+      weight: 15.0,
+      currentWeight: 15.5,
+      shares: 15,
+      avgPrice: 26.53,
+      price: 28.15,
+      volatility: 40,
+      expectedReturn: 10,   // AUDIT-FIX: era 25% → 10% (demanda nuclear real pero ilíquido)
+      sector: "Energy",
+      history: generateMockHistory(28.15),
+      factorRole: 'value'
+    },
+    {
+      ticker: "EMXC.DE",
+      name: "Emerging Markets",
+      weight: 10.0,
+      currentWeight: 10.0,
+      shares: 31,
+      avgPrice: 28.93,
+      price: 35.56,
+      volatility: 22,
+      expectedReturn: 8,    // AUDIT-FIX: era 10% → 8% (prima EM ajustada riesgo divisa DXY alto)
+      sector: "Emerging",
+      history: generateMockHistory(35.56),
+      factorRole: 'value'
+    },
+    {
+      ticker: "PPFB.DE",
+      name: "Gold (ETC)",
+      weight: 10.0,
+      currentWeight: 5.0,
+      shares: 4,
+      avgPrice: 69.39,
+      price: 72.10,
+      volatility: 30,
+      expectedReturn: 6,    // AUDIT-FIX: era 15% → 6% (retorno real histórico oro ~2-4%)
+      sector: "Commodities",
+      history: generateMockHistory(72.10),
+      factorRole: 'defensive'
+    },
+    {
+      ticker: "XNAS.DE",
+      name: "NASDAQ 100",
+      weight: 8.6,
+      currentWeight: 10.6,
+      shares: 0,
+      avgPrice: 0,
+      price: 65.40,
+      volatility: 25,
+      expectedReturn: 9,    // AUDIT-FIX: era 11% → 9% (ajustado tipos altos 2024-2025)
+      sector: "Technology",
+      history: generateMockHistory(65.40),
+      factorRole: 'quality'
+    }
+  ]
 };

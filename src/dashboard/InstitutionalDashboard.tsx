@@ -68,8 +68,6 @@ import {
   type StressResult,
 } from "@/core/simulation/stressScenarios";
 import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
-import { runMonteCarloWithTarget, type MonteCarloTargetResult } from "@/core/simulation/monteCarloTarget";
-import { fetchMistralIntelligence, type MistralIntelligence } from "@/lib/mistralAI";
 import {
   analyzeBitcoinCycle,
   getPowerLawProjection,
@@ -247,14 +245,18 @@ const InstitutionalDashboard: React.FC = () => {
   const [elliottCurrentWave, setElliottCurrentWave] = useState<ElliottWaveLabel | undefined>(undefined);
   const [elliottPivotsText, setElliottPivotsText] = useState<string>("");
 
-  // PASO 6: Motor de Inteligencia AI — MISTRAL CLOUD
+  // PASO 6: Motor de Inteligencia AI — Ollama (local, gratuito)
   // Roles: Macro Strategist · Elliott Analyst · Market Sentinel
-  const [aiIntelligence, setAiIntelligence] = useState<MistralIntelligence | null>(null);
+  const [aiIntelligence, setAiIntelligence] = useState<{
+    gemini: { regimeNarrative: string; macroValidation: string; btcCycleSummary: string; model: string; cachedAt: string; error?: string } | null;
+    grok:   { marketSentiment: string; topNarratives: string[]; blackSwanAlert: boolean; blackSwanReason: string | null; model: string; cachedAt: string; error?: string } | null;
+    claude: { elliottAnalysis: string; rebalanceAdvice: string; contradictionAnalysis: string; model: string; cachedAt: string; error?: string } | null;
+    fetchedAt: string;
+    cacheHit: boolean;
+    ollamaModel?: string;
+  } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [useMistral, setUseMistral] = useState(true); // true = Mistral Cloud, false = Ollama local
-
-  // Monte Carlo con target 15% anual
-  const [monteCarloResult, setMonteCarloResult] = useState<MonteCarloTargetResult | null>(null);
+  const [ollamaModel, setOllamaModel] = useState<string>('llama3.2');
 
   // Señales de techo de ciclo — inputs específicos por activo
   const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);
@@ -404,8 +406,60 @@ const InstitutionalDashboard: React.FC = () => {
     }
   };
 
-  // ── PASO 6: Motor de Inteligencia AI — MISTRAL CLOUD (fallback a Ollama local) ──
+  // ── PASO 6: Motor de Inteligencia AI — Ollama LOCAL (gratuito, sin API keys) ──
+  // Llama directamente a Ollama en localhost:11434 — bypass total de Supabase Edge Functions
+  // Prerequisito: ollama debe estar corriendo con CORS habilitado.
+  // En Windows PowerShell antes de npm run dev:
+  //   $env:OLLAMA_ORIGINS="*"; ollama serve
+  // En Mac/Linux:
+  //   OLLAMA_ORIGINS="*" ollama serve
+
+  // Caché local para no llamar Ollama en cada render
   const aiCacheRef = React.useRef<{ hash: string; result: any; expiresAt: number } | null>(null);
+
+  const callOllama = async (systemPrompt: string, userContent: string, model: string): Promise<string> => {
+    const OLLAMA_URL = 'http://127.0.0.1:11434/api/chat';
+    const res = await fetch(OLLAMA_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        options: { temperature: 0.2, num_predict: 500 },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
+    const json = await res.json();
+    const text: string = json.message?.content ?? '';
+    // Limpiar posibles markdown fences
+    return text.replace(/```json[\s\S]*?```|```[\s\S]*?```/g, m =>
+      m.replace(/```json\n?|```\n?/g, '').trim()
+    ).trim();
+  };
+
+  // Auto-detectar modelo disponible en Ollama
+  const detectOllamaModel = async (): Promise<string> => {
+    try {
+      const res = await fetch('http://127.0.0.1:11434/api/tags');
+      if (!res.ok) return ollamaModel;
+      const json = await res.json();
+      const models: string[] = (json.models ?? []).map((m: any) => m.name as string);
+      if (models.length === 0) return ollamaModel;
+      // Preferencia: modelos más capaces para análisis financiero
+      const preferred = ['llama3.3', 'llama3.2', 'llama3.1', 'llama3', 'mistral', 'mixtral', 'qwen2.5', 'deepseek-r1'];
+      for (const p of preferred) {
+        const found = models.find(m => m.startsWith(p));
+        if (found) return found;
+      }
+      return models[0]; // usar el primero disponible
+    } catch {
+      return ollamaModel;
+    }
+  };
 
   const refreshAIIntelligence = async () => {
     if (!engineResult) return;
@@ -417,181 +471,112 @@ const InstitutionalDashboard: React.FC = () => {
       if (creditSpread > 4.5 && manualPER > 26) contradictions.push('Credit spread elevado + PER caro');
 
       const totalPortfolioVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
+
+      // Hash para caché — si el contexto no cambió, no volvemos a llamar Ollama
       const ctxHash = `${engineResult.regime}-${Math.round(vix)}-${Math.round((mvrvRatio ?? 0) * 100)}-${Math.round((fearGreedIndex?.value ?? 50))}`;
       const now = Date.now();
-      const CACHE_TTL = 15 * 60 * 1000;
+      const CACHE_TTL = 15 * 60 * 1000; // 15 minutos
 
       if (aiCacheRef.current && aiCacheRef.current.hash === ctxHash && aiCacheRef.current.expiresAt > now) {
-        setAiIntelligence(aiCacheRef.current.result);
+        setAiIntelligence({ ...aiCacheRef.current.result, cacheHit: true });
         setAiLoading(false);
         return;
       }
 
+      // Auto-detectar modelo disponible
+      const model = await detectOllamaModel();
+      setOllamaModel(model);
+
       const ts = new Date().toISOString();
 
-      // Intentar Mistral Cloud primero
-      if (useMistral) {
-        try {
-          const btcAsset = portfolio.assets.find(a => a.ticker === 'BTC-EUR');
-          const result = await fetchMistralIntelligence({
-            regime: engineResult.regime,
-            regimePenalty: engineResult.masterRegime.regimePenalty,
-            crisisProb: (engineResult.masterRegime as any).crisisProb ?? 0,
-            vix,
-            moveIndex,
-            bond10y: manualBond10y,
-            bond2y,
-            creditSpread,
-            m2Growth,
-            dxy,
-            wtiOil,
-            btcPrice: btcAsset?.price ?? 60000,
-            btcRsiWeekly: btcRsiWeekly ?? 50,
-            btcDominance,
-            mvrvRatio,
-            fearGreedValue: fearGreedIndex?.value ?? 50,
-            portfolioValue: totalPortfolioVal,
-            portfolioVol: portfolioVol ?? 0.18,
-            portfolioDrawdown: portfolioDrawdown ?? 0,
-            expectedReturn: Math.min(0.15, expectedReturn),
-            elliottWave: elliottCurrentWave,
-            hashRibbonState,
-            puellMultiple,
-            contradictions,
-          });
-          aiCacheRef.current = { hash: ctxHash, result, expiresAt: now + CACHE_TTL };
-          setAiIntelligence(result);
-          setAiLoading(false);
-          return;
-        } catch (err) {
-          console.warn('Mistral Cloud falló, usando Ollama local:', err);
-        }
-      }
-
-      // Fallback a Ollama local
-      const callOllama = async (systemPrompt: string, userContent: string, model: string): Promise<string> => {
-        const res = await fetch('http://127.0.0.1:11434/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model,
-            stream: false,
-            options: { temperature: 0.2, num_predict: 500 },
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userContent },
-            ],
-          }),
-        });
-        if (!res.ok) throw new Error(`Ollama ${res.status}`);
-        const json = await res.json();
-        return json.message?.content ?? '';
-      };
-
+      // Contexto compartido para los 3 roles
       const ctx = `FECHA: ${ts.slice(0, 10)}
-RÉGIMEN: ${engineResult.regime} | penalty=${((engineResult.masterRegime.regimePenalty ?? 1) * 100).toFixed(0)}%
-MACRO: VIX=${vix.toFixed(1)} MOVE=${moveIndex.toFixed(0)} Bond10y=${manualBond10y.toFixed(2)}% CreditSprd=${creditSpread.toFixed(2)}% M2=${m2Growth.toFixed(1)}% DXY=${dxy.toFixed(1)}
-CRYPTO: BTC=€${(portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price ?? 0).toFixed(0)} MVRV=${(mvrvRatio ?? 0).toFixed(2)} FearGreed=${fearGreedIndex?.value ?? 50}
-PORTFOLIO: €${totalPortfolioVal.toFixed(0)} vol=${((portfolioVol ?? 0.18) * 100).toFixed(1)}% drawdown=${((portfolioDrawdown ?? 0) * 100).toFixed(1)}%
-${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') : ''}`;
+RÉGIMEN: ${engineResult.regime} | penalty=${((engineResult.masterRegime.regimePenalty ?? 1) * 100).toFixed(0)}% | P(crisis)=${(((engineResult.masterRegime as any).crisisProb ?? 0) * 100).toFixed(0)}%
+MACRO: VIX=${vix.toFixed(1)} MOVE=${moveIndex.toFixed(0)} Bond10y=${manualBond10y.toFixed(2)}% Bond2y=${bond2y.toFixed(2)}% CreditSprd=${creditSpread.toFixed(2)}% M2=${m2Growth.toFixed(1)}% DXY=${dxy.toFixed(1)} Brent=$${wtiOil.toFixed(0)}
+CRYPTO: BTC=€${(portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price ?? 0).toFixed(0)} RSI_semanal=${(btcRsiWeekly ?? 50).toFixed(0)} DOM=${(btcDominance ?? 0).toFixed(1)}% MVRV=${(mvrvRatio ?? 0).toFixed(2)} FearGreed=${fearGreedIndex?.value ?? 50}/${fearGreedIndex?.label ?? 'N/D'}
+PORTFOLIO: €${totalPortfolioVal.toFixed(0)} vol=${((portfolioVol ?? 0.18) * 100).toFixed(1)}% drawdown=${((portfolioDrawdown ?? 0) * 100).toFixed(1)}% mu=${(Math.min(0.15, expectedReturn) * 100).toFixed(1)}%
+ELLIOTT: Onda ${elliottCurrentWave ?? 'N/D'} | Hash Ribbon: ${hashRibbonState ?? 'N/D'} | Puell: ${(puellMultiple ?? 0).toFixed(2)}
+${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') : ''}`.trim();
 
-      const macroPrompt = `Eres estratega macro senior. Responde solo JSON:
-{"regimeNarrative":"<3 frases>","macroValidation":"<2 frases>","btcCycleSummary":"<2 frases>"}`;
-      const elliottPrompt = `Eres analista Elliott Wave crypto. Responde solo JSON:
-{"elliottAnalysis":"<3 frases>","rebalanceAdvice":"<2 frases>","contradictionAnalysis":"<2 frases>"}`;
+      // ── ROL 1: Macro Strategist ─────────────────────────────────────────
+      const macroPrompt = `Eres estratega macro senior de hedge fund institucional. Analiza el contexto y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones fuera del JSON:
+{"regimeNarrative":"<3 frases sobre el régimen macro actual y sus implicaciones para el portfolio>","macroValidation":"<2 frases sobre coherencia entre las señales macro>","btcCycleSummary":"<2 frases sobre la posición actual en el ciclo BTC y qué esperar>"}`;
+
+      // ── ROL 2: Elliott Wave Analyst ─────────────────────────────────────
+      const elliottPrompt = `Eres analista técnico especialista en ciclos crypto y Elliott Wave. Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown:
+{"elliottAnalysis":"<3 frases sobre la onda actual, dirección y proyección de precio>","rebalanceAdvice":"<2 frases de rebalanceo concreto dado el ciclo>","contradictionAnalysis":"<2 frases sobre señales contradictorias detectadas>"}`;
+
+      // ── ROL 3: Market Sentinel ──────────────────────────────────────────
       const bsAlert = (vix ?? 0) > 35 && (creditSpread ?? 0) > 6 || (mvrvRatio ?? 0) > 7;
-      const sentinelPrompt = `Eres analista de riesgo sistémico. Responde solo JSON:
-{"marketSentiment":"<2 frases>","topNarratives":["n1","n2","n3"],"blackSwanAlert":${bsAlert},"blackSwanReason":${bsAlert ? '"riesgo"' : 'null'}}`;
+      const sentinelPrompt = `Eres analista de riesgo sistémico y vigilante de cisnes negros. Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown:
+{"marketSentiment":"<2 frases del sentimiento actual del mercado>","topNarratives":["<narrativa dominante 1>","<narrativa dominante 2>","<narrativa dominante 3>"],"blackSwanAlert":${bsAlert},"blackSwanReason":${bsAlert ? '"<describe el riesgo sistémico detectado>"' : 'null'}}`;
 
+      // Llamar los 3 roles en paralelo
       const [r1, r2, r3] = await Promise.allSettled([
-        callOllama(macroPrompt, ctx, 'mistral'),
-        callOllama(elliottPrompt, ctx, 'mistral'),
-        callOllama(sentinelPrompt, ctx, 'mistral'),
+        callOllama(macroPrompt, ctx, model),
+        callOllama(elliottPrompt, ctx, model),
+        callOllama(sentinelPrompt, ctx, model),
       ]);
 
-      const parseRole = (r: PromiseSettledResult<string>, fallback: Record<string, any>) => {
-        if (r.status === 'rejected') return { ...fallback, error: String(r.reason).slice(0, 200), model: 'ollama', cachedAt: ts };
+      const parseRole = (r: PromiseSettledResult<string>, fallback: object) => {
+        if (r.status === 'rejected') return { ...fallback, error: String(r.reason).slice(0, 200), model, cachedAt: ts };
         try {
+          // Extraer JSON del texto — Ollama a veces añade texto antes/después
           const match = r.value.match(/\{[\s\S]*\}/);
-          return { ...JSON.parse(match ? match[0] : r.value), model: 'ollama', cachedAt: ts };
+          const parsed = JSON.parse(match ? match[0] : r.value);
+          return { ...parsed, model, cachedAt: ts };
         } catch {
-          return { ...fallback, error: 'JSON parse error', model: 'ollama', cachedAt: ts };
+          return { ...fallback, error: `JSON parse error: ${r.value.slice(0, 100)}`, model, cachedAt: ts };
         }
       };
 
-      const output: MistralIntelligence = {
-        regimeNarrative: parseRole(r1, {}).regimeNarrative || '',
-        macroValidation: parseRole(r1, {}).macroValidation || '',
-        btcCycleSummary: parseRole(r1, {}).btcCycleSummary || '',
-        elliottAnalysis: parseRole(r2, {}).elliottAnalysis || '',
-        rebalanceAdvice: parseRole(r2, {}).rebalanceAdvice || '',
-        contradictionAnalysis: parseRole(r2, {}).contradictionAnalysis || '',
-        marketSentiment: parseRole(r3, {}).marketSentiment || '',
-        topNarratives: parseRole(r3, {}).topNarratives || [],
-        blackSwanAlert: parseRole(r3, {}).blackSwanAlert || false,
-        blackSwanReason: parseRole(r3, {}).blackSwanReason || null,
-        model: 'ollama-mistral',
-        cachedAt: ts,
+      const geminiResult = parseRole(r1, { regimeNarrative: '', macroValidation: '', btcCycleSummary: '' });
+      const claudeResult = parseRole(r2, { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '' });
+      const grokResult   = parseRole(r3, { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null });
+
+      const output = {
+        gemini: geminiResult,
+        claude: claudeResult,
+        grok: grokResult,
+        fetchedAt: ts,
+        cacheHit: false,
+        ollamaModel: model,
       };
 
       aiCacheRef.current = { hash: ctxHash, result: output, expiresAt: now + CACHE_TTL };
       setAiIntelligence(output);
+
+      // Alerta Telegram si sentinel detecta cisne negro
+      if (grokResult.blackSwanAlert && grokResult.blackSwanReason && !grokResult.error) {
+        supabase.functions.invoke('telegram-alerts', {
+          body: {
+            type: 'black_swan',
+            blackSwanReason: grokResult.blackSwanReason,
+            currentRegime: engineResult.regime,
+            vix,
+          },
+        }).catch(() => {});
+      }
+
     } catch (e: any) {
+      const errMsg = e?.message ?? String(e);
+      const ts = new Date().toISOString();
+      const ollamaDown = errMsg.includes('fetch') || errMsg.includes('ECONNREFUSED') || errMsg.includes('Failed to fetch');
+      const errResult = {
+        error: ollamaDown
+          ? 'Ollama no responde en localhost:11434. Verifica que esté corriendo con: $env:OLLAMA_ORIGINS="*"; ollama serve'
+          : errMsg.slice(0, 300),
+        model: ollamaModel, cachedAt: ts,
+      };
       setAiIntelligence({
-        regimeNarrative: '', macroValidation: '', btcCycleSummary: '',
-        elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '',
-        marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null,
-        model: 'error', cachedAt: new Date().toISOString(),
-        error: e?.message ?? String(e).slice(0, 300),
+        gemini: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', ...errResult },
+        claude: { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '', ...errResult },
+        grok:   { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, ...errResult },
+        fetchedAt: ts, cacheHit: false, ollamaModel,
       });
     } finally {
       setAiLoading(false);
     }
-  };
-
-  // ── MONTE CARLO CON TARGET 15% ANUAL ─────────────────────────────────────
-  const runMonteCarloAnalysis = () => {
-    if (!engineResult || !marketData?.covMatrix) return;
-
-    const totalPortfolioVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
-    const weights = portfolio.assets.map(a => (a.price * a.shares) / totalPortfolioVal);
-
-    // Calcular retorno esperado y volatilidad del portfolio
-    const assetInputs = portfolio.assets.map(asset => ({
-      name: asset.name,
-      returns12m: asset.return12m ?? 0.01,
-      returns3m: asset.return3m ?? 0.01,
-      returns1m: asset.return1m ?? 0.01,
-      earningsYield: asset.earningsYield ?? 0,
-      volatility: asset.volatility / 100,
-      sector: asset.sector,
-    }));
-
-    // Retorno esperado ponderado
-    const expectedReturnPortfolio = assetInputs.reduce((s, a, i) => s + weights[i] * a.returns12m, 0);
-    // Volatilidad ponderada (simplificada)
-    const volatilityPortfolio = assetInputs.reduce((s, a, i) => s + weights[i] * a.volatility, 0);
-
-    // Parámetros de salto para BTC
-    const btcIdx = portfolio.assets.findIndex(a => a.ticker === 'BTC-EUR');
-    const jumpIntensityBTC = btcIdx >= 0 ? weights[btcIdx] * 7 : 0; // λ BTC ~7/año
-
-    const result = runMonteCarloWithTarget({
-      initialCapital: totalPortfolioVal,
-      monthlyContribution: monthlyInjection,
-      years: 5,
-      expectedReturn: expectedReturnPortfolio,
-      volatility: volatilityPortfolio,
-      jumpIntensity: jumpIntensityPortfolio + jumpIntensityBTC,
-      jumpMean: -0.08,
-      jumpStd: 0.12,
-      targetReturn: 0.15, // 15% anual objetivo
-      maxCVaR: 0.25,
-      maxDrawdown: 0.30,
-      simulations: 10000,
-    });
-
-    setMonteCarloResult(result);
   };
 
 
@@ -2119,7 +2104,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
             </div>
           </div>
           <div style={{ marginTop: "0.3rem", color: "#4b5563", fontSize: "0.7rem" }}>
-            Priors LP (Damodaran 2024): BTC 15% · Semis 14% · MSCI Mom 11% · Uranio 10% · EM 8% · Gold 6% · REITs 9% — shrinkage 65% hacia prior, 35% histórico Yahoo.
+            Priors LP (Damodaran 2024): BTC 15% · Semis 14% · MSCI Quality 11% · Uranio 10% · EM 8% · Gold 6% · NASDAQ 100 9% — shrinkage 65% hacia prior, 35% histórico Yahoo.
           </div>
         </div>
 
@@ -2629,8 +2614,8 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         </div>
       )}
 
-      {/* Modo Ataque — 5 señales de confluencia de fondo */}
-      {smartDCAResult.attackConfluence > 0 || smartDCAResult.btcCycleConfluence > 0 && (
+      {/* Modo Ataque */}
+      {smartDCAResult.attackConfluence > 0 && (
         <div style={{
           ...styles.card,
           border: smartDCAResult.attackMode ? "2px solid #22c55e" : "1px solid #374151",
@@ -2645,17 +2630,17 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
               backgroundColor: smartDCAResult.attackConfluence >= 4 ? "#14532d" : smartDCAResult.attackConfluence >= 3 ? "#065f46" : smartDCAResult.attackConfluence >= 2 ? "#1e3a5f" : "#374151",
               color: "#fff",
             }}>
-              {smartDCAResult.attackConfluence}/5 señales · Tramo {smartDCAResult.attackTranche || "—"}
+              {smartDCAResult.attackConfluence}/7 señales · Tramo {smartDCAResult.attackTranche || "—"}
               {smartDCAResult.attackMultiplier > 1 && ` · ×${smartDCAResult.attackMultiplier} DCA`}
               {smartDCAResult.action === "BTC_CYCLE_OVERRIDE" && " · ⚡ OVERRIDE"}
             </div>
           </div>
-          {/* BTC Cycle Override (7 señales on-chain) — separado del modo ataque (5 señales macro) */}
+          {/* Indicador de progreso hacia BTC_CYCLE_OVERRIDE */}
           <div style={{ marginBottom: "0.75rem", padding: "0.5rem 0.75rem", borderRadius: 8, backgroundColor: "#0f172a", border: "1px solid #1e3a5f", fontSize: "0.75rem", color: "#6b7280" }}>
             <span style={{ color: "#60a5fa" }}>⚡ Motor B (BTC Ciclo): </span>
-            {smartDCAResult.btcCycleOverrideActive || smartDCAResult.btcCycleConfluence >= 4
-              ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult.btcCycleConfluence}/7 señales on-chain superan umbral de override</span>
-              : <span>Necesita {Math.max(0, 4 - smartDCAResult.btcCycleConfluence)} señal(es) más para override (≥4/7 on-chain)</span>
+            {smartDCAResult.attackConfluence >= 4
+              ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult.attackConfluence}/7 señales superan umbral de override</span>
+              : <span>Necesita {4 - smartDCAResult.attackConfluence} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS macro si ≥4/7)</span>
             }
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.6rem", marginBottom: "1rem" }}>
