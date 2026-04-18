@@ -476,8 +476,34 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const DAYS_3M  = 63;
   const DAYS_1M  = 21;
 
+  // Mapa de proxies americanos para ETFs europeos con historia corta
+  // Cuando el ETF europeo tiene pocos datos en Yahoo, usamos el proxy
+  const PROXY_FALLBACK: Partial<Record<string, string>> = {
+    'URNU.DE': 'URA',    // Global X Uranium UCITS → Global X Uranium ETF (US)
+    'VVSM.DE': 'SMH',    // VanEck Semiconductor → SOXX/SMH
+    'EMXC.DE': 'EEM',    // EM ex-China → EEM
+    'IS3Q.DE': 'QUAL',   // MSCI Quality → iShares MSCI USA Quality
+    'PPFB.DE': 'GLD',    // Gold ETC → GLD
+    'XNAS.DE': 'QQQ',    // NASDAQ 100 → QQQ
+  };
+
+  const getCloses = (ticker: string, minLen: number): number[] => {
+    const direct = closesHistory[ticker] ?? [];
+    if (direct.length >= minLen) return direct;
+    // Fallback al proxy americano si hay datos insuficientes
+    const proxyTicker = PROXY_FALLBACK[ticker];
+    if (proxyTicker) {
+      const proxyData = yfData[proxyTicker];
+      if (proxyData) {
+        const proxyCloses = cleanCloses(proxyData.closes);
+        if (proxyCloses.length >= minLen) return proxyCloses;
+      }
+    }
+    return direct; // devolver lo que hay aunque sea corto
+  };
+
   const returns12m = ASSETS.map(ticker => {
-    const closes = closesHistory[ticker];
+    const closes = getCloses(ticker, DAYS_12M + 1);
     if (closes.length < DAYS_12M + 1) return 0;
     const start = closes[closes.length - DAYS_12M - 1];
     const end   = closes[closes.length - 1];
@@ -485,7 +511,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   });
 
   const returns3m = ASSETS.map(ticker => {
-    const closes = closesHistory[ticker];
+    const closes = getCloses(ticker, DAYS_3M + 1);
     if (closes.length < DAYS_3M + 1) return 0;
     const start = closes[closes.length - DAYS_3M - 1];
     const end   = closes[closes.length - 1];
@@ -493,7 +519,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   });
 
   const returns1m = ASSETS.map(ticker => {
-    const closes = closesHistory[ticker];
+    const closes = getCloses(ticker, DAYS_1M + 1);
     if (closes.length < DAYS_1M + 1) return 0;
     const start = closes[closes.length - DAYS_1M - 1];
     const end   = closes[closes.length - 1];

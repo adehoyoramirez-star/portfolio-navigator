@@ -256,7 +256,15 @@ const InstitutionalDashboard: React.FC = () => {
     ollamaModel?: string;
   } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [ollamaModel, setOllamaModel] = useState<string>('llama3.2');
+  const [ollamaModel, setOllamaModel] = useState<string>('llama3.1:8b');
+  const [telegramStatus, setTelegramStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
+  const [telegramError, setTelegramError] = useState<string>('');
+  // Liquidez defensiva acumulada — capital guardado cuando DCA está bloqueado (BLOCK_CRISIS/VOL)
+  // Se incrementa automáticamente cada vez que el motor bloquea la aportación mensual.
+  // El motor la despliega en Modo Ataque: 10% Tramo1 · 35% Tramo2 · 80% Tramo3.
+  const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
+    try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
+  });
 
   // Señales de techo de ciclo — inputs específicos por activo
   const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);
@@ -449,11 +457,15 @@ const InstitutionalDashboard: React.FC = () => {
       const json = await res.json();
       const models: string[] = (json.models ?? []).map((m: any) => m.name as string);
       if (models.length === 0) return ollamaModel;
-      // Preferencia: modelos más capaces para análisis financiero
-      const preferred = ['llama3.3', 'llama3.2', 'llama3.1', 'llama3', 'mistral', 'mixtral', 'qwen2.5', 'deepseek-r1'];
+      // Preferencia explícita: llama3.1:8b primero (modelo confirmado disponible),
+      // luego los más capaces para análisis financiero
+      const preferred = ['llama3.1:8b', 'llama3.1', 'llama3.3', 'llama3.2', 'llama3', 'mistral', 'mixtral', 'qwen2.5', 'deepseek-r1'];
       for (const p of preferred) {
-        const found = models.find(m => m.startsWith(p));
-        if (found) return found;
+        // Coincidencia exacta primero, luego por prefijo
+        const exact = models.find(m => m === p);
+        if (exact) return exact;
+        const prefix = models.find(m => m.startsWith(p));
+        if (prefix) return prefix;
       }
       return models[0]; // usar el primero disponible
     } catch {
@@ -936,6 +948,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       tailRiskActive: engineResult?.tailRiskActive ?? false,
       tailRiskOverlay: engineResult?.tailRiskOverlay ?? 1.0,
       availableCash: totalCashForDCA,
+      accumulatedDefensiveLiquidity: defensiveLiquidity,
       motorAllocations: engineResult?.allocations.map(a => {
         const asset = portfolio.assets.find(pa => pa.name === a.name);
         return {
@@ -948,11 +961,42 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       cewsOutput: cewsResult ?? undefined,
       cewsPreviousLevel,
     });
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, monthlyInjection, portfolio.assets, cewsResult, cewsPreviousLevel]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, monthlyInjection, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity]);
 
   const dcaAction  = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
   const availableCash = dcaBlocked ? cashReserve : cashReserve + monthlyInjection;
+
+  // ── AUTO-ACUMULACIÓN DE LIQUIDEZ DEFENSIVA ─────────────────────────────
+  // Cuando el motor bloquea el DCA, la aportación mensual se guarda como
+  // "pólvora seca" para desplegarse en Modo Ataque (Tramo 1-2-3).
+  // El capital se descuenta automáticamente cuando el motor entra en ataque.
+  const defensiveLiquidityRef = React.useRef<boolean>(false);
+  React.useEffect(() => {
+    if (!engineResult) return;
+    if (dcaBlocked && monthlyInjection > 0) {
+      // Solo acumular una vez por sesión de bloqueo (no en cada render)
+      if (!defensiveLiquidityRef.current) {
+        defensiveLiquidityRef.current = true;
+        setDefensiveLiquidity(prev => {
+          const next = Math.round((prev + monthlyInjection) * 100) / 100;
+          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
+          return next;
+        });
+      }
+    } else {
+      defensiveLiquidityRef.current = false;
+      // Cuando el motor despliega en ataque, descontar lo que realmente se invirtió
+      if (smartDCAResult.attackMode && smartDCAResult.totalCashToInvest > 0) {
+        setDefensiveLiquidity(prev => {
+          const deployed = Math.min(prev, smartDCAResult.totalCashToInvest * 0.8);
+          const next = Math.max(0, Math.round((prev - deployed) * 100) / 100);
+          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
+          return next;
+        });
+      }
+    }
+  }, [dcaBlocked, engineResult?.regime]);
 
   const rebalanceFinal = useMemo(() => {
     if (!engineResult || engineResult.regime === "ALL_CASH") return null;
@@ -1224,31 +1268,53 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         <button
           onClick={async () => {
             if (!engineResult) return;
-            const totalVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
-            await supabase.functions.invoke('telegram-alerts', {
-              body: {
-                type: 'daily_summary',
-                currentRegime: engineResult.regime,
-                regimePenalty: engineResult.masterRegime.regimePenalty,
-                confidence: engineResult.meta.confidence,
-                portfolioValue: totalVal,
-                portfolioDrawdown: portfolioDrawdown ?? 0,
-                fearGreed: fearGreedIndex?.value ?? undefined,
-                fearGreedLabel: fearGreedIndex?.label ?? undefined,
-                btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price,
-                btcDominance,
-                allocations: engineResult.allocations.map(a => ({ name: a.name, pct: a.finalAllocation })),
-                muEffective: Math.min(0.15, expectedReturn),
-                geminiNarrative: aiIntelligence?.gemini?.regimeNarrative ?? undefined,
-              },
-            });
+            setTelegramStatus('sending');
+            setTelegramError('');
+            try {
+              const totalVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
+              const { error } = await supabase.functions.invoke('telegram-alerts', {
+                body: {
+                  type: 'daily_summary',
+                  currentRegime: engineResult.regime,
+                  regimePenalty: engineResult.masterRegime.regimePenalty,
+                  confidence: engineResult.meta.confidence,
+                  portfolioValue: totalVal,
+                  portfolioDrawdown: portfolioDrawdown ?? 0,
+                  fearGreed: fearGreedIndex?.value ?? undefined,
+                  fearGreedLabel: fearGreedIndex?.label ?? undefined,
+                  btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price,
+                  btcDominance,
+                  allocations: engineResult.allocations.map(a => ({ name: a.name, pct: a.finalAllocation })),
+                  muEffective: Math.min(0.15, expectedReturn),
+                  aiNarrative: aiIntelligence?.gemini?.regimeNarrative ?? undefined,
+                },
+              });
+              if (error) throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
+              setTelegramStatus('ok');
+              setTimeout(() => setTelegramStatus('idle'), 4000);
+            } catch (e: any) {
+              const msg = e?.message ?? String(e);
+              setTelegramError(msg.slice(0, 120));
+              setTelegramStatus('error');
+              setTimeout(() => setTelegramStatus('idle'), 6000);
+            }
           }}
-          disabled={!engineResult}
-          style={{ ...styles.button, backgroundColor: "#0a7d4f", fontSize: "0.8rem", opacity: !engineResult ? 0.5 : 1 }}
+          disabled={!engineResult || telegramStatus === 'sending'}
+          style={{
+            ...styles.button,
+            backgroundColor: telegramStatus === 'ok' ? '#059669' : telegramStatus === 'error' ? '#b91c1c' : '#0a7d4f',
+            fontSize: '0.8rem',
+            opacity: !engineResult ? 0.5 : 1,
+          }}
           title="Enviar resumen del portfolio a Telegram"
         >
-          📱 Resumen Telegram
+          {telegramStatus === 'sending' ? '⏳ Enviando...' : telegramStatus === 'ok' ? '✅ Enviado' : telegramStatus === 'error' ? '❌ Error' : '📱 Resumen Telegram'}
         </button>
+        {telegramStatus === 'error' && telegramError && (
+          <div style={{ color: '#fca5a5', fontSize: '0.72rem', marginTop: '0.25rem', maxWidth: 260 }}>
+            ⚠️ {telegramError}
+          </div>
+        )}
 
         <button
           onClick={() => { clearAll(); window.location.reload(); }}
@@ -1261,11 +1327,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
             <span style={{ color: "#818cf8" }}>
               ✓ AI {aiIntelligence.cacheHit ? "(caché)" : ""}
               {" · "}{new Date(aiIntelligence.fetchedAt).toLocaleTimeString("es-ES")}
-              {" · "}{[
-                aiIntelligence.gemini && "Gemini",
-                aiIntelligence.grok && "Grok",
-                aiIntelligence.claude && "Claude",
-              ].filter(Boolean).join(" · ")}
+              {" · 🦙 "}{aiIntelligence.ollamaModel ?? ollamaModel}
             </span>
           )}
         </span>
@@ -2180,9 +2242,51 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       </div>
 
       {/* Caja y aportaciones */}
-      <div style={{ ...styles.card, display: "flex", gap: "2rem", alignItems: "center", flexWrap: "wrap" }}>
-        <div><label htmlFor="cashReserve" style={styles.label}>Caja de reserva (€)</label><input id="cashReserve" name="cashReserve" type="number" value={cashReserve} onChange={(e) => setCashReserve(Number(e.target.value))} style={styles.input} /></div>
-        <div><label htmlFor="monthlyInjection" style={styles.label}>Aportación mensual (€)</label><input id="monthlyInjection" name="monthlyInjection" type="number" value={monthlyInjection} onChange={(e) => setMonthlyInjection(Number(e.target.value))} style={styles.input} /></div>
+      <div style={{ ...styles.card, display: "flex", gap: "2rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div>
+          <label htmlFor="cashReserve" style={styles.label}>Caja de reserva (€)</label>
+          <input id="cashReserve" name="cashReserve" type="number" value={cashReserve}
+            onChange={(e) => setCashReserve(Number(e.target.value))} style={styles.input} />
+          <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
+            Cash disponible para DCA ahora mismo
+          </p>
+        </div>
+        <div>
+          <label htmlFor="monthlyInjection" style={styles.label}>Aportación mensual (€)</label>
+          <input id="monthlyInjection" name="monthlyInjection" type="number" value={monthlyInjection}
+            onChange={(e) => setMonthlyInjection(Number(e.target.value))} style={styles.input} />
+          <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
+            Lo que aportas cada mes al portfolio
+          </p>
+        </div>
+        <div style={{ borderLeft: "2px solid #16a34a", paddingLeft: "1rem" }}>
+          <label htmlFor="defensiveLiqInput" style={{ ...styles.label, color: "#4ade80" }}>
+            💰 Liquidez defensiva acumulada (€)
+          </label>
+          <input
+            id="defensiveLiqInput"
+            name="defensiveLiqInput"
+            type="number"
+            value={defensiveLiquidity}
+            min={0}
+            step={50}
+            onChange={(e) => {
+              const val = Math.max(0, Number(e.target.value));
+              setDefensiveLiquidity(val);
+              try { localStorage.setItem('olympus_defensive_liq', String(val)); } catch {}
+            }}
+            style={{ ...styles.input, borderColor: "#16a34a", backgroundColor: "#052e16" }}
+          />
+          <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "160px" }}>
+            Cash guardado durante meses de bloqueo DCA. Para ti ahora: <strong>1.500€</strong> para el ataque de oct 2026.
+          </p>
+          {defensiveLiquidity > 0 && (
+            <div style={{ marginTop: "6px", fontSize: "0.7rem", color: "#86efac" }}>
+              Tramo 2 desplegará: <strong>€{Math.round(defensiveLiquidity * 0.35).toLocaleString("es-ES")}</strong>
+              {" · "}Tramo 3: <strong>€{Math.round(defensiveLiquidity * 0.80).toLocaleString("es-ES")}</strong>
+            </div>
+          )}
+        </div>
         <div>
           <p><strong>Valor total cartera:</strong> {formatCurrency(totalPortfolioValue)}</p>
           <p><strong>Objetivo:</strong> {formatCurrency(portfolio.targetGoal)}</p>
@@ -2550,7 +2654,23 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
           <h2>⚖️ Rebalanceo — Motor Olympus</h2>
           {dcaBlocked && (
             <div style={{ background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '6px', padding: '0.6rem 1rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#fca5a5' }}>
-              ⛔ DCA {dcaAction} — La aportación mensual de €{monthlyInjection.toFixed(0)} está congelada como liquidez defensiva.
+              <div>⛔ DCA {dcaAction} — La aportación mensual de €{monthlyInjection.toFixed(0)} está congelada como liquidez defensiva.</div>
+              <div style={{ marginTop: '0.4rem', color: '#fde68a', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span>💰 Acumulado: <strong>€{defensiveLiquidity.toFixed(0)}</strong></span>
+                <span style={{ color: '#9ca3af' }}>·</span>
+                <span>Objetivo Tramo 2: <strong>€{(monthlyInjection * 2).toFixed(0)}–€{(monthlyInjection * 3).toFixed(0)}</strong></span>
+                {defensiveLiquidity > 0 && (
+                  <button
+                    onClick={() => { setDefensiveLiquidity(0); try { localStorage.removeItem('olympus_defensive_liq'); } catch {} }}
+                    style={{ marginLeft: 'auto', fontSize: '0.7rem', padding: '0.1rem 0.5rem', background: '#450a0a', border: '1px solid #ef4444', borderRadius: 4, color: '#fca5a5', cursor: 'pointer' }}
+                  >Resetear</button>
+                )}
+              </div>
+              {defensiveLiquidity >= monthlyInjection && (
+                <div style={{ marginTop: '0.3rem', color: '#86efac', fontSize: '0.75rem' }}>
+                  ✅ {Math.floor(defensiveLiquidity / monthlyInjection)} mes(es) acumulado(s) — {defensiveLiquidity >= monthlyInjection * 2 ? 'Listo para Tramo 2 cuando el motor cambie a ATAQUE' : 'Acumulando para Tramo 2'}
+                </div>
+              )}
             </div>
           )}
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "1rem" }}>
