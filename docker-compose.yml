@@ -1,0 +1,60 @@
+services:
+
+  # ─────────────────────────────────────────────
+  # SUPABASE LOCAL (opcional desarrollo)
+  # ─────────────────────────────────────────────
+  supabase-db:
+    image: supabase/postgres:15.1.0.117
+    container_name: olympus-supabase
+    restart: unless-stopped
+    ports:
+      - "54322:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - supabase-data:/var/lib/postgresql/data
+    networks:
+      - olympus-network
+
+  # ─────────────────────────────────────────────
+  # REDIS (cache + señales)
+  # ─────────────────────────────────────────────
+  redis-cache:
+    image: redis:7-alpine
+    container_name: olympus-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - olympus-network
+
+  # ─────────────────────────────────────────────
+  # IBKR PLACEHOLDER (NO DOCKER OFICIAL)
+  # ─────────────────────────────────────────────
+  ibkr-bridge:
+    image: alpine
+    container_name: olympus-ibkr-bridge
+    command: ["sh", "-c", "echo 'IBKR runs externally on Windows Gateway (port 4001)' && sleep 3600"]
+    restart: unless-stopped
+    networks:
+      - olympus-network
+
+# ─────────────────────────────────────────────
+# NETWORK
+# ─────────────────────────────────────────────
+networks:
+  olympus-network:
+    driver: bridge
+
+# ─────────────────────────────────────────────
+# VOLUMES
+# ─────────────────────────────────────────────
+volumes:
+  supabase-data:
+    driver: local
+  redis-data:
+    driver: local

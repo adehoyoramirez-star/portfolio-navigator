@@ -323,8 +323,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
   }
 
-  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven } = response;
-
+  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven, fundamentals: yfFundamentals } = response;
   // M2 real de FRED
   const m2Growth = fredM2?.growthYoY ?? 5.2;
 

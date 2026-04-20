@@ -1,0 +1,601 @@
+// ============================================================
+// src/dashboard/TacticalDashboard.tsx
+// Dashboard del Motor Táctico Olympus
+// ============================================================
+
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { supabase } from './supabaseClient';
+import type {
+  TacticalEngineState, TacticalOpportunity,
+  TacticalPosition, TacticalConfig,
+} from '@/core/tactical/types';
+import {
+  initTacticalState, loadTacticalState, saveTacticalState,
+  openPosition, closePosition, updatePositionPrices,
+  getTacticalSummary,
+} from '@/core/tactical/tacticalPortfolio';
+import {
+  runTacticalScreener, defaultTacticalConfig,
+} from '@/core/tactical/tacticalScreener';
+
+// ── Estilos base ─────────────────────────────────────────────
+const S: Record<string, React.CSSProperties> = {
+  page:    { background:'#0f172a', minHeight:'100vh', color:'#e2e8f0', fontFamily:'system-ui,sans-serif', padding:'1.5rem' },
+  card:    { background:'#1e293b', border:'1px solid #334155', borderRadius:12, padding:'1.25rem', marginBottom:'1rem' },
+  cardG:   { background:'#1e293b', border:'2px solid #16a34a', borderRadius:12, padding:'1.25rem', marginBottom:'1rem' },
+  cardR:   { background:'#1e293b', border:'1px solid #ef4444', borderRadius:12, padding:'1.25rem', marginBottom:'1rem' },
+  cardB:   { background:'#1e293b', border:'1px solid #3b82f6', borderRadius:12, padding:'1.25rem', marginBottom:'1rem' },
+  h2:      { fontSize:'1rem', fontWeight:700, color:'#f8fafc', marginBottom:'0.75rem', margin:0 },
+  h3:      { fontSize:'0.85rem', fontWeight:700, color:'#94a3b8', letterSpacing:'0.05em', textTransform:'uppercase', margin:'0 0 0.5rem' },
+  mGrid:   { display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:'0.6rem', marginBottom:'1rem' },
+  metric:  { background:'#0f172a', borderRadius:8, padding:'0.75rem 1rem', textAlign:'center', border:'1px solid #1e293b' },
+  mVal:    { fontSize:'1.2rem', fontWeight:700, color:'#f8fafc' },
+  mLbl:    { fontSize:'0.65rem', color:'#64748b', marginTop:2 },
+  btn:     { padding:'0.5rem 1rem', borderRadius:6, fontWeight:700, cursor:'pointer', fontSize:'0.8rem', border:'none', transition:'opacity .15s' },
+  btnB:    { background:'#1d4ed8', color:'#fff' },
+  btnG:    { background:'#15803d', color:'#fff' },
+  btnR:    { background:'#b91c1c', color:'#fff' },
+  btnGr:   { background:'#334155', color:'#94a3b8' },
+  badge:   { display:'inline-block', padding:'2px 8px', borderRadius:4, fontSize:'0.7rem', fontWeight:700 },
+  input:   { background:'#0f172a', border:'1px solid #334155', borderRadius:6, color:'#f8fafc', fontSize:'0.8rem', padding:'0.4rem 0.6rem', width:'100%' },
+  table:   { width:'100%', borderCollapse:'collapse' as const, fontSize:'0.78rem' },
+  th:      { textAlign:'left' as const, padding:'6px 8px', background:'#0f172a', color:'#64748b', fontWeight:700, fontSize:'0.7rem', borderBottom:'1px solid #334155' },
+  td:      { padding:'6px 8px', borderBottom:'1px solid #1e293b', color:'#e2e8f0', verticalAlign:'top' as const },
+};
+
+const clr = (v: number) => v >= 0 ? '#22c55e' : '#ef4444';
+const pct = (v: number, d = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`;
+const eur = (v: number) => `€${Math.round(v).toLocaleString('es-ES')}`;
+
+const typeColors: Record<string, string> = {
+  BLOOD_IN_STREETS:  '#ef4444',
+  MEAN_REVERSION:    '#3b82f6',
+  MOMENTUM_BREAKOUT: '#22c55e',
+  OVERSOLD_BOUNCE:   '#f59e0b',
+  SECTOR_ROTATION:   '#a78bfa',
+  EVENT_DRIVEN:      '#f97316',
+};
+const typeLabels: Record<string, string> = {
+  BLOOD_IN_STREETS:  '🩸 Blood Streets',
+  MEAN_REVERSION:    '↩ Mean Revert',
+  MOMENTUM_BREAKOUT: '🚀 Breakout',
+  OVERSOLD_BOUNCE:   '↑ Rebote',
+  SECTOR_ROTATION:   '🔄 Rotación',
+  EVENT_DRIVEN:      '⚡ Evento',
+};
+
+// ════════════════════════════════════════════════════════════
+// COMPONENTE PRINCIPAL
+// ════════════════════════════════════════════════════════════
+export default function TacticalDashboard() {
+  const [state, setState] = useState<TacticalEngineState>(() => {
+    const saved = loadTacticalState();
+    return saved ?? initTacticalState(defaultTacticalConfig(300, 600));
+  });
+  const [loading, setLoading]     = useState(false);
+  const [tab, setTab]             = useState<'opportunities' | 'positions' | 'history' | 'config'>('opportunities');
+  const [error, setError]         = useState<string | null>(null);
+  const [lastRun, setLastRun]     = useState<string | null>(state.lastScreened);
+  const [confirmClose, setConfirmClose] = useState<string | null>(null);
+
+  // Config local editable
+  const [cfgCapital, setCfgCapital]   = useState(state.config.tacticalCapitalEur);
+  const [cfgMinScore, setCfgMinScore] = useState(state.config.minScore);
+  const [cfgMinRR, setCfgMinRR]       = useState(state.config.minRiskReward);
+  const [cfgMaxPos, setCfgMaxPos]     = useState(state.config.maxOpenPositions);
+  const [cfgRiskPct, setCfgRiskPct]   = useState(state.config.riskPerTradePct * 100);
+  const [cfgMA200, setCfgMA200]       = useState(state.config.requireAboveMA200);
+
+  // Persistir al cambiar estado
+  useEffect(() => { saveTacticalState(state); }, [state]);
+
+  const summary = useMemo(() => getTacticalSummary(state), [state]);
+
+  // ── Ejecutar screener ──────────────────────────────────────
+  const runScreener = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const result = await runTacticalScreener(supabase, state.config);
+      setState(prev => ({
+        ...prev,
+        opportunities: result.opportunities,
+        lastScreened:  result.screennedAt,
+      }));
+      setLastRun(result.screennedAt);
+      if (result.errors.length > 0) {
+        setError(`Datos parciales (${result.errors.length} activos sin datos)`);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Error en el screener');
+    } finally {
+      setLoading(false);
+    }
+  }, [state.config]);
+
+  // ── Abrir posición ─────────────────────────────────────────
+  const handleOpen = useCallback((opp: TacticalOpportunity) => {
+    setState(prev => {
+      const next = openPosition(prev, opp);
+      return next;
+    });
+  }, []);
+
+  // ── Cerrar posición ────────────────────────────────────────
+  const handleClose = useCallback((posId: string, exitPrice: number, reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL') => {
+    setState(prev => closePosition(prev, posId, exitPrice, reason));
+    setConfirmClose(null);
+  }, []);
+
+  // ── Aplicar config ─────────────────────────────────────────
+  const applyConfig = useCallback(() => {
+    const newConfig: TacticalConfig = {
+      ...state.config,
+      tacticalCapitalEur:   cfgCapital,
+      minScore:             cfgMinScore,
+      minRiskReward:        cfgMinRR,
+      maxOpenPositions:     cfgMaxPos,
+      riskPerTradePct:      cfgRiskPct / 100,
+      requireAboveMA200:    cfgMA200,
+    };
+    setState(prev => ({ ...prev, config: newConfig }));
+  }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200, state.config]);
+
+  // ── Render oportunidad ─────────────────────────────────────
+  const OpportunityCard = ({ opp }: { opp: TacticalOpportunity }) => {
+    const alreadyOpen = state.openPositions.some(p => p.ticker === opp.asset.ticker);
+    const canOpen     = !alreadyOpen && state.capitalAvailable >= opp.entryPrice;
+    const tc          = typeColors[opp.type] ?? '#64748b';
+    const riskEur     = (opp.entryPrice - opp.stopLoss) *
+      Math.max(1, Math.floor(state.config.tacticalCapitalEur * state.config.riskPerTradePct / (opp.entryPrice - opp.stopLoss)));
+
+    return (
+      <div style={{ ...S.card, borderLeft:`3px solid ${tc}`, marginBottom:'0.75rem' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'0.6rem' }}>
+          <div>
+            <span style={{ fontWeight:700, fontSize:'1rem', color:'#f8fafc' }}>{opp.asset.ticker}</span>
+            <span style={{ color:'#64748b', fontSize:'0.75rem', marginLeft:8 }}>{opp.asset.name}</span>
+            <span style={{ ...S.badge, background:tc+'22', color:tc, marginLeft:8 }}>
+              {typeLabels[opp.type]}
+            </span>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+            <div style={{ background:'#0f172a', borderRadius:20, width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', border:`2px solid ${opp.score >= 70 ? '#22c55e' : '#f59e0b'}` }}>
+              <span style={{ fontWeight:700, fontSize:'0.8rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{opp.score}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, marginBottom:'0.6rem' }}>
+          {[
+            ['Entrada', `€${opp.entryPrice.toFixed(2)}`],
+            ['Stop Loss', `€${opp.stopLoss.toFixed(2)}`],
+            ['TP1', `€${opp.takeProfit1.toFixed(2)}`],
+            ['R:R', `${opp.riskReward.toFixed(1)}:1`],
+          ].map(([l, v]) => (
+            <div key={l} style={{ background:'#0f172a', borderRadius:6, padding:'5px 8px', textAlign:'center' }}>
+              <div style={{ fontSize:'0.6rem', color:'#64748b' }}>{l}</div>
+              <div style={{ fontSize:'0.82rem', fontWeight:700, color:'#e2e8f0' }}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Señales activas */}
+        <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginBottom:'0.6rem' }}>
+          {opp.activeSignals.map(s => (
+            <span key={s.type} style={{ ...S.badge, background:'#0f172a', color: s.strength === 'EXTREME' ? '#ef4444' : s.strength === 'STRONG' ? '#f59e0b' : '#60a5fa', border:`1px solid #334155` }}>
+              {s.type.replace('_',' ')} {s.score}
+            </span>
+          ))}
+        </div>
+
+        <div style={{ fontSize:'0.72rem', color:'#64748b', marginBottom:'0.6rem', lineHeight:1.5 }}>
+          {opp.asset.indicators && (
+            <>RSI(2)={opp.asset.indicators.rsi2.toFixed(1)} · RSI(14)={opp.asset.indicators.rsi14.toFixed(1)} · Z={opp.asset.indicators.zScore20.toFixed(2)} · Vol×{opp.asset.indicators.volumeRatio.toFixed(1)} · ATR={opp.asset.indicators.atrPct.toFixed(1)}%</>
+          )}
+        </div>
+
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <span style={{ fontSize:'0.7rem', color:'#475569' }}>
+            Riesgo estimado: ~{eur(riskEur)} · Capital: ~{eur(opp.entryPrice * Math.max(1, Math.floor(state.config.tacticalCapitalEur * state.config.maxCapitalPerTrade / opp.entryPrice)))}
+          </span>
+          {alreadyOpen ? (
+            <span style={{ ...S.badge, background:'#1e3a5f', color:'#60a5fa' }}>Ya abierta</span>
+          ) : (
+            <button
+              style={{ ...S.btn, ...S.btnG, opacity: canOpen ? 1 : 0.4 }}
+              disabled={!canOpen}
+              onClick={() => handleOpen(opp)}
+            >
+              ⚡ Abrir posición
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // ── Render posición abierta ────────────────────────────────
+  const PositionRow = ({ pos }: { pos: TacticalPosition }) => {
+    const [exitP, setExitP] = useState(pos.currentPrice.toFixed(2));
+    const pnlColor = clr(pos.unrealizedPnL);
+    const nearSL   = pos.currentPrice <= pos.stopLoss * 1.03;
+    const nearTP   = pos.currentPrice >= pos.takeProfit1 * 0.97;
+
+    return (
+      <tr style={{ background: nearSL ? '#1c0505' : nearTP ? '#052e16' : 'transparent' }}>
+        <td style={S.td}>
+          <div style={{ fontWeight:700 }}>{pos.ticker}</div>
+          <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{pos.name}</div>
+          <span style={{ ...S.badge, background: typeColors[pos.type]+'22', color: typeColors[pos.type], marginTop:3 }}>
+            {typeLabels[pos.type]}
+          </span>
+        </td>
+        <td style={S.td}>
+          <div>€{pos.entryPrice.toFixed(2)}</div>
+          <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{pos.shares} uds</div>
+        </td>
+        <td style={S.td}>
+          <div style={{ fontWeight:700 }}>€{pos.currentPrice.toFixed(2)}</div>
+        </td>
+        <td style={S.td}>
+          <div style={{ color:pnlColor, fontWeight:700 }}>
+            {pos.unrealizedPnL >= 0 ? '+' : ''}{eur(pos.unrealizedPnL)}
+          </div>
+          <div style={{ fontSize:'0.7rem', color:pnlColor }}>
+            {pct(pos.unrealizedPnLPct)}
+          </div>
+        </td>
+        <td style={S.td}>
+          <div style={{ color:'#ef4444', fontSize:'0.75rem' }}>SL €{pos.stopLoss.toFixed(2)}</div>
+          <div style={{ color:'#22c55e', fontSize:'0.75rem' }}>TP1 €{pos.takeProfit1.toFixed(2)}</div>
+        </td>
+        <td style={S.td}>
+          <div style={{ color: pos.daysOpen >= pos.maxDaysAllowed - 2 ? '#f59e0b' : '#94a3b8' }}>
+            Día {pos.daysOpen}/{pos.maxDaysAllowed}
+          </div>
+        </td>
+        <td style={{ ...S.td, minWidth:200 }}>
+          <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+            <input
+              style={{ ...S.input, width:80 }}
+              type="number"
+              value={exitP}
+              onChange={e => setExitP(e.target.value)}
+              step="0.01"
+            />
+            <button style={{ ...S.btn, ...S.btnG, padding:'4px 8px', fontSize:'0.7rem' }}
+              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_TP')}>
+              TP
+            </button>
+            <button style={{ ...S.btn, ...S.btnR, padding:'4px 8px', fontSize:'0.7rem' }}
+              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_SL')}>
+              SL
+            </button>
+            <button style={{ ...S.btn, ...S.btnGr, padding:'4px 8px', fontSize:'0.7rem' }}
+              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_MANUAL')}>
+              M
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  // ══════════════════════════════════════════════════════════
+  // RENDER PRINCIPAL
+  // ══════════════════════════════════════════════════════════
+  return (
+    <div style={S.page}>
+      {/* Cabecera */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'1.25rem' }}>
+        <div>
+          <h1 style={{ margin:0, fontSize:'1.3rem', fontWeight:800, color:'#f8fafc' }}>
+            ⚡ Motor Táctico Olympus
+          </h1>
+          <p style={{ margin:0, fontSize:'0.72rem', color:'#64748b' }}>
+            Blood in the streets · Mean reversion · Momentum breakout
+            {lastRun && ` · Último scan: ${new Date(lastRun).toLocaleTimeString('es-ES')}`}
+          </p>
+        </div>
+        <div style={{ display:'flex', gap:8 }}>
+          <button
+            style={{ ...S.btn, ...S.btnB, opacity: loading ? 0.6 : 1 }}
+            onClick={runScreener}
+            disabled={loading}
+          >
+            {loading ? '⏳ Escaneando...' : '🔍 Escanear mercado'}
+          </button>
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div style={{ background:'#450a0a', border:'1px solid #ef4444', borderRadius:8, padding:'0.6rem 1rem', marginBottom:'1rem', fontSize:'0.78rem', color:'#fca5a5' }}>
+          ⚠️ {error}
+        </div>
+      )}
+
+      {/* Alertas de acción */}
+      {summary.alertsToAction.length > 0 && (
+        <div style={{ background:'#422006', border:'1px solid #f59e0b', borderRadius:8, padding:'0.75rem 1rem', marginBottom:'1rem' }}>
+          <div style={{ fontWeight:700, color:'#fcd34d', fontSize:'0.8rem', marginBottom:4 }}>🔔 Alertas ({summary.alertsToAction.length})</div>
+          {summary.alertsToAction.map((a, i) => (
+            <div key={i} style={{ fontSize:'0.75rem', color:'#fde68a', marginTop:2 }}>{a}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Métricas resumen */}
+      <div style={S.mGrid}>
+        {[
+          { l:'Capital táctico', v:eur(state.config.tacticalCapitalEur), c:'#60a5fa' },
+          { l:'Disponible',      v:eur(summary.capitalAvailable),        c:'#22c55e' },
+          { l:'En posiciones',   v:eur(summary.capitalUsed),             c:'#f59e0b' },
+          { l:'PnL no realizado',v:eur(summary.unrealizedPnL),           c:clr(summary.unrealizedPnL) },
+          { l:'PnL realizado',   v:eur(summary.realizedPnL),             c:clr(summary.realizedPnL) },
+          { l:'Win rate',        v:`${summary.winRate.toFixed(0)}%`,     c:summary.winRate >= 50 ? '#22c55e' : '#f59e0b' },
+          { l:'Profit factor',   v:summary.profitFactor.toFixed(2),      c:summary.profitFactor >= 1.5 ? '#22c55e' : '#f59e0b' },
+          { l:'Posiciones',      v:`${summary.openCount}/${state.config.maxOpenPositions}`, c:'#e2e8f0' },
+        ].map(m => (
+          <div key={m.l} style={S.metric}>
+            <div style={{ ...S.mVal, color:m.c }}>{m.v}</div>
+            <div style={S.mLbl}>{m.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:'flex', gap:4, marginBottom:'1rem' }}>
+        {(['opportunities','positions','history','config'] as const).map(t => (
+          <button
+            key={t}
+            style={{ ...S.btn, background: tab === t ? '#1d4ed8' : '#1e293b', color: tab === t ? '#fff' : '#64748b', border:'1px solid #334155' }}
+            onClick={() => setTab(t)}
+          >
+            {t === 'opportunities' ? `🎯 Oportunidades (${state.opportunities.length})`
+             : t === 'positions'   ? `📊 Posiciones (${state.openPositions.length})`
+             : t === 'history'     ? `📋 Historial (${state.closedPositions.length})`
+             : '⚙️ Configuración'}
+          </button>
+        ))}
+      </div>
+
+      {/* ── TAB: OPORTUNIDADES ────────────────────────── */}
+      {tab === 'opportunities' && (
+        <div>
+          {state.opportunities.length === 0 ? (
+            <div style={{ ...S.card, textAlign:'center', padding:'3rem' }}>
+              <div style={{ fontSize:'2rem', marginBottom:'1rem' }}>🔍</div>
+              <div style={{ color:'#64748b' }}>
+                {loading ? 'Escaneando el universo de activos...' : 'Pulsa "Escanear mercado" para detectar oportunidades'}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Top picks destacados */}
+              {state.opportunities.filter(o => o.score >= 70).length > 0 && (
+                <div style={{ ...S.cardG, marginBottom:'1rem' }}>
+                  <div style={{ fontWeight:700, color:'#4ade80', marginBottom:'0.5rem' }}>
+                    🏆 TOP PICKS — Score ≥ 70
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(100px,1fr))', gap:6 }}>
+                    {state.opportunities.filter(o => o.score >= 70).slice(0,5).map(o => (
+                      <div key={o.id} style={{ background:'#052e16', borderRadius:8, padding:'8px 12px', textAlign:'center', border:'1px solid #16a34a' }}>
+                        <div style={{ fontWeight:700, fontSize:'0.9rem', color:'#f8fafc' }}>{o.asset.ticker}</div>
+                        <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{typeLabels[o.type]}</div>
+                        <div style={{ fontWeight:700, color:'#22c55e', fontSize:'1rem' }}>{o.score}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Todas las oportunidades */}
+              {state.opportunities.map(opp => (
+                <OpportunityCard key={opp.id} opp={opp} />
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── TAB: POSICIONES ABIERTAS ──────────────────── */}
+      {tab === 'positions' && (
+        <div style={S.card}>
+          {state.openPositions.length === 0 ? (
+            <div style={{ textAlign:'center', padding:'2rem', color:'#64748b' }}>
+              No hay posiciones abiertas. Abre una desde la pestaña Oportunidades.
+            </div>
+          ) : (
+            <div style={{ overflowX:'auto' }}>
+              <table style={S.table}>
+                <thead>
+                  <tr>
+                    {['Activo','Entrada','Precio actual','P&L','SL / TP1','Días','Cerrar'].map(h => (
+                      <th key={h} style={S.th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {state.openPositions.map(pos => (
+                    <PositionRow key={pos.id} pos={pos} />
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background:'#0f172a' }}>
+                    <td colSpan={3} style={{ ...S.td, fontWeight:700, color:'#94a3b8' }}>TOTAL</td>
+                    <td style={{ ...S.td, fontWeight:700, color:clr(summary.unrealizedPnL) }}>
+                      {summary.unrealizedPnL >= 0 ? '+' : ''}{eur(summary.unrealizedPnL)}
+                    </td>
+                    <td colSpan={3} style={S.td}></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TAB: HISTORIAL ───────────────────────────── */}
+      {tab === 'history' && (
+        <div style={S.card}>
+          {state.closedPositions.length === 0 ? (
+            <div style={{ textAlign:'center', padding:'2rem', color:'#64748b' }}>
+              Sin operaciones cerradas todavía.
+            </div>
+          ) : (
+            <div style={{ overflowX:'auto' }}>
+              <table style={S.table}>
+                <thead>
+                  <tr>
+                    {['Activo','Tipo','Entrada','Salida','P&L €','P&L %','Días','Motivo'].map(h => (
+                      <th key={h} style={S.th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...state.closedPositions].reverse().map(pos => (
+                    <tr key={pos.id}>
+                      <td style={S.td}><div style={{ fontWeight:700 }}>{pos.ticker}</div></td>
+                      <td style={S.td}>
+                        <span style={{ ...S.badge, background: typeColors[pos.type]+'22', color: typeColors[pos.type] }}>
+                          {typeLabels[pos.type]}
+                        </span>
+                      </td>
+                      <td style={S.td}>€{pos.entryPrice.toFixed(2)}</td>
+                      <td style={S.td}>€{(pos.exitPrice ?? 0).toFixed(2)}</td>
+                      <td style={{ ...S.td, fontWeight:700, color:clr(pos.realizedPnL ?? 0) }}>
+                        {(pos.realizedPnL ?? 0) >= 0 ? '+' : ''}{eur(pos.realizedPnL ?? 0)}
+                      </td>
+                      <td style={{ ...S.td, color:clr(pos.realizedPnLPct ?? 0) }}>
+                        {pct(pos.realizedPnLPct ?? 0)}
+                      </td>
+                      <td style={S.td}>{pos.daysOpen}d</td>
+                      <td style={S.td}>
+                        <span style={{ ...S.badge,
+                          background: pos.status === 'CLOSED_TP' ? '#052e16' : pos.status === 'CLOSED_SL' ? '#450a0a' : '#1e293b',
+                          color:      pos.status === 'CLOSED_TP' ? '#4ade80' : pos.status === 'CLOSED_SL' ? '#fca5a5' : '#94a3b8',
+                        }}>
+                          {pos.status === 'CLOSED_TP' ? '✅ TP' : pos.status === 'CLOSED_SL' ? '🛑 SL' : pos.status === 'CLOSED_TIME' ? '⏰ Tiempo' : '📤 Manual'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Métricas historial */}
+          {state.closedPositions.length > 0 && (
+            <div style={{ marginTop:'1rem', display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:8 }}>
+              {[
+                { l:'Operaciones', v:state.closedPositions.length },
+                { l:'Ganadoras',   v:state.closedPositions.filter(p => (p.realizedPnL ?? 0) > 0).length },
+                { l:'Perdedoras',  v:state.closedPositions.filter(p => (p.realizedPnL ?? 0) <= 0).length },
+                { l:'Win Rate',    v:`${summary.winRate.toFixed(0)}%` },
+                { l:'Profit Factor', v:summary.profitFactor.toFixed(2) },
+                { l:'PnL Total',   v:eur(summary.realizedPnL) },
+              ].map(m => (
+                <div key={m.l} style={S.metric}>
+                  <div style={{ ...S.mVal, color:'#f8fafc', fontSize:'1rem' }}>{m.v}</div>
+                  <div style={S.mLbl}>{m.l}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TAB: CONFIGURACIÓN ────────────────────────── */}
+      {tab === 'config' && (
+        <div style={S.card}>
+          <h2 style={{ ...S.h2, marginBottom:'1rem' }}>⚙️ Configuración del Motor Táctico</h2>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1rem' }}>
+            {/* Capital */}
+            <div style={{ background:'#0f172a', borderRadius:8, padding:'1rem', border:'1px solid #334155' }}>
+              <div style={S.h3}>Capital y riesgo</div>
+              <div style={{ marginBottom:8 }}>
+                <label style={{ fontSize:'0.75rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                  Capital táctico total (€) <span style={{ color:'#475569' }}>— máx 20% de liquidez defensiva</span>
+                </label>
+                <input style={S.input} type="number" value={cfgCapital} onChange={e => setCfgCapital(+e.target.value)} step={50} min={100} />
+              </div>
+              <div style={{ marginBottom:8 }}>
+                <label style={{ fontSize:'0.75rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                  Riesgo por operación (%) <span style={{ color:'#475569' }}>— recomendado 1-2%</span>
+                </label>
+                <input style={S.input} type="number" value={cfgRiskPct} onChange={e => setCfgRiskPct(+e.target.value)} step={0.5} min={0.5} max={5} />
+              </div>
+              <div>
+                <label style={{ fontSize:'0.75rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                  Máx posiciones simultáneas
+                </label>
+                <input style={S.input} type="number" value={cfgMaxPos} onChange={e => setCfgMaxPos(+e.target.value)} step={1} min={1} max={10} />
+              </div>
+            </div>
+
+            {/* Filtros */}
+            <div style={{ background:'#0f172a', borderRadius:8, padding:'1rem', border:'1px solid #334155' }}>
+              <div style={S.h3}>Filtros de calidad</div>
+              <div style={{ marginBottom:8 }}>
+                <label style={{ fontSize:'0.75rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                  Score mínimo (0-100) <span style={{ color:'#475569' }}>— recomendado 45+</span>
+                </label>
+                <input style={S.input} type="number" value={cfgMinScore} onChange={e => setCfgMinScore(+e.target.value)} step={5} min={20} max={90} />
+              </div>
+              <div style={{ marginBottom:8 }}>
+                <label style={{ fontSize:'0.75rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                  Ratio riesgo/recompensa mínimo <span style={{ color:'#475569' }}>— recomendado 1.5</span>
+                </label>
+                <input style={S.input} type="number" value={cfgMinRR} onChange={e => setCfgMinRR(+e.target.value)} step={0.1} min={1} max={5} />
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <input type="checkbox" checked={cfgMA200} onChange={e => setCfgMA200(e.target.checked)} id="ma200check" style={{ width:16, height:16, cursor:'pointer', accentColor:'#22c55e' }} />
+                <label htmlFor="ma200check" style={{ fontSize:'0.75rem', color:'#94a3b8', cursor:'pointer' }}>
+                  Solo activos sobre MA200 (filtro de tendencia)
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop:'1rem', display:'flex', gap:8 }}>
+            <button style={{ ...S.btn, ...S.btnG }} onClick={applyConfig}>
+              ✅ Aplicar configuración
+            </button>
+            <button
+              style={{ ...S.btn, ...S.btnR }}
+              onClick={() => {
+                if (confirm('¿Borrar todo el historial y posiciones del motor táctico?')) {
+                  setState(initTacticalState(state.config));
+                  localStorage.removeItem('olympus_tactical_state');
+                }
+              }}
+            >
+              🗑 Reset completo
+            </button>
+          </div>
+
+          {/* Reglas de operativa */}
+          <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:'1px solid #334155' }}>
+            <div style={{ ...S.h3, marginBottom:'0.75rem' }}>📋 Reglas de operativa (no las rompas)</div>
+            {[
+              '🔒 El motor táctico usa MÁXIMO el 20% de la liquidez defensiva de Olympus. El 80% restante queda para el ATTACK_MAX de octubre.',
+              '⏰ Toda posición se cierra en 10 días hábiles aunque no haya llegado al TP ni al SL. El tiempo es enemigo en trading táctico.',
+              '🚫 Nunca abrir una posición táctica en un activo que Olympus esté comprando ese mes para no duplicar riesgo.',
+              '📊 Stop loss es SAGRADO. Si el precio llega al stop, se ejecuta sin excepción, nunca se mueve hacia abajo.',
+              '🎯 Al llegar al TP1: cerrar el 50% de la posición y subir el stop al precio de entrada (posición gratis).',
+              '💰 Los beneficios del motor táctico se reinvierten en el motor táctico, no en Olympus.',
+              '🔴 Si el motor táctico pierde más del 15% del capital asignado en un mes, parar operativa ese mes.',
+            ].map((rule, i) => (
+              <div key={i} style={{ fontSize:'0.78rem', color:'#94a3b8', padding:'5px 0', borderBottom:'1px solid #1e293b', lineHeight:1.5 }}>
+                {rule}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

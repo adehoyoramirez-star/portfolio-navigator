@@ -2,14 +2,22 @@
 // src/core/tactical/ibkrConnector.ts
 // Interactive Brokers Client Portal Web API
 //
-// PREREQUISITO: IBKR Client Portal Gateway corriendo localmente
-//   Opción A (recomendada): Docker
-//     docker run -p 5000:5000 ghcr.io/extrange/ibkr-cpapi:latest
-//   Opción B: Descarga manual de clientportal.gw de ibkr.com
-//     Luego: ./bin/run.sh root/conf.yaml
+// PREREQUISITO: IBKR Gateway/TWS corriendo localmente
 //
-// El Gateway corre en http://localhost:5000
-// Requiere autenticación browser UNA vez, luego mantiene sesión
+// Opción A (RECOMENDADA): IBKR TWS/Gateway nativo en Windows
+//   1. Descarga: https://www.interactivebrokers.com/en/trading/ibgateway.php
+//   2. Instala y ejecuta IBKR Gateway
+//   3. Configura API: Settings → API → Settings
+//      - Enable ActiveX and Socket EClients: ✓
+//      - Socket port: 4001 (producción) o 4002 (paper)
+//      - Allow connections from localhost only: ✓
+//   4. El conector se conecta directamente al puerto 4001/4002
+//
+// Opción B: Client Portal Gateway (puerto 5000)
+//   - Requiere Docker con imagen compatible
+//   - Ver docker-compose.yml para configuración
+//
+// Account ID: U25387834
 // Documentación: https://interactivebrokers.github.io/cpwebapi/
 // ============================================================
 
@@ -20,9 +28,10 @@ export interface IBKRConfig {
 }
 
 export const DEFAULT_IBKR_CONFIG: IBKRConfig = {
-  gatewayUrl: 'http://localhost:5000',
-  accountId:  '',
-  enabled:    false,
+  gatewayUrl: 'http://localhost:5000',  // Client Portal API (puerto 5000)
+                                         // o 'http://localhost:4001' para TWS Socket API
+  accountId:  'U25387834',  // Interactive Brokers account ID
+  enabled:    false,        // Deshabilitado por defecto hasta configurar IBKR Gateway
 };
 
 // ── Tipos de respuesta IBKR ───────────────────────────────────
