@@ -12,6 +12,7 @@ import {
   calcStopLoss, calcTakeProfits
 } from './tacticalSignals';
 import { CORE_TACTICAL_UNIVERSE, type UniverseAsset } from './tacticalUniverse';
+import { getFundamentals } from './fundamentalsConfig';
 
 // ── Obtener datos de Yahoo Finance via Supabase ──────────────
 async function fetchTickerData(
@@ -76,6 +77,10 @@ async function processAsset(
   const high52w    = Math.max(...data.closes.slice(-252));
   const low52w     = Math.min(...data.closes.slice(-252));
 
+  // Fallback a fundamentales manuales si Yahoo no devuelve datos
+  const manualFundamentals = getFundamentals(asset.yahooSymbol);
+  const hasYahooFundamentals = data.per !== undefined && data.per > 0;
+
   return {
     ticker:      asset.ticker,
     name:        asset.name,
@@ -92,6 +97,10 @@ async function processAsset(
     signals,
     totalScore,
     lastUpdated: new Date().toISOString(),
+    // Datos fundamentales (Yahoo o manual fallback)
+    earningsYield: hasYahooFundamentals ? data.earningsYield : manualFundamentals.earningsYield,
+    per: hasYahooFundamentals ? data.per : manualFundamentals.per,
+    eps: hasYahooFundamentals ? data.eps : manualFundamentals.eps,
   };
 }
 

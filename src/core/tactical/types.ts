@@ -81,6 +81,10 @@ export interface TacticalAsset {
   signals:     TacticalSignal[];
   totalScore:  number;           // 0-100, agregado de todas las señales
   lastUpdated: string | null;
+  // Fundamentales (Value factor)
+  earningsYield?: number;       // E/P = 1/PER
+  per?: number;                 // Price/Earnings
+  eps?: number;                 // Earnings per share
 }
 
 // ── Oportunidad identificada (candidata a operar) ────────────
