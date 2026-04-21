@@ -86,6 +86,16 @@ export default function TacticalDashboard() {
   const [cfgRiskPct, setCfgRiskPct]   = useState(state.config.riskPerTradePct * 100);
   const [cfgMA200, setCfgMA200]       = useState(state.config.requireAboveMA200);
 
+  // IBKR config
+  const [ibkrEnabled,    setIbkrEnabled]    = useState(() => localStorage.getItem('ibkr_enabled') === 'true');
+  const [ibkrAccountId,  setIbkrAccountId]  = useState(() => localStorage.getItem('ibkr_account_id') ?? '');
+  const [ibkrGateway,    setIbkrGateway]    = useState(() => localStorage.getItem('ibkr_gateway') ?? 'https://localhost:5000');
+  const [ibkrStatus,     setIbkrStatus]     = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
+  const [ibkrMsg,        setIbkrMsg]        = useState<string>('');
+  const [ibkrAccounts,   setIbkrAccounts]   = useState<string[]>([]);
+  const [ibkrPositions,  setIbkrPositions]  = useState<any[]>([]);
+  const [ibkrNLV,        setIbkrNLV]        = useState<number>(0);
+
   // Persistir al cambiar estado
   useEffect(() => { saveTacticalState(state); }, [state]);
 
@@ -139,6 +149,59 @@ export default function TacticalDashboard() {
     };
     setState(prev => ({ ...prev, config: newConfig }));
   }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200, state.config]);
+
+  // ── IBKR: verificar conexión ────────────────────────────────
+  const verifyIBKR = useCallback(async () => {
+    setIbkrStatus('checking');
+    setIbkrMsg('Conectando con el Gateway...');
+    try {
+      // 1. Estado de autenticación
+      const authRes = await fetch(`${ibkrGateway}/v1/api/iserver/auth/status`, {
+        credentials: 'include',
+      });
+      if (!authRes.ok) throw new Error(`Gateway no responde (${authRes.status}). ¿Está corriendo en ${ibkrGateway}?`);
+      const auth = await authRes.json();
+      if (!auth.authenticated) {
+        setIbkrStatus('error');
+        setIbkrMsg(`Gateway responde pero no estás autenticado. Ve a ${ibkrGateway} en el navegador e inicia sesión con tus credenciales de IBKR.`);
+        return;
+      }
+
+      // 2. Obtener cuentas
+      const accRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/accounts`, { credentials: 'include' });
+      const accData = await accRes.json();
+      const accounts: string[] = accData.accounts ?? [];
+      setIbkrAccounts(accounts);
+
+      // 3. Si no especificaron accountId, usar el primero disponible
+      const acct = ibkrAccountId || accounts[0] || '';
+      if (!acct) throw new Error('No se encontraron cuentas en el Gateway.');
+
+      // 4. Resumen de cuenta
+      const sumRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/summary`, { credentials: 'include' });
+      const sumData = await sumRes.json();
+      const nlv = parseFloat(sumData?.netliquidation?.amount ?? sumData?.NetLiquidation?.amount ?? 0);
+      setIbkrNLV(nlv);
+
+      // 5. Posiciones
+      const posRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/positions/0`, { credentials: 'include' });
+      const posData = await posRes.json();
+      setIbkrPositions(Array.isArray(posData) ? posData : []);
+
+      // Guardar config
+      localStorage.setItem('ibkr_enabled',    'true');
+      localStorage.setItem('ibkr_account_id', acct);
+      localStorage.setItem('ibkr_gateway',    ibkrGateway);
+      if (!ibkrAccountId) setIbkrAccountId(acct);
+
+      setIbkrStatus('ok');
+      setIbkrMsg(`Conectado a cuenta ${acct} — Valor neto: €${Math.round(nlv).toLocaleString('es-ES')} — ${posData?.length ?? 0} posiciones`);
+    } catch (e: any) {
+      setIbkrStatus('error');
+      setIbkrMsg(e?.message ?? 'Error desconocido al conectar con IBKR');
+      localStorage.setItem('ibkr_enabled', 'false');
+    }
+  }, [ibkrGateway, ibkrAccountId]);
 
   // ── Render oportunidad ─────────────────────────────────────
   const OpportunityCard = ({ opp }: { opp: TacticalOpportunity }) => {
@@ -593,6 +656,144 @@ export default function TacticalDashboard() {
                 {rule}
               </div>
             ))}
+          </div>
+
+          {/* ── IBKR ─────────────────────────────────────────── */}
+          <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:`2px solid ${ibkrStatus === 'ok' ? '#16a34a' : ibkrStatus === 'error' ? '#ef4444' : '#334155'}` }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.75rem' }}>
+              <div style={{ ...S.h3, margin:0 }}>
+                Interactive Brokers — Datos reales y ordenes directas
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:'0.72rem', color:'#64748b' }}>Activar IBKR</span>
+                <div
+                  onClick={() => {
+                    const next = !ibkrEnabled;
+                    setIbkrEnabled(next);
+                    localStorage.setItem('ibkr_enabled', String(next));
+                    if (!next) { setIbkrStatus('idle'); setIbkrMsg(''); }
+                  }}
+                  style={{
+                    width:44, height:24, borderRadius:12, cursor:'pointer',
+                    background: ibkrEnabled ? '#16a34a' : '#334155',
+                    position:'relative', transition:'background .2s',
+                  }}
+                >
+                  <div style={{
+                    width:18, height:18, borderRadius:9, background:'white',
+                    position:'absolute', top:3,
+                    left: ibkrEnabled ? 23 : 3,
+                    transition:'left .2s',
+                  }} />
+                </div>
+              </div>
+            </div>
+
+            {ibkrEnabled && (
+              <>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+                  <div>
+                    <label style={{ fontSize:'0.72rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                      URL del Gateway (default: http://localhost:8010/proxy)
+                    </label>
+                    <input
+                      style={S.input}
+                      value={ibkrGateway}
+                      onChange={e => setIbkrGateway(e.target.value)}
+                      placeholder="https://localhost:5000"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize:'0.72rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                      Account ID (formato U1234567) — opcional, se detecta solo
+                    </label>
+                    <input
+                      style={S.input}
+                      value={ibkrAccountId}
+                      onChange={e => setIbkrAccountId(e.target.value)}
+                      placeholder="U1234567"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  style={{ ...S.btn, background: ibkrStatus === 'checking' ? '#334155' : '#1d4ed8', color:'#fff', opacity: ibkrStatus === 'checking' ? 0.6 : 1 }}
+                  onClick={verifyIBKR}
+                  disabled={ibkrStatus === 'checking'}
+                >
+                  {ibkrStatus === 'checking' ? '⏳ Verificando...' : '🔌 Verificar conexión IBKR'}
+                </button>
+
+                {ibkrMsg && (
+                  <div style={{
+                    marginTop:8, padding:'8px 12px', borderRadius:6, fontSize:'0.78rem',
+                    background: ibkrStatus === 'ok' ? '#052e16' : ibkrStatus === 'error' ? '#450a0a' : '#1e293b',
+                    color: ibkrStatus === 'ok' ? '#4ade80' : ibkrStatus === 'error' ? '#fca5a5' : '#94a3b8',
+                    border: `1px solid ${ibkrStatus === 'ok' ? '#16a34a' : ibkrStatus === 'error' ? '#ef4444' : '#334155'}`,
+                  }}>
+                    {ibkrStatus === 'ok' ? '✅ ' : ibkrStatus === 'error' ? '❌ ' : 'ℹ️ '}{ibkrMsg}
+                  </div>
+                )}
+
+                {/* Cuentas detectadas */}
+                {ibkrAccounts.length > 0 && (
+                  <div style={{ marginTop:8, fontSize:'0.72rem', color:'#64748b' }}>
+                    Cuentas detectadas: {ibkrAccounts.join(', ')}
+                  </div>
+                )}
+
+                {/* Posiciones reales de IBKR */}
+                {ibkrPositions.length > 0 && (
+                  <div style={{ marginTop:12 }}>
+                    <div style={{ fontSize:'0.75rem', fontWeight:700, color:'#94a3b8', marginBottom:6 }}>
+                      POSICIONES REALES EN IBKR ({ibkrPositions.length})
+                    </div>
+                    <div style={{ overflowX:'auto' }}>
+                      <table style={S.table}>
+                        <thead>
+                          <tr>
+                            {['Activo','Qty','Precio actual','Valor','P&L','Precio medio'].map(h => (
+                              <th key={h} style={S.th}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ibkrPositions.slice(0, 15).map((p: any, i: number) => {
+                            const pnl = p.unrealizedPnl ?? 0;
+                            return (
+                              <tr key={i}>
+                                <td style={S.td}>
+                                  <div style={{ fontWeight:700 }}>{p.ticker ?? p.contractDesc?.split(' ')[0] ?? '—'}</div>
+                                  <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{p.contractDesc ?? ''}</div>
+                                </td>
+                                <td style={S.td}>{p.position}</td>
+                                <td style={S.td}>€{(p.mktPrice ?? 0).toFixed(2)}</td>
+                                <td style={S.td}>€{Math.round(p.mktValue ?? 0).toLocaleString('es-ES')}</td>
+                                <td style={{ ...S.td, color: pnl >= 0 ? '#22c55e' : '#ef4444', fontWeight:700 }}>
+                                  {pnl >= 0 ? '+' : ''}€{Math.round(pnl).toLocaleString('es-ES')}
+                                </td>
+                                <td style={S.td}>€{(p.avgPrice ?? 0).toFixed(2)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Guía rápida si no está conectado */}
+                {ibkrStatus !== 'ok' && (
+                  <div style={{ marginTop:12, padding:'10px 12px', background:'#1e293b', borderRadius:6, fontSize:'0.75rem', color:'#94a3b8', lineHeight:1.8 }}>
+                    <div style={{ fontWeight:700, color:'#f8fafc', marginBottom:4 }}>Como conectar IBKR en 3 pasos:</div>
+                    <div>1. Abre el Gateway que descargaste: ejecuta <span style={{ fontFamily:'monospace', color:'#60a5fa' }}>bin\run.bat root\conf.yaml</span></div>
+                    <div>2. Ve a <span style={{ fontFamily:'monospace', color:'#60a5fa' }}>{ibkrGateway}</span> en el navegador y haz login con tus credenciales IBKR</div>
+                    <div>3. Vuelve aquí y pulsa "Verificar conexión IBKR"</div>
+                    <div style={{ marginTop:6, color:'#475569' }}>Nota: acepta el certificado autofirmado en el navegador (click en "Avanzado" → "Continuar")</div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
