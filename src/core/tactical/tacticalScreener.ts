@@ -18,7 +18,7 @@ import { getFundamentals } from './fundamentalsConfig';
 async function fetchTickerData(
   ticker: string,
   supabase: any
-): Promise<{ closes: number[]; volumes: number[]; price: number } | null> {
+): Promise<{ closes: number[]; volumes: number[]; price: number; per?: number; earningsYield?: number; eps?: number } | null> {
   try {
     const { data, error } = await supabase.functions.invoke('yahoo-finance-tactical', {
       body: { tickers: [ticker] }
@@ -26,9 +26,12 @@ async function fetchTickerData(
     if (error || !data?.data?.[ticker]) return null;
     const d = data.data[ticker];
     return {
-      closes:  d.closes  ?? [],
-      volumes: d.volumes ?? [],
-      price:   d.currentPrice ?? 0,
+      closes:       d.closes  ?? [],
+      volumes:      d.volumes ?? [],
+      price:        d.currentPrice ?? 0,
+      per:          d.per,
+      earningsYield: d.earningsYield,
+      eps:          d.eps,
     };
   } catch {
     return null;
@@ -68,6 +71,7 @@ async function processAsset(
   }
 
   if (!data || data.closes.length < 21 || data.price === 0) {
+    console.warn(`[Screener] Sin datos para ${asset.yahooSymbol}`);
     return null;
   }
 
@@ -80,6 +84,11 @@ async function processAsset(
   // Fallback a fundamentales manuales si Yahoo no devuelve datos
   const manualFundamentals = getFundamentals(asset.yahooSymbol);
   const hasYahooFundamentals = data.per !== undefined && data.per > 0;
+
+  // LOG para debuggear en consola del navegador
+  console.log(`[Screener] ${asset.ticker}: score=${totalScore}, price=${data.price.toFixed(2)}, ` +
+              `RSI2=${indicators.rsi2.toFixed(1)}, RSI14=${indicators.rsi14.toFixed(1)}, ` +
+              `sobreMA200=${indicators.aboveMA200}, señales=${signals.filter(s => s.active).length} activas`);
 
   return {
     ticker:      asset.ticker,
@@ -176,13 +185,34 @@ export async function runTacticalScreener(
   }
 
   // Construir oportunidades
-  const rawOpps = assets
-    .filter(a => a.totalScore >= config.minScore)
+  console.log(`[Screener] ${assets.length} activos procesados, aplicando filtros...`);
+  console.log(`[Screener] Filtros: minScore=${config.minScore}, requireMA200=${config.requireAboveMA200}, minRR=${config.minRiskReward}`);
+
+  const filteredByScore = assets.filter(a => a.totalScore >= config.minScore);
+  console.log(`[Screener] Activos con score >= ${config.minScore}: ${filteredByScore.length}`);
+
+  const filteredByMA200 = assets.filter(a => !config.requireAboveMA200 || a.indicators?.aboveMA200);
+  console.log(`[Screener] Activos que pasan filtro MA200: ${filteredByMA200.length}`);
+
+  const rawOpps = filteredByScore
     .filter(a => !config.requireAboveMA200 || a.indicators?.aboveMA200)
     .map(buildOpportunity)
     .filter((o): o is TacticalOpportunity => o !== null)
-    .filter(o => o.riskReward >= config.minRiskReward)
+    .filter(o => {
+      const pass = o.riskReward >= config.minRiskReward;
+      if (!pass) {
+        console.log(`[Screener] ${o.asset.ticker} filtrado por R:R=${o.riskReward.toFixed(2)} < ${config.minRiskReward}`);
+      }
+      return pass;
+    })
     .sort((a, b) => b.score - a.score);
+
+  console.log(`[Screener] Oportunidades encontradas: ${rawOpps.length}`);
+  if (rawOpps.length > 0) {
+    rawOpps.slice(0, 3).forEach(o => {
+      console.log(`  - ${o.asset.ticker}: score=${o.score}, R:R=${o.riskReward.toFixed(2)}, tipo=${o.type}`);
+    });
+  }
 
   const topPicks = rawOpps.slice(0, 5);
 
@@ -240,9 +270,9 @@ export function defaultTacticalConfig(
     maxCapitalPerTrade:     0.30,
     riskPerTradePct:        0.01,
     maxOpenPositions:       4,
-    minScore:               45,
-    requireAboveMA200:      true,
-    minRiskReward:          1.5,
+    minScore:               35,           // REDUCIDO: de 45 a 35 para detectar más oportunidades
+    requireAboveMA200:      false,        // CAMBIADO: permitir activos bajo MA200 (más oportunidades)
+    minRiskReward:          1.3,          // REDUCIDO: de 1.5 a 1.3 para más flexibilidad
     maxAtrPct:              0.06,
     maxDaysPerTrade:        10,
     trailingStop:           false,

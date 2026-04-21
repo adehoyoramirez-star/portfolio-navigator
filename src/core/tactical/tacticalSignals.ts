@@ -104,22 +104,24 @@ function mkSig(type: OpportunityType, active: boolean, score: number, descriptio
 
 function signalBloodInStreets(ind: TechnicalIndicators): TacticalSignal {
   const { rsi2, zScore20, aboveMA200, volumeRatio } = ind;
-  const active = rsi2 < 5 && zScore20 < -2.5 && aboveMA200;
-  const score  = active ? Math.min(100, 50 + (5 - Math.min(5, rsi2)) * 6 + (Math.abs(zScore20) - 2.5) * 6 + (volumeRatio > 2 ? 10 : 0)) : 0;
+  // RELAJADO: RSI(2) < 10 (era 5) para detectar más oportunidades
+  const active = rsi2 < 10 && zScore20 < -1.5 && aboveMA200;
+  const score  = active ? Math.min(100, 45 + (10 - Math.min(10, rsi2)) * 4 + (Math.abs(zScore20) - 1.5) * 5 + (volumeRatio > 1.5 ? 8 : 0)) : 0;
   return mkSig('BLOOD_IN_STREETS', active, score,
-    active ? `RSI(2)=${rsi2.toFixed(1)} · Z=${zScore20.toFixed(2)}${volumeRatio > 2 ? ' · Vol×' + volumeRatio.toFixed(1) : ''} — Pánico extremo sobre MA200`
-           : `RSI(2)=${rsi2.toFixed(1)} · Z=${zScore20.toFixed(2)} — No cumple (RSI<5 Y Z<-2.5 Y sobre MA200)`,
-    'RSI(2) < 5 AND Z-Score(20) < -2.5 AND sobre MA200');
+    active ? `RSI(2)=${rsi2.toFixed(1)} · Z=${zScore20.toFixed(2)}${volumeRatio > 1.5 ? ' · Vol×' + volumeRatio.toFixed(1) : ''} — Pánico de compra`
+           : `RSI(2)=${rsi2.toFixed(1)} · Z=${zScore20.toFixed(2)} — No cumple`,
+    'RSI(2) < 10 AND Z-Score(20) < -1.5 AND sobre MA200');
 }
 
 function signalMeanReversion(ind: TechnicalIndicators): TacticalSignal {
   const { rsi2, bbLower, price, zScore20 } = ind;
-  const active = rsi2 < 10 && price < bbLower * 1.005;
-  const score  = active ? Math.min(100, 45 + (10 - Math.min(10, rsi2)) * 3 + (price < bbLower ? 15 : 5) + (zScore20 < -2 ? 10 : 0)) : 0;
+  // RELAJADO: RSI(2) < 15 y precio cerca del BB inferior
+  const active = rsi2 < 15 && price < bbLower * 1.02;
+  const score  = active ? Math.min(100, 40 + (15 - Math.min(15, rsi2)) * 2 + (price < bbLower ? 12 : 4) + (zScore20 < -1.5 ? 8 : 0)) : 0;
   return mkSig('MEAN_REVERSION', active, score,
     active ? `RSI(2)=${rsi2.toFixed(1)} · €${price.toFixed(2)} bajo BB(€${bbLower.toFixed(2)}) — Vuelta a la media`
            : `RSI(2)=${rsi2.toFixed(1)} · BBI=€${bbLower.toFixed(2)} — Sin condición`,
-    'RSI(2) < 10 AND Precio < Bollinger Inferior');
+    'RSI(2) < 15 AND Precio < BB Inferior +2%');
 }
 
 function signalMomentumBreakout(ind: TechnicalIndicators): TacticalSignal {
@@ -134,12 +136,13 @@ function signalMomentumBreakout(ind: TechnicalIndicators): TacticalSignal {
 
 function signalOversoldBounce(ind: TechnicalIndicators): TacticalSignal {
   const { rsi14, aboveMA200, ma50, price, zScore50 } = ind;
-  const active = rsi14 < 35 && (aboveMA200 || price > ma50 * 0.93);
-  const score  = active ? Math.min(100, 40 + (35 - Math.min(35, rsi14)) * 1.5 + (aboveMA200 ? 20 : 5) + (zScore50 < -1.5 ? 10 : 0)) : 0;
+  // RELAJADO: RSI(14) < 45 (era 35) y precio sobre MA50 o recuperando
+  const active = rsi14 < 45 && (aboveMA200 || price > ma50 * 0.95);
+  const score  = active ? Math.min(100, 38 + (45 - Math.min(45, rsi14)) * 1.2 + (aboveMA200 ? 18 : 6) + (zScore50 < -1 ? 8 : 0)) : 0;
   return mkSig('OVERSOLD_BOUNCE', active, score,
     active ? `RSI(14)=${rsi14.toFixed(1)} · Sobre soporte — Rebote técnico probable`
            : `RSI(14)=${rsi14.toFixed(1)} — Sin condición`,
-    'RSI(14) < 35 AND sobre MA200 o MA50-7%');
+    'RSI(14) < 45 AND sobre MA200 o MA50-5%');
 }
 
 function signalSectorRotation(ind: TechnicalIndicators): TacticalSignal {

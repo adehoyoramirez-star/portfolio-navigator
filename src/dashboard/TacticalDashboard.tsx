@@ -87,9 +87,20 @@ export default function TacticalDashboard() {
   const [cfgMA200, setCfgMA200]       = useState(state.config.requireAboveMA200);
 
   // IBKR config
+  // En Vercel usamos el API route /api/ibkr (proxy server-side) para evitar el bloqueo
+  // de Chrome (Private Network Access) que impide fetch desde HTTPS público a localhost.
+  // En local usamos el proxy directo en puerto 8010.
+  const isVercel = typeof window !== 'undefined' && !window.location.hostname.includes('localhost');
+  const defaultGateway = isVercel ? '/api/ibkr' : 'http://localhost:8010/proxy';
+
   const [ibkrEnabled,    setIbkrEnabled]    = useState(() => localStorage.getItem('ibkr_enabled') === 'true');
   const [ibkrAccountId,  setIbkrAccountId]  = useState(() => localStorage.getItem('ibkr_account_id') ?? '');
-  const [ibkrGateway,    setIbkrGateway]    = useState(() => localStorage.getItem('ibkr_gateway') ?? 'https://localhost:5000');
+  const [ibkrGateway,    setIbkrGateway]    = useState(() => {
+    const saved = localStorage.getItem('ibkr_gateway');
+    // Si el valor guardado es el antiguo localhost:5000, resetear al correcto
+    if (!saved || saved === 'https://localhost:5000') return defaultGateway;
+    return saved;
+  });
   const [ibkrStatus,     setIbkrStatus]     = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
   const [ibkrMsg,        setIbkrMsg]        = useState<string>('');
   const [ibkrAccounts,   setIbkrAccounts]   = useState<string[]>([]);
@@ -150,27 +161,48 @@ export default function TacticalDashboard() {
     setState(prev => ({ ...prev, config: newConfig }));
   }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200, state.config]);
 
+  // ── IBKR: helper fetch ─────────────────────────────────────
+  // Cuando usamos /api/ibkr (Vercel), las rutas son /api/ibkr/iserver/auth/status
+  // Cuando usamos proxy local, las rutas son http://localhost:8010/proxy/v1/api/iserver/auth/status
+  const ibkrFetch = useCallback((path: string, opts?: RequestInit) => {
+    const isApiRoute = ibkrGateway.startsWith('/api/');
+    const url = isApiRoute
+      ? `${ibkrGateway}/${path}`                        // /api/ibkr/iserver/auth/status
+      : `${ibkrGateway}/v1/api/${path}`;                // http://localhost:8010/proxy/v1/api/...
+    return fetch(url, { credentials: 'include', ...opts });
+  }, [ibkrGateway]);
+
   // ── IBKR: verificar conexión ────────────────────────────────
   const verifyIBKR = useCallback(async () => {
     setIbkrStatus('checking');
     setIbkrMsg('Conectando con el Gateway...');
     try {
       // 1. Estado de autenticación
-      const authRes = await fetch(`${ibkrGateway}/v1/api/iserver/auth/status`, {
-        credentials: 'include',
-      });
-      if (!authRes.ok) throw new Error(`Gateway no responde (${authRes.status}). ¿Está corriendo en ${ibkrGateway}?`);
+      const authRes = await ibkrFetch('iserver/auth/status');
+      if (!authRes.ok) {
+        const isApiRoute = ibkrGateway.startsWith('/api/');
+        throw new Error(isApiRoute
+          ? `API route no responde (${authRes.status}). ¿Está configurada IBKR_GATEWAY_URL en Vercel y ngrok corriendo?`
+          : `Gateway no responde (${authRes.status}). ¿Está corriendo en ${ibkrGateway}?`
+        );
+      }
       const auth = await authRes.json();
       if (!auth.authenticated) {
         setIbkrStatus('error');
-        setIbkrMsg(`Gateway responde pero no estás autenticado. Ve a ${ibkrGateway} en el navegador e inicia sesión con tus credenciales de IBKR.`);
+        const isApiRoute = ibkrGateway.startsWith('/api/');
+        setIbkrMsg(isApiRoute
+          ? `Gateway responde pero sesión no autenticada. Abre la URL de ngrok en el navegador e inicia sesión con tus credenciales IBKR.`
+          : `Gateway responde pero no estás autenticado. Ve a https://localhost:5000 en el navegador e inicia sesión.`
+        );
         return;
       }
 
       // 2. Obtener cuentas
-      const accRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/accounts`, { credentials: 'include' });
+      const accRes  = await ibkrFetch('portfolio/accounts');
       const accData = await accRes.json();
-      const accounts: string[] = accData.accounts ?? [];
+      const accounts: string[] = Array.isArray(accData)
+        ? accData.map((a: any) => a.accountId ?? a.id ?? a)
+        : (accData.accounts ?? []);
       setIbkrAccounts(accounts);
 
       // 3. Si no especificaron accountId, usar el primero disponible
@@ -178,13 +210,13 @@ export default function TacticalDashboard() {
       if (!acct) throw new Error('No se encontraron cuentas en el Gateway.');
 
       // 4. Resumen de cuenta
-      const sumRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/summary`, { credentials: 'include' });
+      const sumRes  = await ibkrFetch(`portfolio/${acct}/summary`);
       const sumData = await sumRes.json();
       const nlv = parseFloat(sumData?.netliquidation?.amount ?? sumData?.NetLiquidation?.amount ?? 0);
       setIbkrNLV(nlv);
 
       // 5. Posiciones
-      const posRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/positions/0`, { credentials: 'include' });
+      const posRes  = await ibkrFetch(`portfolio/${acct}/positions/0`);
       const posData = await posRes.json();
       setIbkrPositions(Array.isArray(posData) ? posData : []);
 
@@ -201,7 +233,7 @@ export default function TacticalDashboard() {
       setIbkrMsg(e?.message ?? 'Error desconocido al conectar con IBKR');
       localStorage.setItem('ibkr_enabled', 'false');
     }
-  }, [ibkrGateway, ibkrAccountId]);
+  }, [ibkrGateway, ibkrAccountId, ibkrFetch]);
 
   // ── Render oportunidad ─────────────────────────────────────
   const OpportunityCard = ({ opp }: { opp: TacticalOpportunity }) => {
