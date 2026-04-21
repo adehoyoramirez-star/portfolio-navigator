@@ -7,7 +7,7 @@
   "rewrites": [
     {
       "source": "/api/ibkr/:path*",
-      "destination": "https://babylike-rotatably-jayda.ngrok-free.dev/v1/api/:path*"
+      "destination": "/api/ibkr"
     },
     {
       "source": "/(.*)",
