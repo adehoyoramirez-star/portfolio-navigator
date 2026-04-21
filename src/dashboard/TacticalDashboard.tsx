@@ -15,7 +15,7 @@ import {
   getTacticalSummary,
 } from '@/core/tactical/tacticalPortfolio';
 import {
-  runTacticalScreener, defaultTacticalConfig,
+  runTacticalScreener, defaultTacticalConfig, type ScanMode,
 } from '@/core/tactical/tacticalScreener';
 
 // ── Estilos base ─────────────────────────────────────────────
@@ -77,6 +77,7 @@ export default function TacticalDashboard() {
   const [error, setError]         = useState<string | null>(null);
   const [lastRun, setLastRun]     = useState<string | null>(state.lastScreened);
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
+  const [scanMode, setScanMode]   = useState<ScanMode>('core');
 
   // Config local editable
   const [cfgCapital, setCfgCapital]   = useState(state.config.tacticalCapitalEur);
@@ -116,7 +117,7 @@ export default function TacticalDashboard() {
   const runScreener = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const result = await runTacticalScreener(supabase, state.config);
+      const result = await runTacticalScreener(supabase, state.config, scanMode);
       setState(prev => ({
         ...prev,
         opportunities: result.opportunities,
@@ -131,7 +132,7 @@ export default function TacticalDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [state.config]);
+  }, [state.config, scanMode]);
 
   // ── Abrir posición ─────────────────────────────────────────
   const handleOpen = useCallback((opp: TacticalOpportunity) => {
@@ -158,7 +159,12 @@ export default function TacticalDashboard() {
       riskPerTradePct:      cfgRiskPct / 100,
       requireAboveMA200:    cfgMA200,
     };
-    setState(prev => ({ ...prev, config: newConfig }));
+    setState(prev => ({
+      ...prev,
+      config: newConfig,
+      // BUG FIX: recalcular capitalAvailable cuando cambia el capital total
+      capitalAvailable: Math.max(0, cfgCapital - prev.capitalUsed),
+    }));
   }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200, state.config]);
 
   // ── IBKR: helper fetch ─────────────────────────────────────
@@ -255,7 +261,7 @@ export default function TacticalDashboard() {
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:6 }}>
             <div style={{ background:'#0f172a', borderRadius:20, width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', border:`2px solid ${opp.score >= 70 ? '#22c55e' : '#f59e0b'}` }}>
-              <span style={{ fontWeight:700, fontSize:'0.8rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{opp.score}</span>
+              <span style={{ fontWeight:700, fontSize:'0.8rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{Math.round(opp.score * 100) / 100}</span>
             </div>
           </div>
         </div>
@@ -278,14 +284,14 @@ export default function TacticalDashboard() {
         <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginBottom:'0.6rem' }}>
           {opp.activeSignals.map(s => (
             <span key={s.type} style={{ ...S.badge, background:'#0f172a', color: s.strength === 'EXTREME' ? '#ef4444' : s.strength === 'STRONG' ? '#f59e0b' : '#60a5fa', border:`1px solid #334155` }}>
-              {s.type.replace('_',' ')} {s.score}
+              {s.type.replace('_',' ')} {Math.round(s.score)}
             </span>
           ))}
         </div>
 
         <div style={{ fontSize:'0.72rem', color:'#64748b', marginBottom:'0.6rem', lineHeight:1.5 }}>
           {opp.asset.indicators && (
-            <>RSI(2)={opp.asset.indicators.rsi2.toFixed(1)} · RSI(14)={opp.asset.indicators.rsi14.toFixed(1)} · Z={opp.asset.indicators.zScore20.toFixed(2)} · Vol×{opp.asset.indicators.volumeRatio.toFixed(1)} · ATR={opp.asset.indicators.atrPct.toFixed(1)}%</>
+            <>RSI(2)={opp.asset.indicators.rsi2.toFixed(1)} · RSI(14)={opp.asset.indicators.rsi14.toFixed(1)} · Z={opp.asset.indicators.zScore20.toFixed(2)} · Vol×{opp.asset.indicators.volumeRatio.toFixed(1)} · ATR={(opp.asset.indicators.atrPct * 100).toFixed(2)}%</>
           )}
         </div>
 
@@ -392,7 +398,25 @@ export default function TacticalDashboard() {
             {lastRun && ` · Último scan: ${new Date(lastRun).toLocaleTimeString('es-ES')}`}
           </p>
         </div>
-        <div style={{ display:'flex', gap:8 }}>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          {/* Selector de universo */}
+          <div style={{ display:'flex', gap:2, background:'#0f172a', borderRadius:6, padding:2, border:'1px solid #334155' }}>
+            {([
+              { mode: 'volatile' as ScanMode, label: '⚡ Rápido', title: '25 activos alta volatilidad ~1 min' },
+              { mode: 'core'     as ScanMode, label: '🎯 Core',   title: '50 activos seleccionados ~2 min' },
+              { mode: 'full'     as ScanMode, label: '🔭 Full',   title: '120 activos completo ~8 min' },
+            ]).map(({ mode, label, title }) => (
+              <button
+                key={mode}
+                title={title}
+                style={{ ...S.btn, padding:'3px 10px', fontSize:'0.72rem',
+                  background: scanMode === mode ? '#1d4ed8' : 'transparent',
+                  color:      scanMode === mode ? '#fff' : '#64748b',
+                }}
+                onClick={() => setScanMode(mode)}
+              >{label}</button>
+            ))}
+          </div>
           <button
             style={{ ...S.btn, ...S.btnB, opacity: loading ? 0.6 : 1 }}
             onClick={runScreener}

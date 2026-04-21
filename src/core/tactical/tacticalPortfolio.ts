@@ -38,18 +38,19 @@ export function loadTacticalState(): TacticalEngineState | null {
 export function initTacticalState(config: TacticalConfig): TacticalEngineState {
   return {
     config,
-    opportunities:     [],
-    openPositions:     [],
-    closedPositions:   [],
-    totalRealizedPnL:  0,
+    opportunities:      [],
+    openPositions:      [],
+    closedPositions:    [],
+    totalRealizedPnL:   0,
     totalUnrealizedPnL: 0,
-    winRate:           0,
-    avgRiskReward:     0,
-    profitFactor:      0,
-    maxDrawdown:       0,
-    capitalUsed:       0,
-    capitalAvailable:  config.tacticalCapitalEur,
-    lastScreened:      null,
+    winRate:            0,
+    avgRiskReward:      0,
+    profitFactor:       0,
+    maxDrawdown:        0,
+    capitalUsed:        0,
+    // BUG FIX: capitalAvailable parte del capital táctico completo, no de ningún capped value
+    capitalAvailable:   config.tacticalCapitalEur,
+    lastScreened:       null,
   };
 }
 

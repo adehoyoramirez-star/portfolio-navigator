@@ -11,7 +11,16 @@ import {
   calcIndicators, generateSignals, calcTotalScore,
   calcStopLoss, calcTakeProfits
 } from './tacticalSignals.ts';
-import { CORE_TACTICAL_UNIVERSE, type UniverseAsset } from './tacticalUniverse';
+import {
+  CORE_TACTICAL_UNIVERSE,
+  FULL_TACTICAL_UNIVERSE,
+  VOLATILE_UNIVERSE,
+  type UniverseAsset
+} from './tacticalUniverse';
+
+// Exportar universos para que el dashboard pueda seleccionarlos
+export { CORE_TACTICAL_UNIVERSE, FULL_TACTICAL_UNIVERSE, VOLATILE_UNIVERSE };
+export type ScanMode = 'core' | 'full' | 'volatile';
 import { getFundamentals } from './fundamentalsConfig';
 
 // ── Obtener datos de Yahoo Finance via Supabase ──────────────
@@ -161,10 +170,17 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
 // SCREENER PRINCIPAL
 // ════════════════════════════════════════════════════════════
 export async function runTacticalScreener(
-  supabase: any,
-  config: TacticalConfig,
-  universe = CORE_TACTICAL_UNIVERSE
+  supabase:  any,
+  config:    TacticalConfig,
+  scanMode:  ScanMode = 'core',
 ): Promise<ScreenerResult> {
+  // Seleccionar universo según modo
+  const universeMap = {
+    core:     CORE_TACTICAL_UNIVERSE,     // 50 activos ~2 min
+    full:     FULL_TACTICAL_UNIVERSE,     // 120 activos ~8 min
+    volatile: VOLATILE_UNIVERSE,          // 25 activos HIGH vol ~1 min
+  };
+  const universe = universeMap[scanMode];
   const errors: string[] = [];
   const assets: TacticalAsset[] = [];
 
