@@ -6,11 +6,11 @@
 import type {
   TacticalAsset, TacticalOpportunity, ScreenerResult,
   TacticalConfig, TechnicalIndicators,
-} from './types';
+} from './types.ts';
 import {
   calcIndicators, generateSignals, calcTotalScore,
   calcStopLoss, calcTakeProfits
-} from './tacticalSignals';
+} from './tacticalSignals.ts';
 import { CORE_TACTICAL_UNIVERSE, type UniverseAsset } from './tacticalUniverse';
 import { getFundamentals } from './fundamentalsConfig';
 
