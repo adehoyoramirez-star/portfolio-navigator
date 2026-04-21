@@ -27,11 +27,19 @@ export interface IBKRConfig {
   enabled:     boolean;
 }
 
+// URL del gateway desde variables de entorno (solo funciona en local)
+const IBKR_GATEWAY_URL = import.meta.env.VITE_IBKR_GATEWAY_URL || 'http://localhost:5000';
+const IBKR_ENABLED_ENV = import.meta.env.VITE_IBKR_ENABLED === 'true';
+
+// Verificar si estamos en produccion (Vercel) - IBKR no disponible en serverless
+const isProduction = import.meta.env.PROD ||
+                     import.meta.env.VERCEL === '1' ||
+                     !IBKR_GATEWAY_URL.includes('localhost');
+
 export const DEFAULT_IBKR_CONFIG: IBKRConfig = {
-  gatewayUrl: 'http://localhost:5000',  // Client Portal API (puerto 5000)
-                                         // o 'http://localhost:4001' para TWS Socket API
-  accountId:  'U25387834',  // Interactive Brokers account ID
-  enabled:    false,        // Deshabilitado por defecto hasta configurar IBKR Gateway
+  gatewayUrl:  IBKR_GATEWAY_URL,
+  accountId:   import.meta.env.VITE_IBKR_ACCOUNT_ID || 'U25387834',
+  enabled:     isProduction ? false : IBKR_ENABLED_ENV,  // Forzar false en Vercel
 };
 
 // ── Tipos de respuesta IBKR ───────────────────────────────────
