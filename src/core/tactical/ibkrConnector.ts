@@ -1,92 +1,71 @@
-// ============================================================
 // src/core/tactical/ibkrConnector.ts
-// Interactive Brokers Client Portal Web API
-//
-// PREREQUISITO: IBKR Gateway/TWS corriendo localmente
-//
-// Opción A (RECOMENDADA): IBKR TWS/Gateway nativo en Windows
-//   1. Descarga: https://www.interactivebrokers.com/en/trading/ibgateway.php
-//   2. Instala y ejecuta IBKR Gateway
-//   3. Configura API: Settings → API → Settings
-//      - Enable ActiveX and Socket EClients: ✓
-//      - Socket port: 4001 (producción) o 4002 (paper)
-//      - Allow connections from localhost only: ✓
-//   4. El conector se conecta directamente al puerto 4001/4002
-//
-// Opción B: Client Portal Gateway (puerto 5000)
-//   - Requiere Docker con imagen compatible
-//   - Ver docker-compose.yml para configuración
-//
-// Account ID: U25387834
-// Documentación: https://interactivebrokers.github.io/cpwebapi/
-// ============================================================
+// Interactive Brokers Client Portal Web API – Conexión vía proxy serverless
 
 export interface IBKRConfig {
-  gatewayUrl:  string;  // default: 'http://localhost:5000'
-  accountId:   string;  // Tu account ID de IBKR
-  enabled:     boolean;
+  gatewayUrl: string;   // URL base del gateway (local en dev, /api/ibkr en prod)
+  accountId: string;
+  enabled: boolean;
 }
 
-// URL del gateway desde variables de entorno (solo funciona en local)
-const IBKR_GATEWAY_URL = import.meta.env.VITE_IBKR_GATEWAY_URL || 'http://localhost:5000';
-const IBKR_ENABLED_ENV = import.meta.env.VITE_IBKR_ENABLED === 'true';
+// Determinar si estamos en desarrollo local o en producción (Vercel)
+const isProduction = import.meta.env.PROD || import.meta.env.VERCEL === '1';
 
-// Verificar si estamos en produccion (Vercel) - IBKR no disponible en serverless
-const isProduction = import.meta.env.PROD ||
-                     import.meta.env.VERCEL === '1' ||
-                     !IBKR_GATEWAY_URL.includes('localhost');
+// En desarrollo: conectamos directamente a localhost:5000
+// En producción: usamos el proxy serverless /api/ibkr
+const DEV_GATEWAY = 'http://localhost:5000';
+const PROD_GATEWAY = '/api/ibkr';  // Vercel redirige a la función serverless
 
 export const DEFAULT_IBKR_CONFIG: IBKRConfig = {
-  gatewayUrl:  IBKR_GATEWAY_URL,
-  accountId:   import.meta.env.VITE_IBKR_ACCOUNT_ID || 'U25387834',
-  enabled:     isProduction ? false : IBKR_ENABLED_ENV,  // Forzar false en Vercel
+  gatewayUrl: isProduction ? PROD_GATEWAY : DEV_GATEWAY,
+  accountId: import.meta.env.VITE_IBKR_ACCOUNT_ID || 'U25387834',
+  enabled: import.meta.env.VITE_IBKR_ENABLED === 'true' || !isProduction, // en dev siempre true
 };
 
 // ── Tipos de respuesta IBKR ───────────────────────────────────
 export interface IBKRPosition {
-  conid:          number;
-  contractDesc:   string;
-  position:       number;
-  mktPrice:       number;
-  mktValue:       number;
-  avgPrice:       number;
-  unrealizedPnl:  number;
-  realizedPnl:    number;
-  currency:       string;
-  assetClass:     string;
-  ticker?:        string;
+  conid: number;
+  contractDesc: string;
+  position: number;
+  mktPrice: number;
+  mktValue: number;
+  avgPrice: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  currency: string;
+  assetClass: string;
+  ticker?: string;
 }
 
 export interface IBKROrder {
-  orderId:     number;
-  conid:       number;
-  ticker:      string;
-  orderType:   string;
-  side:        'BUY' | 'SELL';
-  totalSize:   number;
-  price?:      number;
-  status:      string;
+  orderId: number;
+  conid: number;
+  ticker: string;
+  orderType: string;
+  side: 'BUY' | 'SELL';
+  totalSize: number;
+  price?: number;
+  status: string;
   timeInForce: string;
 }
 
 export interface IBKRMarketData {
-  conid:           number;
-  '31'?:           string;  // Last price
-  '84'?:           string;  // Bid
-  '86'?:           string;  // Ask
-  '7295'?:         string;  // Open
-  '7296'?:         string;  // Close (prev)
-  '7762'?:         string;  // Volume
+  conid: number;
+  '31'?: string;   // Last price
+  '84'?: string;   // Bid
+  '86'?: string;   // Ask
+  '7295'?: string; // Open
+  '7296'?: string; // Close (prev)
+  '7762'?: string; // Volume
   lastUpdateTime?: string;
 }
 
 export interface IBKRAccountSummary {
-  accountId:       string;
-  netliquidation:  number;
-  totalCashValue:  number;
-  buyingPower:     number;
-  equity:          number;
-  currency:        string;
+  accountId: string;
+  netliquidation: number;
+  totalCashValue: number;
+  buyingPower: number;
+  equity: number;
+  currency: string;
 }
 
 // ── Cliente IBKR ─────────────────────────────────────────────
@@ -98,19 +77,22 @@ export class IBKRClient {
     this.config = config;
   }
 
-  private get base() { return this.config.gatewayUrl; }
+  private get base() {
+    return this.config.gatewayUrl;
+  }
 
-  // Fetch con CORS — el gateway corre en localhost, mismo origen si se
-  // hace desde Vite dev server. En prod necesita proxy Nginx/Vercel.
+  // Función fetch con manejo de cookies y errores
   private async req<T>(path: string, opts?: RequestInit): Promise<T> {
-    const res = await fetch(`${this.base}/v1/api${path}`, {
+    const url = `${this.base}${path}`;
+    const res = await fetch(url, {
       ...opts,
       headers: {
         'Content-Type': 'application/json',
         ...(opts?.headers ?? {}),
       },
-      credentials: 'include', // Necesario para la cookie de sesión IBKR
+      credentials: 'include', // Necesario para mantener la sesión IBKR
     });
+
     if (!res.ok) {
       const err = await res.text().catch(() => res.statusText);
       throw new Error(`IBKR API ${res.status}: ${err}`);
@@ -147,9 +129,9 @@ export class IBKRClient {
       accountId,
       netliquidation: parseFloat(data.netliquidation?.amount ?? 0),
       totalCashValue: parseFloat(data.totalcashvalue?.amount ?? 0),
-      buyingPower:    parseFloat(data.buyingpower?.amount ?? 0),
-      equity:         parseFloat(data.equitywithloanvalue?.amount ?? 0),
-      currency:       data.netliquidation?.currency ?? 'EUR',
+      buyingPower: parseFloat(data.buyingpower?.amount ?? 0),
+      equity: parseFloat(data.equitywithloanvalue?.amount ?? 0),
+      currency: data.netliquidation?.currency ?? 'EUR',
     };
   }
 
@@ -172,8 +154,8 @@ export class IBKRClient {
 
   // ── Precio en tiempo real ─────────────────────────────────
   async getMarketData(conids: number[]): Promise<IBKRMarketData[]> {
-    const fields = '31,84,86,7295,7296,7762'; // Last, bid, ask, open, close, volume
-    const data   = await this.req<IBKRMarketData[]>(
+    const fields = '31,84,86,7295,7296,7762';
+    const data = await this.req<IBKRMarketData[]>(
       `/iserver/marketdata/snapshot?conids=${conids.join(',')}&fields=${fields}`
     );
     return data ?? [];
@@ -187,80 +169,82 @@ export class IBKRClient {
 
   // ── Colocar orden límite ──────────────────────────────────
   async placeLimitOrder(
-    accountId:   string,
-    conid:       number,
-    side:        'BUY' | 'SELL',
-    quantity:    number,
-    price:       number,
-    ticker:      string,
+    accountId: string,
+    conid: number,
+    side: 'BUY' | 'SELL',
+    quantity: number,
+    price: number,
+    ticker: string
   ): Promise<{ orderId: string; status: string; message?: string }> {
-    const body = [{
-      acctId:      accountId,
-      conid,
-      orderType:   'LMT',
-      side,
-      quantity,
-      price:       price.toFixed(2),
-      tif:         'GTC',  // Good Till Cancelled
-      listingExch: 'SMART',
-    }];
+    const body = [
+      {
+        acctId: accountId,
+        conid,
+        orderType: 'LMT',
+        side,
+        quantity,
+        price: price.toFixed(2),
+        tif: 'GTC',
+        listingExch: 'SMART',
+      },
+    ];
 
-    const data = await this.req<any[]>(
-      `/iserver/account/${accountId}/orders`,
-      { method: 'POST', body: JSON.stringify({ orders: body }) }
-    );
+    const data = await this.req<any[]>(`/iserver/account/${accountId}/orders`, {
+      method: 'POST',
+      body: JSON.stringify({ orders: body }),
+    });
 
-    // La primera respuesta de IBKR suele ser una confirmación (reply needed)
     if (data?.[0]?.id) {
-      // Confirmar orden automáticamente
-      const confirm = await this.req<any[]>(
-        `/iserver/reply/${data[0].id}`,
-        { method: 'POST', body: JSON.stringify({ confirmed: true }) }
-      );
+      const confirm = await this.req<any[]>(`/iserver/reply/${data[0].id}`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true }),
+      });
       return {
         orderId: confirm?.[0]?.order_id ?? data[0].id,
-        status:  confirm?.[0]?.order_status ?? 'SUBMITTED',
+        status: confirm?.[0]?.order_status ?? 'SUBMITTED',
         message: `${side} ${quantity} ${ticker} @ €${price}`,
       };
     }
 
     return {
       orderId: data?.[0]?.order_id ?? '',
-      status:  data?.[0]?.order_status ?? 'UNKNOWN',
+      status: data?.[0]?.order_status ?? 'UNKNOWN',
       message: `${side} ${quantity} ${ticker} @ €${price}`,
     };
   }
 
   // ── Colocar orden de mercado ──────────────────────────────
   async placeMarketOrder(
-    accountId:  string,
-    conid:      number,
-    side:       'BUY' | 'SELL',
-    quantity:   number,
-    ticker:     string,
+    accountId: string,
+    conid: number,
+    side: 'BUY' | 'SELL',
+    quantity: number,
+    ticker: string
   ): Promise<{ orderId: string; status: string; message?: string }> {
-    const body = [{
-      acctId:   accountId,
-      conid,
-      orderType:'MKT',
-      side,
-      quantity,
-      tif:      'DAY',
-    }];
+    const body = [
+      {
+        acctId: accountId,
+        conid,
+        orderType: 'MKT',
+        side,
+        quantity,
+        tif: 'DAY',
+      },
+    ];
 
-    const data = await this.req<any[]>(
-      `/iserver/account/${accountId}/orders`,
-      { method: 'POST', body: JSON.stringify({ orders: body }) }
-    );
+    const data = await this.req<any[]>(`/iserver/account/${accountId}/orders`, {
+      method: 'POST',
+      body: JSON.stringify({ orders: body }),
+    });
 
     if (data?.[0]?.id) {
-      const confirm = await this.req<any[]>(
-        `/iserver/reply/${data[0].id}`,
-        { method: 'POST', body: JSON.stringify({ confirmed: true }) }
-      );
+      const confirm = await this.req<any[]>(`/iserver/reply/${data[0].id}`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true }),
+      });
       return {
         orderId: confirm?.[0]?.order_id ?? '',
-        status:  confirm?.[0]?.order_status ?? 'SUBMITTED',
+        status: confirm?.[0]?.order_status ?? 'SUBMITTED',
         message: `${side} MKT ${quantity} ${ticker}`,
       };
     }
@@ -271,10 +255,7 @@ export class IBKRClient {
   // ── Cancelar orden ────────────────────────────────────────
   async cancelOrder(accountId: string, orderId: string): Promise<boolean> {
     try {
-      await this.req(
-        `/iserver/account/${accountId}/order/${orderId}`,
-        { method: 'DELETE' }
-      );
+      await this.req(`/iserver/account/${accountId}/order/${orderId}`, { method: 'DELETE' });
       return true;
     } catch {
       return false;
@@ -303,23 +284,22 @@ export function getIBKRClient(config: IBKRConfig): IBKRClient {
 }
 
 // ── Mapa de tickers a conids de IBKR ─────────────────────────
-// Conids de los activos más comunes — se cachean tras la primera búsqueda
 export const KNOWN_CONIDS: Record<string, number> = {
-  'BTC-EUR':  13977784,  // Bitcoin
-  'IS3Q.DE':  107373649, // iShares MSCI World Quality
-  'VVSM.DE':  354262162, // VanEck Semiconductor
-  'URNU.DE':  478170349, // Global X Uranium
-  'EMXC.DE':  107373578, // iShares EM ex-China
-  'PPFB.DE':  35271851,  // iShares Physical Gold
-  'XNAS.DE':  185844684, // iShares NASDAQ 100
-  'QQQ':      320227571,
-  'SPY':      756733,
-  'GLD':      13399735,
-  'SLV':      13399780,
-  'URA':      95697706,
-  'SMH':      99038698,
-  'EEM':      22209243,
-  'TLT':      22209460,
-  'HYG':      22209447,
-  'IWM':      9579970,
+  'BTC-EUR': 13977784,
+  'IS3Q.DE': 107373649,
+  'VVSM.DE': 354262162,
+  'URNU.DE': 478170349,
+  'EMXC.DE': 107373578,
+  'PPFB.DE': 35271851,
+  'XNAS.DE': 185844684,
+  'QQQ': 320227571,
+  'SPY': 756733,
+  'GLD': 13399735,
+  'SLV': 13399780,
+  'URA': 95697706,
+  'SMH': 99038698,
+  'EEM': 22209243,
+  'TLT': 22209460,
+  'HYG': 22209447,
+  'IWM': 9579970,
 };
