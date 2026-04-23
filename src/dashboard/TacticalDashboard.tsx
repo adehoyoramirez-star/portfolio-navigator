@@ -17,6 +17,7 @@ import {
 import {
   runTacticalScreener, defaultTacticalConfig,
 } from '@/core/tactical/tacticalScreener';
+import type { ScanMode } from '@/core/tactical/tacticalScreener';
 
 // ── Estilos base ─────────────────────────────────────────────
 const S: Record<string, React.CSSProperties> = {
@@ -76,7 +77,7 @@ export default function TacticalDashboard() {
   const [tab, setTab]             = useState<'opportunities' | 'positions' | 'history' | 'config'>('opportunities');
   const [error, setError]         = useState<string | null>(null);
   const [lastRun, setLastRun]     = useState<string | null>(state.lastScreened);
-  const [confirmClose, setConfirmClose] = useState<string | null>(null);
+  const [scanMode, setScanMode]   = useState<ScanMode>('core');
 
   // Config local editable
   const [cfgCapital, setCfgCapital]   = useState(state.config.tacticalCapitalEur);
@@ -105,7 +106,7 @@ export default function TacticalDashboard() {
   const runScreener = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const result = await runTacticalScreener(supabase, state.config);
+      const result = await runTacticalScreener(supabase, state.config, scanMode);
       setState(prev => ({
         ...prev,
         opportunities: result.opportunities,
@@ -120,7 +121,7 @@ export default function TacticalDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [state.config]);
+  }, [state.config, scanMode]);
 
   // ── Abrir posición ─────────────────────────────────────────
   const handleOpen = useCallback((opp: TacticalOpportunity) => {
@@ -133,7 +134,6 @@ export default function TacticalDashboard() {
   // ── Cerrar posición ────────────────────────────────────────
   const handleClose = useCallback((posId: string, exitPrice: number, reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL') => {
     setState(prev => closePosition(prev, posId, exitPrice, reason));
-    setConfirmClose(null);
   }, []);
 
   // ── Aplicar config ─────────────────────────────────────────
@@ -155,7 +155,6 @@ export default function TacticalDashboard() {
     setIbkrStatus('checking');
     setIbkrMsg('Conectando con el Gateway...');
     try {
-      // 1. Estado de autenticación
       const authRes = await fetch(`${ibkrGateway}/v1/api/iserver/auth/status`, {
         credentials: 'include',
       });
@@ -167,28 +166,23 @@ export default function TacticalDashboard() {
         return;
       }
 
-      // 2. Obtener cuentas
       const accRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/accounts`, { credentials: 'include' });
       const accData = await accRes.json();
       const accounts: string[] = accData.accounts ?? [];
       setIbkrAccounts(accounts);
 
-      // 3. Si no especificaron accountId, usar el primero disponible
       const acct = ibkrAccountId || accounts[0] || '';
       if (!acct) throw new Error('No se encontraron cuentas en el Gateway.');
 
-      // 4. Resumen de cuenta
       const sumRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/summary`, { credentials: 'include' });
       const sumData = await sumRes.json();
       const nlv = parseFloat(sumData?.netliquidation?.amount ?? sumData?.NetLiquidation?.amount ?? 0);
       setIbkrNLV(nlv);
 
-      // 5. Posiciones
       const posRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/positions/0`, { credentials: 'include' });
       const posData = await posRes.json();
       setIbkrPositions(Array.isArray(posData) ? posData : []);
 
-      // Guardar config
       localStorage.setItem('ibkr_enabled',    'true');
       localStorage.setItem('ibkr_account_id', acct);
       localStorage.setItem('ibkr_gateway',    ibkrGateway);
@@ -223,7 +217,9 @@ export default function TacticalDashboard() {
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:6 }}>
             <div style={{ background:'#0f172a', borderRadius:20, width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', border:`2px solid ${opp.score >= 70 ? '#22c55e' : '#f59e0b'}` }}>
-              <span style={{ fontWeight:700, fontSize:'0.8rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{opp.score}</span>
+              <span style={{ fontWeight:700, fontSize:'0.8rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>
+                {opp.score.toFixed(0)}
+              </span>
             </div>
           </div>
         </div>
@@ -247,7 +243,7 @@ export default function TacticalDashboard() {
         <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginBottom:'0.6rem' }}>
           {opp.activeSignals.map(s => (
             <span key={s.type} style={{ ...S.badge, background:'#0f172a', color: s.strength === 'EXTREME' ? '#ef4444' : s.strength === 'STRONG' ? '#f59e0b' : '#60a5fa', border:`1px solid #334155` }}>
-              {s.type.replace('_',' ')} {s.score}
+              {s.type.replace('_',' ')} {s.score.toFixed(2)}
             </span>
           ))}
         </div>
@@ -409,6 +405,24 @@ export default function TacticalDashboard() {
         ))}
       </div>
 
+      {/* Selector de universo */}
+      <div style={{ display:'flex', gap:6, marginBottom:'0.75rem' }}>
+        {(['volatile','core','full'] as ScanMode[]).map(mode => (
+          <button
+            key={mode}
+            onClick={() => setScanMode(mode)}
+            style={{
+              padding:'0.35rem 0.8rem', borderRadius:6, border:'1px solid #334155',
+              background: scanMode === mode ? '#1d4ed8' : '#1e293b',
+              color: scanMode === mode ? '#fff' : '#64748b',
+              fontWeight:700, fontSize:'0.72rem', cursor:'pointer'
+            }}
+          >
+            {mode === 'volatile' ? '⚡ RÁPIDO (17)' : mode === 'core' ? '🎯 CORE (22)' : '📊 FULL (57)'}
+          </button>
+        ))}
+      </div>
+
       {/* Tabs */}
       <div style={{ display:'flex', gap:4, marginBottom:'1rem' }}>
         {(['opportunities','positions','history','config'] as const).map(t => (
@@ -448,7 +462,7 @@ export default function TacticalDashboard() {
                       <div key={o.id} style={{ background:'#052e16', borderRadius:8, padding:'8px 12px', textAlign:'center', border:'1px solid #16a34a' }}>
                         <div style={{ fontWeight:700, fontSize:'0.9rem', color:'#f8fafc' }}>{o.asset.ticker}</div>
                         <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{typeLabels[o.type]}</div>
-                        <div style={{ fontWeight:700, color:'#22c55e', fontSize:'1rem' }}>{o.score}</div>
+                        <div style={{ fontWeight:700, color:'#22c55e', fontSize:'1rem' }}>{o.score.toFixed(0)}</div>
                       </div>
                     ))}
                   </div>

@@ -69,7 +69,7 @@ export interface TacticalAsset {
   sector:      string;
   type:        'ETF' | 'ETC' | 'CRYPTO' | 'INDEX';
   exchange:    string;
-  currency:    'EUR' | 'USD';
+  currency:    'EUR' | 'USD' | 'GBP';  // <- Añadido 'GBP'
   // Datos de mercado (actualizados al cargar)
   price:       number;
   closes:      number[];         // Histórico de cierres

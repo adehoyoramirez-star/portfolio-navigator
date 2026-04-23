@@ -77,8 +77,21 @@ export function calcIndicators(closes: number[], volumes: number[]): TechnicalIn
   for (let i = 26; i <= closes.length; i++) macdSeries.push(ema(closes.slice(0, i), 12) - ema(closes.slice(0, i), 26));
   const macdSignal = ema(macdSeries, 9);
   const macdHist   = macdLine - macdSignal;
-  const atr14  = closes.length >= 15 ? sma(closes.slice(-15).map((c, i, a) => i === 0 ? 0 : Math.abs(c - a[i - 1])).slice(1), 14) : price * 0.02;
-  const atrPct = price > 0 ? atr14 / price : 0.02;
+
+  // ATR14 robusto (nunca cero)
+  let atr14 = 0;
+  if (closes.length >= 15) {
+    const rawAtr = sma(
+      closes.slice(-15).map((c, i, a) => i === 0 ? 0 : Math.abs(c - a[i - 1])).slice(1),
+      14
+    );
+    atr14 = Math.max(rawAtr, price * 0.005); // suelo 0.5% del precio
+  } else {
+    atr14 = price * 0.02;
+  }
+  const atrPct = price > 0 ? (atr14 / price) : 0.02;
+  const atrPctSafe = Math.max(atrPct, 0.005);
+
   const volSlice = volumes.slice(-21);
   const avgVol = sma(volSlice.slice(0, -1), 20);
   const volRatio = avgVol > 0 ? (volumes[volumes.length - 1] ?? avgVol) / avgVol : 1;
@@ -87,9 +100,10 @@ export function calcIndicators(closes: number[], volumes: number[]): TechnicalIn
   let trend: TrendDirection = 'SIDEWAYS';
   if (price > ma50 && ma50 > ma200) trend = 'UPTREND';
   else if (price < ma50 && ma50 < ma200) trend = 'DOWNTREND';
+
   return {
     price, ma20, ma50, ma200, rsi2, rsi14, rsiWeekly,
-    macdLine, macdSignal, macdHist, adx, atr14, atrPct,
+    macdLine, macdSignal, macdHist, adx, atr14, atrPct: atrPctSafe,
     bbUpper, bbMiddle: m20, bbLower, bbWidth,
     zScore20, zScore50, volumeRatio: volRatio, trend,
     aboveMA200: price > ma200, aboveMA50: price > ma50, aboveMA20: price > ma20,
@@ -104,7 +118,6 @@ function mkSig(type: OpportunityType, active: boolean, score: number, descriptio
 
 function signalBloodInStreets(ind: TechnicalIndicators): TacticalSignal {
   const { rsi2, zScore20, aboveMA200, volumeRatio } = ind;
-  // RELAJADO: RSI(2) < 10 (era 5) para detectar más oportunidades
   const active = rsi2 < 10 && zScore20 < -1.5 && aboveMA200;
   const score  = active ? Math.min(100, 45 + (10 - Math.min(10, rsi2)) * 4 + (Math.abs(zScore20) - 1.5) * 5 + (volumeRatio > 1.5 ? 8 : 0)) : 0;
   return mkSig('BLOOD_IN_STREETS', active, score,
@@ -115,7 +128,6 @@ function signalBloodInStreets(ind: TechnicalIndicators): TacticalSignal {
 
 function signalMeanReversion(ind: TechnicalIndicators): TacticalSignal {
   const { rsi2, bbLower, price, zScore20 } = ind;
-  // RELAJADO: RSI(2) < 15 y precio cerca del BB inferior
   const active = rsi2 < 15 && price < bbLower * 1.02;
   const score  = active ? Math.min(100, 40 + (15 - Math.min(15, rsi2)) * 2 + (price < bbLower ? 12 : 4) + (zScore20 < -1.5 ? 8 : 0)) : 0;
   return mkSig('MEAN_REVERSION', active, score,
@@ -136,7 +148,6 @@ function signalMomentumBreakout(ind: TechnicalIndicators): TacticalSignal {
 
 function signalOversoldBounce(ind: TechnicalIndicators): TacticalSignal {
   const { rsi14, aboveMA200, ma50, price, zScore50 } = ind;
-  // RELAJADO: RSI(14) < 45 (era 35) y precio sobre MA50 o recuperando
   const active = rsi14 < 45 && (aboveMA200 || price > ma50 * 0.95);
   const score  = active ? Math.min(100, 38 + (45 - Math.min(45, rsi14)) * 1.2 + (aboveMA200 ? 18 : 6) + (zScore50 < -1 ? 8 : 0)) : 0;
   return mkSig('OVERSOLD_BOUNCE', active, score,
