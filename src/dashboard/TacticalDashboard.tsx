@@ -15,7 +15,7 @@ import {
   getTacticalSummary,
 } from '@/core/tactical/tacticalPortfolio';
 import {
-  runTacticalScreener, defaultTacticalConfig, type ScanMode,
+  runTacticalScreener, defaultTacticalConfig,
 } from '@/core/tactical/tacticalScreener';
 
 // ── Estilos base ─────────────────────────────────────────────
@@ -77,7 +77,6 @@ export default function TacticalDashboard() {
   const [error, setError]         = useState<string | null>(null);
   const [lastRun, setLastRun]     = useState<string | null>(state.lastScreened);
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
-  const [scanMode, setScanMode]   = useState<ScanMode>('core');
 
   // Config local editable
   const [cfgCapital, setCfgCapital]   = useState(state.config.tacticalCapitalEur);
@@ -88,66 +87,14 @@ export default function TacticalDashboard() {
   const [cfgMA200, setCfgMA200]       = useState(state.config.requireAboveMA200);
 
   // IBKR config
-  // En Vercel usamos el API route /api/ibkr (proxy server-side) para evitar el bloqueo
-  // de Chrome (Private Network Access) que impide fetch desde HTTPS público a localhost.
-  // En local usamos el proxy directo en puerto 8010.
-  const isVercel = typeof window !== 'undefined' && !window.location.hostname.includes('localhost');
-  const defaultGateway = isVercel ? '/api/ibkr' : 'http://localhost:8010/proxy';
-
   const [ibkrEnabled,    setIbkrEnabled]    = useState(() => localStorage.getItem('ibkr_enabled') === 'true');
   const [ibkrAccountId,  setIbkrAccountId]  = useState(() => localStorage.getItem('ibkr_account_id') ?? '');
-  const [ibkrGateway,    setIbkrGateway]    = useState(() => {
-    const saved = localStorage.getItem('ibkr_gateway');
-    // Si el valor guardado es el antiguo localhost:5000, resetear al correcto
-    if (!saved || saved === 'https://localhost:5000') return defaultGateway;
-    return saved;
-  });
+  const [ibkrGateway,    setIbkrGateway]    = useState(() => localStorage.getItem('ibkr_gateway') ?? 'https://localhost:5000');
   const [ibkrStatus,     setIbkrStatus]     = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
   const [ibkrMsg,        setIbkrMsg]        = useState<string>('');
   const [ibkrAccounts,   setIbkrAccounts]   = useState<string[]>([]);
   const [ibkrPositions,  setIbkrPositions]  = useState<any[]>([]);
   const [ibkrNLV,        setIbkrNLV]        = useState<number>(0);
-
-  // Telegram config
-  const [tgToken,   setTgToken]   = useState(() => localStorage.getItem('tg_token') ?? '');
-  const [tgChatId,  setTgChatId]  = useState(() => localStorage.getItem('tg_chat_id') ?? '');
-  const [tgEnabled, setTgEnabled] = useState(() => localStorage.getItem('tg_enabled') === 'true');
-  const [tgStatus,  setTgStatus]  = useState<'idle'|'ok'|'error'>('idle');
-
-  // ── Telegram: enviar mensaje ───────────────────────────────
-  const sendTelegram = useCallback(async (text: string): Promise<boolean> => {
-    if (!tgEnabled || !tgToken || !tgChatId) return false;
-    try {
-      const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: tgChatId,
-          text,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        }),
-      });
-      return r.ok;
-    } catch { return false; }
-  }, [tgEnabled, tgToken, tgChatId]);
-
-  // ── Telegram: test de conexión ─────────────────────────────
-  const testTelegram = useCallback(async () => {
-    localStorage.setItem('tg_token',   tgToken);
-    localStorage.setItem('tg_chat_id', tgChatId);
-    localStorage.setItem('tg_enabled', 'true');
-    setTgEnabled(true);
-    const ok = await sendTelegram(
-      '✅ <b>Motor Táctico Olympus conectado</b>\n\n' +
-      'Las alertas de Telegram están activas.\n' +
-      '• Nuevas oportunidades (score ≥ 70)\n' +
-      '• Precio cerca del Stop Loss\n' +
-      '• Precio cerca del TP1\n' +
-      '• Posiciones próximas a expirar'
-    );
-    setTgStatus(ok ? 'ok' : 'error');
-  }, [tgToken, tgChatId, sendTelegram]);
 
   // Persistir al cambiar estado
   useEffect(() => { saveTacticalState(state); }, [state]);
@@ -158,25 +105,13 @@ export default function TacticalDashboard() {
   const runScreener = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const result = await runTacticalScreener(supabase, state.config, scanMode);
+      const result = await runTacticalScreener(supabase, state.config);
       setState(prev => ({
         ...prev,
         opportunities: result.opportunities,
         lastScreened:  result.screennedAt,
       }));
       setLastRun(result.screennedAt);
-      // Alerta Telegram: oportunidades con score alto
-      const topOpps = result.opportunities.filter(o => o.score >= 70);
-      if (topOpps.length > 0) {
-        const lines = topOpps.slice(0, 5).map(o =>
-          `• <b>${o.asset.ticker}</b> ${o.asset.name} — Score: <b>${o.score.toFixed(2)}</b>\n` +
-          `  Entrada: €${o.entryPrice.toFixed(2)} | SL: €${o.stopLoss.toFixed(2)} | TP1: €${o.takeProfit1.toFixed(2)} | TP2: €${o.takeProfit2.toFixed(2)}\n` +
-          `  R:R ${o.riskReward.toFixed(1)} — ${o.type.replace(/_/g,' ')}`
-        ).join('\n\n');
-        sendTelegram(
-          `🎯 <b>Motor Táctico — ${topOpps.length} oportunidad(es) detectada(s)</b>\n\n${lines}`
-        );
-      }
       if (result.errors.length > 0) {
         setError(`Datos parciales (${result.errors.length} activos sin datos)`);
       }
@@ -185,7 +120,7 @@ export default function TacticalDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [state.config, scanMode]);
+  }, [state.config]);
 
   // ── Abrir posición ─────────────────────────────────────────
   const handleOpen = useCallback((opp: TacticalOpportunity) => {
@@ -193,33 +128,13 @@ export default function TacticalDashboard() {
       const next = openPosition(prev, opp);
       return next;
     });
-    sendTelegram(
-      `⚡ <b>Posición abierta — ${opp.asset.ticker}</b>\n\n` +
-      `Entrada: €${opp.entryPrice.toFixed(2)}\n` +
-      `Stop Loss: €${opp.stopLoss.toFixed(2)}\n` +
-      `TP1: €${opp.takeProfit1.toFixed(2)}\n` +
-      `TP2: €${opp.takeProfit2.toFixed(2)}\n` +
-      `R:R: ${opp.riskReward.toFixed(1)}:1 — Score: ${opp.score.toFixed(2)}`
-    );
-  }, [sendTelegram]);
+  }, []);
 
   // ── Cerrar posición ────────────────────────────────────────
   const handleClose = useCallback((posId: string, exitPrice: number, reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL') => {
-    const pos = state.openPositions.find(p => p.id === posId);
     setState(prev => closePosition(prev, posId, exitPrice, reason));
     setConfirmClose(null);
-    if (pos) {
-      const pnl = (exitPrice - pos.entryPrice) * pos.shares;
-      const emoji = reason === 'CLOSED_TP' ? '✅' : reason === 'CLOSED_SL' ? '🛑' : '📤';
-      const label = reason === 'CLOSED_TP' ? 'Take Profit' : reason === 'CLOSED_SL' ? 'Stop Loss' : 'Manual';
-      sendTelegram(
-        `${emoji} <b>Posición cerrada — ${pos.ticker}</b>\n\n` +
-        `Motivo: ${label}\n` +
-        `Entrada: €${pos.entryPrice.toFixed(2)} → Salida: €${exitPrice.toFixed(2)}\n` +
-        `P&L: ${pnl >= 0 ? '+' : ''}€${pnl.toFixed(2)} (${((exitPrice/pos.entryPrice-1)*100).toFixed(2)}%)`
-      );
-    }
-  }, [state.openPositions, sendTelegram]);
+  }, []);
 
   // ── Aplicar config ─────────────────────────────────────────
   const applyConfig = useCallback(() => {
@@ -232,24 +147,8 @@ export default function TacticalDashboard() {
       riskPerTradePct:      cfgRiskPct / 100,
       requireAboveMA200:    cfgMA200,
     };
-    setState(prev => ({
-      ...prev,
-      config: newConfig,
-      // BUG FIX: recalcular capitalAvailable cuando cambia el capital total
-      capitalAvailable: Math.max(0, cfgCapital - prev.capitalUsed),
-    }));
+    setState(prev => ({ ...prev, config: newConfig }));
   }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200, state.config]);
-
-  // ── IBKR: helper fetch ─────────────────────────────────────
-  // Cuando usamos /api/ibkr (Vercel), las rutas son /api/ibkr/iserver/auth/status
-  // Cuando usamos proxy local, las rutas son http://localhost:8010/proxy/v1/api/iserver/auth/status
-  const ibkrFetch = useCallback((path: string, opts?: RequestInit) => {
-    const isApiRoute = ibkrGateway.startsWith('/api/');
-    const url = isApiRoute
-      ? `${ibkrGateway}/${path}`                        // /api/ibkr/iserver/auth/status
-      : `${ibkrGateway}/v1/api/${path}`;                // http://localhost:8010/proxy/v1/api/...
-    return fetch(url, { credentials: 'include', ...opts });
-  }, [ibkrGateway]);
 
   // ── IBKR: verificar conexión ────────────────────────────────
   const verifyIBKR = useCallback(async () => {
@@ -257,31 +156,21 @@ export default function TacticalDashboard() {
     setIbkrMsg('Conectando con el Gateway...');
     try {
       // 1. Estado de autenticación
-      const authRes = await ibkrFetch('iserver/auth/status');
-      if (!authRes.ok) {
-        const isApiRoute = ibkrGateway.startsWith('/api/');
-        throw new Error(isApiRoute
-          ? `API route no responde (${authRes.status}). ¿Está configurada IBKR_GATEWAY_URL en Vercel y ngrok corriendo?`
-          : `Gateway no responde (${authRes.status}). ¿Está corriendo en ${ibkrGateway}?`
-        );
-      }
+      const authRes = await fetch(`${ibkrGateway}/v1/api/iserver/auth/status`, {
+        credentials: 'include',
+      });
+      if (!authRes.ok) throw new Error(`Gateway no responde (${authRes.status}). ¿Está corriendo en ${ibkrGateway}?`);
       const auth = await authRes.json();
       if (!auth.authenticated) {
         setIbkrStatus('error');
-        const isApiRoute = ibkrGateway.startsWith('/api/');
-        setIbkrMsg(isApiRoute
-          ? `Gateway responde pero sesión no autenticada. Abre la URL de ngrok en el navegador e inicia sesión con tus credenciales IBKR.`
-          : `Gateway responde pero no estás autenticado. Ve a https://localhost:5000 en el navegador e inicia sesión.`
-        );
+        setIbkrMsg(`Gateway responde pero no estás autenticado. Ve a ${ibkrGateway} en el navegador e inicia sesión con tus credenciales de IBKR.`);
         return;
       }
 
       // 2. Obtener cuentas
-      const accRes  = await ibkrFetch('portfolio/accounts');
+      const accRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/accounts`, { credentials: 'include' });
       const accData = await accRes.json();
-      const accounts: string[] = Array.isArray(accData)
-        ? accData.map((a: any) => a.accountId ?? a.id ?? a)
-        : (accData.accounts ?? []);
+      const accounts: string[] = accData.accounts ?? [];
       setIbkrAccounts(accounts);
 
       // 3. Si no especificaron accountId, usar el primero disponible
@@ -289,13 +178,13 @@ export default function TacticalDashboard() {
       if (!acct) throw new Error('No se encontraron cuentas en el Gateway.');
 
       // 4. Resumen de cuenta
-      const sumRes  = await ibkrFetch(`portfolio/${acct}/summary`);
+      const sumRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/summary`, { credentials: 'include' });
       const sumData = await sumRes.json();
       const nlv = parseFloat(sumData?.netliquidation?.amount ?? sumData?.NetLiquidation?.amount ?? 0);
       setIbkrNLV(nlv);
 
       // 5. Posiciones
-      const posRes  = await ibkrFetch(`portfolio/${acct}/positions/0`);
+      const posRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/positions/0`, { credentials: 'include' });
       const posData = await posRes.json();
       setIbkrPositions(Array.isArray(posData) ? posData : []);
 
@@ -312,7 +201,7 @@ export default function TacticalDashboard() {
       setIbkrMsg(e?.message ?? 'Error desconocido al conectar con IBKR');
       localStorage.setItem('ibkr_enabled', 'false');
     }
-  }, [ibkrGateway, ibkrAccountId, ibkrFetch]);
+  }, [ibkrGateway, ibkrAccountId]);
 
   // ── Render oportunidad ─────────────────────────────────────
   const OpportunityCard = ({ opp }: { opp: TacticalOpportunity }) => {
@@ -333,8 +222,8 @@ export default function TacticalDashboard() {
             </span>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <div style={{ background:'#0f172a', borderRadius:20, width:44, height:44, display:'flex', alignItems:'center', justifyContent:'center', border:`2px solid ${opp.score >= 70 ? '#22c55e' : '#f59e0b'}` }}>
-              <span style={{ fontWeight:700, fontSize:'0.75rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{opp.score.toFixed(2)}</span>
+            <div style={{ background:'#0f172a', borderRadius:20, width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', border:`2px solid ${opp.score >= 70 ? '#22c55e' : '#f59e0b'}` }}>
+              <span style={{ fontWeight:700, fontSize:'0.8rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{opp.score}</span>
             </div>
           </div>
         </div>
@@ -342,14 +231,14 @@ export default function TacticalDashboard() {
         <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:6, marginBottom:'0.6rem' }}>
           {[
             ['Entrada',   `€${opp.entryPrice.toFixed(2)}`,   '#e2e8f0'],
-            ['Stop Loss', `€${opp.stopLoss.toFixed(2)}`,     '#ef4444'],
-            ['TP1',       `€${opp.takeProfit1.toFixed(2)}`,  '#22c55e'],
-            ['TP2',       `€${opp.takeProfit2.toFixed(2)}`,  '#4ade80'],
-            ['R:R',       `${opp.riskReward.toFixed(1)}:1`,  '#60a5fa'],
+            ['Stop Loss', `€${opp.stopLoss.toFixed(2)}`,      '#ef4444'],
+            ['TP1 (50%)', `€${opp.takeProfit1.toFixed(2)}`,   '#22c55e'],
+            ['TP2 (50%)', `€${opp.takeProfit2.toFixed(2)}`,   '#4ade80'],
+            ['R:R',       `${opp.riskReward.toFixed(1)}:1`,   '#60a5fa'],
           ].map(([l, v, c]) => (
-            <div key={l} style={{ background:'#0f172a', borderRadius:6, padding:'5px 8px', textAlign:'center' }}>
+            <div key={l} style={{ background:'#0f172a', borderRadius:6, padding:'5px 8px', textAlign:'center', border:`1px solid ${l === 'Stop Loss' ? '#450a0a' : l.startsWith('TP') ? '#052e16' : '#1e293b'}` }}>
               <div style={{ fontSize:'0.6rem', color:'#64748b' }}>{l}</div>
-              <div style={{ fontSize:'0.78rem', fontWeight:700, color: c }}>{v}</div>
+              <div style={{ fontSize:'0.82rem', fontWeight:700, color: c }}>{v}</div>
             </div>
           ))}
         </div>
@@ -358,14 +247,14 @@ export default function TacticalDashboard() {
         <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginBottom:'0.6rem' }}>
           {opp.activeSignals.map(s => (
             <span key={s.type} style={{ ...S.badge, background:'#0f172a', color: s.strength === 'EXTREME' ? '#ef4444' : s.strength === 'STRONG' ? '#f59e0b' : '#60a5fa', border:`1px solid #334155` }}>
-              {s.type.replace('_',' ')} {Math.round(s.score)}
+              {s.type.replace('_',' ')} {s.score}
             </span>
           ))}
         </div>
 
         <div style={{ fontSize:'0.72rem', color:'#64748b', marginBottom:'0.6rem', lineHeight:1.5 }}>
           {opp.asset.indicators && (
-            <>RSI(2)={opp.asset.indicators.rsi2.toFixed(1)} · RSI(14)={opp.asset.indicators.rsi14.toFixed(1)} · Z={opp.asset.indicators.zScore20.toFixed(2)} · Vol×{opp.asset.indicators.volumeRatio.toFixed(1)} · ATR={(opp.asset.indicators.atrPct * 100).toFixed(2)}%</>
+            <>RSI(2)={opp.asset.indicators.rsi2.toFixed(1)} · RSI(14)={opp.asset.indicators.rsi14.toFixed(1)} · Z={opp.asset.indicators.zScore20.toFixed(2)} · Vol×{opp.asset.indicators.volumeRatio.toFixed(1)} · ATR={opp.asset.indicators.atrPct.toFixed(1)}%</>
           )}
         </div>
 
@@ -423,7 +312,7 @@ export default function TacticalDashboard() {
         <td style={S.td}>
           <div style={{ color:'#ef4444', fontSize:'0.75rem' }}>SL €{pos.stopLoss.toFixed(2)}</div>
           <div style={{ color:'#22c55e', fontSize:'0.75rem' }}>TP1 €{pos.takeProfit1.toFixed(2)}</div>
-          <div style={{ color:'#4ade80', fontSize:'0.75rem' }}>TP2 €{pos.takeProfit2.toFixed(2)}</div>
+          <div style={{ color:'#4ade80', fontSize:'0.7rem' }}>TP2 €{pos.takeProfit2.toFixed(2)}</div>
         </td>
         <td style={S.td}>
           <div style={{ color: pos.daysOpen >= pos.maxDaysAllowed - 2 ? '#f59e0b' : '#94a3b8' }}>
@@ -473,25 +362,7 @@ export default function TacticalDashboard() {
             {lastRun && ` · Último scan: ${new Date(lastRun).toLocaleTimeString('es-ES')}`}
           </p>
         </div>
-        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          {/* Selector de universo */}
-          <div style={{ display:'flex', gap:2, background:'#0f172a', borderRadius:6, padding:2, border:'1px solid #334155' }}>
-            {([
-              { mode: 'volatile' as ScanMode, label: '⚡ Rápido', title: '25 activos alta volatilidad ~1 min' },
-              { mode: 'core'     as ScanMode, label: '🎯 Core',   title: '50 activos seleccionados ~2 min' },
-              { mode: 'full'     as ScanMode, label: '🔭 Full',   title: '120 activos completo ~8 min' },
-            ]).map(({ mode, label, title }) => (
-              <button
-                key={mode}
-                title={title}
-                style={{ ...S.btn, padding:'3px 10px', fontSize:'0.72rem',
-                  background: scanMode === mode ? '#1d4ed8' : 'transparent',
-                  color:      scanMode === mode ? '#fff' : '#64748b',
-                }}
-                onClick={() => setScanMode(mode)}
-              >{label}</button>
-            ))}
-          </div>
+        <div style={{ display:'flex', gap:8 }}>
           <button
             style={{ ...S.btn, ...S.btnB, opacity: loading ? 0.6 : 1 }}
             onClick={runScreener}
@@ -577,7 +448,7 @@ export default function TacticalDashboard() {
                       <div key={o.id} style={{ background:'#052e16', borderRadius:8, padding:'8px 12px', textAlign:'center', border:'1px solid #16a34a' }}>
                         <div style={{ fontWeight:700, fontSize:'0.9rem', color:'#f8fafc' }}>{o.asset.ticker}</div>
                         <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{typeLabels[o.type]}</div>
-                        <div style={{ fontWeight:700, color:'#22c55e', fontSize:'1rem' }}>{o.score.toFixed(2)}</div>
+                        <div style={{ fontWeight:700, color:'#22c55e', fontSize:'1rem' }}>{o.score}</div>
                       </div>
                     ))}
                   </div>
@@ -605,7 +476,7 @@ export default function TacticalDashboard() {
               <table style={S.table}>
                 <thead>
                   <tr>
-                    {['Activo','Entrada','Precio actual','P&L','SL / TP1 / TP2','Días','Cerrar'].map(h => (
+                    {['Activo','Entrada','Precio actual','P&L','SL / TP1','Días','Cerrar'].map(h => (
                       <th key={h} style={S.th}>{h}</th>
                     ))}
                   </tr>
@@ -789,77 +660,6 @@ export default function TacticalDashboard() {
             ))}
           </div>
 
-          {/* ── TELEGRAM ──────────────────────────────────── */}
-          <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:`2px solid ${tgStatus === 'ok' ? '#16a34a' : tgStatus === 'error' ? '#ef4444' : '#334155'}` }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.75rem' }}>
-              <div style={{ ...S.h3, margin:0 }}>
-                📱 Alertas Telegram — Notificaciones en tiempo real
-              </div>
-              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                <span style={{ fontSize:'0.72rem', color:'#64748b' }}>Activar</span>
-                <div
-                  onClick={() => {
-                    const next = !tgEnabled;
-                    setTgEnabled(next);
-                    localStorage.setItem('tg_enabled', String(next));
-                    if (!next) setTgStatus('idle');
-                  }}
-                  style={{ width:44, height:24, borderRadius:12, cursor:'pointer', background: tgEnabled ? '#16a34a' : '#334155', position:'relative', transition:'background .2s' }}
-                >
-                  <div style={{ width:18, height:18, borderRadius:9, background:'white', position:'absolute', top:3, left: tgEnabled ? 23 : 3, transition:'left .2s' }} />
-                </div>
-              </div>
-            </div>
-
-            <div style={{ fontSize:'0.75rem', color:'#64748b', marginBottom:10, lineHeight:1.6 }}>
-              Recibe alertas cuando: el motor detecta oportunidades (score ≥ 70), abres o cierras posiciones, o una posición se acerca al SL o TP1.
-            </div>
-
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
-              <div>
-                <label style={{ fontSize:'0.72rem', color:'#64748b', display:'block', marginBottom:3 }}>
-                  Token del Bot (de @BotFather)
-                </label>
-                <input
-                  style={S.input}
-                  type="password"
-                  value={tgToken}
-                  onChange={e => setTgToken(e.target.value)}
-                  placeholder="1234567890:AAF..."
-                />
-              </div>
-              <div>
-                <label style={{ fontSize:'0.72rem', color:'#64748b', display:'block', marginBottom:3 }}>
-                  Chat ID (tu ID personal o grupo)
-                </label>
-                <input
-                  style={S.input}
-                  value={tgChatId}
-                  onChange={e => setTgChatId(e.target.value)}
-                  placeholder="-1001234567890"
-                />
-              </div>
-            </div>
-
-            <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
-              <button
-                style={{ ...S.btn, background:'#0088cc', color:'#fff' }}
-                onClick={testTelegram}
-              >
-                📨 Probar conexión
-              </button>
-              {tgStatus === 'ok' && <span style={{ fontSize:'0.78rem', color:'#4ade80' }}>✅ Telegram conectado</span>}
-              {tgStatus === 'error' && <span style={{ fontSize:'0.78rem', color:'#fca5a5' }}>❌ Error — verifica el token y el chat ID</span>}
-            </div>
-
-            <div style={{ background:'#1e293b', borderRadius:6, padding:'10px 12px', fontSize:'0.73rem', color:'#94a3b8', lineHeight:1.8 }}>
-              <div style={{ fontWeight:700, color:'#f8fafc', marginBottom:4 }}>Cómo configurar en 3 pasos:</div>
-              <div>1. Abre Telegram y busca <span style={{ color:'#60a5fa', fontFamily:'monospace' }}>@BotFather</span> → escribe <span style={{ fontFamily:'monospace', color:'#60a5fa' }}>/newbot</span> → copia el token</div>
-              <div>2. Busca <span style={{ color:'#60a5fa', fontFamily:'monospace' }}>@userinfobot</span> en Telegram → te manda tu Chat ID</div>
-              <div>3. Pega ambos aquí y pulsa "Probar conexión"</div>
-            </div>
-          </div>
-
           {/* ── IBKR ─────────────────────────────────────────── */}
           <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:`2px solid ${ibkrStatus === 'ok' ? '#16a34a' : ibkrStatus === 'error' ? '#ef4444' : '#334155'}` }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.75rem' }}>
@@ -896,7 +696,7 @@ export default function TacticalDashboard() {
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
                   <div>
                     <label style={{ fontSize:'0.72rem', color:'#64748b', display:'block', marginBottom:3 }}>
-                      URL del Gateway (default: http://localhost:8010/proxy)
+                      URL del Gateway (default: https://localhost:5000)
                     </label>
                     <input
                       style={S.input}
