@@ -81,3 +81,21 @@ export const CORE_TACTICAL_UNIVERSE: UniverseAsset[] = [
     'GDX.DE','IQQH.DE','IUSN.DE','ARKY.DE',
   ].includes(a.ticker)),
 ];
+
+// ── Universo de alta volatilidad (para señales agresivas) ─────
+// Selección de activos con mayor ATR y beta, ideales para blood in the streets y mean reversion
+export const VOLATILE_UNIVERSE: UniverseAsset[] = [
+  ...OLYMPUS_ASSETS,  // BTC y ETFs temáticos ya son volátiles
+  ...UCITS_PROXIES.filter(a => [
+    'ARKY.DE',   // ARK Innovation (alta beta)
+    'LITG.DE',   // Litio (cíclico extremo)
+    'OILG.DE',   // Petróleo (volatilidad inherente)
+    'LNGG.DE',   // Gas natural (muy volátil)
+    'GDX.DE',    // Mineras de oro (apalancadas al oro)
+    'IQQH.DE',   // Clean Energy (alta volatilidad)
+    'ECAR.DE',   // Vehículos eléctricos
+    'COPP.DE',   // Cobre (cíclico)
+    'SSLN.DE',   // Plata (más volátil que el oro)
+    'CNDX.AS',   // NASDAQ 100 UCITS (tecnología)
+  ].includes(a.ticker)),
+];
