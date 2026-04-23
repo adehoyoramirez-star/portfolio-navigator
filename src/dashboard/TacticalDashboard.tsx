@@ -108,6 +108,47 @@ export default function TacticalDashboard() {
   const [ibkrPositions,  setIbkrPositions]  = useState<any[]>([]);
   const [ibkrNLV,        setIbkrNLV]        = useState<number>(0);
 
+  // Telegram config
+  const [tgToken,   setTgToken]   = useState(() => localStorage.getItem('tg_token') ?? '');
+  const [tgChatId,  setTgChatId]  = useState(() => localStorage.getItem('tg_chat_id') ?? '');
+  const [tgEnabled, setTgEnabled] = useState(() => localStorage.getItem('tg_enabled') === 'true');
+  const [tgStatus,  setTgStatus]  = useState<'idle'|'ok'|'error'>('idle');
+
+  // ── Telegram: enviar mensaje ───────────────────────────────
+  const sendTelegram = useCallback(async (text: string): Promise<boolean> => {
+    if (!tgEnabled || !tgToken || !tgChatId) return false;
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: tgChatId,
+          text,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+      });
+      return r.ok;
+    } catch { return false; }
+  }, [tgEnabled, tgToken, tgChatId]);
+
+  // ── Telegram: test de conexión ─────────────────────────────
+  const testTelegram = useCallback(async () => {
+    localStorage.setItem('tg_token',   tgToken);
+    localStorage.setItem('tg_chat_id', tgChatId);
+    localStorage.setItem('tg_enabled', 'true');
+    setTgEnabled(true);
+    const ok = await sendTelegram(
+      '✅ <b>Motor Táctico Olympus conectado</b>\n\n' +
+      'Las alertas de Telegram están activas.\n' +
+      '• Nuevas oportunidades (score ≥ 70)\n' +
+      '• Precio cerca del Stop Loss\n' +
+      '• Precio cerca del TP1\n' +
+      '• Posiciones próximas a expirar'
+    );
+    setTgStatus(ok ? 'ok' : 'error');
+  }, [tgToken, tgChatId, sendTelegram]);
+
   // Persistir al cambiar estado
   useEffect(() => { saveTacticalState(state); }, [state]);
 
@@ -124,6 +165,18 @@ export default function TacticalDashboard() {
         lastScreened:  result.screennedAt,
       }));
       setLastRun(result.screennedAt);
+      // Alerta Telegram: oportunidades con score alto
+      const topOpps = result.opportunities.filter(o => o.score >= 70);
+      if (topOpps.length > 0) {
+        const lines = topOpps.slice(0, 5).map(o =>
+          `• <b>${o.asset.ticker}</b> ${o.asset.name} — Score: <b>${o.score.toFixed(2)}</b>\n` +
+          `  Entrada: €${o.entryPrice.toFixed(2)} | SL: €${o.stopLoss.toFixed(2)} | TP1: €${o.takeProfit1.toFixed(2)} | TP2: €${o.takeProfit2.toFixed(2)}\n` +
+          `  R:R ${o.riskReward.toFixed(1)} — ${o.type.replace(/_/g,' ')}`
+        ).join('\n\n');
+        sendTelegram(
+          `🎯 <b>Motor Táctico — ${topOpps.length} oportunidad(es) detectada(s)</b>\n\n${lines}`
+        );
+      }
       if (result.errors.length > 0) {
         setError(`Datos parciales (${result.errors.length} activos sin datos)`);
       }
@@ -140,13 +193,33 @@ export default function TacticalDashboard() {
       const next = openPosition(prev, opp);
       return next;
     });
-  }, []);
+    sendTelegram(
+      `⚡ <b>Posición abierta — ${opp.asset.ticker}</b>\n\n` +
+      `Entrada: €${opp.entryPrice.toFixed(2)}\n` +
+      `Stop Loss: €${opp.stopLoss.toFixed(2)}\n` +
+      `TP1: €${opp.takeProfit1.toFixed(2)}\n` +
+      `TP2: €${opp.takeProfit2.toFixed(2)}\n` +
+      `R:R: ${opp.riskReward.toFixed(1)}:1 — Score: ${opp.score.toFixed(2)}`
+    );
+  }, [sendTelegram]);
 
   // ── Cerrar posición ────────────────────────────────────────
   const handleClose = useCallback((posId: string, exitPrice: number, reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL') => {
+    const pos = state.openPositions.find(p => p.id === posId);
     setState(prev => closePosition(prev, posId, exitPrice, reason));
     setConfirmClose(null);
-  }, []);
+    if (pos) {
+      const pnl = (exitPrice - pos.entryPrice) * pos.shares;
+      const emoji = reason === 'CLOSED_TP' ? '✅' : reason === 'CLOSED_SL' ? '🛑' : '📤';
+      const label = reason === 'CLOSED_TP' ? 'Take Profit' : reason === 'CLOSED_SL' ? 'Stop Loss' : 'Manual';
+      sendTelegram(
+        `${emoji} <b>Posición cerrada — ${pos.ticker}</b>\n\n` +
+        `Motivo: ${label}\n` +
+        `Entrada: €${pos.entryPrice.toFixed(2)} → Salida: €${exitPrice.toFixed(2)}\n` +
+        `P&L: ${pnl >= 0 ? '+' : ''}€${pnl.toFixed(2)} (${((exitPrice/pos.entryPrice-1)*100).toFixed(2)}%)`
+      );
+    }
+  }, [state.openPositions, sendTelegram]);
 
   // ── Aplicar config ─────────────────────────────────────────
   const applyConfig = useCallback(() => {
@@ -260,22 +333,23 @@ export default function TacticalDashboard() {
             </span>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <div style={{ background:'#0f172a', borderRadius:20, width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', border:`2px solid ${opp.score >= 70 ? '#22c55e' : '#f59e0b'}` }}>
-              <span style={{ fontWeight:700, fontSize:'0.8rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{Math.round(opp.score * 100) / 100}</span>
+            <div style={{ background:'#0f172a', borderRadius:20, width:44, height:44, display:'flex', alignItems:'center', justifyContent:'center', border:`2px solid ${opp.score >= 70 ? '#22c55e' : '#f59e0b'}` }}>
+              <span style={{ fontWeight:700, fontSize:'0.75rem', color: opp.score >= 70 ? '#22c55e' : '#f59e0b' }}>{opp.score.toFixed(2)}</span>
             </div>
           </div>
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, marginBottom:'0.6rem' }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:6, marginBottom:'0.6rem' }}>
           {[
-            ['Entrada', `€${opp.entryPrice.toFixed(2)}`],
-            ['Stop Loss', `€${opp.stopLoss.toFixed(2)}`],
-            ['TP1', `€${opp.takeProfit1.toFixed(2)}`],
-            ['R:R', `${opp.riskReward.toFixed(1)}:1`],
-          ].map(([l, v]) => (
+            ['Entrada',   `€${opp.entryPrice.toFixed(2)}`,   '#e2e8f0'],
+            ['Stop Loss', `€${opp.stopLoss.toFixed(2)}`,     '#ef4444'],
+            ['TP1',       `€${opp.takeProfit1.toFixed(2)}`,  '#22c55e'],
+            ['TP2',       `€${opp.takeProfit2.toFixed(2)}`,  '#4ade80'],
+            ['R:R',       `${opp.riskReward.toFixed(1)}:1`,  '#60a5fa'],
+          ].map(([l, v, c]) => (
             <div key={l} style={{ background:'#0f172a', borderRadius:6, padding:'5px 8px', textAlign:'center' }}>
               <div style={{ fontSize:'0.6rem', color:'#64748b' }}>{l}</div>
-              <div style={{ fontSize:'0.82rem', fontWeight:700, color:'#e2e8f0' }}>{v}</div>
+              <div style={{ fontSize:'0.78rem', fontWeight:700, color: c }}>{v}</div>
             </div>
           ))}
         </div>
@@ -349,6 +423,7 @@ export default function TacticalDashboard() {
         <td style={S.td}>
           <div style={{ color:'#ef4444', fontSize:'0.75rem' }}>SL €{pos.stopLoss.toFixed(2)}</div>
           <div style={{ color:'#22c55e', fontSize:'0.75rem' }}>TP1 €{pos.takeProfit1.toFixed(2)}</div>
+          <div style={{ color:'#4ade80', fontSize:'0.75rem' }}>TP2 €{pos.takeProfit2.toFixed(2)}</div>
         </td>
         <td style={S.td}>
           <div style={{ color: pos.daysOpen >= pos.maxDaysAllowed - 2 ? '#f59e0b' : '#94a3b8' }}>
@@ -502,7 +577,7 @@ export default function TacticalDashboard() {
                       <div key={o.id} style={{ background:'#052e16', borderRadius:8, padding:'8px 12px', textAlign:'center', border:'1px solid #16a34a' }}>
                         <div style={{ fontWeight:700, fontSize:'0.9rem', color:'#f8fafc' }}>{o.asset.ticker}</div>
                         <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{typeLabels[o.type]}</div>
-                        <div style={{ fontWeight:700, color:'#22c55e', fontSize:'1rem' }}>{o.score}</div>
+                        <div style={{ fontWeight:700, color:'#22c55e', fontSize:'1rem' }}>{o.score.toFixed(2)}</div>
                       </div>
                     ))}
                   </div>
@@ -530,7 +605,7 @@ export default function TacticalDashboard() {
               <table style={S.table}>
                 <thead>
                   <tr>
-                    {['Activo','Entrada','Precio actual','P&L','SL / TP1','Días','Cerrar'].map(h => (
+                    {['Activo','Entrada','Precio actual','P&L','SL / TP1 / TP2','Días','Cerrar'].map(h => (
                       <th key={h} style={S.th}>{h}</th>
                     ))}
                   </tr>
@@ -712,6 +787,77 @@ export default function TacticalDashboard() {
                 {rule}
               </div>
             ))}
+          </div>
+
+          {/* ── TELEGRAM ──────────────────────────────────── */}
+          <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:`2px solid ${tgStatus === 'ok' ? '#16a34a' : tgStatus === 'error' ? '#ef4444' : '#334155'}` }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.75rem' }}>
+              <div style={{ ...S.h3, margin:0 }}>
+                📱 Alertas Telegram — Notificaciones en tiempo real
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:'0.72rem', color:'#64748b' }}>Activar</span>
+                <div
+                  onClick={() => {
+                    const next = !tgEnabled;
+                    setTgEnabled(next);
+                    localStorage.setItem('tg_enabled', String(next));
+                    if (!next) setTgStatus('idle');
+                  }}
+                  style={{ width:44, height:24, borderRadius:12, cursor:'pointer', background: tgEnabled ? '#16a34a' : '#334155', position:'relative', transition:'background .2s' }}
+                >
+                  <div style={{ width:18, height:18, borderRadius:9, background:'white', position:'absolute', top:3, left: tgEnabled ? 23 : 3, transition:'left .2s' }} />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ fontSize:'0.75rem', color:'#64748b', marginBottom:10, lineHeight:1.6 }}>
+              Recibe alertas cuando: el motor detecta oportunidades (score ≥ 70), abres o cierras posiciones, o una posición se acerca al SL o TP1.
+            </div>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+              <div>
+                <label style={{ fontSize:'0.72rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                  Token del Bot (de @BotFather)
+                </label>
+                <input
+                  style={S.input}
+                  type="password"
+                  value={tgToken}
+                  onChange={e => setTgToken(e.target.value)}
+                  placeholder="1234567890:AAF..."
+                />
+              </div>
+              <div>
+                <label style={{ fontSize:'0.72rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                  Chat ID (tu ID personal o grupo)
+                </label>
+                <input
+                  style={S.input}
+                  value={tgChatId}
+                  onChange={e => setTgChatId(e.target.value)}
+                  placeholder="-1001234567890"
+                />
+              </div>
+            </div>
+
+            <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
+              <button
+                style={{ ...S.btn, background:'#0088cc', color:'#fff' }}
+                onClick={testTelegram}
+              >
+                📨 Probar conexión
+              </button>
+              {tgStatus === 'ok' && <span style={{ fontSize:'0.78rem', color:'#4ade80' }}>✅ Telegram conectado</span>}
+              {tgStatus === 'error' && <span style={{ fontSize:'0.78rem', color:'#fca5a5' }}>❌ Error — verifica el token y el chat ID</span>}
+            </div>
+
+            <div style={{ background:'#1e293b', borderRadius:6, padding:'10px 12px', fontSize:'0.73rem', color:'#94a3b8', lineHeight:1.8 }}>
+              <div style={{ fontWeight:700, color:'#f8fafc', marginBottom:4 }}>Cómo configurar en 3 pasos:</div>
+              <div>1. Abre Telegram y busca <span style={{ color:'#60a5fa', fontFamily:'monospace' }}>@BotFather</span> → escribe <span style={{ fontFamily:'monospace', color:'#60a5fa' }}>/newbot</span> → copia el token</div>
+              <div>2. Busca <span style={{ color:'#60a5fa', fontFamily:'monospace' }}>@userinfobot</span> en Telegram → te manda tu Chat ID</div>
+              <div>3. Pega ambos aquí y pulsa "Probar conexión"</div>
+            </div>
           </div>
 
           {/* ── IBKR ─────────────────────────────────────────── */}
