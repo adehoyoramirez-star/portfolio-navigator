@@ -26,7 +26,6 @@ export const OLYMPUS_ASSETS: UniverseAsset[] = [
 ];
 
 // ── Sustitutos UCITS de los proxies americanos ────────────────
-// Misma exposición que QQQ/SPY/GLD etc. pero comprable en España
 export const UCITS_PROXIES: UniverseAsset[] = [
   // Índices amplios
   { ticker:'CSPX.AS',  name:'iShares Core S&P 500 UCITS',      sector:'Equity',      type:'ETF', exchange:'EURONEXT', currency:'USD', yahooSymbol:'CSPX.AS'  },
@@ -83,7 +82,6 @@ export const CORE_TACTICAL_UNIVERSE: UniverseAsset[] = [
 ];
 
 // ── Universo de alta volatilidad (para señales agresivas) ─────
-// Selección de activos con mayor ATR y beta, ideales para blood in the streets y mean reversion
 export const VOLATILE_UNIVERSE: UniverseAsset[] = [
   ...OLYMPUS_ASSETS,  // BTC y ETFs temáticos ya son volátiles
   ...UCITS_PROXIES.filter(a => [
