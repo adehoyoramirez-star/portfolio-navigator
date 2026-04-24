@@ -51,7 +51,12 @@ function ema(arr: number[], n: number): number {
   return e;
 }
 
-export function calcIndicators(closes: number[], volumes: number[]): TechnicalIndicators {
+export function calcIndicators(
+  closes:  number[],
+  volumes: number[],
+  highs:   number[],   // OHLC reales o aproximados por approximateHighsLows()
+  lows:    number[],   // OHLC reales o aproximados por approximateHighsLows()
+): TechnicalIndicators {
   const price  = closes[closes.length - 1];
   const ma20   = sma(closes, 20);
   const ma50   = sma(closes, 50);
@@ -78,13 +83,23 @@ export function calcIndicators(closes: number[], volumes: number[]): TechnicalIn
   const macdSignal = ema(macdSeries, 9);
   const macdHist   = macdLine - macdSignal;
 
-  // ATR14 robusto (nunca cero)
+  // ATR14 real usando highs/lows (True Range = max(H-L, |H-Cprev|, |L-Cprev|))
+  // Si highs/lows son aproximados (de approximateHighsLows) el resultado sigue
+  // siendo mejor que usar solo |close - close_prev|.
   let atr14 = 0;
-  if (closes.length >= 15) {
-    const rawAtr = sma(
-      closes.slice(-15).map((c, i, a) => i === 0 ? 0 : Math.abs(c - a[i - 1])).slice(1),
-      14
-    );
+  const n = Math.min(closes.length, highs.length, lows.length);
+  if (n >= 15) {
+    const trValues: number[] = [];
+    for (let i = n - 14; i < n; i++) {
+      const prevClose = closes[i - 1] ?? closes[i];
+      const tr = Math.max(
+        highs[i] - lows[i],
+        Math.abs(highs[i] - prevClose),
+        Math.abs(lows[i]  - prevClose),
+      );
+      trValues.push(tr);
+    }
+    const rawAtr = trValues.reduce((a, b) => a + b, 0) / trValues.length;
     atr14 = Math.max(rawAtr, price * 0.005); // suelo 0.5% del precio
   } else {
     atr14 = price * 0.02;

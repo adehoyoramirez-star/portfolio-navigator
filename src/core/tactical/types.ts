@@ -36,7 +36,7 @@ export interface TechnicalIndicators {
   bbMiddle:    number;
   bbLower:     number;
   bbWidth:     number;   // (Upper-Lower)/Middle — compresión < 0.05
-  atr14:       number;   // Average True Range 14 periodos
+  atr14:       number;   // Average True Range 14 periodos (requiere highs/lows)
   atrPct:      number;   // ATR como % del precio
   // Z-Score
   zScore20:    number;   // Desviaciones desde MA20
@@ -62,14 +62,23 @@ export interface TacticalSignal {
   condition:   string;           // La condición técnica que la activa
 }
 
+// ── Contrato IBKR normalizado ────────────────────────────────
+export interface IbkrContract {
+  symbol:   string;   // Símbolo IBKR (ej: 'SAN', 'NVDA', 'BTC')
+  secType:  string;   // 'STK' | 'CRYPTO' | 'CFD'
+  exchange: string;   // 'IBIS' | 'AEB' | 'LSE' | 'SBF' | 'NYSE' | 'NASDAQ' | 'PAXOS' | 'BM'
+  currency: string;   // 'EUR' | 'USD' | 'GBP'
+}
+
 // ── Activo del universo táctico ──────────────────────────────
 export interface TacticalAsset {
   ticker:      string;
   name:        string;
   sector:      string;
-  type:        'ETF' | 'ETC' | 'CRYPTO' | 'INDEX';
+  // BUG FIX: era 'INDEX' — el universo usa 'STOCK'. Añadido 'STOCK', eliminado 'INDEX'.
+  type:        'ETF' | 'ETC' | 'CRYPTO' | 'STOCK';
   exchange:    string;
-  currency:    'EUR' | 'USD' | 'GBP';  // <- Añadido 'GBP'
+  currency:    'EUR' | 'USD' | 'GBP';
   // Datos de mercado (actualizados al cargar)
   price:       number;
   closes:      number[];         // Histórico de cierres
@@ -82,9 +91,14 @@ export interface TacticalAsset {
   totalScore:  number;           // 0-100, agregado de todas las señales
   lastUpdated: string | null;
   // Fundamentales (Value factor)
-  earningsYield?: number;       // E/P = 1/PER
-  per?: number;                 // Price/Earnings
-  eps?: number;                 // Earnings per share
+  earningsYield?: number;        // E/P = 1/PER
+  per?: number;                  // Price/Earnings
+  eps?: number;                  // Earnings per share
+  // ── IBKR (añadidos) ─────────────────────────────────────
+  // ibkrContract: contrato listo para la TWS API / IBKR Gateway
+  ibkrContract?: IbkrContract;
+  // ibkrSymbol: símbolo IBKR corto (acceso directo sin desestructurar ibkrContract)
+  ibkrSymbol?:   string;
 }
 
 // ── Oportunidad identificada (candidata a operar) ────────────
@@ -177,9 +191,9 @@ export interface TacticalEngineState {
 
 // ── Resultado del screener ───────────────────────────────────
 export interface ScreenerResult {
-  assets:       TacticalAsset[];
+  assets:        TacticalAsset[];
   opportunities: TacticalOpportunity[];
-  topPicks:     TacticalOpportunity[];   // Top 5 por score
-  screennedAt:  string;
-  errors:       string[];
+  topPicks:      TacticalOpportunity[];   // Top 5 por score
+  screennedAt:   string;
+  errors:        string[];
 }
