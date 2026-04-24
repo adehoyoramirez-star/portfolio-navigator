@@ -36,9 +36,17 @@ interface TacticalDashboardProps {
   defensiveLiquidity: number;
 }
 
+// ------------------------------------------------------------------
+// Utilidad: protege contra undefined/NaN que puedan venir de props
+// ------------------------------------------------------------------
+const safeNumber = (v: any): number => {
+  if (typeof v !== 'number' || !isFinite(v)) return 0;
+  return v;
+};
+
 const SIGNAL_COLORS: Record<string, string> = {
   BLOOD_IN_STREETS: 'bg-red-600 text-white',
-  MOMENTUM_BREAKOUT:'bg-blue-600 text-white',
+  MOMENTUM_BREAKOUT: 'bg-blue-600 text-white',
   MEAN_REVERSION:   'bg-yellow-500 text-black',
   OVERSOLD_BOUNCE:  'bg-orange-500 text-white',
   SECTOR_ROTATION:  'bg-purple-500 text-white',
@@ -61,10 +69,13 @@ function CapitalPanel({
   defensiveLiquidity: number;
   config:             TacticalConfig;
 }) {
-  const maxFromLiq = defensiveLiquidity * 0.20;
+  const safeTac = safeNumber(tacticalCapital);
+  const safeDef = safeNumber(defensiveLiquidity);
+
+  const maxFromLiq = safeDef * 0.20;
   const usable     = config.tacticalCapitalEur;
-  const usablePct  = defensiveLiquidity > 0
-    ? ((usable / defensiveLiquidity) * 100).toFixed(1)
+  const usablePct  = safeDef > 0
+    ? ((usable / safeDef) * 100).toFixed(1)
     : '—';
 
   return (
@@ -78,7 +89,7 @@ function CapitalPanel({
         <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-xl p-3 text-center">
           <div className="text-[10px] text-gray-400 mb-0.5">Asignado al motor</div>
           <div className="font-bold text-indigo-600 dark:text-indigo-400 text-lg tabular-nums">
-            €{tacticalCapital.toLocaleString('es-ES', { maximumFractionDigits: 0 })}
+            €{safeTac.toLocaleString('es-ES', { maximumFractionDigits: 0 })}
           </div>
           <div className="text-[9px] text-gray-400 mt-0.5">Capital táctico total</div>
         </div>
@@ -87,7 +98,7 @@ function CapitalPanel({
         <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-3 text-center">
           <div className="text-[10px] text-gray-400 mb-0.5">Liquidez defensiva</div>
           <div className="font-bold text-gray-700 dark:text-gray-200 text-lg tabular-nums">
-            €{defensiveLiquidity.toLocaleString('es-ES', { maximumFractionDigits: 0 })}
+            €{safeDef.toLocaleString('es-ES', { maximumFractionDigits: 0 })}
           </div>
           <div className="text-[9px] text-gray-400 mt-0.5">Cash/bonos portfolio</div>
         </div>
@@ -409,7 +420,9 @@ export default function TacticalDashboard({
 
   // defaultTacticalConfig calcula el capital usable como
   // min(defensiveLiquidity × 20%, tacticalCapital)
-  const config = defaultTacticalConfig(tacticalCapital, defensiveLiquidity);
+  const safeTac = safeNumber(tacticalCapital);
+  const safeDef = safeNumber(defensiveLiquidity);
+  const config = defaultTacticalConfig(safeTac, safeDef);
 
   const handleScan = useCallback(async () => {
     setIsScanning(true);
