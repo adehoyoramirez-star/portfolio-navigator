@@ -1,7 +1,7 @@
 // app/src/dashboard/supabaseClient.ts
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+const supabaseUrl     = import.meta.env.VITE_SUPABASE_URL     as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 if (!supabaseUrl || !supabaseAnonKey) {
@@ -11,4 +11,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Singleton: una sola instancia en todo el contexto del navegador.
+// Evita el warning "Multiple GoTrueClient instances detected".
+declare global {
+  // eslint-disable-next-line no-var
+  var __supabaseClient: SupabaseClient | undefined;
+}
+
+export const supabase: SupabaseClient =
+  globalThis.__supabaseClient ??
+  (globalThis.__supabaseClient = createClient(supabaseUrl, supabaseAnonKey));

@@ -155,7 +155,7 @@ async function processAsset(
 
   // 2️⃣ Fallback: ETF americano equivalente
   if ((!raw || raw.closes.length < 21 || raw.price === 0) && asset.fallbackYahooSymbol) {
-    console.warn(`[Screener] ${asset.ticker}: fallback → ${asset.fallbackYahooSymbol}`);
+    console.debug(`[Screener] ${asset.ticker}: fallback → ${asset.fallbackYahooSymbol}`);
     raw = await fetchTickerData(asset.fallbackYahooSymbol, supabase);
   }
 
@@ -170,7 +170,7 @@ async function processAsset(
   }
 
   if (!raw || raw.closes.length < 21 || raw.price === 0) {
-    console.warn(`[Screener] Sin datos suficientes: ${asset.yahooSymbol}`);
+    console.debug(`[Screener] Sin datos suficientes: ${asset.yahooSymbol}`);
     return null;
   }
 
@@ -193,7 +193,7 @@ async function processAsset(
 
   const ibkrContract = toIbkrContract(asset);
 
-  console.log(
+  console.debug(
     `[Screener] ${asset.ticker}: score=${totalScore.toFixed(2)}, ` +
     `price=${raw.price.toFixed(2)}, ATR%=${(indicators.atr14/raw.price*100).toFixed(2)}%, ` +
     `RSI14=${indicators.rsi14.toFixed(1)}, MA200=${indicators.aboveMA200}, ` +
@@ -284,7 +284,7 @@ export async function runTacticalScreener(
   const errors:  string[]        = [];
   const assets:  TacticalAsset[] = [];
 
-  console.log(`[Screener] Iniciando modo=${scanMode}, universo=${universe.length} activos, minScore=${config.minScore}`);
+  console.debug(`[Screener] Iniciando modo=${scanMode}, universo=${universe.length} activos, minScore=${config.minScore}`);
 
   const BATCH = 5;
   for (let i = 0; i < universe.length; i += BATCH) {
@@ -304,7 +304,7 @@ export async function runTacticalScreener(
     .filter(o => o.riskReward >= config.minRiskReward)
     .sort((a, b) => b.score - a.score);
 
-  console.log(`[Screener] ${assets.length} analizados → ${rawOpps.length} oportunidades · ${errors.length} errores`);
+  console.debug(`[Screener] ${assets.length} analizados → ${rawOpps.length} oportunidades · ${errors.length} errores`);
 
   return {
     assets,
