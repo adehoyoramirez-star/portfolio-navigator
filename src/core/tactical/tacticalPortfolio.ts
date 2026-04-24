@@ -55,29 +55,33 @@ export function initTacticalState(config: TacticalConfig): TacticalEngineState {
 }
 
 // ── Abrir posición ───────────────────────────────────────────
+// sharesOverride: si el usuario edita las acciones en el modal, se pasan aquí
+// y se ignora el cálculo automático (que puede dar 0 con capital pequeño).
 export function openPosition(
-  state:       TacticalEngineState,
-  opportunity: TacticalOpportunity
+  state:          TacticalEngineState,
+  opportunity:    TacticalOpportunity,
+  sharesOverride?: number,
 ): TacticalEngineState {
   const { config } = state;
 
-  // Verificar que hay capital y no excedemos posiciones máximas
   if (state.openPositions.length >= config.maxOpenPositions) {
-    console.warn('Max open positions reached');
+    console.warn('[Tactical] Max open positions reached');
     return state;
   }
 
-  const { shares, capitalRisked, totalInvested } = calcPositionSize(
-    state.capitalAvailable,
+  // Calcular sizing automático pero garantizar mínimo 1 acción
+  const auto = calcPositionSize(
+    Math.max(state.capitalAvailable, opportunity.entryPrice), // nunca 0
     opportunity.entryPrice,
     opportunity.stopLoss,
-    config
+    config,
   );
 
-  if (shares === 0 || totalInvested > state.capitalAvailable) {
-    console.warn('Insufficient capital');
-    return state;
-  }
+  // Usar override del modal si existe, si no el auto con mínimo 1
+  const shares       = Math.max(1, sharesOverride ?? auto.shares);
+  const riskPerShare = Math.max(0.01, opportunity.entryPrice - opportunity.stopLoss);
+  const capitalRisked = +(shares * riskPerShare).toFixed(2);
+  const totalInvested = +(shares * opportunity.entryPrice).toFixed(2);
 
   const position: TacticalPosition = {
     id:            `pos-${Date.now()}`,
@@ -105,14 +109,14 @@ export function openPosition(
     maxDaysAllowed:   config.maxDaysPerTrade,
   };
 
-  const newState: TacticalEngineState = {
-    ...state,
-    openPositions:   [...state.openPositions, position],
-    capitalUsed:     state.capitalUsed + totalInvested,
-    capitalAvailable: state.capitalAvailable - totalInvested,
-  };
+  console.log(`[Tactical] Abriendo ${position.ticker}: ${shares} acc. @ €${opportunity.entryPrice} · invertido €${totalInvested} · riesgo €${capitalRisked}`);
 
-  return recalcMetrics(newState);
+  return recalcMetrics({
+    ...state,
+    openPositions:    [...state.openPositions, position],
+    capitalUsed:      +(state.capitalUsed + totalInvested).toFixed(2),
+    capitalAvailable: +(state.capitalAvailable - totalInvested).toFixed(2),
+  });
 }
 
 // ── Cerrar posición ──────────────────────────────────────────
