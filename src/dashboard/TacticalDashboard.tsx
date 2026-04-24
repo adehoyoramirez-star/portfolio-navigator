@@ -79,6 +79,15 @@ export default function TacticalDashboard() {
   const [lastRun, setLastRun]     = useState<string | null>(state.lastScreened);
   const [scanMode, setScanMode]   = useState<ScanMode>('core');
 
+  // ── Modal "Confirmar apertura" con precios editables ────────
+  const [openModal,   setOpenModal]   = useState<TacticalOpportunity | null>(null);
+  const [modalEntry,  setModalEntry]  = useState('');
+  const [modalStop,   setModalStop]   = useState('');
+  const [modalTP1,    setModalTP1]    = useState('');
+  const [modalTP2,    setModalTP2]    = useState('');
+  const [modalShares, setModalShares] = useState('');
+  const [modalNote,   setModalNote]   = useState('');
+
   // Config local editable
   const [cfgCapital, setCfgCapital]   = useState(state.config.tacticalCapitalEur);
   const [cfgMinScore, setCfgMinScore] = useState(state.config.minScore);
@@ -123,13 +132,42 @@ export default function TacticalDashboard() {
     }
   }, [state.config, scanMode]);
 
-  // ── Abrir posición ─────────────────────────────────────────
-  const handleOpen = useCallback((opp: TacticalOpportunity) => {
-    setState(prev => {
-      const next = openPosition(prev, opp);
-      return next;
-    });
-  }, []);
+  // ── Abrir posición: abre modal con precios editables ─────────
+  const handleOpenModal = useCallback((opp: TacticalOpportunity) => {
+    const riskPerSh = Math.max(0.01, opp.entryPrice - opp.stopLoss);
+    const shares    = Math.max(1, Math.floor(
+      (state.config.tacticalCapitalEur * state.config.riskPerTradePct) / riskPerSh
+    ));
+    setOpenModal(opp);
+    setModalEntry(opp.entryPrice.toFixed(2));
+    setModalStop(opp.stopLoss.toFixed(2));
+    setModalTP1(opp.takeProfit1.toFixed(2));
+    setModalTP2(opp.takeProfit2.toFixed(2));
+    setModalShares(String(shares));
+    setModalNote('');
+  }, [state.config]);
+
+  // ── Confirmar apertura con precios reales editados ─────────
+  const handleConfirmOpen = useCallback(() => {
+    if (!openModal) return;
+    const entry  = parseFloat(modalEntry);
+    const stop   = parseFloat(modalStop);
+    const tp1    = parseFloat(modalTP1);
+    const tp2    = parseFloat(modalTP2);
+    const shares = parseFloat(modalShares);
+    if (!entry || !stop || !tp1 || !tp2 || !shares || entry <= stop) return;
+    // Crear oportunidad modificada con precios reales ejecutados
+    const modified: TacticalOpportunity = {
+      ...openModal,
+      entryPrice:  entry,
+      stopLoss:    stop,
+      takeProfit1: tp1,
+      takeProfit2: tp2,
+      riskReward:  (tp1 - entry) / (entry - stop),
+    };
+    setState(prev => openPosition(prev, modified));
+    setOpenModal(null);
+  }, [openModal, modalEntry, modalStop, modalTP1, modalTP2, modalShares]);
 
   // ── Cerrar posición ────────────────────────────────────────
   const handleClose = useCallback((posId: string, exitPrice: number, reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL') => {
@@ -200,10 +238,22 @@ export default function TacticalDashboard() {
   // ── Render oportunidad ─────────────────────────────────────
   const OpportunityCard = ({ opp }: { opp: TacticalOpportunity }) => {
     const alreadyOpen = state.openPositions.some(p => p.ticker === opp.asset.ticker);
-    const canOpen     = !alreadyOpen && state.capitalAvailable >= opp.entryPrice;
+    // BUG FIX: state.capitalAvailable no se actualiza → usar summary.capitalAvailable
+    const canOpen     = !alreadyOpen && summary.capitalAvailable >= opp.entryPrice;
     const tc          = typeColors[opp.type] ?? '#64748b';
-    const riskEur     = (opp.entryPrice - opp.stopLoss) *
-      Math.max(1, Math.floor(state.config.tacticalCapitalEur * state.config.riskPerTradePct / (opp.entryPrice - opp.stopLoss)));
+    const riskPerSh   = Math.max(0.01, opp.entryPrice - opp.stopLoss);
+    const shares      = Math.max(1, Math.floor((state.config.tacticalCapitalEur * state.config.riskPerTradePct) / riskPerSh));
+    const riskEur     = riskPerSh * shares;
+    const capitalUsed = opp.entryPrice * shares;
+    // ATR: Average True Range — volatilidad diaria media del activo (14 días)
+    // Representa el rango típico de movimiento en un día. Ej: ATR=2.5% en URNU.DE a €30
+    // significa que el activo se mueve ±€0.75/día de media. Se usa para calcular el stop loss.
+    const atrEur = opp.asset.indicators
+      ? opp.asset.indicators.atr14
+      : 0;
+    const atrPct = opp.asset.indicators && opp.asset.price > 0
+      ? (opp.asset.indicators.atr14 / opp.asset.price * 100)
+      : 0;
 
     return (
       <div style={{ ...S.card, borderLeft:`3px solid ${tc}`, marginBottom:'0.75rem' }}>
@@ -248,15 +298,30 @@ export default function TacticalDashboard() {
           ))}
         </div>
 
-        <div style={{ fontSize:'0.72rem', color:'#64748b', marginBottom:'0.6rem', lineHeight:1.5 }}>
+        {/* Indicadores técnicos — ATR explicado con valor € real */}
+        <div style={{ fontSize:'0.72rem', color:'#64748b', marginBottom:'0.5rem', lineHeight:1.5 }}>
           {opp.asset.indicators && (
-            <>RSI(2)={opp.asset.indicators.rsi2.toFixed(1)} · RSI(14)={opp.asset.indicators.rsi14.toFixed(1)} · Z={opp.asset.indicators.zScore20.toFixed(2)} · Vol×{opp.asset.indicators.volumeRatio.toFixed(1)} · ATR={(((opp.asset.indicators as any).atrPct ?? (opp.asset.indicators as any).atr ?? 0) as number).toFixed(1)}%</>
+            <>
+              RSI(2)={opp.asset.indicators.rsi2.toFixed(1)} · RSI(14)={opp.asset.indicators.rsi14.toFixed(1)} · Z={opp.asset.indicators.zScore20.toFixed(2)} · Vol×{opp.asset.indicators.volumeRatio.toFixed(1)}
+            </>
+          )}
+        </div>
+        {/* ATR con explicación — clave para validar el stop loss */}
+        <div style={{ fontSize:'0.7rem', background:'#0f172a', borderRadius:6, padding:'5px 8px', marginBottom:'0.6rem', border:'1px solid #1e293b' }}>
+          <span style={{ color:'#60a5fa', fontWeight:700 }}>
+            ATR(14): €{atrEur.toFixed(2)} ({atrPct.toFixed(2)}%/día)
+          </span>
+          <span style={{ color:'#475569', marginLeft:6 }}>
+            · rango diario típico · stop = entrada − {opp.type === 'MOMENTUM_BREAKOUT' ? '1×' : opp.type === 'BLOOD_IN_STREETS' ? '1.5×' : '2×'}ATR
+          </span>
+          {atrPct === 0 && (
+            <span style={{ color:'#f59e0b', marginLeft:6 }}>⚠ 0% → Yahoo no devolvió OHLC, usa aproximación</span>
           )}
         </div>
 
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <span style={{ fontSize:'0.7rem', color:'#475569' }}>
-            Riesgo estimado: ~{eur(riskEur)} · Capital: ~{eur(opp.entryPrice * Math.max(1, Math.floor(state.config.tacticalCapitalEur * state.config.maxCapitalPerTrade / opp.entryPrice)))}
+            {shares} acc. · riesgo ~{eur(riskEur)} · capital ~{eur(capitalUsed)}
           </span>
           {alreadyOpen ? (
             <span style={{ ...S.badge, background:'#1e3a5f', color:'#60a5fa' }}>Ya abierta</span>
@@ -264,7 +329,7 @@ export default function TacticalDashboard() {
             <button
               style={{ ...S.btn, ...S.btnG, opacity: canOpen ? 1 : 0.4 }}
               disabled={!canOpen}
-              onClick={() => handleOpen(opp)}
+              onClick={() => handleOpenModal(opp)}
             >
               ⚡ Abrir posición
             </button>
@@ -810,6 +875,107 @@ export default function TacticalDashboard() {
                 )}
               </>
             )}
+          </div>
+        </div>
+      )}
+      {/* ── MODAL: Confirmar apertura de posición ───────────────── */}
+      {openModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999, padding:'1rem' }}>
+          <div style={{ background:'#1e293b', border:'1px solid #334155', borderRadius:16, padding:'1.5rem', width:'100%', maxWidth:480 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'1rem' }}>
+              <div>
+                <div style={{ fontWeight:800, fontSize:'1.1rem', color:'#f8fafc' }}>
+                  ⚡ Confirmar apertura — {openModal.asset.ticker}
+                </div>
+                <div style={{ fontSize:'0.72rem', color:'#64748b', marginTop:2 }}>
+                  {openModal.asset.name} · Edita los precios con los que has ejecutado realmente en IBKR
+                </div>
+              </div>
+              <button
+                onClick={() => setOpenModal(null)}
+                style={{ background:'none', border:'none', color:'#64748b', fontSize:'1.5rem', cursor:'pointer', lineHeight:1 }}
+              >×</button>
+            </div>
+
+            {/* Precio sugerido vs precio real */}
+            <div style={{ background:'#0f172a', borderRadius:8, padding:'0.75rem', marginBottom:'1rem', fontSize:'0.72rem', color:'#64748b', border:'1px solid #334155' }}>
+              📌 Precio sugerido por el motor: <span style={{ color:'#60a5fa', fontWeight:700 }}>€{openModal.entryPrice.toFixed(2)}</span> ·
+              ATR: <span style={{ color:'#60a5fa' }}>€{(openModal.asset.indicators?.atr14 ?? 0).toFixed(2)} ({openModal.asset.indicators ? (openModal.asset.indicators.atr14 / openModal.asset.price * 100).toFixed(2) : '0.00'}%/día)</span>
+            </div>
+
+            {/* Campos editables */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.6rem', marginBottom:'0.75rem' }}>
+              {[
+                { label:'Precio entrada real (€)', val:modalEntry, set:setModalEntry, color:'#e2e8f0', hint:'Precio al que ejecutaste la orden BUY en IBKR' },
+                { label:'Stop Loss (€)',           val:modalStop,  set:setModalStop,  color:'#ef4444', hint:'Precio de stop — SAGRADO, no lo muevas abajo' },
+                { label:'Take Profit 1 — 50% (€)', val:modalTP1,  set:setModalTP1,   color:'#22c55e', hint:'Al llegar aquí: vende 50% y sube stop a entrada' },
+                { label:'Take Profit 2 — 50% (€)', val:modalTP2,  set:setModalTP2,   color:'#4ade80', hint:'Objetivo final del 50% restante' },
+              ].map(({ label, val, set, color, hint }) => (
+                <div key={label}>
+                  <label style={{ fontSize:'0.68rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                    <span style={{ color, fontWeight:700 }}>{label}</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={val}
+                    onChange={e => set(e.target.value)}
+                    style={{ ...S.input, borderColor: color + '44' }}
+                  />
+                  <div style={{ fontSize:'0.62rem', color:'#475569', marginTop:2 }}>{hint}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Acciones */}
+            <div>
+              <label style={{ fontSize:'0.68rem', color:'#64748b', display:'block', marginBottom:3 }}>
+                Número de acciones / participaciones
+              </label>
+              <input
+                type="number"
+                step="1"
+                min="1"
+                value={modalShares}
+                onChange={e => setModalShares(e.target.value)}
+                style={{ ...S.input, marginBottom:'0.5rem' }}
+              />
+            </div>
+
+            {/* Resumen live del R:R con precios editados */}
+            {(() => {
+              const e = parseFloat(modalEntry);
+              const s = parseFloat(modalStop);
+              const t1 = parseFloat(modalTP1);
+              const sh = parseFloat(modalShares);
+              const risk   = e && s && e > s ? (e - s) * (sh || 0) : null;
+              const reward = e && t1 && t1 > e ? (t1 - e) * (sh || 0) : null;
+              const rr     = risk && risk > 0 && reward ? (reward / risk) : null;
+              return (
+                <div style={{ background:'#0f172a', borderRadius:6, padding:'8px 10px', marginBottom:'1rem', fontSize:'0.72rem', display:'flex', gap:16, flexWrap:'wrap' as const }}>
+                  <span style={{ color:'#ef4444' }}>Riesgo: {risk != null ? eur(risk) : '—'}</span>
+                  <span style={{ color:'#22c55e' }}>Ganancia TP1: {reward != null ? eur(reward) : '—'}</span>
+                  <span style={{ color:'#60a5fa', fontWeight:700 }}>R:R = {rr != null ? rr.toFixed(2) : '—'}</span>
+                  <span style={{ color:'#64748b' }}>Capital: {e && sh ? eur(e * sh) : '—'}</span>
+                </div>
+              );
+            })()}
+
+            <div style={{ display:'flex', gap:8 }}>
+              <button
+                onClick={handleConfirmOpen}
+                style={{ ...S.btn, ...S.btnG, flex:1 }}
+                disabled={!modalEntry || !modalStop || !modalTP1 || !modalTP2 || !modalShares || parseFloat(modalEntry) <= parseFloat(modalStop)}
+              >
+                ✅ Confirmar apertura
+              </button>
+              <button
+                onClick={() => setOpenModal(null)}
+                style={{ ...S.btn, ...S.btnGr }}
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
