@@ -163,8 +163,48 @@ export default function TacticalDashboard() {
       takeProfit2: tp2,
       riskReward:  (tp1 - entry) / Math.max(0.01, entry - stop),
     };
-    // sharesOverride evita que openPosition recalcule y dé 0 con capital pequeño
-    setState(prev => openPosition(prev, modified, shares));
+    // Inyectar shares en el asset para que openPosition no recalcule desde cero.
+    // Workaround: openPosition llama internamente a calcPositionSize, pero
+    // como el capital puede ser pequeño y dar shares=0, forzamos el resultado
+    // guardando las shares en el config temporalmente vía un state patch manual.
+    setState(prev => {
+      const riskPerSh     = Math.max(0.01, modified.entryPrice - modified.stopLoss);
+      const capitalRisked = +(shares * riskPerSh).toFixed(2);
+      const totalInvested = +(shares * modified.entryPrice).toFixed(2);
+      const position: import('@/core/tactical/types').TacticalPosition = {
+        id:               `pos-${Date.now()}`,
+        ticker:           modified.asset.ticker,
+        name:             modified.asset.name,
+        type:             modified.type,
+        entryDate:        new Date().toISOString(),
+        entryPrice:       modified.entryPrice,
+        shares,
+        capitalRisked,
+        totalInvested,
+        stopLoss:         modified.stopLoss,
+        takeProfit1:      modified.takeProfit1,
+        takeProfit2:      modified.takeProfit2,
+        status:           'OPEN',
+        currentPrice:     modified.entryPrice,
+        exitDate:         null,
+        exitPrice:        null,
+        exitReason:       null,
+        unrealizedPnL:    0,
+        unrealizedPnLPct: 0,
+        realizedPnL:      null,
+        realizedPnLPct:   null,
+        daysOpen:         0,
+        maxDaysAllowed:   prev.config.maxDaysPerTrade,
+      };
+      const capitalUsed      = +(prev.capitalUsed + totalInvested).toFixed(2);
+      const capitalAvailable = +(prev.capitalAvailable - totalInvested).toFixed(2);
+      return {
+        ...prev,
+        openPositions:    [...prev.openPositions, position],
+        capitalUsed,
+        capitalAvailable,
+      };
+    });
     setOpenModal(null);
   }, [openModal, modalEntry, modalStop, modalTP1, modalTP2, modalShares]);
 
@@ -184,7 +224,20 @@ export default function TacticalDashboard() {
       riskPerTradePct:      cfgRiskPct / 100,
       requireAboveMA200:    cfgMA200,
     };
-    setState(prev => ({ ...prev, config: newConfig }));
+    // Recalcular capitalAvailable cuando cambia el capital total.
+    // capitalUsed = suma real de posiciones abiertas (inmutable).
+    // capitalAvailable = nuevo capital - lo ya invertido.
+    setState(prev => {
+      const capitalUsed = prev.openPositions.reduce(
+        (sum, p) => sum + (p.totalInvested ?? 0), 0
+      );
+      return {
+        ...prev,
+        config:           newConfig,
+        capitalUsed,
+        capitalAvailable: Math.max(0, cfgCapital - capitalUsed),
+      };
+    });
   }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200, state.config]);
 
   // ── IBKR: verificar conexión ────────────────────────────────

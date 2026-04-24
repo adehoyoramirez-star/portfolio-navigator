@@ -29,7 +29,32 @@ export function loadTacticalState(): TacticalEngineState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as TacticalEngineState;
+    const state = JSON.parse(raw) as TacticalEngineState;
+
+    // SANEAMIENTO: recalcular capitalAvailable y capitalUsed desde las
+    // posiciones reales, por si el estado guardado quedó corrupto.
+    // Esto ocurre cuando se cambia el capital en config sin resetear el state.
+    const capitalUsed = state.openPositions.reduce(
+      (sum, p) => sum + (p.totalInvested ?? 0), 0
+    );
+    const capitalAvailable = Math.max(
+      0,
+      state.config.tacticalCapitalEur - capitalUsed
+    );
+
+    // Si hay discrepancia, corregir silenciosamente
+    if (
+      Math.abs(state.capitalAvailable - capitalAvailable) > 0.01 ||
+      Math.abs(state.capitalUsed - capitalUsed) > 0.01
+    ) {
+      console.warn(
+        `[Tactical] Estado saneado: capitalAvailable ${state.capitalAvailable} → ${capitalAvailable}, ` +
+        `capitalUsed ${state.capitalUsed} → ${capitalUsed}`
+      );
+      return { ...state, capitalAvailable, capitalUsed };
+    }
+
+    return state;
   } catch {
     return null;
   }
@@ -55,33 +80,29 @@ export function initTacticalState(config: TacticalConfig): TacticalEngineState {
 }
 
 // ── Abrir posición ───────────────────────────────────────────
-// sharesOverride: si el usuario edita las acciones en el modal, se pasan aquí
-// y se ignora el cálculo automático (que puede dar 0 con capital pequeño).
 export function openPosition(
-  state:          TacticalEngineState,
-  opportunity:    TacticalOpportunity,
-  sharesOverride?: number,
+  state:       TacticalEngineState,
+  opportunity: TacticalOpportunity
 ): TacticalEngineState {
   const { config } = state;
 
+  // Verificar que hay capital y no excedemos posiciones máximas
   if (state.openPositions.length >= config.maxOpenPositions) {
-    console.warn('[Tactical] Max open positions reached');
+    console.warn('Max open positions reached');
     return state;
   }
 
-  // Calcular sizing automático pero garantizar mínimo 1 acción
-  const auto = calcPositionSize(
-    Math.max(state.capitalAvailable, opportunity.entryPrice), // nunca 0
+  const { shares, capitalRisked, totalInvested } = calcPositionSize(
+    state.capitalAvailable,
     opportunity.entryPrice,
     opportunity.stopLoss,
-    config,
+    config
   );
 
-  // Usar override del modal si existe, si no el auto con mínimo 1
-  const shares       = Math.max(1, sharesOverride ?? auto.shares);
-  const riskPerShare = Math.max(0.01, opportunity.entryPrice - opportunity.stopLoss);
-  const capitalRisked = +(shares * riskPerShare).toFixed(2);
-  const totalInvested = +(shares * opportunity.entryPrice).toFixed(2);
+  if (shares === 0 || totalInvested > state.capitalAvailable) {
+    console.warn('Insufficient capital');
+    return state;
+  }
 
   const position: TacticalPosition = {
     id:            `pos-${Date.now()}`,
@@ -109,14 +130,14 @@ export function openPosition(
     maxDaysAllowed:   config.maxDaysPerTrade,
   };
 
-  console.log(`[Tactical] Abriendo ${position.ticker}: ${shares} acc. @ €${opportunity.entryPrice} · invertido €${totalInvested} · riesgo €${capitalRisked}`);
-
-  return recalcMetrics({
+  const newState: TacticalEngineState = {
     ...state,
-    openPositions:    [...state.openPositions, position],
-    capitalUsed:      +(state.capitalUsed + totalInvested).toFixed(2),
-    capitalAvailable: +(state.capitalAvailable - totalInvested).toFixed(2),
-  });
+    openPositions:   [...state.openPositions, position],
+    capitalUsed:     state.capitalUsed + totalInvested,
+    capitalAvailable: state.capitalAvailable - totalInvested,
+  };
+
+  return recalcMetrics(newState);
 }
 
 // ── Cerrar posición ──────────────────────────────────────────
