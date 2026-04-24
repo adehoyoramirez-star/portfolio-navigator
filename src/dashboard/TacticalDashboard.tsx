@@ -66,12 +66,12 @@ function CapitalPanel({
   defensiveLiquidity: number;
   config:             TacticalConfig;
 }) {
-  const safeTac = safeNumber(tacticalCapital);
-  const safeDef = safeNumber(defensiveLiquidity);
-  const maxFromLiq = defensiveLiquidity * 0.20;
-  const usable     = config.tacticalCapitalEur;
-  const usablePct  = defensiveLiquidity > 0
-    ? ((usable / defensiveLiquidity) * 100).toFixed(1)
+  const safeTac    = safeNumber(tacticalCapital);
+  const safeDef    = safeNumber(defensiveLiquidity);
+  const maxFromLiq = safeDef * 0.20;
+  const usable     = safeNumber(config?.tacticalCapitalEur);
+  const usablePct  = safeDef > 0
+    ? ((usable / safeDef) * 100).toFixed(1)
     : '—';
 
   return (

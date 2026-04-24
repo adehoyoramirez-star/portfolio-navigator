@@ -481,9 +481,11 @@ export function defaultTacticalConfig(
   tacticalCapital:    number,  // € totales asignados al motor táctico (viene del portfolio)
   defensiveLiquidity: number,  // € de liquidez defensiva actual del portfolio Olympus
 ): TacticalConfig {
-  const available = Math.min(defensiveLiquidity * 0.20, tacticalCapital);
+  const safeTac = (typeof tacticalCapital    === 'number' && isFinite(tacticalCapital))    ? tacticalCapital    : 0;
+  const safeDef = (typeof defensiveLiquidity === 'number' && isFinite(defensiveLiquidity)) ? defensiveLiquidity : 0;
+  const available = Math.min(safeDef * 0.20, safeTac);
   return {
-    tacticalCapitalEur:     available > 0 ? available : tacticalCapital,
+    tacticalCapitalEur:     available > 0 ? available : safeTac,
     maxCapitalPerTrade:     0.30,   // 30% máx por operación individual
     riskPerTradePct:        0.01,   // 1% del capital táctico en riesgo por trade
     maxOpenPositions:       4,      // 4 posiciones abiertas simultáneas
