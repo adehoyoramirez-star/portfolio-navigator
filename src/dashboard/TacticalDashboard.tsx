@@ -36,9 +36,6 @@ interface TacticalDashboardProps {
   defensiveLiquidity: number;
 }
 
-// ------------------------------------------------------------------
-// Utilidad: protege contra undefined/NaN que puedan venir de props
-// ------------------------------------------------------------------
 const safeNumber = (v: any): number => {
   if (typeof v !== 'number' || !isFinite(v)) return 0;
   return v;
@@ -46,7 +43,7 @@ const safeNumber = (v: any): number => {
 
 const SIGNAL_COLORS: Record<string, string> = {
   BLOOD_IN_STREETS: 'bg-red-600 text-white',
-  MOMENTUM_BREAKOUT: 'bg-blue-600 text-white',
+  MOMENTUM_BREAKOUT:'bg-blue-600 text-white',
   MEAN_REVERSION:   'bg-yellow-500 text-black',
   OVERSOLD_BOUNCE:  'bg-orange-500 text-white',
   SECTOR_ROTATION:  'bg-purple-500 text-white',
@@ -71,11 +68,10 @@ function CapitalPanel({
 }) {
   const safeTac = safeNumber(tacticalCapital);
   const safeDef = safeNumber(defensiveLiquidity);
-
-  const maxFromLiq = safeDef * 0.20;
+  const maxFromLiq = defensiveLiquidity * 0.20;
   const usable     = config.tacticalCapitalEur;
-  const usablePct  = safeDef > 0
-    ? ((usable / safeDef) * 100).toFixed(1)
+  const usablePct  = defensiveLiquidity > 0
+    ? ((usable / defensiveLiquidity) * 100).toFixed(1)
     : '—';
 
   return (
