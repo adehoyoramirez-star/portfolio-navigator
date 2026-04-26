@@ -148,8 +148,13 @@ export interface TacticalPosition {
   realizedPnL:      number | null; // Si está cerrada
   realizedPnLPct:   number | null;
   // Días en posición
-  daysOpen:     number;
-  maxDaysAllowed: number;        // Por defecto 10 días hábiles
+  daysOpen:         number;
+  maxDaysAllowed:   number;      // Calculado dinámicamente por tipo de señal (no fijo 10d)
+  // Tiempo probabilístico (First Passage Time)
+  expectedDaysToTP1: number;     // E[T] días esperados hasta TP1 según ATR y tipo de señal
+  expectedDaysToTP2: number;     // E[T] días esperados hasta TP2
+  daysToBreakeven:   number;     // E[T] días para que el precio vuelva a entrada (si en rojo)
+  timingScore:       number;     // 0-100: qué % del tiempo esperado se ha consumido
 }
 
 // ── Configuración del motor táctico ─────────────────────────

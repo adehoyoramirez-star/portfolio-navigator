@@ -79,6 +79,80 @@ export function initTacticalState(config: TacticalConfig): TacticalEngineState {
   };
 }
 
+// ── First Passage Time — tiempo probabilístico hasta objetivo ─
+// Basado en Movimiento Browniano con deriva para señales con momentum
+// y difusión pura para señales de reversión a la media.
+//
+// Para MEAN REVERSION / BLOOD IN STREETS / OVERSOLD BOUNCE:
+//   E[T] = (distancia)² / (2 × σ²)   — proceso difusivo puro
+//
+// Para MOMENTUM BREAKOUT / SECTOR ROTATION:
+//   E[T] = distancia / drift           — proceso con deriva
+//   drift ≈ ATR × 0.15 (15% del ATR como velocidad neta de tendencia)
+//
+// Cada señal tiene un factor de seguridad y límites min/max distintos.
+
+export function calcExpectedDays(
+  entryPrice:  number,
+  target:      number,
+  atr:         number,
+  signalType:  import('./types').OpportunityType,
+): number {
+  const dist = Math.abs(target - entryPrice);
+  if (atr <= 0 || dist <= 0) return 10;
+
+  let raw: number;
+
+  if (signalType === 'MOMENTUM_BREAKOUT') {
+    // Proceso con deriva: drift = 15% del ATR/día
+    const drift = atr * 0.15;
+    raw = (dist / drift) * 1.5;        // factor de seguridad ×1.5
+    return Math.round(Math.min(25, Math.max(8, raw)));
+  }
+
+  if (signalType === 'SECTOR_ROTATION') {
+    // Rotación lenta: drift = 8% del ATR/día
+    const drift = atr * 0.08;
+    raw = (dist / drift) * 2.0;
+    return Math.round(Math.min(30, Math.max(10, raw)));
+  }
+
+  // Difusión pura: BLOOD_IN_STREETS, MEAN_REVERSION, OVERSOLD_BOUNCE, EVENT_DRIVEN
+  const sigma2 = atr * atr;
+  const factor = signalType === 'BLOOD_IN_STREETS' ? 1.5
+               : signalType === 'MEAN_REVERSION'   ? 2.0
+               : 2.0;  // OVERSOLD_BOUNCE, EVENT_DRIVEN
+  raw = (dist * dist / (2 * sigma2)) * factor;
+
+  const limits: Record<string, [number, number]> = {
+    BLOOD_IN_STREETS: [3, 7],
+    MEAN_REVERSION:   [4, 10],
+    OVERSOLD_BOUNCE:  [4, 12],
+    EVENT_DRIVEN:     [3, 8],
+  };
+  const [mn, mx] = limits[signalType] ?? [4, 10];
+  return Math.round(Math.min(mx, Math.max(mn, raw)));
+}
+
+// ── Timing score: % del tiempo esperado consumido ─────────────
+// 0 = recién abierta | 100 = ha superado el tiempo esperado
+export function calcTimingScore(daysOpen: number, expectedDays: number): number {
+  if (expectedDays <= 0) return 0;
+  return Math.min(100, Math.round((daysOpen / expectedDays) * 100));
+}
+
+// ── Días esperados hasta breakeven (si posición en rojo) ──────
+// Cuántos días necesita el precio para volver al precio de entrada
+export function calcDaysToBreakeven(
+  entryPrice:   number,
+  currentPrice: number,
+  atr:          number,
+  signalType:   import('./types').OpportunityType,
+): number {
+  if (currentPrice >= entryPrice) return 0; // ya está en verde
+  return calcExpectedDays(currentPrice, entryPrice, atr, signalType);
+}
+
 // ── Abrir posición ───────────────────────────────────────────
 export function openPosition(
   state:       TacticalEngineState,
@@ -104,6 +178,13 @@ export function openPosition(
     return state;
   }
 
+  // Calcular tiempo esperado dinámico según tipo de señal (First Passage Time)
+  const atr = opportunity.asset.indicators?.atr14 ?? (opportunity.entryPrice * 0.02);
+  const expectedDaysToTP1 = calcExpectedDays(opportunity.entryPrice, opportunity.takeProfit1, atr, opportunity.type);
+  const expectedDaysToTP2 = calcExpectedDays(opportunity.entryPrice, opportunity.takeProfit2, atr, opportunity.type);
+  // maxDaysAllowed = tiempo esperado TP2 × 1.5 (margen de seguridad), con mínimo 5 y máximo 30
+  const dynamicMax = Math.min(30, Math.max(5, Math.round(expectedDaysToTP2 * 1.5)));
+
   const position: TacticalPosition = {
     id:            `pos-${Date.now()}`,
     ticker:        opportunity.asset.ticker,
@@ -126,8 +207,12 @@ export function openPosition(
     unrealizedPnLPct: 0,
     realizedPnL:      null,
     realizedPnLPct:   null,
-    daysOpen:         0,
-    maxDaysAllowed:   config.maxDaysPerTrade,
+    daysOpen:          0,
+    maxDaysAllowed:    dynamicMax,
+    expectedDaysToTP1,
+    expectedDaysToTP2,
+    daysToBreakeven:   expectedDaysToTP1, // en apertura = tiempo hasta TP1
+    timingScore:       0,
   };
 
   const newState: TacticalEngineState = {
@@ -214,12 +299,18 @@ export function updatePositionPrices(
       return null;
     }
 
+    const atr = Math.max(0.01, pos.entryPrice * 0.02); // approx if not available
+    const daysToBreakeven = calcDaysToBreakeven(pos.entryPrice, price, atr, pos.type);
+    const timingScore     = calcTimingScore(daysOpen, pos.expectedDaysToTP1 ?? 10);
+
     return {
       ...pos,
       currentPrice:      price,
       unrealizedPnL:     unrealized,
       unrealizedPnLPct:  unrealizedPct,
       daysOpen,
+      daysToBreakeven,
+      timingScore,
     };
   }).filter((p): p is TacticalPosition => p !== null);
 

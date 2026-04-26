@@ -11,7 +11,7 @@ import type {
 } from '@/core/tactical/types';
 import {
   initTacticalState, loadTacticalState, saveTacticalState,
-  openPosition, closePosition, updatePositionPrices,
+  openPosition, closePosition, updatePositionPrices, calcExpectedDays, calcTimingScore,
   getTacticalSummary,
 } from '@/core/tactical/tacticalPortfolio';
 import {
@@ -211,8 +211,12 @@ export default function TacticalDashboard() {
         unrealizedPnLPct: 0,
         realizedPnL:      null,
         realizedPnLPct:   null,
-        daysOpen:         0,
-        maxDaysAllowed:   prev.config.maxDaysPerTrade,
+        daysOpen:          0,
+        maxDaysAllowed:    prev.config.maxDaysPerTrade,
+        expectedDaysToTP1: 10,
+        expectedDaysToTP2: 15,
+        daysToBreakeven:   5,
+        timingScore:       0,
       };
       const capitalUsed      = +(prev.capitalUsed + totalInvested).toFixed(2);
       const capitalAvailable = +(prev.capitalAvailable - totalInvested).toFixed(2);
@@ -444,6 +448,21 @@ export default function TacticalDashboard() {
     const pnlColor = clr(pos.unrealizedPnL);
     const nearSL   = pos.currentPrice <= pos.stopLoss * 1.03;
     const nearTP   = pos.currentPrice >= pos.takeProfit1 * 0.97;
+    const inGreen  = pos.currentPrice >= pos.entryPrice;
+
+    // Tiempo probabilístico — First Passage Time
+    const expTP1    = pos.expectedDaysToTP1 ?? calcExpectedDays(pos.entryPrice, pos.takeProfit1, pos.entryPrice * 0.02, pos.type);
+    const expTP2    = pos.expectedDaysToTP2 ?? calcExpectedDays(pos.entryPrice, pos.takeProfit2, pos.entryPrice * 0.02, pos.type);
+    const timing    = calcTimingScore(pos.daysOpen, expTP1);
+    const daysLeft  = Math.max(0, expTP1 - pos.daysOpen);
+    const timingClr = timing <= 50 ? '#22c55e' : timing <= 80 ? '#f59e0b' : '#ef4444';
+    const timingLbl = timing <= 50 ? '✅ En plazo' : timing <= 80 ? '⚡ Revisar' : '🔴 Tiempo';
+
+    // Días estimados para verde
+    const dtbDays = pos.daysToBreakeven ?? 0;
+    const dtbLabel = inGreen
+      ? '✅ En verde'
+      : dtbDays > 0 ? `~${dtbDays}d para verde` : 'calculando...';
 
     return (
       <tr style={{ background: nearSL ? '#1c0505' : nearTP ? '#052e16' : 'transparent' }}>
@@ -459,7 +478,12 @@ export default function TacticalDashboard() {
           <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{pos.shares} uds</div>
         </td>
         <td style={S.td}>
-          <div style={{ fontWeight:700 }}>€{pos.currentPrice.toFixed(2)}</div>
+          <div style={{ fontWeight:700, color: inGreen ? '#22c55e' : '#f8fafc' }}>
+            €{pos.currentPrice.toFixed(2)}
+          </div>
+          <div style={{ fontSize:'0.65rem', color: inGreen ? '#22c55e' : '#f59e0b' }}>
+            {dtbLabel}
+          </div>
         </td>
         <td style={S.td}>
           <div style={{ color:pnlColor, fontWeight:700 }}>
@@ -474,32 +498,40 @@ export default function TacticalDashboard() {
           <div style={{ color:'#22c55e', fontSize:'0.75rem' }}>TP1 €{pos.takeProfit1.toFixed(2)}</div>
           <div style={{ color:'#4ade80', fontSize:'0.7rem' }}>TP2 €{pos.takeProfit2.toFixed(2)}</div>
         </td>
-        <td style={S.td}>
-          <div style={{ color: pos.daysOpen >= pos.maxDaysAllowed - 2 ? '#f59e0b' : '#94a3b8' }}>
-            Día {pos.daysOpen}/{pos.maxDaysAllowed}
+        <td style={{ ...S.td, minWidth:120 }}>
+          {/* Barra de progreso temporal probabilístico */}
+          <div style={{ marginBottom:5 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.62rem', marginBottom:2 }}>
+              <span style={{ color:timingClr, fontWeight:700 }}>{timingLbl}</span>
+              <span style={{ color:'#64748b' }}>{pos.daysOpen}/{expTP1}d</span>
+            </div>
+            <div style={{ background:'#0f172a', borderRadius:3, height:6, overflow:'hidden' }}>
+              <div style={{
+                width:`${Math.min(100,timing)}%`, height:'100%',
+                background:timingClr, borderRadius:3, transition:'width .3s'
+              }}/>
+            </div>
+          </div>
+          <div style={{ fontSize:'0.6rem', color:'#475569', lineHeight:1.4 }}>
+            <div>~{daysLeft}d restantes TP1</div>
+            <div>TP2 en ~{expTP2}d · máx {pos.maxDaysAllowed}d</div>
           </div>
         </td>
-        <td style={{ ...S.td, minWidth:200 }}>
+        <td style={{ ...S.td, minWidth:180 }}>
           <div style={{ display:'flex', gap:4, alignItems:'center' }}>
             <input
-              style={{ ...S.input, width:80 }}
+              style={{ ...S.input, width:76 }}
               type="number"
               value={exitP}
               onChange={e => setExitP(e.target.value)}
               step="0.01"
             />
-            <button style={{ ...S.btn, ...S.btnG, padding:'4px 8px', fontSize:'0.7rem' }}
-              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_TP')}>
-              TP
-            </button>
-            <button style={{ ...S.btn, ...S.btnR, padding:'4px 8px', fontSize:'0.7rem' }}
-              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_SL')}>
-              SL
-            </button>
-            <button style={{ ...S.btn, ...S.btnGr, padding:'4px 8px', fontSize:'0.7rem' }}
-              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_MANUAL')}>
-              M
-            </button>
+            <button style={{ ...S.btn, ...S.btnG, padding:'4px 6px', fontSize:'0.68rem' }}
+              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_TP')}>TP</button>
+            <button style={{ ...S.btn, ...S.btnR, padding:'4px 6px', fontSize:'0.68rem' }}
+              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_SL')}>SL</button>
+            <button style={{ ...S.btn, ...S.btnGr, padding:'4px 6px', fontSize:'0.68rem' }}
+              onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_MANUAL')}>M</button>
           </div>
         </td>
       </tr>
@@ -654,7 +686,7 @@ export default function TacticalDashboard() {
               <table style={S.table}>
                 <thead>
                   <tr>
-                    {['Activo','Entrada','Precio actual','P&L','SL / TP1','Días','Cerrar'].map(h => (
+                    {['Activo','Entrada','Precio actual','P&L','SL / TP1','⏱ Timing probabilístico','Cerrar'].map(h => (
                       <th key={h} style={S.th}>{h}</th>
                     ))}
                   </tr>
