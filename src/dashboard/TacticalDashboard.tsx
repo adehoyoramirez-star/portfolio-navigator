@@ -48,6 +48,24 @@ const clr = (v: number) => v >= 0 ? '#22c55e' : '#ef4444';
 const pct = (v: number, d = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`;
 const eur = (v: number | undefined | null) => `€${Math.round(v ?? 0).toLocaleString('es-ES')}`;
 
+// ── Probabilidad de éxito en horizonte temporal ──────────────
+// Aproximación analítica con distribución normal sobre difusión ATR.
+// σ_N = ATR × √N  →  P(precio sube hasta target en N días) = 1 - Φ(Z)
+function erfApprox(x: number): number {
+  const t = 1 / (1 + 0.3275911 * Math.abs(x));
+  const y = 1 - (((((1.061405429*t - 1.453152027)*t) + 1.421413741)*t - 0.284496736)*t + 0.254829592)*t*Math.exp(-x*x);
+  return x >= 0 ? y : -y;
+}
+function normCDF(z: number): number { return 0.5 * (1 + erfApprox(z / Math.SQRT2)); }
+function calcSuccessProb(entry: number, target: number, atr: number, days: number): number {
+  if (atr <= 0 || days <= 0 || target <= entry) return 0;
+  const z = (target - entry) / (atr * Math.sqrt(days));
+  return Math.max(0, Math.min(100, (1 - normCDF(z)) * 100));
+}
+function probColor(p: number): string {
+  return p >= 50 ? '#22c55e' : p >= 25 ? '#f59e0b' : p >= 10 ? '#f97316' : '#ef4444';
+}
+
 const typeColors: Record<string, string> = {
   BLOOD_IN_STREETS:  '#ef4444',
   MEAN_REVERSION:    '#3b82f6',
@@ -303,6 +321,15 @@ export default function TacticalDashboard() {
     const atrEur      = opp.asset.indicators?.atr14 ?? 0;
     const atrPct      = (opp.asset.price > 0 && opp.asset.indicators)
       ? (opp.asset.indicators.atr14 / opp.asset.price * 100) : 0;
+    const maxDays     = state.config.maxDaysPerTrade;
+    const probTP1     = calcSuccessProb(opp.entryPrice, opp.takeProfit1, atrEur, maxDays);
+    const probTP2     = calcSuccessProb(opp.entryPrice, opp.takeProfit2, atrEur, maxDays);
+    const sigmaND     = atrEur * Math.sqrt(maxDays);  // movimiento esperado en N días
+    // Veredicto automático para el usuario
+    const verdict     = probTP1 >= 40 ? { txt:'Alta prob.', c:'#22c55e' }
+                      : probTP1 >= 20 ? { txt:'Prob. moderada', c:'#f59e0b' }
+                      : probTP1 >= 8  ? { txt:'Prob. baja — revisar plazo', c:'#f97316' }
+                      : { txt:'Improbable en 10 días', c:'#ef4444' };
 
     return (
       <div style={{ ...S.card, borderLeft:`3px solid ${tc}`, marginBottom:'0.75rem' }}>
@@ -353,12 +380,42 @@ export default function TacticalDashboard() {
           )}
         </div>
 
-        {/* ATR: rango diario típico — se usa para calcular el stop loss */}
-        <div style={{ fontSize:'0.7rem', background:'#0f172a', borderRadius:6, padding:'4px 8px', marginBottom:'0.6rem', border:'1px solid #1e293b', display:'flex', alignItems:'center', gap:8 }}>
+        {/* ATR: rango diario típico */}
+        <div style={{ fontSize:'0.7rem', background:'#0f172a', borderRadius:6, padding:'4px 8px', marginBottom:'0.5rem', border:'1px solid #1e293b', display:'flex', alignItems:'center', gap:8 }}>
           <span style={{ color:'#60a5fa', fontWeight:700 }}>ATR(14): €{atrEur.toFixed(2)} · {atrPct.toFixed(2)}%/día</span>
           <span style={{ color:'#334155' }}>|</span>
           <span style={{ color:'#475569', fontSize:'0.65rem' }}>stop = entrada − {opp.type === 'MOMENTUM_BREAKOUT' ? '1×' : opp.type === 'BLOOD_IN_STREETS' ? '1.5×' : '2×'}ATR</span>
           {atrPct < 0.1 && <span style={{ color:'#f59e0b', fontSize:'0.65rem' }}>⚠ sin OHLC real</span>}
+        </div>
+
+        {/* PROBABILIDAD DE ÉXITO en horizonte temporal */}
+        <div style={{ background:'#0f172a', borderRadius:8, padding:'8px 10px', marginBottom:'0.6rem', border:`1px solid ${probColor(probTP1)}44` }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:5 }}>
+            <span style={{ fontSize:'0.65rem', color:'#64748b', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+              Prob. éxito · {maxDays}d hábiles
+            </span>
+            <span style={{ fontSize:'0.7rem', fontWeight:700, color: verdict.c }}>{verdict.txt}</span>
+          </div>
+          {([
+            { label:`TP1 (+${((opp.takeProfit1/opp.entryPrice-1)*100).toFixed(0)}%)`, prob:probTP1 },
+            { label:`TP2 (+${((opp.takeProfit2/opp.entryPrice-1)*100).toFixed(0)}%)`, prob:probTP2 },
+          ] as {label:string;prob:number}[]).map(({ label, prob }) => (
+            <div key={label} style={{ marginBottom:4 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.65rem', marginBottom:2 }}>
+                <span style={{ color:'#64748b' }}>{label}</span>
+                <span style={{ fontWeight:700, color: probColor(prob) }}>{prob.toFixed(1)}%</span>
+              </div>
+              <div style={{ background:'#1e293b', borderRadius:4, height:5, overflow:'hidden' }}>
+                <div style={{ width:`${Math.min(100,prob)}%`, height:'100%', background: probColor(prob), borderRadius:4 }} />
+              </div>
+            </div>
+          ))}
+          <div style={{ marginTop:5, fontSize:'0.62rem', color:'#475569', display:'flex', gap:10 }}>
+            <span>σ({maxDays}d)=±€{sigmaND.toFixed(2)}</span>
+            <span>·</span>
+            <span>TP1 a {sigmaND>0?((opp.takeProfit1-opp.entryPrice)/sigmaND).toFixed(1):'—'}σ</span>
+            {probTP1 < 15 && <span style={{ color:'#f59e0b' }}>· considera ampliar el plazo</span>}
+          </div>
         </div>
 
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
