@@ -187,6 +187,60 @@ export const FTSE100_STOCKS: UniverseAsset[] = [
   { ticker:'NXT.L',    name:'Next PLC',               sector:'Consumer',    type:'STOCK', exchange:'LSE',  currency:'GBP', yahooSymbol:'NXT.L',    ibkrExchange:'LSE',  ibkrSymbol:'NXT',   ibkrSecType:'STK' },
 ];
 
+// ── ETFs Sectoriales US (iShares SPDR) ───────────────────────
+// Añadidos para ampliar el radar a sectores específicos con mayor precisión
+export const US_SECTOR_ETFS: UniverseAsset[] = [
+  { ticker:'XLK',    name:'Technology Select Sector SPDR',    sector:'Technology',  type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLK',     ibkrExchange:'NYSE', ibkrSymbol:'XLK',  ibkrSecType:'STK' },
+  { ticker:'XLE',    name:'Energy Select Sector SPDR',        sector:'Energy',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLE',     ibkrExchange:'NYSE', ibkrSymbol:'XLE',  ibkrSecType:'STK' },
+  { ticker:'XLF',    name:'Financial Select Sector SPDR',     sector:'Finance',     type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLF',     ibkrExchange:'NYSE', ibkrSymbol:'XLF',  ibkrSecType:'STK' },
+  { ticker:'XLV',    name:'Health Care Select Sector SPDR',   sector:'Healthcare',  type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLV',     ibkrExchange:'NYSE', ibkrSymbol:'XLV',  ibkrSecType:'STK' },
+  { ticker:'XLI',    name:'Industrial Select Sector SPDR',    sector:'Industry',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLI',     ibkrExchange:'NYSE', ibkrSymbol:'XLI',  ibkrSecType:'STK' },
+  { ticker:'XLP',    name:'Consumer Staples Select Sector',   sector:'Consumer',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLP',     ibkrExchange:'NYSE', ibkrSymbol:'XLP',  ibkrSecType:'STK' },
+  { ticker:'XLY',    name:'Consumer Discr Select Sector SPDR',sector:'Consumer',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLY',     ibkrExchange:'NYSE', ibkrSymbol:'XLY',  ibkrSecType:'STK' },
+  { ticker:'XLU',    name:'Utilities Select Sector SPDR',     sector:'Utilities',   type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLU',     ibkrExchange:'NYSE', ibkrSymbol:'XLU',  ibkrSecType:'STK' },
+  { ticker:'XLB',    name:'Materials Select Sector SPDR',     sector:'Materials',   type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLB',     ibkrExchange:'NYSE', ibkrSymbol:'XLB',  ibkrSecType:'STK' },
+  { ticker:'XLRE',   name:'Real Estate Select Sector SPDR',   sector:'Real Estate', type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'XLRE',    ibkrExchange:'NYSE', ibkrSymbol:'XLRE', ibkrSecType:'STK' },
+  { ticker:'SOXX',   name:'iShares Semiconductor ETF',        sector:'Technology',  type:'ETF', exchange:'NASDAQ',currency:'USD', yahooSymbol:'SOXX',    ibkrExchange:'NASDAQ',ibkrSymbol:'SOXX', ibkrSecType:'STK' },
+  { ticker:'IBB',    name:'iShares Biotechnology ETF',        sector:'Healthcare',  type:'ETF', exchange:'NASDAQ',currency:'USD', yahooSymbol:'IBB',     ibkrExchange:'NASDAQ',ibkrSymbol:'IBB',  ibkrSecType:'STK' },
+  { ticker:'KRE',    name:'SPDR S&P Regional Bank ETF',       sector:'Finance',     type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'KRE',     ibkrExchange:'NYSE', ibkrSymbol:'KRE',  ibkrSecType:'STK' },
+  { ticker:'GDXJ',   name:'VanEck Junior Gold Miners ETF',    sector:'Materials',   type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'GDXJ',    ibkrExchange:'NYSE', ibkrSymbol:'GDXJ', ibkrSecType:'STK' },
+  { ticker:'USO',    name:'United States Oil Fund',           sector:'Energy',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'USO',      ibkrExchange:'NYSE', ibkrSymbol:'USO',  ibkrSecType:'STK' },
+];
+
+// ── Emerging Markets ex-China ───────────────────────────────
+// India, Taiwan, Korea, LatAm — diversificación real sin exposición China
+export const EM_EX_CHINA: UniverseAsset[] = [
+  { ticker:'INDA',   name:'iShares MSCI India ETF',           sector:'Emerging',    type:'ETF', exchange:'NASDAQ',currency:'USD', yahooSymbol:'INDA',    ibkrExchange:'NASDAQ',ibkrSymbol:'INDA', ibkrSecType:'STK' },
+  { ticker:'EPI',    name:'WisdomTree India Earnings Fund',   sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'EPI',      ibkrExchange:'NYSE', ibkrSymbol:'EPI',  ibkrSecType:'STK' },
+  { ticker:'EWT',    name:'iShares MSCI Taiwan ETF',          sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'EWT',     ibkrExchange:'NYSE', ibkrSymbol:'EWT',  ibkrSecType:'STK' },
+  { ticker:'EWY',    name:'iShares MSCI South Korea ETF',     sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'EWY',     ibkrExchange:'NYSE', ibkrSymbol:'EWY',  ibkrSecType:'STK' },
+  { ticker:'EWZ',    name:'iShares MSCI Brazil ETF',          sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'EWZ',     ibkrExchange:'NYSE', ibkrSymbol:'EWZ',  ibkrSecType:'STK' },
+  { ticker:'EWW',    name:'iShares MSCI Mexico ETF',          sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'EWW',     ibkrExchange:'NYSE', ibkrSymbol:'EWW',  ibkrSecType:'STK' },
+  { ticker:'RSX',    name:'VanEck Russia ETF (hedge)',        sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'RSX',     ibkrExchange:'NYSE', ibkrSymbol:'RSX',  ibkrSecType:'STK' },
+  { ticker:'VNM',    name:'VanEck Vietnam ETF',               sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'VNM',     ibkrExchange:'NYSE', ibkrSymbol:'VNM',  ibkrSecType:'STK' },
+  { ticker:'THD',    name:'iShares MSCI Thailand ETF',        sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'THD',     ibkrExchange:'NYSE', ibkrSymbol:'THD',  ibkrSecType:'STK' },
+  { ticker:'EPHE',   name:'iShares MSCI Philippines ETF',     sector:'Emerging',    type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'EPHE',    ibkrExchange:'NYSE', ibkrSymbol:'EPHE', ibkrSecType:'STK' },
+];
+
+// ── Small Caps & Factor ETFs ────────────────────────────────
+// Exposición a factores y tamaño para oportunidades de ineficiencia
+export const FACTOR_ETFS: UniverseAsset[] = [
+  { ticker:'IWM',    name:'iShares Russell 2000 ETF',         sector:'Small Cap',   type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'IWM',     ibkrExchange:'NYSE', ibkrSymbol:'IWM',  ibkrSecType:'STK' },
+  { ticker:'SLYV',   name:'SPDR S&P 600 Small Cap Value ETF', sector:'Small Cap',   type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'SLYV',    ibkrExchange:'NYSE', ibkrSymbol:'SLYV', ibkrSecType:'STK' },
+  { ticker:'AVUV',   name:'Avantis U.S. Small Cap Value ETF', sector:'Small Cap',   type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'AVUV',    ibkrExchange:'NYSE', ibkrSymbol:'AVUV', ibkrSecType:'STK' },
+  { ticker:'MTUM',   name:'iShares MSCI USA Momentum ETF',    sector:'Factor',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'MTUM',    ibkrExchange:'NYSE', ibkrSymbol:'MTUM', ibkrSecType:'STK' },
+  { ticker:'VLUE',   name:'iShares MSCI USA Value ETF',       sector:'Factor',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'VLUE',    ibkrExchange:'NYSE', ibkrSymbol:'VLUE', ibkrSecType:'STK' },
+  { ticker:'QUAL',   name:'iShares MSCI USA Quality ETF',     sector:'Factor',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'QUAL',    ibkrExchange:'NYSE', ibkrSymbol:'QUAL', ibkrSecType:'STK' },
+  { ticker:'USMV',   name:'iShares MSCI USA Min Vol ETF',     sector:'Factor',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'USMV',    ibkrExchange:'NYSE', ibkrSymbol:'USMV', ibkrSecType:'STK' },
+  { ticker:'TIP',    name:'iShares TIPS Bond ETF',            sector:'Fixed Income',type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'TIP',      ibkrExchange:'NYSE', ibkrSymbol:'TIP',  ibkrSecType:'STK' },
+];
+
+// ── Crypto ampliada ─────────────────────────────────────────
+export const CRYPTO_ETPS: UniverseAsset[] = [
+  { ticker:'ETHE',   name:'Grayscale Ethereum Trust',         sector:'Crypto',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'ETHE',    ibkrExchange:'NYSE', ibkrSymbol:'ETHE', ibkrSecType:'STK' },
+  { ticker:'BITO',   name:'ProShares Bitcoin Strategy ETF',   sector:'Crypto',      type:'ETF', exchange:'NYSE', currency:'USD', yahooSymbol:'BITO',    ibkrExchange:'NYSE', ibkrSymbol:'BITO', ibkrSecType:'STK' },
+];
+
 // ── US Mega-caps (accesibles desde IBKR Europa) ──────────────
 export const US_STOCKS: UniverseAsset[] = [
   { ticker:'AAPL',     name:'Apple Inc.',             sector:'Technology',  type:'STOCK', exchange:'NASDAQ', currency:'USD', yahooSymbol:'AAPL',     ibkrExchange:'NASDAQ', ibkrSymbol:'AAPL',  ibkrSecType:'STK' },
@@ -215,7 +269,7 @@ export const US_STOCKS: UniverseAsset[] = [
 // UNIVERSOS COMPUESTOS
 // ════════════════════════════════════════════════════════════
 
-// FULL: 7 + 57 + 25 + 20 + 15 + 15 + 20 = ~159 activos  (~15-20 min)
+// FULL: 7 + 57 + 25 + 20 + 15 + 15 + 20 + 15 + 10 + 8 + 2 = ~194 activos  (~20-25 min)
 export const FULL_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...OLYMPUS_ASSETS,
   ...UCITS_ETFS,
@@ -224,9 +278,13 @@ export const FULL_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...CAC40_STOCKS,
   ...FTSE100_STOCKS,
   ...US_STOCKS,
+  ...US_SECTOR_ETFS,      // +15 sectoriales US
+  ...EM_EX_CHINA,         // +10 emerging ex-China
+  ...FACTOR_ETFS,         // +8 factor/small caps
+  ...CRYPTO_ETPS,         // +2 crypto ETPs
 ];
 
-// CORE: 22 ETFs UCITS más líquidos + top 10 acciones europeas  (~3-5 min)
+// CORE: 22 ETFs UCITS + top 10 europeas + top 10 US + 8 sectoriales clave  (~5-7 min)
 export const CORE_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...OLYMPUS_ASSETS,
   ...UCITS_ETFS.filter(a => [
@@ -239,10 +297,13 @@ export const CORE_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...IBEX35_STOCKS.filter(a => ['SAN.MC','BBVA.MC','IBE.MC','ITX.MC','AMS.MC'].includes(a.ticker)),
   ...DAX40_STOCKS.filter(a => ['SAP.DE','SIE.DE','ALV.DE','BAYN.DE','IFX.DE'].includes(a.ticker)),
   ...CAC40_STOCKS.filter(a => ['MC.PA','AIR.PA','SAN.PA','TTE.PA','SU.PA'].includes(a.ticker)),
-  ...US_STOCKS.filter(a => ['NVDA','AAPL','MSFT','TSLA','META'].includes(a.ticker)),
+  ...FTSE100_STOCKS.filter(a => ['SHEL.L','AZN.L','HSBA.L','ULVR.L','BP.L'].includes(a.ticker)),
+  ...US_STOCKS.filter(a => ['NVDA','AAPL','MSFT','TSLA','META','GOOGL','AMZN','AMD','JPM','V'].includes(a.ticker)),
+  // Sectoriales US clave
+  ...US_SECTOR_ETFS.filter(a => ['XLK','XLE','XLF','XLV','SOXX'].includes(a.ticker)),
 ];
 
-// VOLATILE: alta beta  (~2-3 min)
+// VOLATILE: alta beta + crypto + litio + gas + miners  (~3-4 min)
 export const VOLATILE_UNIVERSE: UniverseAsset[] = [
   ...OLYMPUS_ASSETS,
   ...UCITS_ETFS.filter(a => [
@@ -252,6 +313,10 @@ export const VOLATILE_UNIVERSE: UniverseAsset[] = [
   ].includes(a.ticker)),
   ...US_STOCKS.filter(a => ['NVDA','TSLA','AMD','SMCI','COIN','MSTR','PLTR'].includes(a.ticker)),
   ...IBEX35_STOCKS.filter(a => ['IAG.MC','GRF.MC','MTS.MC'].includes(a.ticker)),
+  // Añadidos volátiles
+  ...US_SECTOR_ETFS.filter(a => ['SOXX','GDXJ','KRE'].includes(a.ticker)),
+  ...EM_EX_CHINA.filter(a => ['EWZ','VNM'].includes(a.ticker)),
+  ...CRYPTO_ETPS,
 ];
 
 // ── Helper: contrato IBKR listo para la API ──────────────────

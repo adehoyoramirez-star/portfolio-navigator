@@ -155,6 +155,10 @@ export interface TacticalPosition {
   expectedDaysToTP2: number;     // E[T] días esperados hasta TP2
   daysToBreakeven:   number;     // E[T] días para que el precio vuelva a entrada (si en rojo)
   timingScore:       number;     // 0-100: qué % del tiempo esperado se ha consumido
+  // Horizonte óptimo dinámico (nuevo)
+  optimalDaysTP1:    number;     // Día de máxima probabilidad para TP1
+  optimalDaysTP2:    number;     // Día de máxima probabilidad para TP2
+  optimalProbTP1:    number;     // Probabilidad máxima en el horizonte óptimo
 }
 
 // ── Configuración del motor táctico ─────────────────────────
