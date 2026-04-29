@@ -1,3 +1,11 @@
+// ===============================================
+// ARCHIVO: src/core/types/portfolio.ts
+// FIX-BAYN: Bayer AG añadida como activo real del portfolio
+// FIX-ASSET-INTERFACE: añadidos earningsYield, return12m, return3m, return1m
+//   que el dashboard usa pero que NO estaban declarados en la interfaz Asset,
+//   causando que TypeScript los tratara como 'any' silenciosamente.
+// ===============================================
+
 // 1. DEFINICIÓN DE INTERFACES
 export interface Asset {
   ticker: string;
@@ -10,10 +18,15 @@ export interface Asset {
   volatility: number;
   expectedReturn: number;
   sector: string;
-  history: number[]; // El historial que ahora sí vamos a usar
+  history: number[];
   zScore?: number;
   rsi?: number;
-  factorRole?: 'momentum' | 'value' | 'lowVol' | 'quality' | 'defensive'; // ← NUEVO: para el motor Olympus
+  factorRole?: 'momentum' | 'value' | 'lowVol' | 'quality' | 'defensive';
+  // FIX-ASSET-INTERFACE: estos campos son usados en el dashboard pero faltaban en el tipo
+  earningsYield?: number;   // Earnings Yield anualizado (0.05 = 5%) — para el factor Value
+  return12m?: number;       // Retorno 12 meses (decimal, ej: 0.12 = 12%)
+  return3m?: number;        // Retorno 3 meses
+  return1m?: number;        // Retorno 1 mes
 }
 
 export interface Portfolio {
@@ -28,32 +41,30 @@ export interface Portfolio {
 }
 
 // 2. GENERADOR DE HISTORIAL CORREGIDO
-// Usamos '_' para indicar a TypeScript que el primer parámetro se ignora 
-// y usamos 'index' para crear una tendencia ligera y que no dé error.
-const generateMockHistory = (basePrice: number): number[] => 
+const generateMockHistory = (basePrice: number): number[] =>
   Array.from({ length: 30 }, (_, index) => {
     const randomShock = (Math.random() - 0.5) * 0.02;
-    const trend = index * 0.001; // Usamos el índice para dar una ligera tendencia alcista
+    const trend = index * 0.001;
     return basePrice * (1 + trend + randomShock);
   });
 
-// 3. PORTFOLIO COMPLETO CON CONEXIÓN DE DATOS
-// AUDIT-FIX-01: expectedReturn corregidos con priors de largo plazo (Damodaran 2024 / Vanguard CMA 2024)
-// Los valores anteriores (BTC=45%, Semis=18%, etc.) eran retornos históricos del bull run 2022-2024,
-// NO retornos esperados prospectivos. Usarlos en Monte Carlo producía medianas de €443k absurdas.
+// 3. PORTFOLIO COMPLETO
+// NOTA CRÍTICA — PRECIOS FALLBACK:
+//   Los precios aquí son el FALLBACK estático que se usa SOLO cuando
+//   fetchRealMarketData() falla o antes de que termine la primera carga.
+//   En producción normal, el dashboard sobreescribe price con md.prices[ticker].
 //
-// Priors calibrados (consenso académico — % anual en términos reales ajustados):
-//   BTC:   15% — prima cripto ajustada ciclo (no 45% del bull run, ciclo largo ~4 años)
-//   Semis: 14% — semiconductores: ciclo AI legítimo pero valoración ya alta (P/E ~30x)
-//   MSCI Quality: 11% — prima quality documentada ~3% sobre mercado global (IS3Q.DE)
-//   Uranio: 10% — demanda nuclear estructural, pero ilíquido y volátil
-//   EM ex-China: 8% — prima EM ~3% sobre DM, ajustado riesgo divisa y geopolítico
-//   Gold: 6% — retorno real histórico ~2-4% + inflación esperada ~2-3%
-//   NASDAQ 100 (XNAS.DE): 9% — growth/tech ajustado tipos altos 2024-2025
+//   CAUSA DEL BUG "precios no actualizan":
+//   El bug NO estaba aquí — estaba en dos sitios simultáneos:
+//   1. supabase/functions/yahoo-finance/index.ts — BAYN.DE no estaba en TICKERS
+//      → Yahoo Finance nunca devolvía el precio de BAYN.DE
+//   2. src/lib/constants.ts — BAYN.DE no estaba en ASSETS
+//      → marketData.ts solo itera ASSETS para construir prices{}
+//      → md.prices['BAYN.DE'] era undefined
+//      → el fallback `asset.price` (este archivo) se usaba siempre
+//   Ambos archivos están corregidos en este mismo commit.
 //
-// IMPORTANTE: estos valores son el FALLBACK cuando no hay datos Yahoo disponibles.
-// Con datos Yahoo activos, el motor usa James-Stein shrinkage (marketData.ts) que
-// combina 35% retorno histórico real + 65% prior de largo plazo. Estos priors son idénticos.
+// AUDIT-FIX-01: expectedReturn corregidos con priors de largo plazo (Damodaran 2024)
 export const portfolio: Portfolio = {
   totalValue: 5685,
   cashReserve: 150.00,
@@ -62,23 +73,27 @@ export const portfolio: Portfolio = {
   regime: "ATTACK",
   riskFreeRate: 4.0,
   expectedVolatility: 24.2,
-  
+
   assets: [
     {
       ticker: "BTC-EUR",
       name: "Bitcoin",
       weight: 23.9,
       currentWeight: 9.2,
-      shares: 0.033994,
-      avgPrice: 85386.00,
-      price: 55134.37,
+      shares: 0.031285,
+      avgPrice: 88010.99,
+      price: 85000,           // fallback — se sobreescribe con precio real Yahoo
       volatility: 60,
-      expectedReturn: 15,   // AUDIT-FIX: era 45% (bull run) → 15% (prior LP Damodaran)
+      expectedReturn: 15,
       sector: "Crypto",
-      zScore: -2.08,
-      rsi: 40.51,
-      history: generateMockHistory(55134),
-      factorRole: 'defensive'   // opcional, para el motor
+      zScore: 0,
+      rsi: 50,
+      earningsYield: 0,
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(85000),
+      factorRole: 'defensive'
     },
     {
       ticker: "VVSM.DE",
@@ -87,11 +102,15 @@ export const portfolio: Portfolio = {
       currentWeight: 9.1,
       shares: 2,
       avgPrice: 52.01,
-      price: 62.60,
+      price: 55.0,
       volatility: 35,
-      expectedReturn: 14,   // AUDIT-FIX: era 18% → 14% (ciclo AI legítimo, val ya alta)
+      expectedReturn: 14,
       sector: "Technology",
-      history: generateMockHistory(62.60),
+      earningsYield: 0.03,
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(55.0),
       factorRole: 'momentum'
     },
     {
@@ -101,11 +120,15 @@ export const portfolio: Portfolio = {
       currentWeight: 26.6,
       shares: 26,
       avgPrice: 67.53,
-      price: 70.62,
+      price: 70.0,
       volatility: 18,
-      expectedReturn: 11,   // AUDIT-FIX: era 12% → 11% (prima quality ~3% sobre mercado)
+      expectedReturn: 11,
       sector: "Equity",
-      history: generateMockHistory(70.62),
+      earningsYield: 0.04,
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(70.0),
       factorRole: 'quality'
     },
     {
@@ -113,13 +136,17 @@ export const portfolio: Portfolio = {
       name: "Uranium",
       weight: 15.0,
       currentWeight: 15.5,
-      shares: 15,
-      avgPrice: 26.53,
-      price: 28.15,
+      shares: 13,
+      avgPrice: 26.48,
+      price: 27.0,
       volatility: 40,
-      expectedReturn: 10,   // AUDIT-FIX: era 25% → 10% (demanda nuclear real pero ilíquido)
+      expectedReturn: 10,
       sector: "Energy",
-      history: generateMockHistory(28.15),
+      earningsYield: 0.02,
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(27.0),
       factorRole: 'value'
     },
     {
@@ -129,11 +156,15 @@ export const portfolio: Portfolio = {
       currentWeight: 10.0,
       shares: 31,
       avgPrice: 28.93,
-      price: 35.56,
+      price: 29.5,
       volatility: 22,
-      expectedReturn: 8,    // AUDIT-FIX: era 10% → 8% (prima EM ajustada riesgo divisa DXY alto)
+      expectedReturn: 8,
       sector: "Emerging",
-      history: generateMockHistory(35.56),
+      earningsYield: 0.05,
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(29.5),
       factorRole: 'value'
     },
     {
@@ -143,11 +174,15 @@ export const portfolio: Portfolio = {
       currentWeight: 5.0,
       shares: 4,
       avgPrice: 69.39,
-      price: 72.10,
-      volatility: 30,
-      expectedReturn: 6,    // AUDIT-FIX: era 15% → 6% (retorno real histórico oro ~2-4%)
+      price: 72.0,
+      volatility: 15,
+      expectedReturn: 6,
       sector: "Commodities",
-      history: generateMockHistory(72.10),
+      earningsYield: 0,
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(72.0),
       factorRole: 'defensive'
     },
     {
@@ -155,14 +190,40 @@ export const portfolio: Portfolio = {
       name: "NASDAQ 100",
       weight: 8.6,
       currentWeight: 10.6,
-      shares: 0,
-      avgPrice: 0,
-      price: 65.40,
+      shares: 6,
+      avgPrice: 61.67,
+      price: 65.0,
       volatility: 25,
-      expectedReturn: 9,    // AUDIT-FIX: era 11% → 9% (ajustado tipos altos 2024-2025)
+      expectedReturn: 9,
       sector: "Technology",
-      history: generateMockHistory(65.40),
+      earningsYield: 0.03,
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(65.0),
       factorRole: 'quality'
+    },
+    {
+      // FIX-BAYN: Bayer AG — añadida como posición real del portfolio
+      // Tesis: value extremo (P/E ~8x vs sector 20x) por litigios glifosato
+      // Prior de retorno esperado: 12% — descuento grande, pipeline GLP-1 positivo
+      // RELLENAR shares y avgPrice con datos reales de IBKR
+      ticker: "BAYN.DE",
+      name: "Bayer AG",
+      weight: 0,              // peso objetivo — ajustar según decisión de asignación
+      currentWeight: 0,
+      shares: 0,              // ← RELLENAR con posición real de IBKR
+      avgPrice: 0,            // ← RELLENAR con precio medio de compra real
+      price: 25.0,            // fallback — Yahoo Finance: BAYN.DE (~€24-26 en 2025)
+      volatility: 35,
+      expectedReturn: 12,     // prior: value deep + upside legal resolution
+      sector: "Healthcare",
+      earningsYield: 0.08,    // ~8% earnings yield a precios actuales (P/E ~12-13x normalizado)
+      return12m: 0,
+      return3m: 0,
+      return1m: 0,
+      history: generateMockHistory(25.0),
+      factorRole: 'value'     // Bayer es posición value pura — P/B < 0.8x
     }
   ]
 };

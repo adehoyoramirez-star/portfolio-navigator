@@ -6,10 +6,17 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+// FIX-BAYN: BAYN.DE añadido a la lista de tickers del portfolio real.
+// CAUSA del bug "BAYN no aparece en Vercel":
+//   La función Supabase solo fetcha los tickers de esta lista.
+//   Si un activo no está aquí → su precio nunca se recupera de Yahoo Finance
+//   → marketData.prices['BAYN.DE'] es undefined → el dashboard usa el precio
+//   estático del portfolio.ts (o 0 si no existe) → el precio nunca actualiza.
 const TICKERS = [
-  // Portfolio real
+  // ── Portfolio real ────────────────────────────────────────────────────────
   'BTC-EUR', 'EMXC.DE', 'IS3Q.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'XNAS.DE',
-  // Macro — tiempo real
+  'BAYN.DE',   // FIX-BAYN: Bayer AG (XETRA) — Pharma/Crop Science/Consumer Health
+  // ── Macro — tiempo real ───────────────────────────────────────────────────
   '%5EVIX', '%5ETNX', '%5EIRX',
   // MOVE Index — volatilidad bonos USA (CBOE)
   '%5EMOVE',
@@ -23,12 +30,13 @@ const TICKERS = [
   'DX-Y.NYB',
   // Brent Crude Oil — geopolitical shock detector (referente europeo/global)
   'BZ=F',
-  // Proxies americanos para backtest histórico (10-24 años de datos)
-  'EEM',   // EMXC.DE + IS3Q.DE → MSCI Emerging Markets
+  // ── Proxies americanos para backtest histórico (10-24 años de datos) ──────
+  'EEM',   // EMXC.DE → MSCI Emerging Markets
   'GLD',   // PPFB.DE → Oro físico
   'URA',   // URNU.DE → Uranio global
   'SMH',   // VVSM.DE → Semiconductores
   'QQQ',   // XNAS.DE → Nasdaq-100
+  // BAYN.DE tiene datos europeos desde 2000 — no necesita proxy USA
 ];
 
 interface ChartResult {
@@ -66,12 +74,9 @@ async function fetchTicker(ticker: string): Promise<ChartResult | null> {
 }
 
 // ── FRED M2 ──────────────────────────────────────────────────────────────────
-// FRED es pública — no requiere API key para series básicas.
-// M2SL = M2 Money Supply mensual en billones USD (Federal Reserve)
-// Devolvemos los últimos 5 años como array [{date, value}]
 interface M2DataPoint {
-  date: string;   // "2024-01-01"
-  value: number;  // M2 en billones USD
+  date: string;
+  value: number;
 }
 
 interface M2Result {
@@ -81,26 +86,20 @@ interface M2Result {
 }
 
 interface CentralBankData {
-  // Fed Balance Sheet (WALCL) — billones USD
   fedCurrent: number;
-  fedPrev: number;      // hace 12 meses
-  // ECB Assets (ECBASSETSW) — millones EUR → convertimos a billones
+  fedPrev: number;
   ecbCurrent: number;
   ecbPrev: number;
   source: string;
 }
 
-// ── FRED Shiller CAPE (PER S&P 500 ajustado al ciclo) ────────────────────────
 async function fetchCAPEFRED(): Promise<{ cape: number; source: string } | null> {
   try {
-    // CAPE = Cyclically Adjusted Price-Earnings ratio (Shiller)
-    // Serie FRED: CAPE (mensual, ~1881 en adelante)
     const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=CAPE';
     const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) return null;
     const text = await res.text();
     const lines = text.trim().split('\n').slice(1);
-    // Last non-empty line
     for (let i = lines.length - 1; i >= 0; i--) {
       const [, val] = lines[i].split(',');
       const cape = parseFloat(val);
@@ -116,18 +115,15 @@ async function fetchCAPEFRED(): Promise<{ cape: number; source: string } | null>
 
 async function fetchM2FRED(): Promise<M2Result | null> {
   try {
-    // FRED CSV público — sin API key necesaria
     const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=M2SL';
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    });
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) {
       console.error(`FRED M2 fetch failed: ${res.status}`);
       return null;
     }
 
     const text = await res.text();
-    const lines = text.trim().split('\n').slice(1); // skip header
+    const lines = text.trim().split('\n').slice(1);
 
     const allPoints: M2DataPoint[] = [];
     for (const line of lines) {
@@ -140,7 +136,6 @@ async function fetchM2FRED(): Promise<M2Result | null> {
 
     if (allPoints.length < 13) return null;
 
-    // Últimos 5 años (60 meses)
     const history = allPoints.slice(-60);
     const current = history[history.length - 1].value;
     const yearAgo = history[history.length - 13]?.value ?? current;
@@ -153,10 +148,6 @@ async function fetchM2FRED(): Promise<M2Result | null> {
   }
 }
 
-// ── FRED Central Bank Balance Sheets ─────────────────────────────────────────
-// WALCL    = Fed total assets (weekly, billones USD)
-// ECBASSETSW = ECB total assets (weekly, millones EUR)
-// BoJ no tiene serie FRED pública fácil — omitimos y normalizamos Fed+ECB
 async function fetchCentralBanksFRED(): Promise<CentralBankData | null> {
   try {
     const [fedRes, ecbRes] = await Promise.all([
@@ -182,11 +173,8 @@ async function fetchCentralBanksFRED(): Promise<CentralBankData | null> {
 
     if (fedVals.length < 52 || ecbVals.length < 52) return null;
 
-    // Fed en billones USD (WALCL es en millones → dividir por 1000)
     const fedCurrent = fedVals[fedVals.length - 1] / 1000;
-    const fedPrev    = fedVals[fedVals.length - 53] / 1000; // ~12 meses atrás (semanal)
-
-    // ECB en billones EUR (ECBASSETSW en millones → dividir por 1000)
+    const fedPrev    = fedVals[fedVals.length - 53] / 1000;
     const ecbCurrent = ecbVals[ecbVals.length - 1] / 1000;
     const ecbPrev    = ecbVals[ecbVals.length - 53] / 1000;
 
@@ -197,11 +185,6 @@ async function fetchCentralBanksFRED(): Promise<CentralBankData | null> {
   }
 }
 
-// ── PASO 2: FRED Credit Spread HY ────────────────────────────────────────────
-// BAMLH0A0HYM2 = ICE BofA US High Yield Index Option-Adjusted Spread (%)
-// Es el spread HY-IG oficial — el mismo que usan Bloomberg y Reuters.
-// Serie diaria desde 1997, sin API key, CSV público de FRED.
-// Valor normal: 3-4% · Tensión: 5-7% · Crisis: >8% (COVID: 11%, GFC: 20%)
 async function fetchCreditSpreadFRED(): Promise<{ spread: number; source: string } | null> {
   try {
     const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2';
@@ -212,7 +195,6 @@ async function fetchCreditSpreadFRED(): Promise<{ spread: number; source: string
     }
     const text = await res.text();
     const lines = text.trim().split('\n').slice(1);
-    // Último valor no-nulo (FRED puede tener "." para días sin datos)
     for (let i = lines.length - 1; i >= 0; i--) {
       const [, val] = lines[i].split(',');
       const spread = parseFloat(val);
@@ -227,11 +209,6 @@ async function fetchCreditSpreadFRED(): Promise<{ spread: number; source: string
   }
 }
 
-// ── PASO 5: FRED Breakeven Inflación 5y (T5YIFR) ────────────────────────────
-// T5YIFR = 5-Year, 5-Year Forward Inflation Expectation Rate
-// Mide la inflación esperada entre los años 5 y 10 — proxy de expectativas LP
-// Serie diaria, sin key, CSV público de FRED
-// Valor normal: ~2-2.5% · Tensión inflacionista: >3% · Deflación: <1.5%
 async function fetchBreakevenFRED(): Promise<{ value: number; source: string } | null> {
   try {
     const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=T5YIFR';
@@ -260,7 +237,6 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // PASO 2: Fetch Yahoo + FRED en paralelo — añadido creditSpread oficial
     const [yahooResults, m2Data, capeData, centralBanks, creditSpreadData, breakevenData] = await Promise.all([
       Promise.allSettled(TICKERS.map(fetchTicker)),
       fetchM2FRED(),

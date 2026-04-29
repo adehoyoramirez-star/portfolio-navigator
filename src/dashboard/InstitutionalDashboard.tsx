@@ -347,13 +347,13 @@ const InstitutionalDashboard: React.FC = () => {
         ...prev,
         assets: prev.assets.map((asset) => {
           const idx = ASSETS.indexOf(asset.ticker as any);
-          if (idx === -1) return { ...asset, price: md.prices[asset.ticker] || asset.price };
+          if (idx === -1) return { ...asset, price: md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price };
 
           const closes = md.closesHistory[asset.ticker] || [];
 
           return {
             ...asset,
-            price: md.prices[asset.ticker] || asset.price,
+            price: md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price,
             history: closes,
             volatility: (md.realizedVols[idx] ?? asset.volatility / 100) * 100,
             return12m: md.returns12m[idx] ?? asset.return12m,
