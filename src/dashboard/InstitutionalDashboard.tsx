@@ -347,18 +347,25 @@ const InstitutionalDashboard: React.FC = () => {
         ...prev,
         assets: prev.assets.map((asset) => {
           const idx = ASSETS.indexOf(asset.ticker as any);
-          if (idx === -1) return { ...asset, price: md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price };
+          // FIX-EDITABLE: NUNCA tocar shares ni avgPrice desde el refresh de mercado
+          // Son datos del usuario — solo actualizar precio de mercado e indicadores
+          if (idx === -1) return {
+            ...asset,
+            price: md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price,
+          };
 
           const closes = md.closesHistory[asset.ticker] || [];
 
           return {
             ...asset,
-            price: md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price,
-            history: closes,
+            // FIX-PRICE: > 0 evita que Yahoo devolviendo 0 sobreescriba con precio estático
+            price:      md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price,
+            // shares y avgPrice NO se modifican — son propiedad del usuario
+            history:    closes,
             volatility: (md.realizedVols[idx] ?? asset.volatility / 100) * 100,
-            return12m: md.returns12m[idx] ?? asset.return12m,
-            return3m:  md.returns3m[idx]  ?? asset.return3m,
-            return1m:  md.returns1m[idx]  ?? asset.return1m,
+            return12m:  md.returns12m[idx] ?? asset.return12m,
+            return3m:   md.returns3m[idx]  ?? asset.return3m,
+            return1m:   md.returns1m[idx]  ?? asset.return1m,
             ...(asset.ticker === 'BTC-EUR' ? {
               zScore: md.btcZScore,
               rsi: md.btcRsi,
@@ -646,7 +653,14 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   }, []);
 
   // NIVEL 4: auto-guardar portfolio cuando cambia
+  // FIX-AUTOSAVE: usar ref para no guardar en el primer render (initialPortfolio estático)
+  // Solo guardar a partir del segundo render, cuando loadPortfolio ya restauró los datos reales
+  const hasMounted = useRef(false);
   useEffect(() => {
+    if (!hasMounted.current) {
+      hasMounted.current = true;
+      return; // primer render — no guardar, loadPortfolio aún no ha restaurado los datos
+    }
     savePortfolio({
       positions: portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice })),
       cashReserve,
