@@ -20,23 +20,24 @@ import { supabase } from './supabaseClient';
 import type {
   TacticalEngineState, TacticalOpportunity,
   TacticalPosition, TacticalConfig,
-} from '@/core/tactical/types';
+} from '../core/tactical/types';
+import type { TacticalSignal } from '../core/tactical/types';
 import {
   initTacticalState, loadTacticalState, saveTacticalState,
   openPosition, closePosition, updatePositionPrices,
   calcExpectedDays, calcTimingScore,
   evaluatePositionHealth, type PositionHealth,
   getTacticalSummary,
-} from '@/core/tactical/tacticalPortfolio';
+} from '../core/tactical/tacticalPortfolio';
 import {
   calcOptimalHorizon,
   classifyAssetSpeed,
   calcDynamicMaxDays,
-} from '@/core/tactical/tacticalSignals';
+} from '../core/tactical/tacticalSignals';
 import {
   runTacticalScreener, defaultTacticalConfig, getScanModeCount,
-} from '@/core/tactical/tacticalScreener';
-import type { ScanMode } from '@/core/tactical/tacticalScreener';
+} from '../core/tactical/tacticalScreener';
+import type { ScanMode } from '../core/tactical/tacticalScreener';
 
 // ── Estilos base ─────────────────────────────────────────────
 const S: Record<string, React.CSSProperties> = {
@@ -188,10 +189,34 @@ function buildDemoPositions(): TacticalPosition[] {
 export default function TacticalDashboard() {
   const [state, setState] = useState<TacticalEngineState>(() => {
     const saved = loadTacticalState();
-    if (saved) return saved;
-    const base = initTacticalState(defaultTacticalConfig(300, 600));
-    // Precarga INTC y BAYN si no hay estado guardado
     const demos = buildDemoPositions();
+
+    if (saved) {
+      // FIX-INTC: Si hay estado guardado pero INTC no está en openPositions
+      // ni en closedPositions → inyectarla. Esto evita que INTC desaparezca
+      // cuando el usuario ya tiene un estado guardado sin ella.
+      const hasIntc = [
+        ...saved.openPositions,
+        ...saved.closedPositions,
+      ].some((p: TacticalPosition) => p.ticker === 'INTC');
+
+      if (!hasIntc) {
+        const intcPos = demos.find((p: TacticalPosition) => p.ticker === 'INTC');
+        if (intcPos) {
+          const capitalUsed = saved.capitalUsed + intcPos.totalInvested;
+          return {
+            ...saved,
+            openPositions: [intcPos, ...saved.openPositions],
+            capitalUsed,
+            capitalAvailable: Math.max(0, saved.capitalAvailable - intcPos.totalInvested),
+          };
+        }
+      }
+      return saved;
+    }
+
+    // Sin estado guardado: cargar demos completos
+    const base = initTacticalState(defaultTacticalConfig(300, 600));
     const capitalUsed = demos.reduce((s: number, p: TacticalPosition) => s + p.totalInvested, 0);
     return {
       ...base,
@@ -362,12 +387,77 @@ export default function TacticalDashboard() {
     setOpenModal(null);
   }, [openModal, modalEntry, modalStop, modalTP1, modalTP2, modalShares]);
 
-  // ── Cerrar posición ─────────────────────────────────────────
+  // ── Cerrar posición COMPLETA ─────────────────────────────────
   const handleClose = useCallback((
     posId: string, exitPrice: number,
     reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL',
   ) => {
     setState((prev: TacticalEngineState) => closePosition(prev, posId, exitPrice, reason));
+  }, []);
+
+  // ── FIX-TP1-HALF: Cerrar el 50% en TP1 — estrategia institucional ────────
+  // Cuando se pulsa TP1: vende la mitad de la posición al precio TP1,
+  // mantiene la otra mitad abierta con el StopLoss movido al precio de entrada
+  // (trailing breakeven). De esta forma el trade es libre de riesgo desde TP1.
+  //
+  // Resultado:
+  //   - Se registra una operación cerrada parcial (50%) con PnL realizado
+  //   - La posición abierta queda con el 50% restante, SL = entrada (0 riesgo)
+  //   - El capital recuperado del 50% vuelve a capitalAvailable
+  const handleCloseHalf = useCallback((posId: string, exitPrice: number) => {
+    setState((prev: TacticalEngineState) => {
+      const pos = prev.openPositions.find((p: TacticalPosition) => p.id === posId);
+      if (!pos || pos.shares <= 0) return prev;
+
+      const halfShares     = pos.shares / 2;
+      const daysOpen       = Math.round((Date.now() - new Date(pos.entryDate).getTime()) / 86400000);
+      const realizedPnL    = parseFloat(((exitPrice - pos.entryPrice) * halfShares).toFixed(2));
+      const realizedPnLPct = parseFloat(((exitPrice / pos.entryPrice - 1) * 100).toFixed(2));
+
+      // Registro del 50% cerrado → historial
+      const partialClose: TacticalPosition = {
+        ...pos,
+        id:               `${pos.id}-tp1-${Date.now()}`,
+        shares:           halfShares,
+        totalInvested:    pos.entryPrice * halfShares,
+        capitalRisked:    (pos.entryPrice - pos.stopLoss) * halfShares,
+        status:           'CLOSED_TP',
+        exitDate:         new Date().toISOString(),
+        exitPrice,
+        exitReason:       'CLOSED_TP',
+        unrealizedPnL:    0,
+        unrealizedPnLPct: 0,
+        realizedPnL,
+        realizedPnLPct,
+        daysOpen,
+        name:             `${pos.name} (50% TP1)`,
+      };
+
+      // 50% restante: SL sube a entrada (trade libre de riesgo), TP2 sigue activo
+      const remaining: TacticalPosition = {
+        ...pos,
+        shares:           halfShares,
+        totalInvested:    pos.entryPrice * halfShares,
+        capitalRisked:    0, // ya no hay riesgo — SL en breakeven
+        stopLoss:         pos.entryPrice, // trailing breakeven
+        unrealizedPnL:    parseFloat(((pos.currentPrice - pos.entryPrice) * halfShares).toFixed(2)),
+        unrealizedPnLPct: parseFloat(((pos.currentPrice / pos.entryPrice - 1) * 100).toFixed(2)),
+        name:             `${pos.ticker} (50% → TP2)`,
+      };
+
+      const recoveredCapital = exitPrice * halfShares;
+      return {
+        ...prev,
+        openPositions:    prev.openPositions.map((p: TacticalPosition) =>
+          p.id === posId ? remaining : p
+        ),
+        closedPositions:  [...prev.closedPositions, partialClose],
+        totalRealizedPnL: prev.totalRealizedPnL + realizedPnL,
+        capitalAvailable: prev.capitalAvailable + recoveredCapital,
+        // capitalUsed baja solo por la mitad recuperada
+        capitalUsed:      Math.max(0, prev.capitalUsed - pos.entryPrice * halfShares),
+      };
+    });
   }, []);
 
   // ── Añadir posición manualmente (recuperar INTC u otras) ────
@@ -486,7 +576,7 @@ export default function TacticalDashboard() {
   // SUB-COMPONENTE: OpportunityCard
   // ════════════════════════════════════════════════════════════
   const OpportunityCard = ({ opp }: { opp: TacticalOpportunity }) => {
-    const alreadyOpen = state.openPositions.some(p => p.ticker === opp.asset.ticker);
+    const alreadyOpen = state.openPositions.some((p: TacticalPosition) => p.ticker === opp.asset.ticker);
     const canOpen     = !alreadyOpen && state.openPositions.length < state.config.maxOpenPositions;
     const tc          = typeColors[opp.type] ?? '#64748b';
     const riskPerSh   = Math.max(0.01, opp.entryPrice - opp.stopLoss);
@@ -551,7 +641,7 @@ export default function TacticalDashboard() {
         </div>
 
         <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginBottom:'0.6rem' }}>
-          {opp.activeSignals.map(s => (
+          {opp.activeSignals.map((s: TacticalSignal) => (
             <span key={s.type} style={{ ...S.badge, background:'#0f172a', color: s.strength === 'EXTREME' ? '#ef4444' : s.strength === 'STRONG' ? '#f59e0b' : '#60a5fa', border:'1px solid #334155' }}>
               {s.type.replace('_',' ')} {s.score.toFixed(2)}
             </span>
@@ -865,12 +955,15 @@ export default function TacticalDashboard() {
             <div style={{ display:'flex', gap:4, alignItems:'center', marginBottom:4, flexWrap:'wrap' }}>
               <input style={{ ...S.input, width:68 }} type="number" value={exitP}
                 onChange={e => setExitP(e.target.value)} step="0.01" />
+              {/* FIX-TP1-HALF: TP1 cierra el 50% y mueve SL a entrada (breakeven) */}
               <button style={{ ...S.btn, ...S.btnG, padding:'4px 5px', fontSize:'0.65rem' }}
-                onClick={() => { setExitP(pos.takeProfit1.toFixed(2)); handleClose(pos.id, pos.takeProfit1, 'CLOSED_TP'); }}
-                title={`Cerrar en TP1 €${pos.takeProfit1.toFixed(2)}`}>TP1</button>
+                onClick={() => { setExitP(pos.takeProfit1.toFixed(2)); handleCloseHalf(pos.id, pos.takeProfit1); }}
+                title={`Vender 50% en TP1 €${pos.takeProfit1.toFixed(2)} — mantiene 50% con SL en entrada`}>
+                TP1 50%
+              </button>
               <button style={{ ...S.btn, background:'#14532d', color:'#86efac', border:'1px solid #22c55e', padding:'4px 5px', fontSize:'0.65rem' }}
                 onClick={() => { setExitP(pos.takeProfit2.toFixed(2)); handleClose(pos.id, pos.takeProfit2, 'CLOSED_TP'); }}
-                title={`Cerrar en TP2 €${pos.takeProfit2.toFixed(2)}`}>TP2</button>
+                title={`Cerrar 100% en TP2 €${pos.takeProfit2.toFixed(2)}`}>TP2</button>
               <button style={{ ...S.btn, ...S.btnR, padding:'4px 5px', fontSize:'0.65rem' }}
                 onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_SL')}
                 title="Cerrar en Stop Loss">SL</button>
@@ -1031,7 +1124,7 @@ export default function TacticalDashboard() {
             </div>
           ) : (
             <>
-              {state.opportunities.filter(o => o.score >= 70).length > 0 && (
+              {state.opportunities.filter((o: TacticalOpportunity) => o.score >= 70).length > 0 && (
                 <div style={{ ...S.cardG, marginBottom:'1rem' }}>
                   <div style={{ fontWeight:700, color:'#4ade80', marginBottom:'0.5rem' }}>🏆 TOP PICKS — Score ≥ 70</div>
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(100px,1fr))', gap:6 }}>
