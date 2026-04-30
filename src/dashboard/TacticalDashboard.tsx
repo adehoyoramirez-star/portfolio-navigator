@@ -1094,7 +1094,8 @@ export default function TacticalDashboard() {
             <button style={{ ...S.btn, ...S.btnR }} onClick={() => {
               if (confirm('¿Borrar todo el historial y posiciones?')) {
                 const fresh = initTacticalState(state.config);
-                setState({ ...fresh, openPositions: buildDemoPositions() });
+                // FIX-RESET: preservar posiciones abiertas reales — solo resetear config y stats
+                setState({ ...fresh, openPositions: state.openPositions });
                 localStorage.removeItem('olympus_tactical_state');
               }
             }}>🗑 Reset completo</button>
