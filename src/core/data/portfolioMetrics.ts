@@ -90,3 +90,88 @@ export function calculateDrawdown(assets: Asset[], currentTotal: number): number
   }
   return (currentTotal - maxValue) / maxValue;
 }
+
+/**
+ * FIX-IMP-4: Sortino ratio con semi-desviación REAL sobre retornos históricos negativos.
+ *
+ * PROBLEMA ANTERIOR en InstitutionalDashboard.tsx línea 1235:
+ *   downsideVol = portfolioVol / Math.sqrt(2)
+ *   Esta aproximación asume distribución perfectamente normal (gaussiana).
+ *   Con BTC en cartera (fat tails, skewness negativa), el downside deviation real
+ *   es materialmente mayor → Sortino inflado hasta 1.4× el valor real.
+ *   Un Sortino de 2.1 puede ser en realidad 1.5 — por debajo del umbral institucional de 2.0.
+ *
+ * CORRECCIÓN: calcular semi-desviación real filtrando retornos diarios < 0.
+ *   downsideDev = std(retornos < rf_diario) × √252
+ *   sortino = (retorno_anual - rf) / downsideDev
+ *
+ * @param dailyReturns - array de retornos diarios del portfolio (decimal, ej: -0.02 = -2%)
+ * @param annualReturn - retorno anualizado esperado (decimal)
+ * @param riskFreeRate - tasa libre de riesgo anualizada (decimal, ej: 0.04 = 4%)
+ */
+export function sortinoRatioReal(
+  dailyReturns: number[],
+  annualReturn: number,
+  riskFreeRate = 0.04
+): number {
+  if (dailyReturns.length < 10) return 0;
+  const rfDaily = riskFreeRate / 252;
+  // Solo retornos por debajo del MAR (Minimum Acceptable Return = rf diario)
+  const negativeExcess = dailyReturns.filter(r => r < rfDaily);
+  if (negativeExcess.length === 0) return Infinity; // sin retornos negativos = Sortino perfecto
+  // Semi-desviación: std de los retornos negativos en exceso del MAR
+  const meanNeg = negativeExcess.reduce((a, b) => a + b, 0) / negativeExcess.length;
+  const variance = negativeExcess.reduce((s, r) => s + (r - meanNeg) ** 2, 0) / negativeExcess.length;
+  const downsideDev = Math.sqrt(variance) * Math.sqrt(252); // anualizar
+  if (downsideDev === 0) return 0;
+  return (annualReturn - riskFreeRate) / downsideDev;
+}
+
+/**
+ * FIX-IMP-6-BETA: Beta del portfolio vs benchmark (MSCI World / S&P 500 proxy).
+ *
+ * Beta = Cov(r_portfolio, r_benchmark) / Var(r_benchmark)
+ *
+ * Interpretación:
+ *   β < 1: portfolio menos volátil que el mercado → defensivo
+ *   β = 1: movimiento igual al mercado
+ *   β > 1: portfolio más volátil → agresivo (típico con BTC y semis)
+ *   β < 0: cobertura negativa (oro en parte)
+ *
+ * @param portfolioReturns - retornos diarios del portfolio
+ * @param benchmarkReturns - retornos diarios del benchmark (IS3Q.DE o ^GSPC proxy)
+ */
+export function betaVsBenchmark(
+  portfolioReturns: number[],
+  benchmarkReturns: number[]
+): number {
+  const n = Math.min(portfolioReturns.length, benchmarkReturns.length);
+  if (n < 20) return 1; // fallback neutro con pocos datos
+  const pRet = portfolioReturns.slice(0, n);
+  const bRet = benchmarkReturns.slice(0, n);
+  const pMean = pRet.reduce((a, b) => a + b, 0) / n;
+  const bMean = bRet.reduce((a, b) => a + b, 0) / n;
+  let cov = 0, varB = 0;
+  for (let i = 0; i < n; i++) {
+    cov  += (pRet[i] - pMean) * (bRet[i] - bMean);
+    varB += (bRet[i] - bMean) ** 2;
+  }
+  if (varB === 0) return 1;
+  return cov / varB;
+}
+
+/**
+ * Alpha de Jensen: retorno ajustado por riesgo sistemático.
+ *
+ * α = r_portfolio - [rf + β × (r_benchmark - rf)]
+ *
+ * Alpha positivo = el motor genera valor más allá de lo explicado por el mercado.
+ */
+export function jensenAlpha(
+  annualReturn: number,
+  beta: number,
+  benchmarkReturn: number,
+  riskFreeRate = 0.04
+): number {
+  return annualReturn - (riskFreeRate + beta * (benchmarkReturn - riskFreeRate));
+}

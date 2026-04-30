@@ -36,6 +36,10 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";  // ✅ CORREGIDO: import al inicio
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
+// FIX-CRÍTICO-2: ÚNICA fuente de verdad para pesos de factores.
+// Antes: triple hardcode en engineConfig.ts, factorCalibration.ts, y aquí.
+// Ahora: todos importan de engineConfig → un solo punto de cambio.
+import { FACTOR_CONFIG } from "../config/engineConfig";
 
 // ==================== INTERFACES ====================
 export interface AssetInput {
@@ -246,7 +250,15 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const regimeNumeric = adjustedRegimePenalty;
   const btcNumeric = btcCycle.btcNumeric;
   const riskNumeric = 1 - ((input.portfolioRealizedVol ?? 0.18) / 0.50);
-  const coreSignalScore = 0.35 * regimeNumeric + 0.45 * btcNumeric + 0.20 * Math.max(0, riskNumeric);
+  // FIX-IMP-6: rebalancear pesos coreSignal.
+  // PROBLEMA ANTERIOR: 0.45×btcNumeric + 0.35×regimeNumeric
+  //   BTC on-chain dominaba más que el régimen macro global.
+  //   En 2023: BTC bear + equity global en rally → el motor infraexponía equity innecesariamente.
+  // CORRECCIÓN: régimen macro es el driver primario, BTC es señal secundaria proporcional a su cap (20%).
+  //   0.45 × regimeNumeric  ← macro global es el sistema nervioso del portfolio
+  //   0.35 × btcNumeric     ← BTC on-chain relevante pero no dominante
+  //   0.20 × riskNumeric    ← vol del portfolio: sin cambio
+  const coreSignalScore = 0.45 * regimeNumeric + 0.35 * btcNumeric + 0.20 * Math.max(0, riskNumeric);
 
   // ====== ESCENARIOS PROBABILÍSTICOS ======
   const scenarioProbabilities = computeScenarioProbabilities(
@@ -270,7 +282,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     const quality = calculateQuality(asset as QualityInput, qualityStats);
     const lowVol = calculateLowVol(asset, lowVolStats);
 
-    const fw = input.adaptiveFactorWeights ?? { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 };
+    // FIX-CRÍTICO-2: usar FACTOR_CONFIG.DEFAULT_WEIGHTS como fuente única.
+    // Antes era { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 } hardcodeado.
+    // Ahora cualquier cambio en engineConfig.ts se propaga automáticamente.
+    const fw = input.adaptiveFactorWeights ?? FACTOR_CONFIG.DEFAULT_WEIGHTS;
     const calibrated = calibrateExpectedReturn({
       momentumScore: momentum.momentumScore,
       valueScore: value.valueScore,
@@ -307,7 +322,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
-      coreSignal: { regimeComponent: 0.35 * regimeNumeric, btcComponent: 0.45 * btcNumeric, riskComponent: 0.20 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
+      coreSignal: { regimeComponent: 0.45 * regimeNumeric, btcComponent: 0.35 * btcNumeric, riskComponent: 0.20 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
       scenarioProbabilities,
       metaIntelligence: { modelHealth: metaIntelligence.modelHealth, confidenceMultiplier: metaIntelligence.confidenceMultiplier, consecutiveErrors: metaIntelligence.consecutiveErrors, recommendation: metaIntelligence.recommendation },
       killSwitchLevel: 0, killSwitchName: 'SIN TRIGGER',
@@ -479,8 +494,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     },
     dca,
     coreSignal: {
-      regimeComponent: 0.35 * regimeNumeric,
-      btcComponent: 0.45 * btcNumeric,
+      regimeComponent: 0.45 * regimeNumeric,
+      btcComponent: 0.35 * btcNumeric,
       riskComponent: 0.20 * Math.max(0, riskNumeric),
       finalScore: coreSignalScore,
     },

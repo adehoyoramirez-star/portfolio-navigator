@@ -31,15 +31,18 @@
 //
 // ===============================================
 
-// ── CONSTANTES DE CALIBRACIÓN ──────────────────────────────────────────────
-// Prima anualizada por factor (post-2000, ajustada por colapso de primas)
-// Los valores representan el alpha esperado cuando Z-score = +1
-export const FACTOR_PREMIA = {
-  momentum: 0.048,   // 4.8% anual — fuente: AQR UMD 2000-2023 (fue 7% pre-2000)
-  value:    0.032,   // 3.2% anual — fuente: Fama-French HML (ajustado por value decay)
-  quality:  0.024,   // 2.4% anual — fuente: AQR QMJ 2000-2023
-  lowVol:   0.018,   // 1.8% anual — fuente: AQR BAB 2000-2023
-} as const;
+// FIX-CRÍTICO-2: importar FACTOR_CONFIG desde engineConfig como única fuente de verdad.
+// ANTES: FACTOR_PREMIA estaba hardcodeado aquí con valores distintos a los de engineConfig.
+//   factorCalibration.ts → momentum: 0.048
+//   engineConfig.ts → FACTOR_PREMIUMS.momentum: 0.04
+//   olympusV3.ts → peso momentum: 0.40 (hardcodeado)
+// AHORA: todos usan FACTOR_CONFIG.FACTOR_PREMIUMS y FACTOR_CONFIG.DEFAULT_WEIGHTS.
+//   Un solo cambio en engineConfig.ts → se propaga a calibración y al motor.
+import { FACTOR_CONFIG } from "../config/engineConfig";
+
+// Re-exportar para compatibilidad con código que importaba FACTOR_PREMIA directamente
+// DEPRECATED: usar FACTOR_CONFIG.FACTOR_PREMIUMS en código nuevo
+export const FACTOR_PREMIA = FACTOR_CONFIG.FACTOR_PREMIUMS;
 
 // Tasa libre de riesgo de referencia (EUR, short-term)
 // Usamos un valor conservador fijo — el motor no predice tipos futuros
@@ -94,13 +97,14 @@ export function calibrateExpectedReturn(
   scores: FactorScores,
   weights?: { momentum: number; value: number; quality: number; lowVol: number }
 ): CalibratedReturn {
-  const w = weights ?? { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 };
-  // Contribución de cada factor: sigmoid aplicado sobre la prima documentada
-  // sigmoid_bounded(z, prima) ≈ z × prima/2 para z pequeño (comportamiento lineal cerca de 0)
-  const momentumContrib = sigmoidBounded(scores.momentumScore, FACTOR_PREMIA.momentum) * w.momentum;
-  const valueContrib    = sigmoidBounded(scores.valueScore,    FACTOR_PREMIA.value)    * w.value;
-  const qualityContrib  = sigmoidBounded(scores.qualityScore,  FACTOR_PREMIA.quality)  * w.quality;
-  const lowVolContrib   = sigmoidBounded(scores.lowVolScore,   FACTOR_PREMIA.lowVol)   * w.lowVol;
+  // FIX-CRÍTICO-2: usar FACTOR_CONFIG.DEFAULT_WEIGHTS como fallback — única fuente de verdad.
+  const w = weights ?? FACTOR_CONFIG.DEFAULT_WEIGHTS;
+  // FIX-CRÍTICO-2: usar FACTOR_CONFIG.FACTOR_PREMIUMS — ya no hay definición duplicada aquí.
+  const premia = FACTOR_CONFIG.FACTOR_PREMIUMS;
+  const momentumContrib = sigmoidBounded(scores.momentumScore, premia.momentum) * w.momentum;
+  const valueContrib    = sigmoidBounded(scores.valueScore,    premia.value)    * w.value;
+  const qualityContrib  = sigmoidBounded(scores.qualityScore,  premia.quality)  * w.quality;
+  const lowVolContrib   = sigmoidBounded(scores.lowVolScore,   premia.lowVol)   * w.lowVol;
 
   const factorAlpha = momentumContrib + valueContrib + qualityContrib + lowVolContrib;
 

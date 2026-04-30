@@ -192,7 +192,7 @@ export default function TacticalDashboard() {
     const base = initTacticalState(defaultTacticalConfig(300, 600));
     // Precarga INTC y BAYN si no hay estado guardado
     const demos = buildDemoPositions();
-    const capitalUsed = demos.reduce((s, p) => s + p.totalInvested, 0);
+    const capitalUsed = demos.reduce((s: number, p: TacticalPosition) => s + p.totalInvested, 0);
     return {
       ...base,
       openPositions:    demos,
@@ -214,6 +214,18 @@ export default function TacticalDashboard() {
   const [modalTP1,    setModalTP1]    = useState('');
   const [modalTP2,    setModalTP2]    = useState('');
   const [modalShares, setModalShares] = useState('');
+
+  // ── Modal "Añadir posición manual" ──────────────────────────
+  const [manualModal,   setManualModal]   = useState(false);
+  const [manualTicker,  setManualTicker]  = useState('INTC');
+  const [manualName,    setManualName]    = useState('Intel Corporation');
+  const [manualType,    setManualType]    = useState<string>('OVERSOLD_BOUNCE');
+  const [manualEntry,   setManualEntry]   = useState('72.21');
+  const [manualStop,    setManualStop]    = useState('57.00');
+  const [manualTP1,     setManualTP1]     = useState('95.00');
+  const [manualTP2,     setManualTP2]     = useState('138.00');
+  const [manualShares,  setManualShares]  = useState('1');
+  const [manualCurrent, setManualCurrent] = useState('68.40');
 
   // Config local editable
   const [cfgCapital,  setCfgCapital]  = useState(state.config.tacticalCapitalEur);
@@ -251,7 +263,7 @@ export default function TacticalDashboard() {
     setLoading(true); setError(null);
     try {
       const result = await runTacticalScreener(supabase, state.config, scanMode);
-      setState(prev => ({
+      setState((prev: TacticalEngineState) => ({
         ...prev,
         opportunities: result.opportunities,
         lastScreened:  result.screennedAt,
@@ -342,7 +354,7 @@ export default function TacticalDashboard() {
       optimalProbTP1:    optTP1.prob,
     };
 
-    setState(prev => {
+    setState((prev: TacticalEngineState) => {
       const capitalUsed      = +(prev.capitalUsed + totalInvested).toFixed(2);
       const capitalAvailable = +(prev.capitalAvailable - totalInvested).toFixed(2);
       return { ...prev, openPositions: [...prev.openPositions, position], capitalUsed, capitalAvailable };
@@ -355,12 +367,68 @@ export default function TacticalDashboard() {
     posId: string, exitPrice: number,
     reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL',
   ) => {
-    setState(prev => closePosition(prev, posId, exitPrice, reason));
+    setState((prev: TacticalEngineState) => closePosition(prev, posId, exitPrice, reason));
   }, []);
+
+  // ── Añadir posición manualmente (recuperar INTC u otras) ────
+  const handleAddManual = useCallback(() => {
+    const entry   = parseFloat(manualEntry);
+    const stop    = parseFloat(manualStop);
+    const tp1     = parseFloat(manualTP1);
+    const tp2     = parseFloat(manualTP2);
+    const curr    = parseFloat(manualCurrent) || entry;
+    const shares  = Math.max(1, parseInt(manualShares, 10) || 1);
+    if (!entry || !stop || !tp1 || !tp2 || entry <= stop) return;
+
+    const atr    = entry * 0.021;
+    const atrPct = atr / entry;
+    const optTP1 = calcOptimalHorizon(entry, tp1, atr);
+    const optTP2 = calcOptimalHorizon(entry, tp2, atr);
+    const dynMax = calcDynamicMaxDays(atrPct);
+    const maxDaysAllowed = Math.min(dynMax, Math.max(5, Math.round(optTP2.days * 1.2)));
+
+    const position: TacticalPosition = {
+      id:               `manual-${manualTicker.toLowerCase()}-${Date.now()}`,
+      ticker:           manualTicker.trim().toUpperCase(),
+      name:             manualName.trim(),
+      type:             manualType as TacticalPosition['type'],
+      entryDate:        new Date().toISOString(),
+      entryPrice:       entry,
+      shares,
+      capitalRisked:    +((entry - stop) * shares).toFixed(2),
+      totalInvested:    +(entry * shares).toFixed(2),
+      stopLoss:         stop,
+      takeProfit1:      tp1,
+      takeProfit2:      tp2,
+      status:           'OPEN',
+      currentPrice:     curr,
+      exitDate:         null, exitPrice: null, exitReason: null,
+      unrealizedPnL:    +((curr - entry) * shares).toFixed(2),
+      unrealizedPnLPct: +((curr / entry - 1) * 100).toFixed(2),
+      realizedPnL:      null, realizedPnLPct: null,
+      daysOpen:         0,
+      maxDaysAllowed,
+      expectedDaysToTP1: calcExpectedDays(entry, tp1, atr, manualType as TacticalPosition['type']),
+      expectedDaysToTP2: calcExpectedDays(entry, tp2, atr, manualType as TacticalPosition['type']),
+      daysToBreakeven:   calcExpectedDays(entry, tp1, atr, manualType as TacticalPosition['type']),
+      timingScore:       0,
+      optimalDaysTP1:    optTP1.days,
+      optimalDaysTP2:    optTP2.days,
+      optimalProbTP1:    optTP1.prob,
+    };
+
+    setState((prev: TacticalEngineState) => ({
+      ...prev,
+      openPositions:    [...prev.openPositions, position],
+      capitalUsed:      +(prev.capitalUsed + position.totalInvested).toFixed(2),
+      capitalAvailable: +Math.max(0, prev.capitalAvailable - position.totalInvested).toFixed(2),
+    }));
+    setManualModal(false);
+  }, [manualTicker, manualName, manualType, manualEntry, manualStop, manualTP1, manualTP2, manualShares, manualCurrent]);
 
   // ── Aplicar config ──────────────────────────────────────────
   const applyConfig = useCallback(() => {
-    setState(prev => {
+    setState((prev: TacticalEngineState) => {
       const newConfig: TacticalConfig = {
         ...prev.config,
         tacticalCapitalEur: cfgCapital,
@@ -370,7 +438,7 @@ export default function TacticalDashboard() {
         riskPerTradePct:    cfgRiskPct / 100,
         requireAboveMA200:  cfgMA200,
       };
-      const capitalUsed = prev.openPositions.reduce((s, p) => s + (p.totalInvested ?? 0), 0);
+      const capitalUsed = prev.openPositions.reduce((s: number, p: TacticalPosition) => s + (p.totalInvested ?? 0), 0);
       return { ...prev, config: newConfig, capitalUsed, capitalAvailable: Math.max(0, cfgCapital - capitalUsed) };
     });
   }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200]);
@@ -689,9 +757,9 @@ export default function TacticalDashboard() {
               onChange={e => setEntryP(e.target.value)}
               onBlur={() => {
                 const v = parseFloat(entryP);
-                if (v > 0) setState(prev => ({
+                if (v > 0) setState((prev: TacticalEngineState) => ({
                   ...prev,
-                  openPositions: prev.openPositions.map(p =>
+                  openPositions: prev.openPositions.map((p: TacticalPosition) =>
                     p.id === pos.id ? {
                       ...p, entryPrice: v,
                       totalInvested: v * p.shares,
@@ -706,9 +774,9 @@ export default function TacticalDashboard() {
               onChange={e => setSharesP(e.target.value)}
               onBlur={() => {
                 const v = parseFloat(sharesP);
-                if (v > 0) setState(prev => ({
+                if (v > 0) setState((prev: TacticalEngineState) => ({
                   ...prev,
-                  openPositions: prev.openPositions.map(p =>
+                  openPositions: prev.openPositions.map((p: TacticalPosition) =>
                     p.id === pos.id ? {
                       ...p, shares: v,
                       totalInvested: p.entryPrice * v,
@@ -729,9 +797,9 @@ export default function TacticalDashboard() {
               onBlur={() => {
                 const v = parseFloat(currP);
                 if (v > 0) {
-                  setState(prev => ({
+                  setState((prev: TacticalEngineState) => ({
                     ...prev,
-                    openPositions: prev.openPositions.map(p =>
+                    openPositions: prev.openPositions.map((p: TacticalPosition) =>
                       p.id === pos.id ? {
                         ...p, currentPrice: v,
                         unrealizedPnL: (v - p.entryPrice) * p.shares,
@@ -967,7 +1035,7 @@ export default function TacticalDashboard() {
                 <div style={{ ...S.cardG, marginBottom:'1rem' }}>
                   <div style={{ fontWeight:700, color:'#4ade80', marginBottom:'0.5rem' }}>🏆 TOP PICKS — Score ≥ 70</div>
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(100px,1fr))', gap:6 }}>
-                    {state.opportunities.filter(o => o.score >= 70).slice(0,5).map(o => (
+                    {state.opportunities.filter((o: TacticalOpportunity) => o.score >= 70).slice(0,5).map((o: TacticalOpportunity) => (
                       <div key={o.id} style={{ background:'#052e16', borderRadius:8, padding:'8px 12px', textAlign:'center', border:'1px solid #16a34a' }}>
                         <div style={{ fontWeight:700, fontSize:'0.9rem', color:'#f8fafc' }}>{o.asset.ticker}</div>
                         <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{typeLabels[o.type]}</div>
@@ -977,7 +1045,7 @@ export default function TacticalDashboard() {
                   </div>
                 </div>
               )}
-              {state.opportunities.map(opp => <OpportunityCard key={opp.id} opp={opp} />)}
+              {state.opportunities.map((opp: TacticalOpportunity) => <OpportunityCard key={opp.id} opp={opp} />)}
             </>
           )}
         </div>
@@ -986,6 +1054,13 @@ export default function TacticalDashboard() {
       {/* ── TAB: POSICIONES ── */}
       {tab === 'positions' && (
         <div style={S.card}>
+          {/* Botón añadir posición manual */}
+          <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'0.75rem' }}>
+            <button style={{ ...S.btn, background:'#1e3a5f', color:'#93c5fd', border:'1px solid #3b82f6', fontSize:'0.78rem' }}
+              onClick={() => setManualModal(true)}>
+              ➕ Añadir posición manual
+            </button>
+          </div>
           {state.openPositions.length === 0 ? (
             <div style={{ textAlign:'center', padding:'2rem', color:'#64748b' }}>
               No hay posiciones abiertas. Abre una desde la pestaña Oportunidades.
@@ -1001,7 +1076,7 @@ export default function TacticalDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {state.openPositions.map(pos => <PositionRow key={pos.id} pos={pos} />)}
+                  {state.openPositions.map((pos: TacticalPosition) => <PositionRow key={pos.id} pos={pos} />)}
                 </tbody>
                 <tfoot>
                   <tr style={{ background:'#0f172a' }}>
@@ -1034,48 +1109,94 @@ export default function TacticalDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...state.closedPositions].reverse().map(pos => (
-                    <tr key={pos.id}>
-                      <td style={S.td}><div style={{ fontWeight:700 }}>{pos.ticker}</div></td>
-                      <td style={S.td}>
-                        <span style={{ ...S.badge, background: typeColors[pos.type]+'22', color: typeColors[pos.type] }}>
-                          {typeLabels[pos.type]}
-                        </span>
-                      </td>
-                      <td style={S.td}>€{pos.entryPrice.toFixed(2)}</td>
-                      <td style={S.td}>€{(pos.exitPrice ?? 0).toFixed(2)}</td>
-                      <td style={{ ...S.td, fontWeight:700, color:clr(pos.realizedPnL ?? 0) }}>
-                        {(pos.realizedPnL ?? 0) >= 0 ? '+' : ''}{eur(pos.realizedPnL ?? 0)}
-                      </td>
-                      <td style={{ ...S.td, color:clr(pos.realizedPnLPct ?? 0) }}>{pct(pos.realizedPnLPct ?? 0)}</td>
-                      <td style={S.td}>{pos.daysOpen}d</td>
-                      <td style={S.td}>
-                        <span style={{ ...S.badge,
-                          background: pos.status === 'CLOSED_TP' ? '#052e16' : pos.status === 'CLOSED_SL' ? '#450a0a' : '#1e293b',
-                          color:      pos.status === 'CLOSED_TP' ? '#4ade80' : pos.status === 'CLOSED_SL' ? '#fca5a5' : '#94a3b8',
-                        }}>
-                          {pos.status === 'CLOSED_TP' ? '✅ TP' : pos.status === 'CLOSED_SL' ? '🛑 SL' : pos.status === 'CLOSED_TIME' ? '⏰ Tiempo' : '📤 Manual'}
-                        </span>
-                      </td>
-                      <td style={S.td}>
-                        <button
-                          style={{ ...S.btn, background:'#1e3a5f', color:'#93c5fd', border:'1px solid #3b82f6', padding:'3px 7px', fontSize:'0.62rem' }}
-                          title="Reabrir posición cerrada por error"
-                          onClick={() => setState(prev => {
-                            const pos2 = prev.closedPositions.find(p => p.id === pos.id);
-                            if (!pos2) return prev;
-                            const reopened = { ...pos2, status: 'OPEN' as const, exitDate: null, exitPrice: null, exitReason: null, realizedPnL: null, realizedPnLPct: null };
-                            return {
-                              ...prev,
-                              openPositions: [...prev.openPositions, reopened],
-                              closedPositions: prev.closedPositions.filter(p => p.id !== pos.id),
-                            };
-                          })}>
-                          🔄 Reabrir
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {[...state.closedPositions].reverse().map((pos: TacticalPosition) => {
+                    const ClosedRow = () => {
+                      const [exitEdit,  setExitEdit]  = useState((pos.exitPrice ?? 0).toFixed(2));
+                      const [entryEdit, setEntryEdit] = useState(pos.entryPrice.toFixed(2));
+                      const handleExitBlur = () => {
+                        const v = parseFloat(exitEdit);
+                        if (v > 0) setState((prev: TacticalEngineState) => ({
+                          ...prev,
+                          closedPositions: prev.closedPositions.map((p: TacticalPosition) => {
+                            if (p.id !== pos.id) return p;
+                            const pnl    = +(( v - p.entryPrice) * p.shares).toFixed(2);
+                            const pnlPct = +((v / p.entryPrice - 1) * 100).toFixed(2);
+                            return { ...p, exitPrice: v, realizedPnL: pnl, realizedPnLPct: pnlPct };
+                          }),
+                        }));
+                      };
+                      const handleEntryBlur = () => {
+                        const v = parseFloat(entryEdit);
+                        if (v > 0) setState((prev: TacticalEngineState) => ({
+                          ...prev,
+                          closedPositions: prev.closedPositions.map((p: TacticalPosition) => {
+                            if (p.id !== pos.id) return p;
+                            const ep  = pos.exitPrice ?? v;
+                            const pnl    = +((ep - v) * p.shares).toFixed(2);
+                            const pnlPct = +((ep / v - 1) * 100).toFixed(2);
+                            return { ...p, entryPrice: v, realizedPnL: pnl, realizedPnLPct: pnlPct };
+                          }),
+                        }));
+                      };
+                      return (
+                        <tr key={pos.id}>
+                          <td style={S.td}><div style={{ fontWeight:700 }}>{pos.ticker}</div></td>
+                          <td style={S.td}>
+                            <span style={{ ...S.badge, background: typeColors[pos.type]+'22', color: typeColors[pos.type] }}>
+                              {typeLabels[pos.type]}
+                            </span>
+                          </td>
+                          {/* Entrada editable */}
+                          <td style={S.td}>
+                            <input type="number" step="0.01" value={entryEdit}
+                              onChange={e => setEntryEdit(e.target.value)}
+                              onBlur={handleEntryBlur}
+                              style={{ ...S.input, width:72 }} />
+                          </td>
+                          {/* Salida editable */}
+                          <td style={S.td}>
+                            <input type="number" step="0.01" value={exitEdit}
+                              onChange={e => setExitEdit(e.target.value)}
+                              onBlur={handleExitBlur}
+                              style={{ ...S.input, width:72,
+                                color: parseFloat(exitEdit) >= pos.entryPrice ? '#22c55e' : '#ef4444',
+                                fontWeight:700 }} />
+                          </td>
+                          <td style={{ ...S.td, fontWeight:700, color:clr(pos.realizedPnL ?? 0) }}>
+                            {(pos.realizedPnL ?? 0) >= 0 ? '+' : ''}{eur(pos.realizedPnL ?? 0)}
+                          </td>
+                          <td style={{ ...S.td, color:clr(pos.realizedPnLPct ?? 0) }}>{pct(pos.realizedPnLPct ?? 0)}</td>
+                          <td style={S.td}>{pos.daysOpen}d</td>
+                          <td style={S.td}>
+                            <span style={{ ...S.badge,
+                              background: pos.status === 'CLOSED_TP' ? '#052e16' : pos.status === 'CLOSED_SL' ? '#450a0a' : '#1e293b',
+                              color:      pos.status === 'CLOSED_TP' ? '#4ade80' : pos.status === 'CLOSED_SL' ? '#fca5a5' : '#94a3b8',
+                            }}>
+                              {pos.status === 'CLOSED_TP' ? '✅ TP' : pos.status === 'CLOSED_SL' ? '🛑 SL' : pos.status === 'CLOSED_TIME' ? '⏰ Tiempo' : '📤 Manual'}
+                            </span>
+                          </td>
+                          <td style={S.td}>
+                            <button
+                              style={{ ...S.btn, background:'#1e3a5f', color:'#93c5fd', border:'1px solid #3b82f6', padding:'3px 7px', fontSize:'0.62rem' }}
+                              title="Reabrir posición cerrada"
+                              onClick={() => setState((prev: TacticalEngineState) => {
+                                const pos2 = prev.closedPositions.find((p: TacticalPosition) => p.id === pos.id);
+                                if (!pos2) return prev;
+                                const reopened = { ...pos2, status: 'OPEN' as const, exitDate: null, exitPrice: null, exitReason: null, realizedPnL: null, realizedPnLPct: null };
+                                return {
+                                  ...prev,
+                                  openPositions: [...prev.openPositions, reopened],
+                                  closedPositions: prev.closedPositions.filter((p: TacticalPosition) => p.id !== pos.id),
+                                };
+                              })}>
+                              🔄 Reabrir
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    };
+                    return <ClosedRow key={pos.id} />;
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1084,7 +1205,7 @@ export default function TacticalDashboard() {
             <div style={{ marginTop:'1rem', display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:8 }}>
               {[
                 { l:'Operaciones', v:state.closedPositions.length },
-                { l:'Ganadoras',   v:state.closedPositions.filter(p => (p.realizedPnL ?? 0) > 0).length },
+                { l:'Ganadoras',   v:state.closedPositions.filter((p: TacticalPosition) => (p.realizedPnL ?? 0) > 0).length },
                 { l:'Win Rate',    v:`${summary.winRate.toFixed(0)}%` },
                 { l:'Profit Factor', v:summary.profitFactor.toFixed(2) },
                 { l:'PnL Total',   v:eur(summary.realizedPnL) },
@@ -1210,6 +1331,91 @@ export default function TacticalDashboard() {
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: Añadir posición manual ── */}
+      {manualModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:998, padding:'1rem' }}>
+          <div style={{ background:'#1e293b', border:'1px solid #3b82f6', borderRadius:16, padding:'1.5rem', width:'100%', maxWidth:480 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'1rem' }}>
+              <div>
+                <div style={{ fontWeight:800, fontSize:'1.05rem', color:'#f8fafc' }}>➕ Añadir posición manual</div>
+                <div style={{ fontSize:'0.7rem', color:'#64748b', marginTop:2 }}>Útil para recuperar posiciones perdidas (ej. INTC) o añadir cualquier operación</div>
+              </div>
+              <button onClick={() => setManualModal(false)} style={{ background:'none', border:'none', color:'#64748b', fontSize:'1.4rem', cursor:'pointer', lineHeight:1, padding:0 }}>×</button>
+            </div>
+
+            {/* Ticker / nombre / tipo */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 2fr', gap:'0.5rem', marginBottom:'0.5rem' }}>
+              <div>
+                <div style={{ fontSize:'0.65rem', color:'#60a5fa', fontWeight:700, marginBottom:2 }}>Ticker</div>
+                <input style={S.input} value={manualTicker} onChange={e => setManualTicker(e.target.value.toUpperCase())} placeholder="INTC" />
+              </div>
+              <div>
+                <div style={{ fontSize:'0.65rem', color:'#94a3b8', fontWeight:700, marginBottom:2 }}>Nombre</div>
+                <input style={S.input} value={manualName} onChange={e => setManualName(e.target.value)} placeholder="Intel Corporation" />
+              </div>
+            </div>
+
+            <div style={{ marginBottom:'0.6rem' }}>
+              <div style={{ fontSize:'0.65rem', color:'#94a3b8', fontWeight:700, marginBottom:2 }}>Tipo de operación</div>
+              <select value={manualType} onChange={e => setManualType(e.target.value)}
+                style={{ ...S.input, cursor:'pointer' }}>
+                {Object.entries(typeLabels).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Precios */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.5rem', marginBottom:'0.5rem' }}>
+              {([
+                { label:'Entrada (€)',       val:manualEntry,   set:setManualEntry,   c:'#e2e8f0' },
+                { label:'Precio actual (€)', val:manualCurrent, set:setManualCurrent, c:'#60a5fa' },
+                { label:'Stop Loss (€)',     val:manualStop,    set:setManualStop,    c:'#ef4444' },
+                { label:'Acciones',          val:manualShares,  set:setManualShares,  c:'#94a3b8' },
+                { label:'Take Profit 1 (€)', val:manualTP1,     set:setManualTP1,     c:'#22c55e' },
+                { label:'Take Profit 2 (€)', val:manualTP2,     set:setManualTP2,     c:'#4ade80' },
+              ] as { label:string; val:string; set:(v:string)=>void; c:string }[]).map(({ label, val, set, c }) => (
+                <div key={label}>
+                  <div style={{ fontSize:'0.65rem', color:c, fontWeight:700, marginBottom:2 }}>{label}</div>
+                  <input type="number" step="0.01" value={val} onChange={e => set(e.target.value)}
+                    style={{ ...S.input, borderColor: c + '55' }} />
+                </div>
+              ))}
+            </div>
+
+            {/* Resumen R:R */}
+            {(() => {
+              const e = parseFloat(manualEntry), s = parseFloat(manualStop);
+              const t1 = parseFloat(manualTP1), t2 = parseFloat(manualTP2);
+              const sh = parseInt(manualShares, 10) || 1;
+              const risk    = e > s ? (e - s) * sh : null;
+              const reward1 = t1 > e ? (t1 - e) * sh : null;
+              const reward2 = t2 > e ? (t2 - e) * sh : null;
+              const rr1 = risk && reward1 ? (reward1 / risk) : null;
+              const rr2 = risk && reward2 ? (reward2 / risk) : null;
+              const valid = e > s && sh >= 1;
+              return (
+                <div style={{ background:'#0f172a', borderRadius:6, padding:'8px 10px', marginBottom:'1rem', fontSize:'0.72rem', display:'flex', gap:10, flexWrap:'wrap' as const, border:`1px solid ${valid ? '#16a34a' : '#ef4444'}` }}>
+                  <span style={{ color:'#ef4444' }}>Riesgo: {risk != null ? eur(risk) : '—'}</span>
+                  <span style={{ color:'#22c55e' }}>TP1: R:R {rr1?.toFixed(2) ?? '—'}</span>
+                  <span style={{ color:'#4ade80' }}>TP2: R:R {rr2?.toFixed(2) ?? '—'}</span>
+                  <span style={{ color:'#64748b' }}>Capital: {e && sh ? eur(e * sh) : '—'}</span>
+                </div>
+              );
+            })()}
+
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={handleAddManual}
+                disabled={!manualEntry || !manualStop || !manualTP1 || !manualTP2 || parseFloat(manualEntry) <= parseFloat(manualStop)}
+                style={{ ...S.btn, ...S.btnG, flex:1, opacity: (!manualEntry || parseFloat(manualEntry) <= parseFloat(manualStop)) ? 0.4 : 1 }}>
+                ✅ Añadir posición
+              </button>
+              <button onClick={() => setManualModal(false)} style={{ ...S.btn, ...S.btnGr }}>Cancelar</button>
+            </div>
           </div>
         </div>
       )}

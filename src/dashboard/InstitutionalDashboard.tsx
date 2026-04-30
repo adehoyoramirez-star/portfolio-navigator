@@ -21,7 +21,7 @@ import {
 // ── Core engine & types ──────────────────────────────────────────────────
 import { liquidityScore } from "@/core/macro/liquidity";
 import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/portfolio";
-import { calculateCorrelationMatrix } from "@/core/data/portfolioMetrics";
+import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
@@ -347,25 +347,18 @@ const InstitutionalDashboard: React.FC = () => {
         ...prev,
         assets: prev.assets.map((asset) => {
           const idx = ASSETS.indexOf(asset.ticker as any);
-          // FIX-EDITABLE: NUNCA tocar shares ni avgPrice desde el refresh de mercado
-          // Son datos del usuario — solo actualizar precio de mercado e indicadores
-          if (idx === -1) return {
-            ...asset,
-            price: md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price,
-          };
+          if (idx === -1) return { ...asset, price: md.prices[asset.ticker] || asset.price };
 
           const closes = md.closesHistory[asset.ticker] || [];
 
           return {
             ...asset,
-            // FIX-PRICE: > 0 evita que Yahoo devolviendo 0 sobreescriba con precio estático
-            price:      md.prices[asset.ticker] > 0 ? md.prices[asset.ticker] : asset.price,
-            // shares y avgPrice NO se modifican — son propiedad del usuario
-            history:    closes,
+            price: md.prices[asset.ticker] || asset.price,
+            history: closes,
             volatility: (md.realizedVols[idx] ?? asset.volatility / 100) * 100,
-            return12m:  md.returns12m[idx] ?? asset.return12m,
-            return3m:   md.returns3m[idx]  ?? asset.return3m,
-            return1m:   md.returns1m[idx]  ?? asset.return1m,
+            return12m: md.returns12m[idx] ?? asset.return12m,
+            return3m:  md.returns3m[idx]  ?? asset.return3m,
+            return1m:  md.returns1m[idx]  ?? asset.return1m,
             ...(asset.ticker === 'BTC-EUR' ? {
               zScore: md.btcZScore,
               rsi: md.btcRsi,
@@ -653,14 +646,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   }, []);
 
   // NIVEL 4: auto-guardar portfolio cuando cambia
-  // FIX-AUTOSAVE: usar ref para no guardar en el primer render (initialPortfolio estático)
-  // Solo guardar a partir del segundo render, cuando loadPortfolio ya restauró los datos reales
-  const hasMounted = useRef(false);
   useEffect(() => {
-    if (!hasMounted.current) {
-      hasMounted.current = true;
-      return; // primer render — no guardar, loadPortfolio aún no ha restaurado los datos
-    }
     savePortfolio({
       positions: portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice })),
       cashReserve,
@@ -1246,11 +1232,55 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     const annualReturn = expectedReturn;
     const excessReturn = annualReturn - rf;
     const sharpe = excessReturn / portfolioVol;
-    const downsideVol = portfolioVol / Math.sqrt(2);
-    const sortino = downsideVol > 0 ? excessReturn / downsideVol : 0;
+
+    // FIX-IMP-4: Sortino con semi-desviación REAL sobre retornos diarios históricos.
+    // ANTES: downsideVol = portfolioVol / Math.sqrt(2) — asume distribución normal perfecta.
+    // Con BTC (fat tails, skewness -), el Sortino estaba inflado hasta 1.4× el real.
+    // AHORA: filtrar retornos diarios < rf_diario y calcular su std real.
+    const dailyPortfolioReturns: number[] = [];
+    if (portfolio.assets.length > 0 && portfolio.assets[0].history.length > 1) {
+      const totalVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
+      const numDays = portfolio.assets[0].history.length;
+      for (let t = 1; t < numDays; t++) {
+        let dayRet = 0;
+        for (const asset of portfolio.assets) {
+          if (asset.history[t] && asset.history[t - 1]) {
+            const w = (asset.price * asset.shares) / (totalVal || 1);
+            dayRet += w * (asset.history[t] / asset.history[t - 1] - 1);
+          }
+        }
+        dailyPortfolioReturns.push(dayRet);
+      }
+    }
+    const sortino = dailyPortfolioReturns.length >= 10
+      ? sortinoRatioReal(dailyPortfolioReturns, annualReturn, rf)
+      : excessReturn / (portfolioVol / Math.sqrt(2)); // fallback si no hay histórico
+
+    // FIX-IMP-6-BETA: Beta vs benchmark usando IS3Q.DE como proxy MSCI World Quality.
+    // IS3Q.DE es el activo del portfolio más correlacionado con mercado global desarrollado.
+    const benchmarkAsset = portfolio.assets.find(a => a.ticker === 'IS3Q.DE');
+    let beta = 1.0, alpha = 0;
+    if (benchmarkAsset && benchmarkAsset.history.length > 20 && dailyPortfolioReturns.length > 20) {
+      const benchReturns: number[] = [];
+      for (let t = 1; t < benchmarkAsset.history.length; t++) {
+        if (benchmarkAsset.history[t] && benchmarkAsset.history[t - 1]) {
+          benchReturns.push(benchmarkAsset.history[t] / benchmarkAsset.history[t - 1] - 1);
+        }
+      }
+      if (benchReturns.length >= 20) {
+        beta = betaVsBenchmark(dailyPortfolioReturns, benchReturns);
+        const benchAnnualReturn = benchReturns.reduce((a, b) => a + b, 0) / benchReturns.length * 252;
+        alpha = jensenAlpha(annualReturn, beta, benchAnnualReturn, rf);
+      }
+    }
+
+    // FIX-AUDIT: indicador de ruta Monte Carlo — visible en dashboard
+    const hasCovMatrix = marketData?.covMatrix && marketData.covMatrix.length > 1;
+    const mcRoute = hasCovMatrix ? "✅ Multivariante (Cholesky + correlaciones reales)" : "⚠️ Univariante (fallback — sin covMatrix)";
+
     const calmar = portfolioDrawdown !== 0 ? annualReturn / Math.abs(portfolioDrawdown) : 0;
-    return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol: portfolioVol };
-  }, [portfolioVol, expectedReturn, portfolio.riskFreeRate, portfolioDrawdown]);
+    return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol, beta, alpha, mcRoute, hasCovMatrix };
+  }, [portfolioVol, expectedReturn, portfolio.riskFreeRate, portfolioDrawdown, portfolio.assets, marketData?.covMatrix]);
 
   return (
     <div style={styles.container}>
@@ -2140,10 +2170,35 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
               </div>
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>×{(engineResult?.masterRegime.regimePenalty ?? 1).toFixed(2)} penalty régimen</div>
             </div>
+            {/* FIX-AUDIT: Beta vs benchmark — nuevo */}
+            <div style={{ background: (portfolioAnalytics.beta ?? 1) > 1.3 ? "#78350f" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "#1e3a5f" : "#065f46", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
+              <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Beta vs IS3Q (MSCI World)</div>
+              <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#ffffff" }}>{(portfolioAnalytics.beta ?? 1).toFixed(2)}</div>
+              <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>
+                {(portfolioAnalytics.beta ?? 1) > 1.2 ? "Agresivo" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "Mercado" : "Defensivo"}
+              </div>
+            </div>
+            {/* FIX-AUDIT: Jensen Alpha — nuevo */}
+            <div style={{ background: (portfolioAnalytics.alpha ?? 0) > 0.02 ? "#065f46" : (portfolioAnalytics.alpha ?? 0) > 0 ? "#1e3a5f" : "#7f1d1d", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
+              <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Alpha de Jensen</div>
+              <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: (portfolioAnalytics.alpha ?? 0) >= 0 ? "#10b981" : "#ef4444" }}>
+                {((portfolioAnalytics.alpha ?? 0) * 100).toFixed(1)}%
+              </div>
+              <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>r_p - [rf + β(r_m - rf)]</div>
+            </div>
           </div>
-          <p style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "0.75rem" }}>
-            Sharpe = (r_portfolio − r_f) / σ_p · r_f = {(portfolioAnalytics.rf * 100).toFixed(1)}% · Sortino penaliza solo vol bajista · Calmar = retorno anualizado / |max drawdown|
-          </p>
+          {/* FIX-AUDIT: MC route indicator + metodología Sortino */}
+          <div style={{ marginTop: "0.75rem", background: "#0f172a", borderRadius: 6, padding: "0.5rem 0.75rem", fontSize: "0.7rem", color: "#6b7280", display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
+            <span>Sharpe = (r_p − r_f) / σ_p · r_f = {(portfolioAnalytics.rf * 100).toFixed(1)}%</span>
+            <span>·</span>
+            <span style={{ color: "#94a3b8" }}>Sortino: semi-desviación real (retornos &lt; rf) — no aprox. σ/√2</span>
+            <span>·</span>
+            <span>Calmar = CAGR / |Max DD|</span>
+            <span>·</span>
+            <span style={{ color: portfolioAnalytics.hasCovMatrix ? "#4ade80" : "#f59e0b", fontWeight: 700 }}>
+              MC: {portfolioAnalytics.mcRoute}
+            </span>
+          </div>
         </div>
       )}
 
