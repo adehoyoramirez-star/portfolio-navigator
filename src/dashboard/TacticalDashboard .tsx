@@ -11,6 +11,7 @@
 //      el bloque de horizonte óptimo. Antes solo se mostraba TP1.
 //   4. PositionRow: "fila de salud" incluye suggestedExit y
 //      scaleUpAmount cuando aplica.
+//   5. Posiciones de demo INTC y BAYN precargadas en initState
 //      para que el dashboard muestre datos reales desde el primer render.
 // ============================================================
 
@@ -99,6 +100,7 @@ const typeLabels: Record<string, string> = {
   EVENT_DRIVEN:      '⚡ Evento',
 };
 
+// ── Posiciones de demo precargadas (INTC + BAYN) ─────────────
 // Se insertan en el estado inicial si no hay estado guardado en localStorage.
 // Los valores de horizonte óptimo se calculan en tiempo de ejecución
 // usando calcOptimalHorizon sin cap duro.
@@ -140,7 +142,44 @@ function buildDemoPositions(): TacticalPosition[] {
     optimalProbTP1: intcOpt1.prob,
   };
 
-  return [intc];
+  // BAYN: 2 acc entrada €36.63. SL, TP1, TP2 calculados por motor.
+  const baynEntry = 36.63, baynAtr = 36.63 * 0.019;
+  const baynSL  = baynEntry - baynAtr * 2;
+  const baynTP1 = baynEntry + (baynEntry - baynSL) * 1.2;
+  const baynTP2 = baynEntry + (baynEntry - baynSL) * 1.8;
+  const baynOpt1 = calcOptimalHorizon(baynEntry, baynTP1, baynAtr);
+  const baynOpt2 = calcOptimalHorizon(baynEntry, baynTP2, baynAtr);
+  const baynMax  = Math.min(calcDynamicMaxDays(0.019), Math.max(5, Math.round(baynOpt2.days * 1.2)));
+  const bayn: TacticalPosition = {
+    id: 'demo-bayn-1',
+    ticker: 'BAYN', name: 'Bayer AG',
+    type: 'MEAN_REVERSION',
+    entryDate: daysAgo(1),
+    entryPrice: baynEntry,
+    shares: 2,
+    capitalRisked: (baynEntry - baynSL) * 2,
+    totalInvested: baynEntry * 2,
+    stopLoss: parseFloat(baynSL.toFixed(2)),
+    takeProfit1: parseFloat(baynTP1.toFixed(2)),
+    takeProfit2: parseFloat(baynTP2.toFixed(2)),
+    status: 'OPEN',
+    currentPrice: 35.10,
+    exitDate: null, exitPrice: null, exitReason: null,
+    unrealizedPnL: (35.10 - baynEntry) * 2,
+    unrealizedPnLPct: (35.10 / baynEntry - 1) * 100,
+    realizedPnL: null, realizedPnLPct: null,
+    daysOpen: 1,
+    maxDaysAllowed: baynMax,
+    expectedDaysToTP1: calcExpectedDays(baynEntry, baynTP1, baynAtr, 'MEAN_REVERSION'),
+    expectedDaysToTP2: calcExpectedDays(baynEntry, baynTP2, baynAtr, 'MEAN_REVERSION'),
+    daysToBreakeven: 2,
+    timingScore: 0,
+    optimalDaysTP1: baynOpt1.days,
+    optimalDaysTP2: baynOpt2.days,
+    optimalProbTP1: baynOpt1.prob,
+  };
+
+  return [intc, bayn];
 }
 
 // ════════════════════════════════════════════════════════════
@@ -151,7 +190,8 @@ export default function TacticalDashboard() {
     const saved = loadTacticalState();
     if (saved) return saved;
     const base = initTacticalState(defaultTacticalConfig(300, 600));
-        const demos = buildDemoPositions();
+    // Precarga INTC y BAYN si no hay estado guardado
+    const demos = buildDemoPositions();
     const capitalUsed = demos.reduce((s, p) => s + p.totalInvested, 0);
     return {
       ...base,
@@ -590,10 +630,7 @@ export default function TacticalDashboard() {
   // SUB-COMPONENTE: PositionRow — con TP2, salud completa
   // ════════════════════════════════════════════════════════════
   const PositionRow = ({ pos }: { pos: TacticalPosition }) => {
-    const [exitP,   setExitP]   = useState(pos.currentPrice.toFixed(2));
-    const [currP,   setCurrP]   = useState(pos.currentPrice.toFixed(2));
-    const [entryP,  setEntryP]  = useState(pos.entryPrice.toFixed(2));
-    const [sharesP, setSharesP] = useState(String(pos.shares));
+    const [exitP, setExitP] = useState(pos.currentPrice.toFixed(2));
     const pnlColor = clr(pos.unrealizedPnL);
     const nearSL   = pos.currentPrice <= pos.stopLoss * 1.02;
     const nearTP   = pos.currentPrice >= pos.takeProfit1 * 0.97;
@@ -643,82 +680,18 @@ export default function TacticalDashboard() {
             </span>
           </td>
 
-          {/* Entrada — editable */}
+          {/* Entrada */}
           <td style={S.td}>
-            <input
-              type="number" step="0.01"
-              value={entryP}
-              onChange={e => setEntryP(e.target.value)}
-              onBlur={() => {
-                const v = parseFloat(entryP);
-                if (v > 0) setState(prev => ({
-                  ...prev,
-                  openPositions: prev.openPositions.map(p =>
-                    p.id === pos.id ? {
-                      ...p,
-                      entryPrice: v,
-                      totalInvested: v * p.shares,
-                      capitalRisked: (v - p.stopLoss) * p.shares,
-                      unrealizedPnL: (p.currentPrice - v) * p.shares,
-                      unrealizedPnLPct: (p.currentPrice / v - 1) * 100,
-                    } : p
-                  )
-                }));
-              }}
-              style={{ ...S.input, width:72, marginBottom:2 }}
-            />
-            <input
-              type="number" step="1" min="0.000001"
-              value={sharesP}
-              onChange={e => setSharesP(e.target.value)}
-              onBlur={() => {
-                const v = parseFloat(sharesP);
-                if (v > 0) setState(prev => ({
-                  ...prev,
-                  openPositions: prev.openPositions.map(p =>
-                    p.id === pos.id ? {
-                      ...p,
-                      shares: v,
-                      totalInvested: p.entryPrice * v,
-                      capitalRisked: (p.entryPrice - p.stopLoss) * v,
-                      unrealizedPnL: (p.currentPrice - p.entryPrice) * v,
-                      unrealizedPnLPct: (p.currentPrice / p.entryPrice - 1) * 100,
-                    } : p
-                  )
-                }));
-              }}
-              style={{ ...S.input, width:72, marginBottom:2 }}
-            />
+            <div>€{pos.entryPrice.toFixed(2)}</div>
+            <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{pos.shares} uds</div>
             <div style={{ fontSize:'0.6rem', color:'#475569' }}>€{pos.totalInvested.toFixed(0)} inv.</div>
           </td>
 
-          {/* Precio actual — editable */}
+          {/* Precio actual + días para verde */}
           <td style={S.td}>
-            <input
-              type="number" step="0.01"
-              value={currP}
-              onChange={e => setCurrP(e.target.value)}
-              onBlur={() => {
-                const v = parseFloat(currP);
-                if (v > 0) {
-                  setState(prev => ({
-                    ...prev,
-                    openPositions: prev.openPositions.map(p =>
-                      p.id === pos.id ? {
-                        ...p,
-                        currentPrice: v,
-                        unrealizedPnL: (v - p.entryPrice) * p.shares,
-                        unrealizedPnLPct: (v / p.entryPrice - 1) * 100,
-                      } : p
-                    )
-                  }));
-                  setExitP(v.toFixed(2));
-                }
-              }}
-              style={{ ...S.input, width:72, marginBottom:2,
-                color: parseFloat(currP) >= pos.entryPrice ? '#22c55e' : '#f8fafc',
-                fontWeight: 700 }}
-            />
+            <div style={{ fontWeight:700, color: inGreen ? '#22c55e' : '#f8fafc' }}>
+              €{pos.currentPrice.toFixed(2)}
+            </div>
             <div style={{ fontSize:'0.65rem', color: inGreen ? '#22c55e' : '#f59e0b' }}>
               {dtbLabel}
             </div>
@@ -769,15 +742,21 @@ export default function TacticalDashboard() {
 
           {/* Acciones */}
           <td style={{ ...S.td, minWidth:175 }}>
-            <div style={{ display:'flex', gap:4, alignItems:'center', marginBottom:4 }}>
-              <input style={{ ...S.input, width:72 }} type="number" value={exitP}
+            <div style={{ display:'flex', gap:4, alignItems:'center', marginBottom:4, flexWrap:'wrap' }}>
+              <input style={{ ...S.input, width:68 }} type="number" value={exitP}
                 onChange={e => setExitP(e.target.value)} step="0.01" />
               <button style={{ ...S.btn, ...S.btnG, padding:'4px 5px', fontSize:'0.65rem' }}
-                onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_TP')}>TP</button>
+                onClick={() => { setExitP(pos.takeProfit1.toFixed(2)); handleClose(pos.id, pos.takeProfit1, 'CLOSED_TP'); }}
+                title={`Cerrar en TP1 €${pos.takeProfit1.toFixed(2)}`}>TP1</button>
+              <button style={{ ...S.btn, background:'#14532d', color:'#86efac', border:'1px solid #22c55e', padding:'4px 5px', fontSize:'0.65rem' }}
+                onClick={() => { setExitP(pos.takeProfit2.toFixed(2)); handleClose(pos.id, pos.takeProfit2, 'CLOSED_TP'); }}
+                title={`Cerrar en TP2 €${pos.takeProfit2.toFixed(2)}`}>TP2</button>
               <button style={{ ...S.btn, ...S.btnR, padding:'4px 5px', fontSize:'0.65rem' }}
-                onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_SL')}>SL</button>
+                onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_SL')}
+                title="Cerrar en Stop Loss">SL</button>
               <button style={{ ...S.btn, ...S.btnGr, padding:'4px 5px', fontSize:'0.65rem' }}
-                onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_MANUAL')}>M</button>
+                onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_MANUAL')}
+                title="Cierre manual al precio del input">M</button>
             </div>
             {health.suggestedExit && health.action === 'EXIT_NOW' && (
               <button onClick={() => handleClose(pos.id, health.suggestedExit!, 'CLOSED_MANUAL')}
@@ -1026,6 +1005,23 @@ export default function TacticalDashboard() {
                           {pos.status === 'CLOSED_TP' ? '✅ TP' : pos.status === 'CLOSED_SL' ? '🛑 SL' : pos.status === 'CLOSED_TIME' ? '⏰ Tiempo' : '📤 Manual'}
                         </span>
                       </td>
+                      <td style={S.td}>
+                        <button
+                          style={{ ...S.btn, background:'#1e3a5f', color:'#93c5fd', border:'1px solid #3b82f6', padding:'3px 7px', fontSize:'0.62rem' }}
+                          title="Reabrir posición cerrada por error"
+                          onClick={() => setState(prev => {
+                            const pos2 = prev.closedPositions.find(p => p.id === pos.id);
+                            if (!pos2) return prev;
+                            const reopened = { ...pos2, status: 'OPEN' as const, exitDate: null, exitPrice: null, exitReason: null, realizedPnL: null, realizedPnLPct: null };
+                            return {
+                              ...prev,
+                              openPositions: [...prev.openPositions, reopened],
+                              closedPositions: prev.closedPositions.filter(p => p.id !== pos.id),
+                            };
+                          })}>
+                          🔄 Reabrir
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1094,8 +1090,7 @@ export default function TacticalDashboard() {
             <button style={{ ...S.btn, ...S.btnR }} onClick={() => {
               if (confirm('¿Borrar todo el historial y posiciones?')) {
                 const fresh = initTacticalState(state.config);
-                // FIX-RESET: preservar posiciones abiertas reales — solo resetear config y stats
-                setState({ ...fresh, openPositions: state.openPositions });
+                setState({ ...fresh, openPositions: buildDemoPositions() });
                 localStorage.removeItem('olympus_tactical_state');
               }
             }}>🗑 Reset completo</button>
