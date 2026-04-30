@@ -630,7 +630,9 @@ export default function TacticalDashboard() {
   // SUB-COMPONENTE: PositionRow — con TP2, salud completa
   // ════════════════════════════════════════════════════════════
   const PositionRow = ({ pos }: { pos: TacticalPosition }) => {
-    const [exitP, setExitP] = useState(pos.currentPrice.toFixed(2));
+    const [exitP,    setExitP]    = useState(pos.currentPrice.toFixed(2));
+    const [currP,    setCurrP]    = useState(pos.currentPrice.toFixed(2));
+    const [entryP,   setEntryP]   = useState(pos.entryPrice.toFixed(2));
     const pnlColor = clr(pos.unrealizedPnL);
     const nearSL   = pos.currentPrice <= pos.stopLoss * 1.02;
     const nearTP   = pos.currentPrice >= pos.takeProfit1 * 0.97;
@@ -680,18 +682,58 @@ export default function TacticalDashboard() {
             </span>
           </td>
 
-          {/* Entrada */}
+          {/* Entrada — editable para corregir precio real ejecutado */}
           <td style={S.td}>
-            <div>€{pos.entryPrice.toFixed(2)}</div>
+            <input
+              type="number" step="0.01"
+              value={entryP}
+              onChange={e => setEntryP(e.target.value)}
+              onBlur={() => {
+                const v = parseFloat(entryP);
+                if (v > 0) setState(prev => ({
+                  ...prev,
+                  openPositions: prev.openPositions.map(p =>
+                    p.id === pos.id ? {
+                      ...p,
+                      entryPrice: v,
+                      totalInvested: v * p.shares,
+                      capitalRisked: (v - p.stopLoss) * p.shares,
+                      unrealizedPnL: (p.currentPrice - v) * p.shares,
+                      unrealizedPnLPct: (p.currentPrice / v - 1) * 100,
+                    } : p
+                  )
+                }));
+              }}
+              style={{ ...S.input, width:72, marginBottom:2 }}
+            />
             <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{pos.shares} uds</div>
             <div style={{ fontSize:'0.6rem', color:'#475569' }}>€{pos.totalInvested.toFixed(0)} inv.</div>
           </td>
 
-          {/* Precio actual + días para verde */}
+          {/* Precio actual — editable para introducir precio real de mercado */}
           <td style={S.td}>
-            <div style={{ fontWeight:700, color: inGreen ? '#22c55e' : '#f8fafc' }}>
-              €{pos.currentPrice.toFixed(2)}
-            </div>
+            <input
+              type="number" step="0.01"
+              value={currP}
+              onChange={e => setCurrP(e.target.value)}
+              onBlur={() => {
+                const v = parseFloat(currP);
+                if (v > 0) setState(prev => ({
+                  ...prev,
+                  openPositions: prev.openPositions.map(p =>
+                    p.id === pos.id ? {
+                      ...p,
+                      currentPrice: v,
+                      unrealizedPnL: (v - p.entryPrice) * p.shares,
+                      unrealizedPnLPct: (v / p.entryPrice - 1) * 100,
+                    } : p
+                  )
+                }));
+                setExitP(parseFloat(currP).toFixed(2));
+              }}
+              style={{ ...S.input, width:72, marginBottom:2,
+                color: parseFloat(currP) >= pos.entryPrice ? '#22c55e' : '#f8fafc' }}
+            />
             <div style={{ fontSize:'0.65rem', color: inGreen ? '#22c55e' : '#f59e0b' }}>
               {dtbLabel}
             </div>
