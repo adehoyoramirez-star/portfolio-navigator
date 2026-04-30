@@ -4,18 +4,13 @@
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-};
-
-// FIX-BAYN: BAYN.DE añadido a la lista de tickers del portfolio real.
-// CAUSA del bug "BAYN no aparece en Vercel":
-//   La función Supabase solo fetcha los tickers de esta lista.
+};//   La función Supabase solo fetcha los tickers de esta lista.
 //   Si un activo no está aquí → su precio nunca se recupera de Yahoo Finance
-//   → marketData.prices['BAYN.DE'] es undefined → el dashboard usa el precio
+//   → marketData.prices[
 //   estático del portfolio.ts (o 0 si no existe) → el precio nunca actualiza.
 const TICKERS = [
   // ── Portfolio real ────────────────────────────────────────────────────────
   'BTC-EUR', 'EMXC.DE', 'IS3Q.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'XNAS.DE',
-  'BAYN.DE',   // FIX-BAYN: Bayer AG (XETRA) — Pharma/Crop Science/Consumer Health
   // ── Macro — tiempo real ───────────────────────────────────────────────────
   '%5EVIX', '%5ETNX', '%5EIRX',
   // MOVE Index — volatilidad bonos USA (CBOE)
@@ -35,9 +30,7 @@ const TICKERS = [
   'GLD',   // PPFB.DE → Oro físico
   'URA',   // URNU.DE → Uranio global
   'SMH',   // VVSM.DE → Semiconductores
-  'QQQ',   // XNAS.DE → Nasdaq-100
-  // BAYN.DE tiene datos europeos desde 2000 — no necesita proxy USA
-];
+  'QQQ',   // XNAS.DE → Nasdaq-100];
 
 interface ChartResult {
   ticker: string;

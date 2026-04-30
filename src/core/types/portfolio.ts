@@ -1,6 +1,5 @@
 // ===============================================
 // ARCHIVO: src/core/types/portfolio.ts
-// FIX-BAYN: Bayer AG añadida como activo real del portfolio
 // FIX-ASSET-INTERFACE: añadidos earningsYield, return12m, return3m, return1m
 //   que el dashboard usa pero que NO estaban declarados en la interfaz Asset,
 //   causando que TypeScript los tratara como 'any' silenciosamente.
@@ -56,11 +55,7 @@ const generateMockHistory = (basePrice: number): number[] =>
 //
 //   CAUSA DEL BUG "precios no actualizan":
 //   El bug NO estaba aquí — estaba en dos sitios simultáneos:
-//   1. supabase/functions/yahoo-finance/index.ts — BAYN.DE no estaba en TICKERS
-//      → Yahoo Finance nunca devolvía el precio de BAYN.DE
-//   2. src/lib/constants.ts — BAYN.DE no estaba en ASSETS
 //      → marketData.ts solo itera ASSETS para construir prices{}
-//      → md.prices['BAYN.DE'] era undefined
 //      → el fallback `asset.price` (este archivo) se usaba siempre
 //   Ambos archivos están corregidos en este mismo commit.
 //
@@ -203,27 +198,5 @@ export const portfolio: Portfolio = {
       history: generateMockHistory(65.0),
       factorRole: 'quality'
     },
-    {
-      // FIX-BAYN: Bayer AG — añadida como posición real del portfolio
-      // Tesis: value extremo (P/E ~8x vs sector 20x) por litigios glifosato
-      // Prior de retorno esperado: 12% — descuento grande, pipeline GLP-1 positivo
-      // RELLENAR shares y avgPrice con datos reales de IBKR
-      ticker: "BAYN.DE",
-      name: "Bayer AG",
-      weight: 0,              // peso objetivo — ajustar según decisión de asignación
-      currentWeight: 0,
-      shares: 0,              // ← RELLENAR con posición real de IBKR
-      avgPrice: 0,            // ← RELLENAR con precio medio de compra real
-      price: 25.0,            // fallback — Yahoo Finance: BAYN.DE (~€24-26 en 2025)
-      volatility: 35,
-      expectedReturn: 12,     // prior: value deep + upside legal resolution
-      sector: "Healthcare",
-      earningsYield: 0.08,    // ~8% earnings yield a precios actuales (P/E ~12-13x normalizado)
-      return12m: 0,
-      return3m: 0,
-      return1m: 0,
-      history: generateMockHistory(25.0),
-      factorRole: 'value'     // Bayer es posición value pura — P/B < 0.8x
-    }
   ]
 };

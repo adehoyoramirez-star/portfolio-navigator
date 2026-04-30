@@ -11,7 +11,6 @@
 //      el bloque de horizonte óptimo. Antes solo se mostraba TP1.
 //   4. PositionRow: "fila de salud" incluye suggestedExit y
 //      scaleUpAmount cuando aplica.
-//   5. Posiciones de demo INTC y BAYN precargadas en initState
 //      para que el dashboard muestre datos reales desde el primer render.
 // ============================================================
 
@@ -100,7 +99,6 @@ const typeLabels: Record<string, string> = {
   EVENT_DRIVEN:      '⚡ Evento',
 };
 
-// ── Posiciones de demo precargadas (INTC + BAYN) ─────────────
 // Se insertan en el estado inicial si no hay estado guardado en localStorage.
 // Los valores de horizonte óptimo se calculan en tiempo de ejecución
 // usando calcOptimalHorizon sin cap duro.
@@ -142,44 +140,7 @@ function buildDemoPositions(): TacticalPosition[] {
     optimalProbTP1: intcOpt1.prob,
   };
 
-  // BAYN: 2 acc entrada €36.63. SL, TP1, TP2 calculados por motor.
-  const baynEntry = 36.63, baynAtr = 36.63 * 0.019;
-  const baynSL  = baynEntry - baynAtr * 2;
-  const baynTP1 = baynEntry + (baynEntry - baynSL) * 1.2;
-  const baynTP2 = baynEntry + (baynEntry - baynSL) * 1.8;
-  const baynOpt1 = calcOptimalHorizon(baynEntry, baynTP1, baynAtr);
-  const baynOpt2 = calcOptimalHorizon(baynEntry, baynTP2, baynAtr);
-  const baynMax  = Math.min(calcDynamicMaxDays(0.019), Math.max(5, Math.round(baynOpt2.days * 1.2)));
-  const bayn: TacticalPosition = {
-    id: 'demo-bayn-1',
-    ticker: 'BAYN', name: 'Bayer AG',
-    type: 'MEAN_REVERSION',
-    entryDate: daysAgo(1),
-    entryPrice: baynEntry,
-    shares: 2,
-    capitalRisked: (baynEntry - baynSL) * 2,
-    totalInvested: baynEntry * 2,
-    stopLoss: parseFloat(baynSL.toFixed(2)),
-    takeProfit1: parseFloat(baynTP1.toFixed(2)),
-    takeProfit2: parseFloat(baynTP2.toFixed(2)),
-    status: 'OPEN',
-    currentPrice: 35.10,
-    exitDate: null, exitPrice: null, exitReason: null,
-    unrealizedPnL: (35.10 - baynEntry) * 2,
-    unrealizedPnLPct: (35.10 / baynEntry - 1) * 100,
-    realizedPnL: null, realizedPnLPct: null,
-    daysOpen: 1,
-    maxDaysAllowed: baynMax,
-    expectedDaysToTP1: calcExpectedDays(baynEntry, baynTP1, baynAtr, 'MEAN_REVERSION'),
-    expectedDaysToTP2: calcExpectedDays(baynEntry, baynTP2, baynAtr, 'MEAN_REVERSION'),
-    daysToBreakeven: 2,
-    timingScore: 0,
-    optimalDaysTP1: baynOpt1.days,
-    optimalDaysTP2: baynOpt2.days,
-    optimalProbTP1: baynOpt1.prob,
-  };
-
-  return [intc, bayn];
+  return [intc];
 }
 
 // ════════════════════════════════════════════════════════════
@@ -190,8 +151,7 @@ export default function TacticalDashboard() {
     const saved = loadTacticalState();
     if (saved) return saved;
     const base = initTacticalState(defaultTacticalConfig(300, 600));
-    // Precarga INTC y BAYN si no hay estado guardado
-    const demos = buildDemoPositions();
+        const demos = buildDemoPositions();
     const capitalUsed = demos.reduce((s, p) => s + p.totalInvested, 0);
     return {
       ...base,
@@ -630,10 +590,7 @@ export default function TacticalDashboard() {
   // SUB-COMPONENTE: PositionRow — con TP2, salud completa
   // ════════════════════════════════════════════════════════════
   const PositionRow = ({ pos }: { pos: TacticalPosition }) => {
-    const [exitP,    setExitP]    = useState(pos.currentPrice.toFixed(2));
-    const [currP,    setCurrP]    = useState(pos.currentPrice.toFixed(2));
-    const [entryP,   setEntryP]   = useState(pos.entryPrice.toFixed(2));
-    const [sharesP,  setSharesP]  = useState(String(pos.shares));
+    const [exitP, setExitP] = useState(pos.currentPrice.toFixed(2));
     const pnlColor = clr(pos.unrealizedPnL);
     const nearSL   = pos.currentPrice <= pos.stopLoss * 1.02;
     const nearTP   = pos.currentPrice >= pos.takeProfit1 * 0.97;
@@ -683,79 +640,18 @@ export default function TacticalDashboard() {
             </span>
           </td>
 
-          {/* Entrada — editable para corregir precio real ejecutado */}
+          {/* Entrada */}
           <td style={S.td}>
-            <input
-              type="number" step="0.01"
-              value={entryP}
-              onChange={e => setEntryP(e.target.value)}
-              onBlur={() => {
-                const v = parseFloat(entryP);
-                if (v > 0) setState(prev => ({
-                  ...prev,
-                  openPositions: prev.openPositions.map(p =>
-                    p.id === pos.id ? {
-                      ...p,
-                      entryPrice: v,
-                      totalInvested: v * p.shares,
-                      capitalRisked: (v - p.stopLoss) * p.shares,
-                      unrealizedPnL: (p.currentPrice - v) * p.shares,
-                      unrealizedPnLPct: (p.currentPrice / v - 1) * 100,
-                    } : p
-                  )
-                }));
-              }}
-              style={{ ...S.input, width:72, marginBottom:2 }}
-            />
-            <input
-              type="number" step="1" min="0.000001"
-              value={sharesP}
-              onChange={e => setSharesP(e.target.value)}
-              onBlur={() => {
-                const v = parseFloat(sharesP);
-                if (v > 0) setState(prev => ({
-                  ...prev,
-                  openPositions: prev.openPositions.map(p =>
-                    p.id === pos.id ? {
-                      ...p,
-                      shares: v,
-                      totalInvested: p.entryPrice * v,
-                      capitalRisked: (p.entryPrice - p.stopLoss) * v,
-                      unrealizedPnL: (p.currentPrice - p.entryPrice) * v,
-                      unrealizedPnLPct: (p.currentPrice / p.entryPrice - 1) * 100,
-                    } : p
-                  )
-                }));
-              }}
-              style={{ ...S.input, width:72, marginBottom:2 }}
-            />
+            <div>€{pos.entryPrice.toFixed(2)}</div>
+            <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{pos.shares} uds</div>
             <div style={{ fontSize:'0.6rem', color:'#475569' }}>€{pos.totalInvested.toFixed(0)} inv.</div>
           </td>
 
-          {/* Precio actual — editable para introducir precio real de mercado */}
+          {/* Precio actual + días para verde */}
           <td style={S.td}>
-            <input
-              type="number" step="0.01"
-              value={currP}
-              onChange={e => setCurrP(e.target.value)}
-              onBlur={() => {
-                const v = parseFloat(currP);
-                if (v > 0) setState(prev => ({
-                  ...prev,
-                  openPositions: prev.openPositions.map(p =>
-                    p.id === pos.id ? {
-                      ...p,
-                      currentPrice: v,
-                      unrealizedPnL: (v - p.entryPrice) * p.shares,
-                      unrealizedPnLPct: (v / p.entryPrice - 1) * 100,
-                    } : p
-                  )
-                }));
-                setExitP(parseFloat(currP).toFixed(2));
-              }}
-              style={{ ...S.input, width:72, marginBottom:2,
-                color: parseFloat(currP) >= pos.entryPrice ? '#22c55e' : '#f8fafc' }}
-            />
+            <div style={{ fontWeight:700, color: inGreen ? '#22c55e' : '#f8fafc' }}>
+              €{pos.currentPrice.toFixed(2)}
+            </div>
             <div style={{ fontSize:'0.65rem', color: inGreen ? '#22c55e' : '#f59e0b' }}>
               {dtbLabel}
             </div>
