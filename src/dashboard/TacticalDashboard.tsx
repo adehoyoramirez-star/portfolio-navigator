@@ -630,7 +630,10 @@ export default function TacticalDashboard() {
   // SUB-COMPONENTE: PositionRow — con TP2, salud completa
   // ════════════════════════════════════════════════════════════
   const PositionRow = ({ pos }: { pos: TacticalPosition }) => {
-    const [exitP, setExitP] = useState(pos.currentPrice.toFixed(2));
+    const [exitP,   setExitP]   = useState(pos.currentPrice.toFixed(2));
+    const [currP,   setCurrP]   = useState(pos.currentPrice.toFixed(2));
+    const [entryP,  setEntryP]  = useState(pos.entryPrice.toFixed(2));
+    const [sharesP, setSharesP] = useState(String(pos.shares));
     const pnlColor = clr(pos.unrealizedPnL);
     const nearSL   = pos.currentPrice <= pos.stopLoss * 1.02;
     const nearTP   = pos.currentPrice >= pos.takeProfit1 * 0.97;
