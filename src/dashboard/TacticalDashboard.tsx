@@ -1275,11 +1275,49 @@ export default function TacticalDashboard() {
                               onClick={() => setState((prev: TacticalEngineState) => {
                                 const pos2 = prev.closedPositions.find((p: TacticalPosition) => p.id === pos.id);
                                 if (!pos2) return prev;
-                                const reopened = { ...pos2, status: 'OPEN' as const, exitDate: null, exitPrice: null, exitReason: null, realizedPnL: null, realizedPnLPct: null };
+
+                                // FIX-REOPEN-1: no reabrir si ya hay una posición abierta del mismo ticker
+                                const alreadyOpen = prev.openPositions.some(
+                                  (p: TacticalPosition) => p.ticker === pos2.ticker
+                                );
+                                if (alreadyOpen) {
+                                  alert(`Ya tienes ${pos2.ticker} en posiciones abiertas. Ciérrala antes de reabrir.`);
+                                  return prev;
+                                }
+
+                                // FIX-REOPEN-2: eliminar TODAS las entradas cerradas del mismo ticker base
+                                // (incluye parciales tp1 con id como "demo-intc-1-tp1-xxxxx")
+                                const baseTicker = pos2.ticker;
+                                const closedFiltered = prev.closedPositions.filter(
+                                  (p: TacticalPosition) => p.ticker !== baseTicker
+                                );
+
+                                // FIX-REOPEN-3: restaurar el estado original de la posición
+                                // (shares originales = si era parcial, usamos el original del nombre base)
+                                const reopened: TacticalPosition = {
+                                  ...pos2,
+                                  id:               `${pos2.ticker.toLowerCase()}-reopened-${Date.now()}`,
+                                  status:           'OPEN',
+                                  exitDate:         null,
+                                  exitPrice:        null,
+                                  exitReason:       null,
+                                  realizedPnL:      null,
+                                  realizedPnLPct:   null,
+                                  // Reset P&L no realizado al precio actual (currentPrice = entryPrice como punto neutro)
+                                  currentPrice:     pos2.entryPrice,
+                                  unrealizedPnL:    0,
+                                  unrealizedPnLPct: 0,
+                                  daysOpen:         0,
+                                  name:             pos2.ticker, // nombre limpio sin "(50% TP1)" etc.
+                                };
+
+                                const capitalNeeded = reopened.entryPrice * reopened.shares;
                                 return {
                                   ...prev,
-                                  openPositions: [...prev.openPositions, reopened],
-                                  closedPositions: prev.closedPositions.filter((p: TacticalPosition) => p.id !== pos.id),
+                                  openPositions:    [...prev.openPositions, reopened],
+                                  closedPositions:  closedFiltered,
+                                  capitalUsed:      prev.capitalUsed + capitalNeeded,
+                                  capitalAvailable: Math.max(0, prev.capitalAvailable - capitalNeeded),
                                 };
                               })}>
                               🔄 Reabrir
