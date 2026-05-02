@@ -679,11 +679,22 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   });
 
   // ====== MATRIZ DE COVARIANZA ======
-  const staticCov = returnsPerAsset.some(r => r.length < 20)
-  ? fallbackCovMatrix()
-  : covarianceMatrix(returnsPerAsset);
+  // DIAGNÓSTICO — visible en consola del navegador para detectar activos sin datos
+  console.log('[Olympus] returnsPerAsset lengths:',
+    ASSETS.map((t, i) => `${t}:${returnsPerAsset[i].length}`).join(' | ')
+  );
+  console.log('[Olympus] returnsPerAsset hasNaN:',
+    ASSETS.map((t, i) => `${t}:${returnsPerAsset[i].some(v => !isFinite(v))}`).join(' | ')
+  );
 
-const covMatrix = getDynamicCovMatrix([...ASSETS], closesHistory, staticCov);
+  const staticCov = returnsPerAsset.some(r => r.length < 20)
+    ? fallbackCovMatrix()
+    : covarianceMatrix(returnsPerAsset);
+
+  const covMatrix = getDynamicCovMatrix([...ASSETS], closesHistory, staticCov);
+  console.log('[Olympus] covMatrix size:', covMatrix.length, '×', covMatrix[0]?.length,
+    '| hasNaN:', covMatrix.some(row => row.some(v => !isFinite(v)))
+  );
     
 
   // ====== CEWS HISTORY AUTOMÁTICO (5 años semanal desde Yahoo) ======
@@ -740,21 +751,21 @@ const covMatrix = getDynamicCovMatrix([...ASSETS], closesHistory, staticCov);
   };
 }
 
-// Fallback if historical data is incomplete
-// FIX-BAYN: expandida de 7×7 a 8×8 para incluir BAYN.DE (healthcare, vol ~35%)
-// Orden: BTC-EUR, EMXC.DE, IS3Q.DE, PPFB.DE, URNU.DE, VVSM.DE, XNAS.DE, BAYN.DE
+// Fallback 7×7 — orden exacto de ASSETS: BTC-EUR, EMXC.DE, IS3Q.DE, PPFB.DE, URNU.DE, VVSM.DE, XNAS.DE
+// FIX: era 8×8 (incluía BAYN.DE que está en motor táctico, no en ASSETS).
+// Eso hacía que hasRealCovMatrix siempre fuera false (8 !== 7) → Olympus nunca
+// usaba MinVar ni BL, solo Kelly+HRP. Ahora dimensiones coinciden con ASSETS.
 function fallbackCovMatrix(): number[][] {
-  const VOLS = [0.60, 0.18, 0.22, 0.15, 0.35, 0.25, 0.16, 0.35];
+  const VOLS = [0.60, 0.18, 0.22, 0.15, 0.35, 0.25, 0.16];
   const CORR = [
-    // BTC   EMXC   IS3Q   PPFB   URNU   VVSM   XNAS   BAYN
-    [1.00,  0.15,  0.20,  0.05,  0.10,  0.30,  0.10,  0.05],  // BTC
-    [0.15,  1.00,  0.75,  0.10,  0.15,  0.40,  0.25,  0.30],  // EMXC
-    [0.20,  0.75,  1.00,  0.10,  0.15,  0.45,  0.20,  0.35],  // IS3Q
-    [0.05,  0.10,  0.10,  1.00,  0.05,  0.05,  0.15,  0.00],  // PPFB (oro — descorrelado)
-    [0.10,  0.15,  0.15,  0.05,  1.00,  0.20,  0.10,  0.10],  // URNU
-    [0.30,  0.40,  0.45,  0.05,  0.20,  1.00,  0.15,  0.25],  // VVSM
-    [0.10,  0.25,  0.20,  0.15,  0.10,  0.15,  1.00,  0.20],  // XNAS
-    [0.05,  0.30,  0.35,  0.00,  0.10,  0.25,  0.20,  1.00],  // BAYN (healthcare, correlación moderada con equity)
+    // BTC   EMXC   IS3Q   PPFB   URNU   VVSM   XNAS
+    [1.00,  0.15,  0.20,  0.05,  0.10,  0.30,  0.10],  // BTC
+    [0.15,  1.00,  0.75,  0.10,  0.15,  0.40,  0.25],  // EMXC
+    [0.20,  0.75,  1.00,  0.10,  0.15,  0.45,  0.20],  // IS3Q
+    [0.05,  0.10,  0.10,  1.00,  0.05,  0.05,  0.15],  // PPFB (oro — descorrelado)
+    [0.10,  0.15,  0.15,  0.05,  1.00,  0.20,  0.10],  // URNU
+    [0.30,  0.40,  0.45,  0.05,  0.20,  1.00,  0.15],  // VVSM
+    [0.10,  0.25,  0.20,  0.15,  0.10,  0.15,  1.00],  // XNAS
   ];
   return CORR.map((row, i) => row.map((c, j) => c * VOLS[i] * VOLS[j]));
 }
