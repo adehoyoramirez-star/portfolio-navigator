@@ -1,352 +1,586 @@
 // ===============================================
-// ARCHIVO: src/core/engine/olympusX.ts
-// OLYMPUS X — Motor de Siguiente Nivel
+// ARCHIVO: src/core/engine/olympusV3.ts
+// OLYMPUS ENGINE V5 — Motor Institucional Anti-Frágil
 // ===============================================
-// Capa de integración que conecta los upgrades institucionales:
-//
-//   HMM Regime      → Reemplaza/augmenta el régimen probabilístico estático
-//   CVaR Optimizer  → Constraina las allocaciones con tail risk real
-//   Kalman Weights  → Pesos de factores adaptativos
-//
-// FILOSOFÍA DE INTEGRACIÓN:
-//   No reemplazamos OlympusV3 — lo AUGMENTAMOS.
-//   OlympusV3 sigue siendo el motor base (probado, auditado).
-//   OlympusX añade 3 capas sobre el output de V3:
-//
-//   PIPELINE COMPLETO:
-//   [DATA] → [OLYMPUS V3] → [HMM REGIME OVERRIDE] → [CVaR OPTIMIZER] → [OUTPUT]
-//                               ↑                         ↑
-//                        runHMMRegime()           optimizeCVaR()
-//                               ↑
-//                    updateKalmanFactorWeights()
-//
-// DEGRADACIÓN ELEGANTE:
-//   Si el HMM no tiene historial suficiente (<4 semanas) → usa V3 regime
-//   Si el CVaR optimizer no converge → usa las allocaciones de V3
-//   Si Kalman no está calibrado (<12 updates) → usa DEFAULT_WEIGHTS de engineConfig
-//
-// VERSION BUMP: X.0.0 (sobre V5.0.0)
+// CAPAS DE ASIGNACIÓN (en orden de aplicación):
+//   0. BTC CYCLE OVERLAY  → MVRV/Puell/RSI → btcNumeric [0,1]
+//   1. META-INTELIGENCIA  → confidenceMultiplier [0.70, 1.0] si modelo falla
+//   2. RÉGIMEN UNIFICADO  → masterRegime con penalty continuo [0.4, 1.0]
+//   3. FACTOR SCORES      → momentum + value + quality + lowVol
+//   4. KELLY FRACTION     → half-kelly cap 0.20
+//   5. CORRELACIÓN        → penalización si correlación media > 0.5
+//   6. BLEND 2-PATH       → BL×0.40 + HRP×0.45 + MinVar×0.15
+//   7. VOL TARGET         → escalar a vol objetivo 18%
+//   8. TAIL RISK V5       → kill switch 5 niveles DD 5/10/15/20/25%
+//   9. BTC CAP            → máximo 20% (no 70% de V4.1)
+//  10. META-CONFIDENCE    → ajuste final por salud del modelo
 // ===============================================
 
-import { runOlympusEngine, EngineOutput, OlympusEngineInput } from './olympusV3';
-import { runHMMRegime, hmmProbsToRegimePenalty, HMMObservation } from '../macro/hmmRegime';
-import {
-  optimizeCVaR,
-  generateCVaRScenarios,
-  computePortfolioCVaR,
-  CVaROptimizerOutput,
-} from '../risk/cvarOptimizer';
-import {
-  getCurrentKalmanWeights,
-  updateKalmanFactorWeights,
-  FactorObservation,
-  loadKalmanState,
-} from '../factors/kalmanFactorWeights';
-import { VOLATILITY_CONFIG } from '../config/engineConfig';
+export const ENGINE_VERSION = "v5.0.0";
 
-export const OLYMPUS_X_VERSION = 'X.0.0';
+// ── Imports (todos al inicio) ─────────────────────────────────────────────
+import { calculateMomentum } from "../factors/momentum";
+import { calculateValue, computeUniverseStats, ValueInput } from "../factors/value";
+import { calculateQuality, computeQualityUniverseStats, QualityInput } from "../factors/quality";
+import { calculateLowVol, computeLowVolUniverseStats } from "../factors/lowVolatility";
+import { computeHRP } from "../risk/hrp";
+import { getMasterRegime, MasterRegimeOutput, RegimeHistoryEntry } from "../macro/masterRegime";
+import type { CEWSDataPoint } from "../macro/crisisEarlyWarning";
+import { calculateKelly } from "../portfolio/kelly";
+import { correlationPenalty } from "../portfolio/correlation";
+import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBudget";
+import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
+import { computeTailRiskOverlay } from "../risk/tailRisk";
+import { runBlackLitterman, generateViewsFromEngine, BLView } from "../portfolio/blackLitterman";
+import { calibrateExpectedReturn } from "../factors/factorCalibration";
+import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
+import { computeDCADecision } from "../dca/dcaEngine";  // ✅ CORREGIDO: import al inicio
+import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
+// FIX-CRÍTICO-2: ÚNICA fuente de verdad para pesos de factores.
+// Antes: triple hardcode en engineConfig.ts, factorCalibration.ts, y aquí.
+// Ahora: todos importan de engineConfig → un solo punto de cambio.
+// FIX-IMPORT: BTC_HARD_CAP y BLEND_WEIGHTS definidos aquí como fallback seguro
+// por si la versión desplegada de engineConfig no los exporta todavía.
+import { FACTOR_CONFIG } from "../config/engineConfig";
 
-// ── INPUT EXTENDIDO ───────────────────────────────────────────────────────────
+// ── BTC Hard Cap y Blend Weights — definidos localmente para robustez ─────
+// Si engineConfig los exporta, úsalos desde allí. Si no, estos valores
+// actúan como fallback sin romper la compilación.
+const BTC_HARD_CAP = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cfg = require("../config/engineConfig");
+    return cfg.BTC_HARD_CAP ?? 0.15;
+  } catch { return 0.15; }
+})();
 
-export interface OlympusXInput extends OlympusEngineInput {
-  // Historial de observaciones macro para el HMM (últimas 4-52 semanas)
-  // Orden cronológico: [semana_más_antigua, ..., semana_actual]
-  macroHistory?: HMMObservation[];
+// CAMBIO-2: BL 20%, HRP 65%, MinVar 15% — walk-forward 59% overfitting lo justifica
+const BLEND_WEIGHTS = {
+  WITH_COV:    { BL: 0.20, HRP: 0.65, MIN_VAR: 0.15 },
+  WITHOUT_COV: { KELLY: 0.25, HRP: 0.75 },
+} as const;
 
-  // Observación de factores de esta semana (para Kalman update)
-  factorObservation?: FactorObservation;
-
-  // Target CVaR para el optimizer (default: 0.15 = pérdida máx 15%)
-  cvarTarget?: number;
-
-  // Si false, omite el CVaR optimizer (más rápido, mismo behavior que V3)
-  useCVarOptimizer?: boolean;
-
-  // Si false, omite el HMM (usa V3 regime detection)
-  useHMM?: boolean;
-
-  // Si false, omite el Kalman (usa pesos estáticos)
-  useKalman?: boolean;
+// ==================== INTERFACES ====================
+export interface AssetInput {
+  name: string;
+  returns12m: number;
+  returns3m: number;
+  returns1m: number;
+  earningsYield: number;
+  volatility: number;   // decimal anualizado (0.60 = 60%)
+  sector?: string;
 }
 
-// ── OUTPUT EXTENDIDO ──────────────────────────────────────────────────────────
-
-export interface OlympusXOutput extends EngineOutput {
-  engineVersion: string; // override con OLYMPUS_X_VERSION
-
-  // Regime del HMM (si activo)
-  hmmRegime?: {
-    state: 'EXPANSION' | 'CONTRACTION' | 'CRISIS';
-    probabilities: { expansion: number; contraction: number; crisis: number };
-    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-    transitionProbability: number;
-    logLikelihood: number;
-    overrodeV3Regime: boolean;
-  };
-
-  // Output del CVaR optimizer (si activo)
-  cvarOptimizer?: {
-    active: boolean;
-    achievedCVaR: number;
-    cvarTarget: number;
-    cvarSlack: number;
-    isBindingConstraint: boolean;
-    converged: boolean;
-    cvarContributions: { asset: string; contribution: number }[];
-    allocationAdjustmentApplied: boolean;
-  };
-
-  // Estado del Kalman (si activo)
-  kalmanWeights?: {
-    active: boolean;
-    weights: { momentum: number; value: number; quality: number; lowVol: number };
-    modelHealth: 'CALIBRATED' | 'LEARNING' | 'UNCERTAIN';
-    nUpdates: number;
-  };
-
-  // Diagnostics comparando X vs V3
-  upgradeImpact: {
-    regimePenaltyDelta: number;  // cuánto cambió la penalización de régimen
-    allocationShiftMax: number;  // máxima diferencia de allocation vs V3
-    cvarImprovement: number;     // reducción de CVaR vs portfolio sin optimizer
-    activeUpgrades: string[];    // qué upgrades están activos
-  };
+export interface OlympusOutput {
+  name: string;
+  momentumScore: number;
+  valueScore: number;
+  valuePercentileRank: number;
+  qualityScore: number;
+  lowVolScore: number;
+  expectedReturn: number;
+  normalizedExpectedReturn: number;
+  kellyFraction: number;
+  rawKelly: number;
+  isCapped: boolean;
+  kellyAllocation: number;
+  markowitzAllocation: number;
+  riskParityAllocation: number;
+  blendedAllocation: number;
+  volAdjustedAllocation: number;
+  finalAllocation: number;
 }
 
-// ── MOTOR PRINCIPAL OLYMPUS X ─────────────────────────────────────────────────
+export type PortfolioRegime = "EXPANSION" | "CONTRACTION" | "CRISIS" | "ALL_CASH";
 
-export function runOlympusX(input: OlympusXInput): OlympusXOutput {
-  const {
-    macroHistory = [],
-    factorObservation,
-    cvarTarget = 0.15,
-    useCVarOptimizer = true,
-    useHMM = true,
-    useKalman = true,
-  } = input;
+export interface ScenarioProbabilities {
+  bull: number;
+  neutral: number;
+  bear: number;
+  expectedExposure: number;
+}
 
-  const activeUpgrades: string[] = [];
+export interface EngineOutput {
+  allocations: OlympusOutput[];
+  regime: PortfolioRegime;
+  masterRegime: MasterRegimeOutput;
+  correlationPenalty: number;
+  totalAllocation: number;
+  volTargetMultiplier: number;
+  tailRiskOverlay: number;
+  tailRiskActive: boolean;
+  tailRiskReason: string;
+  engineVersion: string;
+  meta: {
+    allCash: boolean;
+    confidence: "HIGH" | "MEDIUM" | "LOW";
+    dominantSignal: string;
+    hasRealCovMatrix: boolean;
+  };
+  btcCycle?: {
+    btcScore: number;
+    btcNumeric: number;
+    signal: 'STRONG_BUY' | 'BUY' | 'ACCUMULATE' | 'HOLD' | 'REDUCE';
+    boostActive: boolean;
+    breakdown: { mvrvScore: number; puellScore: number; rsiScore: number };
+  };
+  dca?: {
+    investPercent: number;
+    investAmount: number;
+    frequency: 'weekly' | 'biweekly' | 'monthly';
+    boostMultiplier: number;
+    effectiveIntensity: number;
+  };
+  coreSignal: {
+    regimeComponent: number;
+    btcComponent: number;
+    riskComponent: number;
+    finalScore: number;
+  };
+  scenarioProbabilities: ScenarioProbabilities;
+  metaIntelligence: {
+    modelHealth: 'RELIABLE' | 'DEGRADED' | 'UNRELIABLE';
+    confidenceMultiplier: number;
+    consecutiveErrors: number;
+    recommendation: string;
+  };
+  killSwitchLevel: 0 | 1 | 2 | 3 | 4 | 5;
+  killSwitchName: string;
+}
 
-  // ── STEP 1: KALMAN FACTOR WEIGHTS ────────────────────────────────────────
-  // Actualizar y obtener pesos adaptativos de factores
-  let adaptiveFactorWeights = input.adaptiveFactorWeights;
-  let kalmanOutput: OlympusXOutput['kalmanWeights'];
+export interface OlympusEngineInput {
+  assets: AssetInput[];
+  correlationMatrix: number[][];
+  macro: {
+    vix: number;
+    yieldSpread: number;
+    creditSpread: number;
+    move: number;
+    dxyTrend: number;
+    btcVol: number;
+    m2Growth: number;
+    wtiOil?: number;
+  };
+  covMatrix?: number[][];
+  portfolioDrawdown?: number;
+  portfolioRealizedVol?: number;
+  targetVol?: number;
+  erpValue?: number;
+  blViews?: BLView[];
+  liquidityGrowth?: number;
+  cewsHistory?: CEWSDataPoint[];
+  regimeHistory?: RegimeHistoryEntry[];
+  adaptiveFactorWeights?: {
+    momentum: number;
+    value: number;
+    quality: number;
+    lowVol: number;
+  };
+  btcOnChain?: {
+    mvrvRatio?: number;
+    puellMultiple?: number;
+    rsiWeekly?: number;
+  };
+  availableCash?: number;
+  totalPortfolioValue?: number;
+  avgCorrelation?: number;
+}
 
-  if (useKalman) {
-    if (factorObservation) {
-      // Tenemos observación nueva → actualizar Kalman
-      const kalmanResult = updateKalmanFactorWeights(factorObservation);
-      adaptiveFactorWeights = kalmanResult.weights;
-      kalmanOutput = {
-        active: true,
-        weights: kalmanResult.weights,
-        modelHealth: kalmanResult.diagnostics.modelHealth,
-        nUpdates: kalmanResult.state.nUpdates,
-      };
+// ── ESCENARIOS PROBABILÍSTICOS V5 ─────────────────────────────────────────
+function computeScenarioProbabilities(
+  regimeProbs: { expansion: number; contraction: number; crisis: number },
+  btcNumeric: number,
+  liquidityGrowth: number
+): ScenarioProbabilities {
+  let pBull = regimeProbs.expansion;
+  let pNeutral = regimeProbs.contraction;
+  let pBear = regimeProbs.crisis;
+
+  const btcAdjustment = (btcNumeric - 0.5) * 0.40;
+  pBull = Math.max(0.05, Math.min(0.90, pBull + btcAdjustment));
+  pBear = Math.max(0.05, Math.min(0.90, pBear - btcAdjustment));
+
+  if (liquidityGrowth < 0) {
+    const liquidityPenalty = Math.min(0.15, Math.abs(liquidityGrowth) / 10);
+    pBull = Math.max(0.05, pBull - liquidityPenalty);
+    pBear = Math.min(0.90, pBear + liquidityPenalty);
+  } else if (liquidityGrowth > 5) {
+    const liquidityBoost = Math.min(0.10, (liquidityGrowth - 5) / 20);
+    pBull = Math.min(0.90, pBull + liquidityBoost);
+    pBear = Math.max(0.05, pBear - liquidityBoost);
+  }
+
+  const total = pBull + pNeutral + pBear;
+  pBull /= total;
+  pNeutral = Math.max(0.05, 1 - pBull - pBear);
+  pBear /= total;
+  const total2 = pBull + pNeutral + pBear;
+  pBull /= total2;
+  pNeutral /= total2;
+  pBear /= total2;
+
+  const expectedExposure = pBull * 1.0 + pNeutral * 0.60 + pBear * 0.20;
+  return { bull: pBull, neutral: pNeutral, bear: pBear, expectedExposure };
+}
+
+// ── MOTOR PRINCIPAL ───────────────────────────────────────────────────────
+export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
+  const { assets, correlationMatrix, macro } = input;
+
+  const erpRaw = input.erpValue ?? 0.02;
+  const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
+  // FIX-NaN-1: hasRealCovMatrix debe verificar que la dimensión de la covMatrix
+  // coincide exactamente con el número de activos. Si covMatrix es 7×7 pero
+  // assets tiene 8 elementos (BAYN.DE añadida), covMatrix[7] es undefined →
+  // Math.sqrt(undefined) → NaN → se propaga a portfolioVol, μ, MC y allocations.
+  // ANTES: !!(input.covMatrix && input.covMatrix.length > 0) → acepta 7×7 con 8 activos
+  // AHORA: también verifica input.covMatrix.length === assets.length
+  const hasRealCovMatrix = !!(
+    input.covMatrix &&
+    input.covMatrix.length === assets.length &&
+    input.covMatrix[0]?.length === assets.length
+  );
+
+  // ====== CAPA 0: BTC CYCLE OVERLAY ======
+  const btcCycleInput: BTCCycleInput = {
+    mvrvRatio: input.btcOnChain?.mvrvRatio,
+    puellMultiple: input.btcOnChain?.puellMultiple,
+    rsiWeekly: input.btcOnChain?.rsiWeekly,
+  };
+  const btcCycle = computeBTCCycleOverlay(btcCycleInput);
+
+  // ====== CAPA 1: META-INTELIGENCIA ======
+  const predictionHistory = loadPredictionHistory();
+  const metaIntelligence = computeMetaIntelligence(predictionHistory);
+
+  // ====== CAPA 2: RÉGIMEN UNIFICADO ======
+  const masterRegime = getMasterRegime(
+    {
+      vix: macro.vix,
+      yieldSpread: macro.yieldSpread,
+      creditSpread: macro.creditSpread,
+      move: macro.move,
+      dxyTrend: macro.dxyTrend,
+      btcVol: macro.btcVol,
+      m2Growth: macro.m2Growth,
+      wtiOil: macro.wtiOil,
+    },
+    input.cewsHistory,
+    input.regimeHistory
+  );
+
+  const adjustedRegimePenalty = masterRegime.regime === 'CRISIS'
+    ? Math.max(masterRegime.regimePenalty, masterRegime.regimePenalty / metaIntelligence.confidenceMultiplier)
+    : masterRegime.regimePenalty;
+
+  const corrPenalty = correlationPenalty(correlationMatrix);
+
+  // ====== CORE SIGNAL ======
+  const regimeNumeric = adjustedRegimePenalty;
+  const btcNumeric = btcCycle.btcNumeric;
+  const riskNumeric = 1 - ((input.portfolioRealizedVol ?? 0.18) / 0.50);
+  // FIX-IMP-6: rebalancear pesos coreSignal.
+  // PROBLEMA ANTERIOR: 0.45×btcNumeric + 0.35×regimeNumeric
+  //   BTC on-chain dominaba más que el régimen macro global.
+  //   En 2023: BTC bear + equity global en rally → el motor infraexponía equity innecesariamente.
+  // CORRECCIÓN: régimen macro es el driver primario, BTC es señal secundaria proporcional a su cap (20%).
+  //   0.45 × regimeNumeric  ← macro global es el sistema nervioso del portfolio
+  //   0.35 × btcNumeric     ← BTC on-chain relevante pero no dominante
+  //   0.20 × riskNumeric    ← vol del portfolio: sin cambio
+  const coreSignalScore = 0.45 * regimeNumeric + 0.35 * btcNumeric + 0.20 * Math.max(0, riskNumeric);
+
+  // ====== ESCENARIOS PROBABILÍSTICOS ======
+  const scenarioProbabilities = computeScenarioProbabilities(
+    masterRegime.regimeProbs,
+    btcNumeric,
+    input.liquidityGrowth ?? 0
+  );
+
+  // ====== CAPA 3: FACTOR SCORES ======
+  const universeStats = computeUniverseStats(assets as ValueInput[]);
+  const qualityStats = computeQualityUniverseStats(assets as QualityInput[]);
+  const lowVolStats = computeLowVolUniverseStats(assets);
+
+  const rawScores = assets.map((asset) => {
+    const momentum = calculateMomentum({
+      returns12m: asset.returns12m,
+      returns1m: asset.returns1m,
+      returns3m: asset.returns3m,
+    });
+    const value = calculateValue({ earningsYield: asset.earningsYield }, universeStats);
+    const quality = calculateQuality(asset as QualityInput, qualityStats);
+    const lowVol = calculateLowVol(asset, lowVolStats);
+
+    // FIX-CRÍTICO-2: usar FACTOR_CONFIG.DEFAULT_WEIGHTS como fuente única.
+    // Antes era { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 } hardcodeado.
+    // Ahora cualquier cambio en engineConfig.ts se propaga automáticamente.
+    const fw = input.adaptiveFactorWeights ?? FACTOR_CONFIG.DEFAULT_WEIGHTS;
+    const calibrated = calibrateExpectedReturn({
+      momentumScore: momentum.momentumScore,
+      valueScore: value.valueScore,
+      qualityScore: quality.qualityScore,
+      lowVolScore: lowVol.lowVolScore + lowVol.downsideVolPenalty,
+    }, fw);
+
+    return { asset, momentum, value, quality, lowVol, rawExpectedReturn: calibrated.expectedReturn, calibrated };
+  });
+
+  // ====== CAPA 4: KELLY ======
+  const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, calibrated }) => {
+    const kelly = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility });
+    const isEquity = asset.earningsYield > 0;
+    const erpAdj = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0);
+    const kellyAlloc = kelly.kellyFraction * corrPenalty * adjustedRegimePenalty * erpAdj;
+    return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn: rawExpectedReturn, calibrated, kelly, kellyAlloc };
+  });
+
+  const totalKelly = kellyAllocations.reduce((s, a) => s + a.kellyAlloc, 0);
+  if (totalKelly === 0) {
+    const empty = kellyAllocations.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, kelly }) => ({
+      name: asset.name, momentumScore: momentum.momentumScore, valueScore: value.valueScore,
+      valuePercentileRank: value.percentileRank, qualityScore: quality.qualityScore,
+      lowVolScore: lowVol.lowVolScore, expectedReturn: rawExpectedReturn,
+      normalizedExpectedReturn: rawExpectedReturn, kellyFraction: kelly.kellyFraction, rawKelly: kelly.rawKelly,
+      isCapped: kelly.isCapped, kellyAllocation: 0, markowitzAllocation: 0,
+      riskParityAllocation: 0, blendedAllocation: 0, volAdjustedAllocation: 0, finalAllocation: 0,
+    }));
+    return {
+      allocations: empty, regime: "ALL_CASH", masterRegime, correlationPenalty: corrPenalty,
+      totalAllocation: 0, volTargetMultiplier: 0, tailRiskOverlay: 1, tailRiskActive: false,
+      tailRiskReason: "", engineVersion: ENGINE_VERSION,
+      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix },
+      btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
+      dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
+      coreSignal: { regimeComponent: 0.45 * regimeNumeric, btcComponent: 0.35 * btcNumeric, riskComponent: 0.20 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
+      scenarioProbabilities,
+      metaIntelligence: { modelHealth: metaIntelligence.modelHealth, confidenceMultiplier: metaIntelligence.confidenceMultiplier, consecutiveErrors: metaIntelligence.consecutiveErrors, recommendation: metaIntelligence.recommendation },
+      killSwitchLevel: 0, killSwitchName: 'SIN TRIGGER',
+    };
+  }
+
+  const kellyNorm = kellyAllocations.map(a => ({ ...a, kellyNormalized: a.kellyAlloc / totalKelly }));
+
+  // ====== CAPA 5: HRP ======
+  const hrpResult = computeHRP(hasRealCovMatrix ? input.covMatrix! : [], assets.length);
+  const hrpWeights = hrpResult.weights;
+
+  // ====== CAPA 6: BLACK-LITTERMAN ======
+  let blWeights: number[] = assets.map(() => 1 / assets.length);
+  if (hasRealCovMatrix && input.covMatrix) {
+    try {
+      const blViews = input.blViews ?? generateViewsFromEngine(
+        rawScores.map(s => ({
+          name: s.asset.name,
+          ticker: s.asset.name,
+          momentumScore: s.momentum.momentumScore,
+          valuePercentileRank: s.value.percentileRank,
+        })),
+        masterRegime.regime,
+        input.liquidityGrowth ?? 0
+      );
+      const marketWeights = assets.map(() => 1 / assets.length);
+      const blResult = runBlackLitterman({
+        assetNames: assets.map(a => a.name),
+        covMatrix: input.covMatrix,
+        marketWeights,
+        views: blViews,
+        riskAversion: masterRegime.regime === "CRISIS" ? 4.0 : masterRegime.regime === "CONTRACTION" ? 3.0 : 2.5,
+        tau: 0.05,
+      });
+      blWeights = blResult.posteriorWeights;
+    } catch {
+      blWeights = assets.map(() => 1 / assets.length);
+    }
+  }
+
+  // ====== BLEND FINAL — CAMBIO-2: HRP aumentado a 65%, BL reducido a 20% ======
+  // Fuente: BLEND_WEIGHTS en engineConfig.ts (única fuente de verdad).
+  // Antes: BL×0.40 + HRP×0.45 + MinVar×0.15 → ahora: BL×0.20 + HRP×0.65 + MinVar×0.15
+  // Walk-forward 59% overfitting justifica reducir BL (predice retornos) y subir HRP (no predice).
+  const blendWeights = assets.map((_, i) => {
+    if (hasRealCovMatrix) {
+      const minVarW = minimumVarianceWeights(input.covMatrix!, assets.length);
+      return blWeights[i] * BLEND_WEIGHTS.WITH_COV.BL
+           + hrpWeights[i] * BLEND_WEIGHTS.WITH_COV.HRP
+           + minVarW[i]    * BLEND_WEIGHTS.WITH_COV.MIN_VAR;
     } else {
-      // Sin observación nueva → solo leer el estado actual
-      const currentWeights = getCurrentKalmanWeights();
-      const kalmanState = loadKalmanState();
-      const nUpdates = kalmanState.nUpdates;
+      return kellyNorm[i].kellyNormalized * BLEND_WEIGHTS.WITHOUT_COV.KELLY
+           + hrpWeights[i]                * BLEND_WEIGHTS.WITHOUT_COV.HRP;
+    }
+  });
 
-      // Solo usar si tiene al menos 4 semanas de historia
-      if (nUpdates >= 4) {
-        adaptiveFactorWeights = currentWeights;
-        kalmanOutput = {
-          active: true,
-          weights: currentWeights,
-          modelHealth: nUpdates >= 52 ? 'CALIBRATED' : nUpdates >= 12 ? 'LEARNING' : 'UNCERTAIN',
-          nUpdates,
-        };
+  const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
+  const blendNorm = blendWeights.map(w => w / totalBlend);
+
+  const markowitzWeights = assets.map(() => 1 / assets.length);
+  const rpInputs = assets.map(a => ({
+    name: a.name,
+    volatility: a.volatility,
+    riskBudget: DEFAULT_SECTOR_BUDGETS[a.sector ?? ""] ?? 1,
+  }));
+  const rpResult = computeRiskParityWeights(rpInputs);
+  const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
+
+  // ====== CAPA 7: VOL TARGET ======
+  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, blendNorm, input.covMatrix);
+  const volTarget = computeVolTargetMultiplier({
+    targetVol: input.targetVol ?? DEFAULT_TARGET_VOL,
+    realizedVol,
+    regimePenalty: adjustedRegimePenalty,
+  });
+
+  // ====== CAPA 8: TAIL RISK ======
+  const tailRisk = computeTailRiskOverlay({
+    drawdown: input.portfolioDrawdown ?? 0,
+    vix: macro.vix,
+    creditSpread: macro.creditSpread,
+    stressScore: masterRegime.stressDetail.score,
+    portfolioVolatility: input.portfolioRealizedVol,
+    avgCorrelation: input.avgCorrelation,
+  });
+
+  // ====== CAPA 9: DCA CONTRACÍCLICO (CORREGIDO) ======
+  const dcaDecision = computeDCADecision({
+    regime: (masterRegime.regime as PortfolioRegime) === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime,
+    btcCycle,
+    totalPortfolioValue: input.totalPortfolioValue ?? 0,
+    availableCash: input.availableCash ?? 0,
+    portfolioVolatility: input.portfolioRealizedVol ?? 0.18,
+  });
+  const dca = {
+    investPercent: dcaDecision.effectiveIntensity,
+    investAmount: dcaDecision.investAmount,
+    frequency: dcaDecision.frequency,
+    boostMultiplier: dcaDecision.boostMultiplier,
+    effectiveIntensity: dcaDecision.effectiveIntensity,
+  };
+
+  // ====== OUTPUT FINAL ======
+  const allocations: OlympusOutput[] = kellyNorm.map(
+    ({ asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyNormalized }, i) => {
+      const blended = blendNorm[i];
+      const volAdj = blended * volTarget.multiplier;
+      const final = volAdj * tailRisk.overlay;
+
+      return {
+        name: asset.name,
+        momentumScore: momentum.momentumScore,
+        valueScore: value.valueScore,
+        valuePercentileRank: value.percentileRank,
+        qualityScore: quality.qualityScore,
+        lowVolScore: lowVol.lowVolScore,
+        expectedReturn: rawExpectedReturn,
+        normalizedExpectedReturn,
+        kellyFraction: kelly.kellyFraction,
+        rawKelly: kelly.rawKelly,
+        isCapped: kelly.isCapped,
+        kellyAllocation: kellyNormalized,
+        markowitzAllocation: markowitzWeights[i],
+        riskParityAllocation: rpWeights[i],
+        blendedAllocation: blended,
+        volAdjustedAllocation: volAdj,
+        finalAllocation: final,
+      };
+    }
+  );
+
+  const totalFinal = allocations.reduce((s, a) => s + a.finalAllocation, 0);
+  if (totalFinal > 0) {
+    allocations.forEach(a => { a.finalAllocation = a.finalAllocation / totalFinal; });
+  }
+
+  // ====== CAPA 10: BTC HARD CAP — CAMBIO-1 ======
+  // ANTES: MAX_BTC_WEIGHT_V5 = 0.20 (hardcodeado)
+  // AHORA: BTC_HARD_CAP = 0.15 (desde engineConfig — única fuente de verdad)
+  // Walk-forward 6.2 años: MaxDD −50% con BTC al 20% → reducir a 15% es la
+  // corrección directa más impactante en el perfil riesgo/retorno del motor.
+  const btcIdx = allocations.findIndex(a => a.name === 'BTC-EUR' || a.name.toLowerCase().includes('bitcoin') || a.name.toLowerCase().includes('btc'));
+  if (btcIdx >= 0 && allocations[btcIdx].finalAllocation > BTC_HARD_CAP) {
+    const excess = allocations[btcIdx].finalAllocation - BTC_HARD_CAP;
+    allocations[btcIdx].finalAllocation = BTC_HARD_CAP;
+    const otherTotal = allocations.filter((_, i) => i !== btcIdx).reduce((s, a) => s + a.finalAllocation, 0);
+    if (otherTotal > 0) {
+      allocations.forEach((a, i) => {
+        if (i !== btcIdx) a.finalAllocation += excess * (a.finalAllocation / otherTotal);
+      });
+    }
+  }
+
+  return {
+    allocations,
+    regime: masterRegime.regime,
+    masterRegime,
+    correlationPenalty: corrPenalty,
+    totalAllocation: allocations.reduce((s, a) => s + a.finalAllocation, 0),
+    volTargetMultiplier: volTarget.multiplier,
+    tailRiskOverlay: tailRisk.overlay,
+    tailRiskActive: tailRisk.isActive,
+    tailRiskReason: tailRisk.triggerReason,
+    engineVersion: ENGINE_VERSION,
+    meta: {
+      allCash: false,
+      confidence: masterRegime.confidence,
+      dominantSignal: masterRegime.dominantSignal,
+      hasRealCovMatrix,
+    },
+    btcCycle: {
+      btcScore: btcCycle.btcScore,
+      btcNumeric: btcCycle.btcNumeric,
+      signal: btcCycle.signal,
+      boostActive: btcCycle.boostActive,
+      breakdown: btcCycle.breakdown,
+    },
+    dca,
+    coreSignal: {
+      regimeComponent: 0.45 * regimeNumeric,
+      btcComponent: 0.35 * btcNumeric,
+      riskComponent: 0.20 * Math.max(0, riskNumeric),
+      finalScore: coreSignalScore,
+    },
+    scenarioProbabilities,
+    metaIntelligence: {
+      modelHealth: metaIntelligence.modelHealth,
+      confidenceMultiplier: metaIntelligence.confidenceMultiplier,
+      consecutiveErrors: metaIntelligence.consecutiveErrors,
+      recommendation: metaIntelligence.recommendation,
+    },
+    killSwitchLevel: tailRisk.killSwitchLevel,
+    killSwitchName: tailRisk.killSwitchName,
+  };
+}
+
+// ==================== HELPERS INTERNOS ====================
+function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
+  // ── FIX NaN: validar covMatrix antes de usarla ─────────────────────────
+  const hasNaN = covMatrix.some(row => row.some(v => !isFinite(v)));
+  if (hasNaN) return Array(n).fill(1 / n); // equal weight si la matriz está rota
+
+  const iters = 500;
+  let weights = Array(n).fill(1 / n);
+  for (let iter = 0; iter < iters; iter++) {
+    const grad = Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        grad[i] += 2 * weights[j] * covMatrix[i][j];
       }
     }
-
-    if (kalmanOutput?.active) activeUpgrades.push('KALMAN_WEIGHTS');
+    const lr = 0.05 / (1 + iter * 0.01);
+    const updated = weights.map((w, i) => Math.max(0.01, w - lr * grad[i]));
+    const sum = updated.reduce((a, b) => a + b, 0);
+    weights = updated.map(w => w / sum);
   }
-
-  // ── STEP 2: EJECUTAR OLYMPUS V3 (con pesos adaptativos) ──────────────────
-  const v3Input: OlympusEngineInput = {
-    ...input,
-    adaptiveFactorWeights,
-  };
-
-  const v3Output = runOlympusEngine(v3Input);
-  const v3RegimePenalty = v3Output.masterRegime.regimePenalty;
-
-  // ── STEP 3: HMM REGIME OVERRIDE ──────────────────────────────────────────
-  let hmmOutput: OlympusXOutput['hmmRegime'];
-  let finalRegimePenalty = v3RegimePenalty;
-  let hmmOverrideActive = false;
-
-  if (useHMM && macroHistory.length >= 4) {
-    // Construir observación actual para el HMM
-    const currentHMMObs: HMMObservation = {
-      vix: input.macro.vix,
-      yieldSpread: input.macro.yieldSpread,
-      creditSpread: input.macro.creditSpread,
-      m2Growth: input.macro.m2Growth,
-    };
-
-    const hmmResult = runHMMRegime(macroHistory, currentHMMObs, true);
-    const hmmPenalty = hmmProbsToRegimePenalty(hmmResult.probabilities);
-
-    // Blending: 60% HMM + 40% V3 (transición gradual)
-    // El HMM gana más peso a medida que tiene más historia
-    const hmmHistoryWeight = Math.min(0.60, macroHistory.length / 52 * 0.60);
-    const v3Weight = 1 - hmmHistoryWeight;
-    const blendedPenalty = hmmHistoryWeight * hmmPenalty + v3Weight * v3RegimePenalty;
-
-    finalRegimePenalty = Math.max(0.4, Math.min(1.0, blendedPenalty));
-
-    // El HMM ha "overridden" si la diferencia es significativa (>3%)
-    hmmOverrideActive = Math.abs(finalRegimePenalty - v3RegimePenalty) > 0.03;
-
-    hmmOutput = {
-      state: hmmResult.state,
-      probabilities: hmmResult.probabilities,
-      confidence: hmmResult.confidence,
-      transitionProbability: hmmResult.transitionProbability,
-      logLikelihood: hmmResult.logLikelihood,
-      overrodeV3Regime: hmmOverrideActive,
-    };
-
-    activeUpgrades.push('HMM_REGIME');
-  }
-
-  // Ajustar allocations con el nuevo regime penalty del HMM
-  let adjustedAllocations = v3Output.allocations;
-  if (hmmOverrideActive && finalRegimePenalty !== v3RegimePenalty) {
-    const penaltyRatio = finalRegimePenalty / v3RegimePenalty;
-    const rawAdjusted = adjustedAllocations.map(a => ({
-      ...a,
-      finalAllocation: a.finalAllocation * penaltyRatio,
-    }));
-    // Renormalizar
-    const totalAdjusted = rawAdjusted.reduce((s, a) => s + a.finalAllocation, 0);
-    if (totalAdjusted > 0) {
-      adjustedAllocations = rawAdjusted.map(a => ({
-        ...a,
-        finalAllocation: a.finalAllocation / totalAdjusted,
-      }));
-    }
-  }
-
-  // ── STEP 4: CVaR OPTIMIZER ────────────────────────────────────────────────
-  let cvarOptimizerOutput: OlympusXOutput['cvarOptimizer'];
-  let finalAllocations = adjustedAllocations;
-  let cvarImprovement = 0;
-
-  if (useCVarOptimizer && input.covMatrix && input.covMatrix.length > 0) {
-    const assetNames = input.assets.map(a => a.name);
-    const vols = input.assets.map(a => a.volatility);
-    const expectedReturns = adjustedAllocations.map(a => a.expectedReturn);
-
-    // Detectar índice BTC
-    const btcIdx = assetNames.findIndex(name =>
-      name.toLowerCase().includes('btc') || name.toLowerCase().includes('bitcoin')
-    );
-
-    // Generar scenarios Monte Carlo para el CVaR optimizer
-    const scenarios = generateCVaRScenarios(
-      expectedReturns,
-      vols,
-      input.covMatrix,
-      3000, // 3000 scenarios (balance velocidad/precisión)
-      1    // horizonte 1 día
-    );
-
-    // CVaR del portfolio actual (sin optimizer) para medir el impacto
-    // computePortfolioCVaR es síncrona — no necesita await
-    const currentWeights = adjustedAllocations.map(a => a.finalAllocation);
-    let baselineCVaR = cvarTarget;
-    try {
-      const { cvar } = computePortfolioCVaR(currentWeights, scenarios, 0.95);
-      baselineCVaR = cvar;
-    } catch { /* fallback al target si hay error */ }
-
-    // Ejecutar el optimizer solo si el CVaR actual excede el target
-    const cvarResult = baselineCVaR > cvarTarget
-      ? optimizeCVaR({
-          assetNames,
-          scenarios,
-          expectedReturns,
-          cvarTarget,
-          alpha: 0.95,
-          minWeight: 0.01,
-          maxWeight: 0.40,
-          maxBtcWeight: 0.25,
-          btcAssetIndex: btcIdx,
-          maxIterations: 300,
-        })
-      : null;
-
-    if (cvarResult && cvarResult.converged && baselineCVaR > cvarTarget) {
-      // Aplicar los pesos del optimizer
-      finalAllocations = adjustedAllocations.map((a, i) => ({
-        ...a,
-        finalAllocation: cvarResult.weights[i],
-      }));
-
-      cvarImprovement = baselineCVaR - cvarResult.achievedCVaR;
-      activeUpgrades.push('CVAR_OPTIMIZER');
-
-      cvarOptimizerOutput = {
-        active: true,
-        achievedCVaR: cvarResult.achievedCVaR,
-        cvarTarget,
-        cvarSlack: cvarResult.cvarSlack,
-        isBindingConstraint: cvarResult.isBindingConstraint,
-        converged: cvarResult.converged,
-        cvarContributions: assetNames.map((name, i) => ({
-          asset: name,
-          contribution: cvarResult.cvarContributions[i],
-        })),
-        allocationAdjustmentApplied: true,
-      };
-    } else {
-      cvarOptimizerOutput = {
-        active: true,
-        achievedCVaR: baselineCVaR,
-        cvarTarget,
-        cvarSlack: cvarTarget - baselineCVaR,
-        isBindingConstraint: false,
-        converged: true,
-        cvarContributions: assetNames.map((name, _) => ({ asset: name, contribution: 0 })),
-        allocationAdjustmentApplied: false,
-      };
-    }
-  }
-
-  // ── STEP 5: CALCULAR IMPACT METRICS ──────────────────────────────────────
-  const regimePenaltyDelta = finalRegimePenalty - v3RegimePenalty;
-  const maxAllocationShift = v3Output.allocations.reduce((maxDiff, v3a, i) => {
-    const xAlloc = finalAllocations[i]?.finalAllocation ?? v3a.finalAllocation;
-    return Math.max(maxDiff, Math.abs(xAlloc - v3a.finalAllocation));
-  }, 0);
-
-  // ── OUTPUT FINAL ──────────────────────────────────────────────────────────
-  const xOutput: OlympusXOutput = {
-    ...v3Output,
-    allocations: finalAllocations,
-    engineVersion: OLYMPUS_X_VERSION,
-    hmmRegime: hmmOutput,
-    cvarOptimizer: cvarOptimizerOutput,
-    kalmanWeights: kalmanOutput,
-    upgradeImpact: {
-      regimePenaltyDelta,
-      allocationShiftMax: maxAllocationShift,
-      cvarImprovement,
-      activeUpgrades,
-    },
-  };
-
-  return xOutput;
+  return weights;
 }
 
-/**
- * Versión sincrónica de OlympusX (sin CVaR optimizer async).
- * Para usar en contextos donde no se puede usar async/await.
- */
-export function runOlympusXSync(input: OlympusXInput): OlympusXOutput {
-  return runOlympusX({ ...input, useCVarOptimizer: false });
+function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix?: number[][]): number {
+  if (covMatrix && covMatrix.length === assets.length) {
+    let portfolioVar = 0;
+    for (let i = 0; i < assets.length; i++) {
+      for (let j = 0; j < assets.length; j++) {
+        portfolioVar += weights[i] * weights[j] * covMatrix[i][j];
+      }
+    }
+    return Math.sqrt(Math.max(0, portfolioVar));
+  }
+  return assets.reduce((sum, a, i) => sum + weights[i] * a.volatility, 0);
 }

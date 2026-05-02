@@ -140,6 +140,20 @@ function covarianceMatrix(returnsSeries: number[][]): number[][] {
   const n = returnsSeries.length;
   // Find minimum length
   const minLen = Math.min(...returnsSeries.map(r => r.length));
+
+  // ── FIX NaN: necesitamos al menos 2 observaciones para covarianza ──────
+  if (minLen < 2) {
+    // Fallback: matriz diagonal con varianzas individuales de cada serie
+    return Array.from({ length: n }, (_, i) => {
+      const series = returnsSeries[i];
+      const m = series.length > 0 ? series.reduce((a, b) => a + b, 0) / series.length : 0;
+      const v = series.length > 1
+        ? series.reduce((a, b) => a + (b - m) ** 2, 0) / (series.length - 1) * 252
+        : 0.04; // fallback: 20% vol anualizada
+      return Array.from({ length: n }, (_, j) => i === j ? v : 0);
+    });
+  }
+
   // Trim all to same length (from the end, most recent)
   const trimmed = returnsSeries.map(r => r.slice(r.length - minLen));
   const means = trimmed.map(mean);
@@ -190,9 +204,10 @@ function covarianceMatrix(returnsSeries: number[][]): number[][] {
     }
   }
   // shrinkage intensity: más alta cuando Σ_sample difiere mucho del target o T es pequeño
-  const alpha = normSample > 0
+  // ── FIX NaN: proteger contra normSample = 0 y valores no finitos ──────
+  const alpha = (normSample > 1e-12 && isFinite(normDiff) && isFinite(normSample))
     ? Math.min(0.9, (normDiff / normSample) * (n / Math.max(1, minLen - 1)))
-    : 0.1;
+    : 0.3; // fallback conservador si la matriz es degenerada
 
   // Aplicar shrinkage: combinar sample con identidad escalada
   const covLW: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
@@ -370,7 +385,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
   }
 
-  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven, fundamentals: yfFundamentals } = response;
+  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven } = response;
   // M2 real de FRED
   const m2Growth = fredM2?.growthYoY ?? 5.2;
 
@@ -661,7 +676,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   ? fallbackCovMatrix()
   : covarianceMatrix(returnsPerAsset);
 
-const covMatrix = getDynamicCovMatrix(ASSETS, closesHistory, staticCov);
+const covMatrix = getDynamicCovMatrix([...ASSETS], closesHistory, staticCov);
     
 
   // ====== CEWS HISTORY AUTOMÁTICO (5 años semanal desde Yahoo) ======
