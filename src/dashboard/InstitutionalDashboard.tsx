@@ -23,8 +23,7 @@ import { liquidityScore } from "@/core/macro/liquidity";
 import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/portfolio";
 import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
-import { runOlympusX } from "@/core/engine/olympusX";
-import type { AssetInput } from "@/core/engine/olympusV3"; 
+import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
@@ -327,7 +326,17 @@ const InstitutionalDashboard: React.FC = () => {
       const liq = liquidityScore({
         m2Growth: md.m2GrowthSource === "FRED" ? md.m2Growth : m2Growth,
         vix: md.vix,
-        yieldCurveSpread: md.tnx - md.irx
+        yieldCurveSpread: md.tnx - md.irx,
+        // FIX-ERROR-3: liquidityGrowth no existe en MarketData.
+        // El campo real es liquidityScore (0-1). Para obtener el crecimiento %
+        // de bancos centrales, lo calculamos desde liquidityScore inverso.
+        // liquidityScoreAuto = (liquidityGrowth/10)*0.6 + vixComponent*0.4
+        // → liquidityGrowth ≈ (liquidityScoreAuto - vixComponent*0.4) / 0.6 * 10
+        // Más simple: pasar el score directamente y convertir en centralBankGrowth proxy:
+        // score > 0.5 → positivo, score < 0.5 → negativo
+        centralBankGrowth: md.liquidityScore != null
+          ? (md.liquidityScore - 0.5) * 6  // mapear 0-1 a -3%..+3%
+          : undefined,
       });
       setLiquidity(liq);
 
@@ -727,15 +736,22 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   const cewsResult = useMemo(() => computeCEWS(effectiveCEWSHistory), [effectiveCEWSHistory]);
 
   const portfolioRealizedVol = useMemo(() => {
+    // FIX-NaN-2: verificar que covMatrix.length === assetInputs.length
+    // Si son distintos (ej: covMatrix 7×7, assetInputs 8 por BAYN.DE),
+    // covMatrix[i]?.[j] devuelve undefined → variance = NaN → vol = NaN → todo NaN.
     if (!marketData?.covMatrix || assetInputs.length === 0) return undefined;
+    if (marketData.covMatrix.length !== assetInputs.length) return undefined; // mismatch → no calcular
     const weights = portfolio.assets.map(a => (a.price * a.shares) / totalPortfolioValue);
     let variance = 0;
     for (let i = 0; i < assetInputs.length; i++) {
       for (let j = 0; j < assetInputs.length; j++) {
-        variance += weights[i] * weights[j] * (marketData.covMatrix[i]?.[j] ?? 0);
+        const cij = marketData.covMatrix[i]?.[j];
+        if (cij === undefined || isNaN(cij)) continue; // saltar celdas inválidas
+        variance += weights[i] * weights[j] * cij;
       }
     }
-    return Math.sqrt(Math.max(0, variance));
+    const vol = Math.sqrt(Math.max(0, variance));
+    return isFinite(vol) && vol > 0 ? vol : undefined;
   }, [marketData?.covMatrix, assetInputs, portfolio.assets, totalPortfolioValue]);
 
   const walkForwardResult = useMemo(() => {
@@ -748,45 +764,31 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     return runWalkForward(weeklyReturns, 5);
   }, [marketData?.closesHistory]);
 
-// ── EL useMemo completo (reemplaza el tuyo desde línea ~751) ──
-const engineResult = useMemo(() => {
-  if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
+  const engineResult = useMemo(() => {
+    if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
+    return runOlympusEngine({
+      assets: assetInputs,
+      correlationMatrix: corrMatrix,
+      macro: {
+        vix,
+        yieldSpread,
+        creditSpread,
+        m2Growth,
+        move: moveIndex,
+        dxyTrend: (dxy - 100) / 100,
+        btcVol,
+        wtiOil,
+      },
+      covMatrix: marketData?.covMatrix,
+      portfolioDrawdown,
+      portfolioRealizedVol,
+      erpValue,
+      liquidityGrowth,
+      cewsHistory: effectiveCEWSHistory,
+      adaptiveFactorWeights: walkForwardResult?.adaptiveFactorWeights,
+    });
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights]);
 
-  return runOlympusX({
-    // ── TODO LO QUE YA TENÍAS — sin tocar ────────────────────
-    assets:                  assetInputs,
-    correlationMatrix:       corrMatrix,
-    macro: {
-      vix,
-      yieldSpread,
-      creditSpread,
-      m2Growth,
-      move:      moveIndex,
-      dxyTrend:  (dxy - 100) / 100,
-      btcVol,
-      wtiOil,
-    },
-    covMatrix:               marketData?.covMatrix,
-    portfolioDrawdown,
-    portfolioRealizedVol,
-    erpValue,
-    liquidityGrowth,
-    cewsHistory:             effectiveCEWSHistory,
-    adaptiveFactorWeights:   walkForwardResult?.adaptiveFactorWeights,
-
-    // ── NUEVO — solo estas 4 líneas son nuevas ───────────────
-    cvarTarget:       0.15,
-    useHMM:           true,
-    useKalman:        true,
-    useCVarOptimizer: true,
-  });
-
-  // ── DEPENDENCIAS — exactamente las mismas que tenías ────────
-}, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth,
-    moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix,
-    portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory,
-    walkForwardResult?.adaptiveFactorWeights]);
-    // Este bloque DEBE estar, no tocarlo:
   const liquidityOutput = useMemo(() =>
     fromManualInputs({ liquidityGrowth, dxy }),
     [liquidityGrowth, dxy]
