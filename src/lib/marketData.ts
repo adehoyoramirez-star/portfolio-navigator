@@ -96,22 +96,29 @@ export interface MarketData {
 }
 
 function cleanCloses(closes: number[]): number[] {
-  // Remove nulls/NaN and forward-fill
+  // Remove nulls/NaN and forward-fill.
+  // FIX ROOT: last=0 causaba ceros al inicio → retornos -100% o NaN en dailyReturns.
+  // No emitimos nada hasta tener el primer precio válido (>0).
   const clean: number[] = [];
-  let last = 0;
+  let last: number | null = null;
   for (const c of closes) {
-    if (c != null && isFinite(c)) {
+    if (c != null && isFinite(c) && c > 0) {
       last = c;
     }
-    clean.push(last);
+    if (last !== null) {
+      clean.push(last);
+    }
+    // Si last sigue siendo null (aún no hay precio real), omitimos la entrada
   }
   return clean;
 }
 
 function dailyReturns(closes: number[]): number[] {
+  // FIX ROOT: también verificar closes[i] > 0 para evitar retornos -100% cuando
+  // un cierre es 0 (dato corrupto que cleanCloses no filtró).
   const r: number[] = [];
   for (let i = 1; i < closes.length; i++) {
-    if (closes[i - 1] > 0) {
+    if (closes[i - 1] > 0 && closes[i] > 0) {
       r.push(closes[i] / closes[i - 1] - 1);
     }
   }
