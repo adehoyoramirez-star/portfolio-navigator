@@ -19,6 +19,7 @@
 export const ENGINE_VERSION = "v5.0.0";
 
 // ── Imports (todos al inicio) ─────────────────────────────────────────────
+import { getCurrentKalmanWeights } from '@/core/factors/kalmanFactorWeights';
 import { calculateMomentum } from "../factors/momentum";
 import { calculateValue, computeUniverseStats, ValueInput } from "../factors/value";
 import { calculateQuality, computeQualityUniverseStats, QualityInput } from "../factors/quality";
@@ -285,7 +286,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     // FIX-CRÍTICO-2: usar FACTOR_CONFIG.DEFAULT_WEIGHTS como fuente única.
     // Antes era { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 } hardcodeado.
     // Ahora cualquier cambio en engineConfig.ts se propaga automáticamente.
-    const fw = input.adaptiveFactorWeights ?? FACTOR_CONFIG.DEFAULT_WEIGHTS;
+    
+  const kalman = getCurrentKalmanWeights();
+const fw = input.adaptiveFactorWeights ?? kalman ?? FACTOR_CONFIG.DEFAULT_WEIGHTS;
     const calibrated = calibrateExpectedReturn({
       momentumScore: momentum.momentumScore,
       valueScore: value.valueScore,

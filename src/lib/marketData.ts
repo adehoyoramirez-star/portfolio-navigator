@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { getDynamicCovMatrix } from '@/core/risk/dccGarch';
 import { ASSETS } from '@/lib/constants';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { globalLiquiditySignal, fromManualInputs } from '@/core/macro/liquidityCycle';
@@ -656,9 +657,12 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   });
 
   // ====== MATRIZ DE COVARIANZA ======
-  const covMatrix = returnsPerAsset.some(r => r.length < 20)
-    ? fallbackCovMatrix()
-    : covarianceMatrix(returnsPerAsset);
+  const staticCov = returnsPerAsset.some(r => r.length < 20)
+  ? fallbackCovMatrix()
+  : covarianceMatrix(returnsPerAsset);
+
+const covMatrix = getDynamicCovMatrix(ASSETS, closesHistory, staticCov);
+    
 
   // ====== CEWS HISTORY AUTOMÁTICO (5 años semanal desde Yahoo) ======
   const cewsHistory = buildCEWSHistory(

@@ -23,7 +23,8 @@ import { liquidityScore } from "@/core/macro/liquidity";
 import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/portfolio";
 import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
-import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
+import { runOlympusX } from "@/core/engine/olympusX";
+import type { AssetInput } from "@/core/engine/olympusV3"; 
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
@@ -747,31 +748,45 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     return runWalkForward(weeklyReturns, 5);
   }, [marketData?.closesHistory]);
 
-  const engineResult = useMemo(() => {
-    if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
-    return runOlympusEngine({
-      assets: assetInputs,
-      correlationMatrix: corrMatrix,
-      macro: {
-        vix,
-        yieldSpread,
-        creditSpread,
-        m2Growth,
-        move: moveIndex,
-        dxyTrend: (dxy - 100) / 100,
-        btcVol,
-        wtiOil,
-      },
-      covMatrix: marketData?.covMatrix,
-      portfolioDrawdown,
-      portfolioRealizedVol,
-      erpValue,
-      liquidityGrowth,
-      cewsHistory: effectiveCEWSHistory,
-      adaptiveFactorWeights: walkForwardResult?.adaptiveFactorWeights,
-    });
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights]);
+// ── EL useMemo completo (reemplaza el tuyo desde línea ~751) ──
+const engineResult = useMemo(() => {
+  if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
 
+  return runOlympusX({
+    // ── TODO LO QUE YA TENÍAS — sin tocar ────────────────────
+    assets:                  assetInputs,
+    correlationMatrix:       corrMatrix,
+    macro: {
+      vix,
+      yieldSpread,
+      creditSpread,
+      m2Growth,
+      move:      moveIndex,
+      dxyTrend:  (dxy - 100) / 100,
+      btcVol,
+      wtiOil,
+    },
+    covMatrix:               marketData?.covMatrix,
+    portfolioDrawdown,
+    portfolioRealizedVol,
+    erpValue,
+    liquidityGrowth,
+    cewsHistory:             effectiveCEWSHistory,
+    adaptiveFactorWeights:   walkForwardResult?.adaptiveFactorWeights,
+
+    // ── NUEVO — solo estas 4 líneas son nuevas ───────────────
+    cvarTarget:       0.15,
+    useHMM:           true,
+    useKalman:        true,
+    useCVarOptimizer: true,
+  });
+
+  // ── DEPENDENCIAS — exactamente las mismas que tenías ────────
+}, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth,
+    moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix,
+    portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory,
+    walkForwardResult?.adaptiveFactorWeights]);
+    // Este bloque DEBE estar, no tocarlo:
   const liquidityOutput = useMemo(() =>
     fromManualInputs({ liquidityGrowth, dxy }),
     [liquidityGrowth, dxy]
