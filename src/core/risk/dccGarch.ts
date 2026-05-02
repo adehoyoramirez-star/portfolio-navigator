@@ -327,7 +327,13 @@ export function runDCCGARCH(
   });
 
   // ── PASO 2: Filtro DCC ────────────────────────────────────────────────────
-  const dccState = initDCC(standardizedResiduals);
+  // FIX NaN: las series de residuos tienen longitudes distintas (ej: BTC 1826 vs URNU 221).
+  // initDCC itera T = residuals[0].length, accediendo a series[t-1] con t > 221 para URNU
+  // → devuelve undefined → undefined * undefined = NaN → se propaga por toda Qt.
+  // Solución: recortar todas las series al mínimo común ANTES de pasarlas a initDCC.
+  const minResidualLen = Math.min(...standardizedResiduals.map(r => r.length));
+  const trimmedResiduals = standardizedResiduals.map(r => r.slice(r.length - minResidualLen));
+  const dccState = initDCC(trimmedResiduals);
   const dynamicCorrelations = qtToCorrelation(dccState.Qt);
 
   // ── PASO 3: Covarianza dinámica Σ_t = D_t · R_t · D_t ────────────────────
@@ -412,7 +418,8 @@ export function getDynamicCovMatrix(
     if (closes.length < 2) return [0];
     const rets: number[] = [];
     for (let i = 1; i < closes.length; i++) {
-      if (closes[i - 1] > 0) rets.push(closes[i] / closes[i - 1] - 1);
+      // FIX: verificar también closes[i] > 0 para evitar retornos -100% por datos corruptos
+      if (closes[i - 1] > 0 && closes[i] > 0) rets.push(closes[i] / closes[i - 1] - 1);
     }
     return rets;
   });
