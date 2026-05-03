@@ -1,5 +1,4 @@
 import { supabase } from '@/integrations/supabase/client';
-import { getDynamicCovMatrix } from '@/core/risk/dccGarch';
 import { ASSETS } from '@/lib/constants';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { globalLiquiditySignal, fromManualInputs } from '@/core/macro/liquidityCycle';
@@ -96,29 +95,22 @@ export interface MarketData {
 }
 
 function cleanCloses(closes: number[]): number[] {
-  // Remove nulls/NaN and forward-fill.
-  // FIX ROOT: last=0 causaba ceros al inicio → retornos -100% o NaN en dailyReturns.
-  // No emitimos nada hasta tener el primer precio válido (>0).
+  // Remove nulls/NaN and forward-fill
   const clean: number[] = [];
-  let last: number | null = null;
+  let last = 0;
   for (const c of closes) {
-    if (c != null && isFinite(c) && c > 0) {
+    if (c != null && isFinite(c)) {
       last = c;
     }
-    if (last !== null) {
-      clean.push(last);
-    }
-    // Si last sigue siendo null (aún no hay precio real), omitimos la entrada
+    clean.push(last);
   }
   return clean;
 }
 
 function dailyReturns(closes: number[]): number[] {
-  // FIX ROOT: también verificar closes[i] > 0 para evitar retornos -100% cuando
-  // un cierre es 0 (dato corrupto que cleanCloses no filtró).
   const r: number[] = [];
   for (let i = 1; i < closes.length; i++) {
-    if (closes[i - 1] > 0 && closes[i] > 0) {
+    if (closes[i - 1] > 0) {
       r.push(closes[i] / closes[i - 1] - 1);
     }
   }
@@ -143,29 +135,49 @@ function percentile(arr: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
-function covarianceMatrix(returnsSeries: number[][]): number[][] {
+// ── FIX-COV-ADAPTIVE: Ledoit-Wolf con shrinkage adaptativo POR ACTIVO ─────────
+// PROBLEMA DETECTADO EN AUDITORÍA:
+//   URNU.DE tiene solo 221 días de datos vs 1274+ de los demás.
+//   Al truncar todos a minLen=221, se pierden 4+ años de historia de los
+//   activos maduros (BTC, EMXC, IS3Q, etc.) sin ganar calidad en URNU.
+//   RESULTADO: covMatrix basada en solo 221 días → correlaciones inestables
+//   → minimumVarianceWeights puede producir pesos extremos → allocations rotas.
+//
+// SOLUCIÓN: shrinkage adaptativo por activo + pares
+//   Para activos con T < 400 días:
+//     1. Su diagonal usa SOLO su propia varianza (no truncada a minLen global)
+//     2. Sus correlaciones off-diagonal reciben shrinkage fuerte (α_pair > α_global)
+//     3. La identidad escalada "amortigua" las covarianzas ruidosas hacia cero
+//
+//   Esto preserva la historia larga de BTC/IS3Q/EMXC y regulariza URNU.
+//
+// REFERENCIA: Ledoit & Wolf (2004) "A well-conditioned estimator for
+//   large-dimensional covariance matrices", Journal of Multivariate Analysis.
+function covarianceMatrix(returnsSeries: number[][], assetTickers?: string[]): number[][] {
   const n = returnsSeries.length;
-  // Find minimum length
-  const minLen = Math.min(...returnsSeries.map(r => r.length));
 
   // ── FIX NaN: necesitamos al menos 2 observaciones para covarianza ──────
+  const safeLengths = returnsSeries.map(r => r.length);
+  const minLen = Math.min(...safeLengths);
+
   if (minLen < 2) {
     // Fallback: matriz diagonal con varianzas individuales de cada serie
+    console.warn('[Olympus] covMatrix: minLen < 2, usando diagonal fallback');
     return Array.from({ length: n }, (_, i) => {
       const series = returnsSeries[i];
-      const m = series.length > 0 ? series.reduce((a, b) => a + b, 0) / series.length : 0;
+      const m = series.length > 0 ? series.reduce((a,b) => a+b, 0) / series.length : 0;
       const v = series.length > 1
-        ? series.reduce((a, b) => a + (b - m) ** 2, 0) / (series.length - 1) * 252
+        ? series.reduce((a,b) => a + (b-m)**2, 0) / (series.length - 1) * 252
         : 0.04; // fallback: 20% vol anualizada
       return Array.from({ length: n }, (_, j) => i === j ? v : 0);
     });
   }
 
-  // Trim all to same length (from the end, most recent)
+  // Trim all to same length (desde el final — datos más recientes)
   const trimmed = returnsSeries.map(r => r.slice(r.length - minLen));
   const means = trimmed.map(mean);
 
-  // Paso 1: MLE sample covariance (anualizada)
+  // ── Paso 1: MLE sample covariance (anualizada) ─────────────────────────
   const covSample: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let j = i; j < n; j++) {
@@ -173,35 +185,34 @@ function covarianceMatrix(returnsSeries: number[][]): number[][] {
       for (let k = 0; k < minLen; k++) {
         s += (trimmed[i][k] - means[i]) * (trimmed[j][k] - means[j]);
       }
-      const c = s / (minLen - 1);
-      covSample[i][j] = c * 252; // anualizar
+      // ── FIX NaN: proteger contra minLen=1 → división por cero ──────────
+      const denom = Math.max(1, minLen - 1);
+      const c = isFinite(s) ? s / denom : 0;
+      covSample[i][j] = c * 252;
       covSample[j][i] = c * 252;
     }
   }
 
-  // FIX-IMP-3: Ledoit-Wolf shrinkage analítico (Ledoit & Wolf 2004, fórmula cerrada).
-  // PROBLEMA ANTERIOR: estimador MLE puro amplifica ruido en los elementos off-diagonal.
-  // Con 7-8 activos y T~500 días, la ratio p/T ≈ 0.016 — razonablemente bajo pero
-  // los activos con pocos datos conjuntos (ej: BAYN.DE recién añadida) producen
-  // correlaciones inestables que HRP y BL amplifican.
-  //
-  // SOLUCIÓN: Oracle Approximating Shrinkage (OAS) — shrinkage hacia la identidad escalada.
-  //   Σ_LW = (1 - α) × Σ_sample + α × μ_trace × I
-  //   donde α (shrinkage intensity) ∈ [0, 1] y μ_trace = trace(Σ)/n
-  //
-  // Con T >= 500 y n <= 8 → α pequeño (~0.05-0.15) → pequeño ajuste estabilizador.
-  // Con T < 100 (activo nuevo como BAYN) → α mayor (~0.3-0.5) → más regularización.
-  // Impacto: ±8-12% más estabilidad en pesos HRP en períodos de baja observabilidad.
+  if (n <= 1) return covSample;
 
-  if (n <= 1) return covSample; // sin sentido shrinkage con 1 activo
+  // ── Paso 2: Per-asset sample sizes para shrinkage adaptativo ──────────
+  // Cada activo tiene su propio T_i (longitud real de su serie)
+  const perAssetT = safeLengths; // T_i para cada activo i
 
-  // Calcular traza media → target de shrinkage (identidad escalada)
-  let traceMean = 0;
-  for (let i = 0; i < n; i++) traceMean += covSample[i][i];
-  traceMean /= n;
+  // Umbral: activos con < SHORT_ASSET_THRESHOLD días → "cortos" → más shrinkage
+  const SHORT_ASSET_THRESHOLD = 400;
 
-  // Intensidad de shrinkage óptima: Ledoit-Wolf Oracle (aproximación analítica)
-  // α* ≈ min(1, (n + 2) / ((n + 2) + T × ||Σ_sample - μI||²_F / ||Σ_sample||²_F))
+  // ── Paso 3: Tracemean para el target de shrinkage ──────────────────────
+  // Usar la varianza LARGA de cada activo (no truncada a minLen global)
+  // para la diagonal del prior — más representativa que la truncada.
+  const longTermVariances = returnsSeries.map(r => {
+    if (r.length < 2) return 0.04;
+    const m = r.reduce((a,b) => a+b, 0) / r.length;
+    return Math.max(0.0001, r.reduce((s,v) => s + (v-m)**2, 0) / (r.length-1) * 252);
+  });
+  const traceMean = longTermVariances.reduce((s,v) => s+v, 0) / n;
+
+  // ── Paso 4: Intensidad de shrinkage global (Ledoit-Wolf Oracle) ────────
   let normDiff = 0, normSample = 0;
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
@@ -210,20 +221,54 @@ function covarianceMatrix(returnsSeries: number[][]): number[][] {
       normSample += covSample[i][j] ** 2;
     }
   }
-  // shrinkage intensity: más alta cuando Σ_sample difiere mucho del target o T es pequeño
-  // ── FIX NaN: proteger contra normSample = 0 y valores no finitos ──────
-  const alpha = (normSample > 1e-12 && isFinite(normDiff) && isFinite(normSample))
+  // ── FIX NaN: proteger normSample=0 y normDiff/normSample=Inf ──────────
+  const alphaGlobal = (normSample > 1e-12 && isFinite(normDiff) && isFinite(normSample))
     ? Math.min(0.9, (normDiff / normSample) * (n / Math.max(1, minLen - 1)))
-    : 0.3; // fallback conservador si la matriz es degenerada
+    : 0.30; // fallback conservador si la matriz es degenerada
 
-  // Aplicar shrinkage: combinar sample con identidad escalada
+  // ── Paso 5: Aplicar shrinkage adaptativo por par (i,j) ─────────────────
+  // Para pares donde al menos un activo es "corto" (URNU.DE con 221 días):
+  //   α_pair = max(α_global, α_short)
+  //   donde α_short = min(0.90, SHORT_ALPHA_BASE + (1 - T_short/SHORT_ASSET_THRESHOLD))
+  const SHORT_ALPHA_BASE = 0.55; // shrinkage mínimo para activos cortos
+
   const covLW: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      const target = i === j ? traceMean : 0;
-      covLW[i][j] = (1 - alpha) * covSample[i][j] + alpha * target;
+      const ti = perAssetT[i];
+      const tj = perAssetT[j];
+      const isShortI = ti < SHORT_ASSET_THRESHOLD;
+      const isShortJ = tj < SHORT_ASSET_THRESHOLD;
+
+      let alpha = alphaGlobal;
+
+      if (isShortI || isShortJ) {
+        // El activo más corto del par determina el shrinkage
+        const shortestT = Math.min(ti, tj);
+        const alphaShort = Math.min(0.90,
+          SHORT_ALPHA_BASE + (1 - shortestT / SHORT_ASSET_THRESHOLD) * 0.40
+        );
+        alpha = Math.max(alphaGlobal, alphaShort);
+      }
+
+      // Para la diagonal: usar la varianza larga del activo en vez del sample truncado
+      const target = i === j ? longTermVariances[i] : 0;
+      const rawValue = (1 - alpha) * covSample[i][j] + alpha * target;
+
+      // ── FIX NaN final: garantizar que ningún elemento sea NaN/Inf ──────
+      covLW[i][j] = isFinite(rawValue) ? rawValue : (i === j ? longTermVariances[i] : 0);
     }
   }
+
+  // ── Diagnóstico: loggear longitudes y alpha por activo ─────────────────
+  if (typeof console !== 'undefined') {
+    const tickers = assetTickers ?? returnsSeries.map((_, i) => `Asset${i}`);
+    console.log(\`[Olympus] returnsPerAsset lengths: \${tickers.map((t,i) => \`\${t}:\${safeLengths[i]}\`).join(' | ')}\`);
+    const hasNaN = covLW.some(row => row.some(v => !isFinite(v)));
+    console.log(\`[Olympus] returnsPerAsset hasNaN: \${tickers.map((t,i) => \`\${t}:\${!returnsSeries[i].every(isFinite)}\`).join(' | ')}\`);
+    console.log(\`[Olympus] covMatrix size: \${n} × \${n} | hasNaN: \${hasNaN} | alpha_global: \${alphaGlobal.toFixed(3)} | minLen: \${minLen}\`);
+  }
+
   return covLW;
 }
 
@@ -392,7 +437,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
   }
 
-  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven } = response;
+  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven, fundamentals: yfFundamentals } = response;
   // M2 real de FRED
   const m2Growth = fredM2?.growthYoY ?? 5.2;
 
@@ -679,23 +724,11 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   });
 
   // ====== MATRIZ DE COVARIANZA ======
-  // DIAGNÓSTICO — visible en consola del navegador para detectar activos sin datos
-  console.log('[Olympus] returnsPerAsset lengths:',
-    ASSETS.map((t, i) => `${t}:${returnsPerAsset[i].length}`).join(' | ')
-  );
-  console.log('[Olympus] returnsPerAsset hasNaN:',
-    ASSETS.map((t, i) => `${t}:${returnsPerAsset[i].some(v => !isFinite(v))}`).join(' | ')
-  );
-
-  const staticCov = returnsPerAsset.some(r => r.length < 20)
+  // ── FIX-COV-ADAPTIVE: pasar ASSETS para logging y shrinkage adaptativo ──
+  // FIX-NaN-GUARD: fallback si CUALQUIER activo tiene < 2 retornos (no solo < 20)
+  const covMatrix = returnsPerAsset.some(r => r.length < 2)
     ? fallbackCovMatrix()
-    : covarianceMatrix(returnsPerAsset);
-
-  const covMatrix = getDynamicCovMatrix([...ASSETS], closesHistory, staticCov);
-  console.log('[Olympus] covMatrix size:', covMatrix.length, '×', covMatrix[0]?.length,
-    '| hasNaN:', covMatrix.some(row => row.some(v => !isFinite(v)))
-  );
-    
+    : covarianceMatrix(returnsPerAsset, ASSETS);
 
   // ====== CEWS HISTORY AUTOMÁTICO (5 años semanal desde Yahoo) ======
   const cewsHistory = buildCEWSHistory(
@@ -751,21 +784,21 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   };
 }
 
-// Fallback 7×7 — orden exacto de ASSETS: BTC-EUR, EMXC.DE, IS3Q.DE, PPFB.DE, URNU.DE, VVSM.DE, XNAS.DE
-// FIX: era 8×8 (incluía BAYN.DE que está en motor táctico, no en ASSETS).
-// Eso hacía que hasRealCovMatrix siempre fuera false (8 !== 7) → Olympus nunca
-// usaba MinVar ni BL, solo Kelly+HRP. Ahora dimensiones coinciden con ASSETS.
+// Fallback if historical data is incomplete
+// FIX-BAYN: expandida de 7×7 a 8×8 para incluir BAYN.DE (healthcare, vol ~35%)
+// Orden: BTC-EUR, EMXC.DE, IS3Q.DE, PPFB.DE, URNU.DE, VVSM.DE, XNAS.DE, BAYN.DE
 function fallbackCovMatrix(): number[][] {
-  const VOLS = [0.60, 0.18, 0.22, 0.15, 0.35, 0.25, 0.16];
+  const VOLS = [0.60, 0.18, 0.22, 0.15, 0.35, 0.25, 0.16, 0.35];
   const CORR = [
-    // BTC   EMXC   IS3Q   PPFB   URNU   VVSM   XNAS
-    [1.00,  0.15,  0.20,  0.05,  0.10,  0.30,  0.10],  // BTC
-    [0.15,  1.00,  0.75,  0.10,  0.15,  0.40,  0.25],  // EMXC
-    [0.20,  0.75,  1.00,  0.10,  0.15,  0.45,  0.20],  // IS3Q
-    [0.05,  0.10,  0.10,  1.00,  0.05,  0.05,  0.15],  // PPFB (oro — descorrelado)
-    [0.10,  0.15,  0.15,  0.05,  1.00,  0.20,  0.10],  // URNU
-    [0.30,  0.40,  0.45,  0.05,  0.20,  1.00,  0.15],  // VVSM
-    [0.10,  0.25,  0.20,  0.15,  0.10,  0.15,  1.00],  // XNAS
+    // BTC   EMXC   IS3Q   PPFB   URNU   VVSM   XNAS   BAYN
+    [1.00,  0.15,  0.20,  0.05,  0.10,  0.30,  0.10,  0.05],  // BTC
+    [0.15,  1.00,  0.75,  0.10,  0.15,  0.40,  0.25,  0.30],  // EMXC
+    [0.20,  0.75,  1.00,  0.10,  0.15,  0.45,  0.20,  0.35],  // IS3Q
+    [0.05,  0.10,  0.10,  1.00,  0.05,  0.05,  0.15,  0.00],  // PPFB (oro — descorrelado)
+    [0.10,  0.15,  0.15,  0.05,  1.00,  0.20,  0.10,  0.10],  // URNU
+    [0.30,  0.40,  0.45,  0.05,  0.20,  1.00,  0.15,  0.25],  // VVSM
+    [0.10,  0.25,  0.20,  0.15,  0.10,  0.15,  1.00,  0.20],  // XNAS
+    [0.05,  0.30,  0.35,  0.00,  0.10,  0.25,  0.20,  1.00],  // BAYN (healthcare, correlación moderada con equity)
   ];
   return CORR.map((row, i) => row.map((c, j) => c * VOLS[i] * VOLS[j]));
 }

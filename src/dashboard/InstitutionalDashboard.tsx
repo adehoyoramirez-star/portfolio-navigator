@@ -24,6 +24,7 @@ import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/po
 import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
+import { signalManualRefresh } from "@/core/macro/masterRegime";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
@@ -2321,56 +2322,160 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         <p style={{ fontSize: "0.9rem", color: "#9ca3af" }}>Histograma basado en {simulations.length} simulaciones (20 bins).</p>
       </div>
 
-      {/* Caja y aportaciones */}
-      <div style={{ ...styles.card, display: "flex", gap: "2rem", alignItems: "flex-start", flexWrap: "wrap" }}>
-        <div>
-          <label htmlFor="cashReserve" style={styles.label}>Caja de reserva (€)</label>
-          <input id="cashReserve" name="cashReserve" type="number" value={cashReserve}
-            onChange={(e) => setCashReserve(Number(e.target.value))} style={styles.input} />
-          <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
-            Cash disponible para DCA ahora mismo
-          </p>
+      {/* ══════════════════════════════════════════════════════════════════════
+           PANEL DE LIQUIDEZ — 4 capas de cash con órdenes BTC límite
+           ══════════════════════════════════════════════════════════════════════ */}
+      <div style={{ ...styles.card }}>
+        <h2 style={{ marginBottom: "1rem", fontSize: "1rem" }}>
+          💰 Gestión de Liquidez — Capital disponible y comprometido
+        </h2>
+
+        {/* ── Fila de inputs ── */}
+        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", marginBottom: "1.2rem" }}>
+          <div>
+            <label htmlFor="cashReserve" style={styles.label}>Caja de reserva (€)</label>
+            <input id="cashReserve" name="cashReserve" type="number" value={cashReserve}
+              onChange={(e) => setCashReserve(Number(e.target.value))} style={styles.input} />
+            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
+              Cash total en cuenta ahora mismo
+            </p>
+          </div>
+          <div>
+            <label htmlFor="btcOrdersInput" style={styles.label}>Órdenes BTC límite (€)</label>
+            <input id="btcOrdersInput" type="number"
+              value={typeof window !== "undefined" ? (parseFloat(localStorage.getItem("olympus_btc_orders_eur") ?? "0") || 0) : 0}
+              onChange={(e) => {
+                const val = Math.max(0, Number(e.target.value));
+                try { localStorage.setItem("olympus_btc_orders_eur", String(val)); } catch {}
+                // Forzar re-render disparando un evento
+                window.dispatchEvent(new Event("olympus_cash_update"));
+              }}
+              style={{ ...styles.input, borderColor: "#f59e0b" }} />
+            <p style={{ fontSize: "0.7rem", color: "#f59e0b", marginTop: "3px", maxWidth: "140px" }}>
+              Capital comprometido en órdenes BTC pendientes
+            </p>
+          </div>
+          <div>
+            <label htmlFor="monthlyInjection" style={styles.label}>Aportación mensual (€)</label>
+            <input id="monthlyInjection" name="monthlyInjection" type="number" value={monthlyInjection}
+              onChange={(e) => setMonthlyInjection(Number(e.target.value))} style={styles.input} />
+            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
+              Lo que aportas cada mes
+            </p>
+          </div>
+          <div style={{ borderLeft: "2px solid #16a34a", paddingLeft: "1rem" }}>
+            <label htmlFor="defensiveLiqInput" style={{ ...styles.label, color: "#4ade80" }}>
+              💰 Liquidez defensiva acumulada (€)
+            </label>
+            <input id="defensiveLiqInput" type="number" value={defensiveLiquidity} min={0} step={50}
+              onChange={(e) => {
+                const val = Math.max(0, Number(e.target.value));
+                setDefensiveLiquidity(val);
+                try { localStorage.setItem("olympus_defensive_liq", String(val)); } catch {}
+              }}
+              style={{ ...styles.input, borderColor: "#16a34a", backgroundColor: "#052e16" }} />
+            <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "160px" }}>
+              Acumulado en meses de bloqueo DCA
+            </p>
+            {defensiveLiquidity > 0 && (
+              <div style={{ marginTop: "6px", fontSize: "0.7rem", color: "#86efac" }}>
+                Tramo 2: <strong>€{Math.round(defensiveLiquidity * 0.35).toLocaleString("es-ES")}</strong>
+                {" · "}Tramo 3: <strong>€{Math.round(defensiveLiquidity * 0.80).toLocaleString("es-ES")}</strong>
+              </div>
+            )}
+          </div>
         </div>
-        <div>
-          <label htmlFor="monthlyInjection" style={styles.label}>Aportación mensual (€)</label>
-          <input id="monthlyInjection" name="monthlyInjection" type="number" value={monthlyInjection}
-            onChange={(e) => setMonthlyInjection(Number(e.target.value))} style={styles.input} />
-          <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
-            Lo que aportas cada mes al portfolio
-          </p>
-        </div>
-        <div style={{ borderLeft: "2px solid #16a34a", paddingLeft: "1rem" }}>
-          <label htmlFor="defensiveLiqInput" style={{ ...styles.label, color: "#4ade80" }}>
-            💰 Liquidez defensiva acumulada (€)
-          </label>
-          <input
-            id="defensiveLiqInput"
-            name="defensiveLiqInput"
-            type="number"
-            value={defensiveLiquidity}
-            min={0}
-            step={50}
-            onChange={(e) => {
-              const val = Math.max(0, Number(e.target.value));
-              setDefensiveLiquidity(val);
-              try { localStorage.setItem('olympus_defensive_liq', String(val)); } catch {}
-            }}
-            style={{ ...styles.input, borderColor: "#16a34a", backgroundColor: "#052e16" }}
-          />
-          <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "160px" }}>
-            Cash guardado durante meses de bloqueo DCA. Para ti ahora: <strong>1.500€</strong> para el ataque de oct 2026.
-          </p>
-          {defensiveLiquidity > 0 && (
-            <div style={{ marginTop: "6px", fontSize: "0.7rem", color: "#86efac" }}>
-              Tramo 2 desplegará: <strong>€{Math.round(defensiveLiquidity * 0.35).toLocaleString("es-ES")}</strong>
-              {" · "}Tramo 3: <strong>€{Math.round(defensiveLiquidity * 0.80).toLocaleString("es-ES")}</strong>
+
+        {/* ── Breakdown visual de las 4 capas ── */}
+        {(() => {
+          const btcOrders = typeof window !== "undefined"
+            ? (parseFloat(localStorage.getItem("olympus_btc_orders_eur") ?? "0") || 0)
+            : 0;
+          const buffer = Math.min(cashReserve, 350);
+          const committed = Math.min(btcOrders, Math.max(0, cashReserve - buffer));
+          const tactical = Math.max(0, cashReserve - buffer - committed);
+          const totalKnown = cashReserve + monthlyInjection + defensiveLiquidity;
+          const pctBuffer = totalKnown > 0 ? buffer / totalKnown * 100 : 0;
+          const pctBtc    = totalKnown > 0 ? committed / totalKnown * 100 : 0;
+          const pctTact   = totalKnown > 0 ? tactical / totalKnown * 100 : 0;
+          const pctMonthly= totalKnown > 0 ? monthlyInjection / totalKnown * 100 : 0;
+          const pctDef    = totalKnown > 0 ? defensiveLiquidity / totalKnown * 100 : 0;
+
+          return (
+            <div>
+              {/* Barra de distribución */}
+              <div style={{ display: "flex", height: "28px", borderRadius: "6px", overflow: "hidden", marginBottom: "10px" }}>
+                {pctBuffer > 0 && <div style={{ width: `${pctBuffer}%`, background: "#374151", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: "9px", color: "#9ca3af", fontWeight: 600 }}>BUFFER</span>
+                </div>}
+                {pctBtc > 0 && <div style={{ width: `${pctBtc}%`, background: "#d97706", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: "9px", color: "#fff", fontWeight: 600 }}>BTC ORD.</span>
+                </div>}
+                {pctTact > 0 && <div style={{ width: `${pctTact}%`, background: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: "9px", color: "#fff", fontWeight: 600 }}>TÁCTICO</span>
+                </div>}
+                {pctMonthly > 0 && <div style={{ width: `${pctMonthly}%`, background: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: "9px", color: "#fff", fontWeight: 600 }}>MENSUAL</span>
+                </div>}
+                {pctDef > 0 && <div style={{ width: `${pctDef}%`, background: "#166534", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: "9px", color: "#4ade80", fontWeight: 600 }}>DEF.LIQ.</span>
+                </div>}
+              </div>
+
+              {/* Tabla de capas */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px" }}>
+                <div style={{ padding: "10px", background: "#1f2937", borderRadius: "6px", borderTop: "3px solid #374151" }}>
+                  <div style={{ fontSize: "0.65rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: "4px" }}>🔒 Buffer Op.</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#9ca3af" }}>€{buffer.toFixed(0)}</div>
+                  <div style={{ fontSize: "0.6rem", color: "#6b7280", marginTop: "3px" }}>Nunca tocar</div>
+                </div>
+                <div style={{ padding: "10px", background: "#1c1506", borderRadius: "6px", borderTop: "3px solid #d97706" }}>
+                  <div style={{ fontSize: "0.65rem", color: "#f59e0b", textTransform: "uppercase", marginBottom: "4px" }}>₿ Órdenes BTC</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#f59e0b" }}>€{committed.toFixed(0)}</div>
+                  <div style={{ fontSize: "0.6rem", color: "#92400e", marginTop: "3px" }}>
+                    {btcOrders > 0 ? `${btcOrders > 0 ? "Comprometido en límites" : "Sin órdenes"}` : "Meter en campo BTC Órdenes"}
+                  </div>
+                </div>
+                <div style={{ padding: "10px", background: "#0d1b3e", borderRadius: "6px", borderTop: "3px solid #2563eb" }}>
+                  <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "4px" }}>⚡ Táctico Libre</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#60a5fa" }}>€{tactical.toFixed(0)}</div>
+                  <div style={{ fontSize: "0.6rem", color: "#1d4ed8", marginTop: "3px" }}>Motor screener</div>
+                </div>
+                <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #16a34a" }}>
+                  <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "4px" }}>📅 Aportación</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#4ade80" }}>€{monthlyInjection.toFixed(0)}</div>
+                  <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Mensual disponible</div>
+                </div>
+                <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #15803d" }}>
+                  <div style={{ fontSize: "0.65rem", color: "#86efac", textTransform: "uppercase", marginBottom: "4px" }}>🛡 Def. Acumulada</div>
+                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#86efac" }}>€{defensiveLiquidity.toFixed(0)}</div>
+                  <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div>
+                </div>
+              </div>
+
+              {/* Disponible para motor DCA */}
+              <div style={{ marginTop: "10px", padding: "10px 14px", background: "#0f172a", borderRadius: "6px", border: "1px solid #1e3a5f", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
+                  <strong style={{ color: "#e2e8f0" }}>Total disponible para DCA/Rebalanceo:</strong>
+                  {" "}€{(tactical + monthlyInjection).toFixed(0)} libre
+                  {defensive > 0 ? ` + €${Math.round(defensiveLiquidity * 0.35)} del ataque Tramo 2` : ""}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: committed < btcOrders ? "#ef4444" : "#10b981" }}>
+                  {committed < btcOrders
+                    ? `⚠️ Órdenes BTC (€${btcOrders}) > cash disponible — revisar`
+                    : `✓ Órdenes BTC cubiertas por caja`
+                  }
+                </div>
+              </div>
             </div>
-          )}
-        </div>
-        <div>
+          );
+        })()}
+
+        {/* Resumen portfolio */}
+        <div style={{ marginTop: "1rem", display: "flex", gap: "2rem", flexWrap: "wrap" }}>
           <p><strong>Valor total cartera:</strong> {formatCurrency(totalPortfolioValue)}</p>
           <p><strong>Objetivo:</strong> {formatCurrency(portfolio.targetGoal)}</p>
-          <p><strong>Ganancias/Pérdidas totales:</strong> <span style={{ color: totalGainLoss >= 0 ? "#10b981" : "#ef4444" }}>{formatCurrency(totalGainLoss)}</span></p>
+          <p><strong>G/P totales:</strong> <span style={{ color: totalGainLoss >= 0 ? "#10b981" : "#ef4444" }}>{formatCurrency(totalGainLoss)}</span></p>
         </div>
       </div>
 

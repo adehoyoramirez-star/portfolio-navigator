@@ -39,26 +39,7 @@ import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaInte
 // FIX-CRÍTICO-2: ÚNICA fuente de verdad para pesos de factores.
 // Antes: triple hardcode en engineConfig.ts, factorCalibration.ts, y aquí.
 // Ahora: todos importan de engineConfig → un solo punto de cambio.
-// FIX-IMPORT: BTC_HARD_CAP y BLEND_WEIGHTS definidos aquí como fallback seguro
-// por si la versión desplegada de engineConfig no los exporta todavía.
 import { FACTOR_CONFIG } from "../config/engineConfig";
-
-// ── BTC Hard Cap y Blend Weights — definidos localmente para robustez ─────
-// Si engineConfig los exporta, úsalos desde allí. Si no, estos valores
-// actúan como fallback sin romper la compilación.
-const BTC_HARD_CAP = (() => {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cfg = require("../config/engineConfig");
-    return cfg.BTC_HARD_CAP ?? 0.15;
-  } catch { return 0.15; }
-})();
-
-// CAMBIO-2: BL 20%, HRP 65%, MinVar 15% — walk-forward 59% overfitting lo justifica
-const BLEND_WEIGHTS = {
-  WITH_COV:    { BL: 0.20, HRP: 0.65, MIN_VAR: 0.15 },
-  WITHOUT_COV: { KELLY: 0.25, HRP: 0.75 },
-} as const;
 
 // ==================== INTERFACES ====================
 export interface AssetInput {
@@ -229,17 +210,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   const erpRaw = input.erpValue ?? 0.02;
   const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
-  // FIX-NaN-1: hasRealCovMatrix debe verificar que la dimensión de la covMatrix
-  // coincide exactamente con el número de activos. Si covMatrix es 7×7 pero
-  // assets tiene 8 elementos (BAYN.DE añadida), covMatrix[7] es undefined →
-  // Math.sqrt(undefined) → NaN → se propaga a portfolioVol, μ, MC y allocations.
-  // ANTES: !!(input.covMatrix && input.covMatrix.length > 0) → acepta 7×7 con 8 activos
-  // AHORA: también verifica input.covMatrix.length === assets.length
-  const hasRealCovMatrix = !!(
-    input.covMatrix &&
-    input.covMatrix.length === assets.length &&
-    input.covMatrix[0]?.length === assets.length
-  );
+  const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
 
   // ====== CAPA 0: BTC CYCLE OVERLAY ======
   const btcCycleInput: BTCCycleInput = {
@@ -393,19 +364,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-  // ====== BLEND FINAL — CAMBIO-2: HRP aumentado a 65%, BL reducido a 20% ======
-  // Fuente: BLEND_WEIGHTS en engineConfig.ts (única fuente de verdad).
-  // Antes: BL×0.40 + HRP×0.45 + MinVar×0.15 → ahora: BL×0.20 + HRP×0.65 + MinVar×0.15
-  // Walk-forward 59% overfitting justifica reducir BL (predice retornos) y subir HRP (no predice).
+  // ====== BLEND FINAL: BL×0.40 + HRP×0.45 + MinVar×0.15 ======
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
       const minVarW = minimumVarianceWeights(input.covMatrix!, assets.length);
-      return blWeights[i] * BLEND_WEIGHTS.WITH_COV.BL
-           + hrpWeights[i] * BLEND_WEIGHTS.WITH_COV.HRP
-           + minVarW[i]    * BLEND_WEIGHTS.WITH_COV.MIN_VAR;
+      return blWeights[i] * 0.40 + hrpWeights[i] * 0.45 + minVarW[i] * 0.15;
     } else {
-      return kellyNorm[i].kellyNormalized * BLEND_WEIGHTS.WITHOUT_COV.KELLY
-           + hrpWeights[i]                * BLEND_WEIGHTS.WITHOUT_COV.HRP;
+      return kellyNorm[i].kellyNormalized * 0.40 + hrpWeights[i] * 0.60;
     }
   });
 
@@ -489,15 +454,12 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     allocations.forEach(a => { a.finalAllocation = a.finalAllocation / totalFinal; });
   }
 
-  // ====== CAPA 10: BTC HARD CAP — CAMBIO-1 ======
-  // ANTES: MAX_BTC_WEIGHT_V5 = 0.20 (hardcodeado)
-  // AHORA: BTC_HARD_CAP = 0.15 (desde engineConfig — única fuente de verdad)
-  // Walk-forward 6.2 años: MaxDD −50% con BTC al 20% → reducir a 15% es la
-  // corrección directa más impactante en el perfil riesgo/retorno del motor.
+  // ====== CAPA 10: BTC CAP INSTITUCIONAL ======
+  const MAX_BTC_WEIGHT_V5 = 0.20;
   const btcIdx = allocations.findIndex(a => a.name === 'BTC-EUR' || a.name.toLowerCase().includes('bitcoin') || a.name.toLowerCase().includes('btc'));
-  if (btcIdx >= 0 && allocations[btcIdx].finalAllocation > BTC_HARD_CAP) {
-    const excess = allocations[btcIdx].finalAllocation - BTC_HARD_CAP;
-    allocations[btcIdx].finalAllocation = BTC_HARD_CAP;
+  if (btcIdx >= 0 && allocations[btcIdx].finalAllocation > MAX_BTC_WEIGHT_V5) {
+    const excess = allocations[btcIdx].finalAllocation - MAX_BTC_WEIGHT_V5;
+    allocations[btcIdx].finalAllocation = MAX_BTC_WEIGHT_V5;
     const otherTotal = allocations.filter((_, i) => i !== btcIdx).reduce((s, a) => s + a.finalAllocation, 0);
     if (otherTotal > 0) {
       allocations.forEach((a, i) => {
@@ -551,6 +513,23 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
 // ==================== HELPERS INTERNOS ====================
 function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
+  // ── FIX NaN: validar covMatrix antes de cualquier operación ──────────────
+  // Si covMatrix contiene NaN o Inf (ej: activo con datos insuficientes que
+  // no fue protegido por el shrinkage adaptativo), la optimización producirá
+  // grad[i]=NaN → weights=NaN → blendNorm=NaN → finalAllocation=NaN en cascade.
+  // Fallback: igual weight es mejor que NaN — el motor puede continuar.
+  const hasInvalidValues = covMatrix.some(row => row.some(v => !isFinite(v)));
+  if (hasInvalidValues) {
+    console.warn('[Olympus] minimumVarianceWeights: covMatrix contiene NaN/Inf → fallback equal weight');
+    return Array(n).fill(1 / n);
+  }
+
+  // ── FIX NaN: si n no coincide con la dimensión de la matriz ─────────────
+  if (covMatrix.length !== n || covMatrix.some(row => row.length !== n)) {
+    console.warn('[Olympus] minimumVarianceWeights: dimensión n no coincide con covMatrix → fallback');
+    return Array(n).fill(1 / n);
+  }
+
   const iters = 500;
   let weights = Array(n).fill(1 / n);
   for (let iter = 0; iter < iters; iter++) {
@@ -560,9 +539,17 @@ function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
         grad[i] += 2 * weights[j] * covMatrix[i][j];
       }
     }
+
+    // ── FIX NaN: proteger contra grad con NaN (si covMatrix es mala a pesar del guard) ──
+    if (grad.some(g => !isFinite(g))) {
+      console.warn('[Olympus] minimumVarianceWeights: gradiente NaN en iteración', iter, '→ fallback');
+      return Array(n).fill(1 / n);
+    }
+
     const lr = 0.05 / (1 + iter * 0.01);
     const updated = weights.map((w, i) => Math.max(0.01, w - lr * grad[i]));
     const sum = updated.reduce((a, b) => a + b, 0);
+    if (sum <= 0 || !isFinite(sum)) return Array(n).fill(1 / n);
     weights = updated.map(w => w / sum);
   }
   return weights;
