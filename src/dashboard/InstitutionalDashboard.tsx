@@ -267,7 +267,16 @@ const InstitutionalDashboard: React.FC = () => {
     try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
   });
 
-  // Señales de techo de ciclo — inputs específicos por activo
+  // FIX-BTC-ORDERS: estado React para las órdenes BTC límite pendientes en IBKR.
+  // PROBLEMA ANTERIOR: el input leía value={localStorage.getItem(...)} directamente.
+  // localStorage no es reactivo — React no sabe cuándo cambia → el campo parecía
+  // congelado porque el valor leído siempre devolvía el mismo dato sin re-render.
+  // SOLUCIÓN: useState con inicialización desde localStorage (igual que defensiveLiquidity).
+  // Ahora cuando escribes en el campo, setBtcOrdersEur actualiza el estado React
+  // Y guarda en localStorage. React re-renderiza → el campo se actualiza visualmente.
+  const [btcOrdersEur, setBtcOrdersEur] = useState<number>(() => {
+    try { return parseFloat(localStorage.getItem('olympus_btc_orders_eur') ?? '0') || 0; } catch { return 0; }
+  });
   const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);
   const [uraniumLT, setUraniumLT] = useState<number | undefined>(undefined);
   const [bookToBill, setBookToBill] = useState<number | undefined>(undefined);
@@ -2343,12 +2352,11 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
           <div>
             <label htmlFor="btcOrdersInput" style={styles.label}>Órdenes BTC límite (€)</label>
             <input id="btcOrdersInput" type="number"
-              value={typeof window !== "undefined" ? (parseFloat(localStorage.getItem("olympus_btc_orders_eur") ?? "0") || 0) : 0}
+              value={btcOrdersEur}
               onChange={(e) => {
                 const val = Math.max(0, Number(e.target.value));
+                setBtcOrdersEur(val);
                 try { localStorage.setItem("olympus_btc_orders_eur", String(val)); } catch {}
-                // Forzar re-render disparando un evento
-                window.dispatchEvent(new Event("olympus_cash_update"));
               }}
               style={{ ...styles.input, borderColor: "#f59e0b" }} />
             <p style={{ fontSize: "0.7rem", color: "#f59e0b", marginTop: "3px", maxWidth: "140px" }}>
@@ -2388,9 +2396,9 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
 
         {/* ── Breakdown visual de las 4 capas ── */}
         {(() => {
-          const btcOrders = typeof window !== "undefined"
-            ? (parseFloat(localStorage.getItem("olympus_btc_orders_eur") ?? "0") || 0)
-            : 0;
+          // FIX-BTC-ORDERS: usar btcOrdersEur (estado React) en vez de leer
+          // localStorage directamente. Ahora el cálculo se actualiza en tiempo real.
+          const btcOrders = btcOrdersEur;
           const buffer = Math.min(cashReserve, 350);
           const committed = Math.min(btcOrders, Math.max(0, cashReserve - buffer));
           const tactical = Math.max(0, cashReserve - buffer - committed);
