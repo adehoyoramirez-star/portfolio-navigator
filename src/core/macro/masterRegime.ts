@@ -70,6 +70,74 @@ export interface RegimeHistoryEntry {
   regime: string;
 }
 
+// ── HYSTERESIS CONSTANTS ───────────────────────────────────────────────────
+// PROBLEMA AUDITADO: el usuario modifica datos manualmente (bond yields, VIX override,
+// M2, etc.) inmediatamente después de abrir la app, provocando múltiples cambios de
+// régimen en minutos (CRISIS→CONTRACTION→EXPANSION→CONTRACTION en 24h con VIX=17).
+// Esto es señal de INESTABILIDAD del detector, no de cambio macro real.
+//
+// SOLUCIÓN — Hysteresis de dos niveles:
+//   Nivel 1 (SOFT): si el nuevo régimen es menos severo que el anterior Y han pasado
+//     menos de HYSTERESIS_DOWNGRADE_HOURS horas → mantener el anterior, bajar confianza.
+//     "Downgrade" = CRISIS→CONTRACTION o CONTRACTION→EXPANSION (mejora del entorno)
+//     Justificación: los mercados no mejoran en horas; si el VIX bajó de 19 a 17,
+//     la macro no ha cambiado — probablemente fue un ajuste manual.
+//
+//   Nivel 2 (HARD): si el nuevo régimen es más severo (upgrade de riesgo: CRISIS)
+//     → aplicar SIEMPRE, sin hysteresis. Las crisis sí pueden ocurrir rápido.
+//
+// STORAGE: localStorage con key 'olympus_regime_hysteresis_v1'
+// RESET: se limpia automáticamente si han pasado más de HYSTERESIS_MAX_HOURS horas.
+//
+const HYSTERESIS_DOWNGRADE_HOURS = 6;  // mínimas horas para downgrade (si no hay refresh manual)
+const HYSTERESIS_MAX_HOURS = 72;        // reset completo después de 3 días
+
+// ── BYPASS: cuando el usuario pulsa "Actualizar datos", la hysteresis se salta ──
+// Lógica: datos manuales actualizados INTENCIONALMENTE = foto real del mercado ahora.
+// La hysteresis solo protege contra recálculos automáticos en background.
+// El botón de refresh escribe esta clave ANTES de llamar a fetchRealMarketData().
+export const HYSTERESIS_BYPASS_KEY = 'olympus_manual_refresh_v1';
+const BYPASS_VALID_MS = 120_000; // 2 minutos — ventana tras pulsar el botón
+
+function isManualRefreshActive(): boolean {
+  try {
+    const ts = parseInt(localStorage.getItem(HYSTERESIS_BYPASS_KEY) ?? '0');
+    return (Date.now() - ts) < BYPASS_VALID_MS;
+  } catch { return false; }
+}
+
+export function signalManualRefresh(): void {
+  try { localStorage.setItem(HYSTERESIS_BYPASS_KEY, Date.now().toString()); } catch {}
+}
+
+interface HysteresisState {
+  lastRegime: string;
+  lastTimestamp: number;
+  penaltyAtChange: number;
+}
+
+function loadHysteresisState(): HysteresisState | null {
+  try {
+    const raw = localStorage.getItem('olympus_regime_hysteresis_v1');
+    if (!raw) return null;
+    const state = JSON.parse(raw) as HysteresisState;
+    const hoursElapsed = (Date.now() - state.lastTimestamp) / 3_600_000;
+    if (hoursElapsed > HYSTERESIS_MAX_HOURS) {
+      localStorage.removeItem('olympus_regime_hysteresis_v1');
+      return null;
+    }
+    return state;
+  } catch { return null; }
+}
+
+function saveHysteresisState(state: HysteresisState): void {
+  try {
+    localStorage.setItem('olympus_regime_hysteresis_v1', JSON.stringify(state));
+  } catch { /* silencio */ }
+}
+
+const REGIME_SEVERITY: Record<string, number> = { EXPANSION: 0, CONTRACTION: 1, CRISIS: 2 };
+
 export function getMasterRegime(
   input: MasterRegimeInput,
   cewsHistory?: CEWSDataPoint[],
@@ -137,14 +205,56 @@ export function getMasterRegime(
     finalPenalty = Math.min(finalPenalty, 0.55);
   }
 
+  // ── HYSTERESIS: estabilizar régimen contra cambios manuales rápidos ──────
+  // Aplicar SOLO a downgrades (mejoras de régimen). Las alertas de crisis nunca
+  // se suavizan — si el modelo dice CRISIS, es CRISIS inmediatamente.
+  const hysteresis = loadHysteresisState();
+  let effectiveRegime = regime;
+  let effectivePenalty = finalPenalty;
+  let hysteresisActive = false;
+
+  if (hysteresis) {
+    const hoursElapsed = (Date.now() - hysteresis.lastTimestamp) / 3_600_000;
+    const prevSeverity = REGIME_SEVERITY[hysteresis.lastRegime] ?? 0;
+    const currSeverity = REGIME_SEVERITY[regime] ?? 0;
+    const isDowngrade = currSeverity < prevSeverity;
+    // Si el usuario pulsó "Actualizar datos" en los últimos 2 min → bypass total
+    const bypassActive = isManualRefreshActive();
+
+    if (isDowngrade && hoursElapsed < HYSTERESIS_DOWNGRADE_HOURS && !bypassActive) {
+      // Mantener el régimen anterior — solo suavizar la penalización hacia el nuevo
+      effectiveRegime = hysteresis.lastRegime as MasterRegimeLabel;
+      // Interpolar penalización: avanzar 30% hacia el nuevo valor por hora transcurrida
+      const lerpFactor = Math.min(1, hoursElapsed / HYSTERESIS_DOWNGRADE_HOURS);
+      effectivePenalty = hysteresis.penaltyAtChange * (1 - lerpFactor) + finalPenalty * lerpFactor;
+      effectivePenalty = Math.max(0.4, Math.min(1.0, effectivePenalty));
+      hysteresisActive = true;
+    } else {
+      // Actualizar hysteresis state con el nuevo régimen
+      saveHysteresisState({
+        lastRegime: regime,
+        lastTimestamp: Date.now(),
+        penaltyAtChange: finalPenalty,
+      });
+    }
+  } else {
+    // Primera vez — guardar estado actual
+    saveHysteresisState({
+      lastRegime: regime,
+      lastTimestamp: Date.now(),
+      penaltyAtChange: finalPenalty,
+    });
+  }
+
   return {
-    regime,
-    regimePenalty: finalPenalty,
+    regime: effectiveRegime,
+    regimePenalty: effectivePenalty,
     crisisDetail: crisis,
     stressDetail: stress,
     regimeProbs,
     dominantSignal,
-    confidence,
+    // Bajar confianza si hysteresis está activa — el dashboard puede mostrarlo
+    confidence: hysteresisActive ? 'LOW' : confidence,
     cews,
     regimeDuration, // FIX MATH-NEW-02: ahora disponible en output Y activo en cálculo
   };

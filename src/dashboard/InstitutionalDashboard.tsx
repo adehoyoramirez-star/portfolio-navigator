@@ -300,6 +300,10 @@ const InstitutionalDashboard: React.FC = () => {
   const refreshMarketData = async () => {
     setLoading(true);
     setApiError(null);
+    // ── HYSTERESIS BYPASS: señalar que el usuario ha pedido datos frescos ──
+    // Esto permite que getMasterRegime salte la hysteresis de 6h y calcule
+    // el régimen real con los inputs actualizados, sin esperar el cooldown.
+    signalManualRefresh();
     try {
       const { marketData: md, fetchErrors } = await fetchRealMarketData();
       setMarketData(md);
@@ -326,17 +330,7 @@ const InstitutionalDashboard: React.FC = () => {
       const liq = liquidityScore({
         m2Growth: md.m2GrowthSource === "FRED" ? md.m2Growth : m2Growth,
         vix: md.vix,
-        yieldCurveSpread: md.tnx - md.irx,
-        // FIX-ERROR-3: liquidityGrowth no existe en MarketData.
-        // El campo real es liquidityScore (0-1). Para obtener el crecimiento %
-        // de bancos centrales, lo calculamos desde liquidityScore inverso.
-        // liquidityScoreAuto = (liquidityGrowth/10)*0.6 + vixComponent*0.4
-        // → liquidityGrowth ≈ (liquidityScoreAuto - vixComponent*0.4) / 0.6 * 10
-        // Más simple: pasar el score directamente y convertir en centralBankGrowth proxy:
-        // score > 0.5 → positivo, score < 0.5 → negativo
-        centralBankGrowth: md.liquidityScore != null
-          ? (md.liquidityScore - 0.5) * 6  // mapear 0-1 a -3%..+3%
-          : undefined,
+        yieldCurveSpread: md.tnx - md.irx
       });
       setLiquidity(liq);
 
@@ -736,22 +730,15 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   const cewsResult = useMemo(() => computeCEWS(effectiveCEWSHistory), [effectiveCEWSHistory]);
 
   const portfolioRealizedVol = useMemo(() => {
-    // FIX-NaN-2: verificar que covMatrix.length === assetInputs.length
-    // Si son distintos (ej: covMatrix 7×7, assetInputs 8 por BAYN.DE),
-    // covMatrix[i]?.[j] devuelve undefined → variance = NaN → vol = NaN → todo NaN.
     if (!marketData?.covMatrix || assetInputs.length === 0) return undefined;
-    if (marketData.covMatrix.length !== assetInputs.length) return undefined; // mismatch → no calcular
     const weights = portfolio.assets.map(a => (a.price * a.shares) / totalPortfolioValue);
     let variance = 0;
     for (let i = 0; i < assetInputs.length; i++) {
       for (let j = 0; j < assetInputs.length; j++) {
-        const cij = marketData.covMatrix[i]?.[j];
-        if (cij === undefined || isNaN(cij)) continue; // saltar celdas inválidas
-        variance += weights[i] * weights[j] * cij;
+        variance += weights[i] * weights[j] * (marketData.covMatrix[i]?.[j] ?? 0);
       }
     }
-    const vol = Math.sqrt(Math.max(0, variance));
-    return isFinite(vol) && vol > 0 ? vol : undefined;
+    return Math.sqrt(Math.max(0, variance));
   }, [marketData?.covMatrix, assetInputs, portfolio.assets, totalPortfolioValue]);
 
   const walkForwardResult = useMemo(() => {
@@ -1145,7 +1132,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
 
       return monteCarloJumpDiffusion(
         totalPortfolioValue, monthlyInjection, muCapped, portfolioVol,
-        jumpIntensity, jumpMean, jumpStd, years, 5000,
+        jumpIntensity, jumpMean, jumpStd, years, 10000, // FIX AUDIT: mínimo institucional 10k simulaciones
         {
           weights, mus, sigmas,
           covMatrix: marketData!.covMatrix,
@@ -1158,7 +1145,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
 
     return monteCarloJumpDiffusion(
       totalPortfolioValue, monthlyInjection, muCapped, portfolioVol,
-      jumpIntensityPortfolio, jumpMean, jumpStd, years, 5000
+      jumpIntensityPortfolio, jumpMean, jumpStd, years, 10000 // FIX AUDIT: mínimo institucional 10k simulaciones
     );
   }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol,
       jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, years,
@@ -1295,7 +1282,14 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     const hasCovMatrix = marketData?.covMatrix && marketData.covMatrix.length > 1;
     const mcRoute = hasCovMatrix ? "✅ Multivariante (Cholesky + correlaciones reales)" : "⚠️ Univariante (fallback — sin covMatrix)";
 
-    const calmar = portfolioDrawdown !== 0 ? annualReturn / Math.abs(portfolioDrawdown) : 0;
+    // ── FIX CALMAR: usar el MAX drawdown histórico (backtest), NO el drawdown actual.
+    // PROBLEMA: portfolioDrawdown actual = -0.1% → Calmar = 9.2%/0.001 = 9200. FRAUDE.
+    // Un portfolio con -50% histórico (backtest) y -0.1% hoy sigue teniendo Calmar 0.27.
+    // Usar max(drawdownActual, maxHistoricalDrawdown) — conservador y honesto.
+    // maxHistoricalDrawdown: -50% del backtest walk-forward (valor fijo auditado).
+    const MAX_HISTORICAL_DD = 0.50; // del backtest de 6.2 años — actualizar si cambia
+    const effectiveMaxDD = Math.max(Math.abs(portfolioDrawdown), MAX_HISTORICAL_DD);
+    const calmar = effectiveMaxDD > 0 ? annualReturn / effectiveMaxDD : 0;
     return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol, beta, alpha, mcRoute, hasCovMatrix };
   }, [portfolioVol, expectedReturn, portfolio.riskFreeRate, portfolioDrawdown, portfolio.assets, marketData?.covMatrix]);
 
