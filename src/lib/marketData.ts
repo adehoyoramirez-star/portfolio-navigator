@@ -262,11 +262,13 @@ function covarianceMatrix(returnsSeries: number[][], assetTickers?: string[]): n
 
   // ── Diagnóstico: loggear longitudes y alpha por activo ─────────────────
   if (typeof console !== 'undefined') {
-    const tickers = assetTickers ?? returnsSeries.map((_, i) => `Asset${i}`);
-    console.log(\`[Olympus] returnsPerAsset lengths: \${tickers.map((t,i) => \`\${t}:\${safeLengths[i]}\`).join(' | ')}\`);
+    const tickers = assetTickers ?? returnsSeries.map((_, i) => 'Asset' + i);
+    const lenStr = tickers.map((t, i) => t + ':' + safeLengths[i]).join(' | ');
+    console.log('[Olympus] returnsPerAsset lengths: ' + lenStr);
     const hasNaN = covLW.some(row => row.some(v => !isFinite(v)));
-    console.log(\`[Olympus] returnsPerAsset hasNaN: \${tickers.map((t,i) => \`\${t}:\${!returnsSeries[i].every(isFinite)}\`).join(' | ')}\`);
-    console.log(\`[Olympus] covMatrix size: \${n} × \${n} | hasNaN: \${hasNaN} | alpha_global: \${alphaGlobal.toFixed(3)} | minLen: \${minLen}\`);
+    const nanStr = tickers.map((t, i) => t + ':' + !returnsSeries[i].every(isFinite)).join(' | ');
+    console.log('[Olympus] returnsPerAsset hasNaN: ' + nanStr);
+    console.log('[Olympus] covMatrix size: ' + n + ' x ' + n + ' | hasNaN: ' + hasNaN + ' | alpha_global: ' + alphaGlobal.toFixed(3) + ' | minLen: ' + minLen);
   }
 
   return covLW;
