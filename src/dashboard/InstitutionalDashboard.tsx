@@ -2458,7 +2458,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
                 <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
                   <strong style={{ color: "#e2e8f0" }}>Total disponible para DCA/Rebalanceo:</strong>
                   {" "}€{(tactical + monthlyInjection).toFixed(0)} libre
-                  {defensive > 0 ? ` + €${Math.round(defensiveLiquidity * 0.35)} del ataque Tramo 2` : ""}
+                  {defensiveLiquidity > 0 ? ` + €${Math.round(defensiveLiquidity * 0.35)} del ataque Tramo 2` : ""}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: committed < btcOrders ? "#ef4444" : "#10b981" }}>
                   {committed < btcOrders

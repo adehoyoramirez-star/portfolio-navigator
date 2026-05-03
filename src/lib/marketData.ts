@@ -26,6 +26,15 @@ interface YahooResponse {
   } | null;
   creditSpread?: { spread?: number; value?: number; source: string } | null;
   breakeven?: { value?: number; source: string } | null;
+  // FIX-1: fundamentals añadido — la función Supabase puede devolver datos
+  // de fundamentales (PE, EPS, dividendo) si se implementa en el edge function.
+  // Sin esta declaración TypeScript rechaza el destructuring de la línea 442.
+  fundamentals?: Record<string, {
+    pe?: number;
+    eps?: number;
+    dividendYield?: number;
+    marketCap?: number;
+  }> | null;
 }
 
 // Tipo completo que devuelve fetchRealMarketData — incluye todo lo que el dashboard necesita
@@ -153,7 +162,11 @@ function percentile(arr: number[], p: number): number {
 //
 // REFERENCIA: Ledoit & Wolf (2004) "A well-conditioned estimator for
 //   large-dimensional covariance matrices", Journal of Multivariate Analysis.
-function covarianceMatrix(returnsSeries: number[][], assetTickers?: string[]): number[][] {
+// FIX-2: assetTickers acepta readonly string[] además de string[].
+// ASSETS en constants.ts es 'readonly ["BTC-EUR", ...]' — TypeScript no permite
+// asignar un tipo readonly a un parámetro mutable string[].
+// Solución: usar 'readonly string[]' que es compatible con ambos.
+function covarianceMatrix(returnsSeries: number[][], assetTickers?: readonly string[]): number[][] {
   const n = returnsSeries.length;
 
   // ── FIX NaN: necesitamos al menos 2 observaciones para covarianza ──────
