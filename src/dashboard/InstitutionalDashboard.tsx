@@ -307,13 +307,15 @@ const InstitutionalDashboard: React.FC = () => {
     }
   }, [manualPER, manualBond10y]);
 
-  const refreshMarketData = async () => {
+  // FIX-HYST-01: isUserInitiated controla el bypass de hysteresis.
+  // AUTO-LOAD (isUserInitiated=false): respeta la hysteresis de 6h → no genera oscilaciones
+  // USER CLICK  (isUserInitiated=true): salta la hysteresis → datos frescos inmediatamente
+  const refreshMarketData = async (isUserInitiated = false) => {
     setLoading(true);
     setApiError(null);
-    // ── HYSTERESIS BYPASS: señalar que el usuario ha pedido datos frescos ──
-    // Esto permite que getMasterRegime salte la hysteresis de 6h y calcule
-    // el régimen real con los inputs actualizados, sin esperar el cooldown.
-    signalManualRefresh();
+    if (isUserInitiated) {
+      signalManualRefresh(); // solo bypass cuando el usuario hace clic explícitamente
+    }
     try {
       const { marketData: md, fetchErrors } = await fetchRealMarketData();
       setMarketData(md);
@@ -1308,7 +1310,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       <h1 style={styles.title}>Institutional Portfolio Dashboard (Olympus Engine V3+)</h1>
 
       <div style={{ marginBottom: "20px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-        <button onClick={refreshMarketData} style={styles.button} disabled={loading}>
+        <button onClick={() => refreshMarketData(true)} style={styles.button} disabled={loading}>
           {loading ? "Actualizando..." : "🔄 Actualizar precios y datos macro"}
         </button>
 
@@ -1985,6 +1987,15 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
               <p><strong>Prob. crisis:</strong> {engineResult.masterRegime.crisisDetail.crisisProbability.toFixed(1)}%</p>
               <p><strong>p(exp/cont/crisis):</strong> {((engineResult.masterRegime.regimeProbs?.expansion ?? 0) * 100).toFixed(0)}% / {((engineResult.masterRegime.regimeProbs?.contraction ?? 0) * 100).toFixed(0)}% / {((engineResult.masterRegime.regimeProbs?.crisis ?? 0) * 100).toFixed(0)}%</p>
               <p><strong>Penalización régimen:</strong> <span style={{ color: "#f59e0b" }}>×{engineResult.masterRegime.regimePenalty.toFixed(3)}</span></p>
+              <p style={{ fontSize: "0.7rem", color: "#9ca3af", marginTop: "4px" }}>
+                <strong>p(exp/cont/crisis): {(engineResult.masterRegime.regimeProbs.expansion * 100).toFixed(0)}% / {(engineResult.masterRegime.regimeProbs.contraction * 100).toFixed(0)}% / {(engineResult.masterRegime.regimeProbs.crisis * 100).toFixed(0)}%</strong>
+                <br />
+                <span style={{ color: "#6b7280" }}>
+                  ⓘ Modelo VIX+M2+Yield (probabilístico). El régimen final combina éste + 
+                  credit spreads + WTI shock. El más conservador de los 3 modelos determina el régimen.
+                  Penalización = 40% modelo binario + 60% modelo continuo.
+                </span>
+              </p>
               <p><strong>Penalización correlación:</strong> ×{engineResult.correlationPenalty.toFixed(2)}</p>
               <p><strong>Vol Target:</strong> ×{engineResult.volTargetMultiplier.toFixed(2)}</p>
               {engineResult.tailRiskActive && (

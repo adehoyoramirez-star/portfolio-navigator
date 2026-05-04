@@ -46,12 +46,52 @@ export default function BacktestPanel({
 
   const result: BacktestOutput | null = useMemo(() => {
     if (!marketData?.closesHistory) return null;
-    // Crear arrays de macro con el valor actual repetido (para que tenga la misma longitud que los precios)
+    // FIX-BACKTEST-REGIME: usar proxy histórico de VIX en lugar de repetir el valor actual.
+    // PROBLEMA ANTERIOR: currentVix repetido para todos los días → el régimen es idéntico
+    // en cada rebalanceo → 100% EXPANSION en el backtest porque VIX=17 < umbral CONTRACTION.
+    // FIX: proxy de VIX histórico = volatilidad realizada del S&P500 (^GSPC closes) × √252 × 10
+    //   Calibración: σ=0.01 diario → VIX_proxy ≈ 15.9 (histórico normal)
+    //               σ=0.025 diario → VIX_proxy ≈ 39.7 (spike como COVID/2008)
+    // Si no hay datos históricos de VIX reales → usar el proxy de precio como fallback
     const length = marketData.closesHistory['BTC-EUR']?.length || 0;
+    const spxCloses = marketData.closesHistory['^GSPC'] ?? marketData.closesHistory['SPY'] ?? [];
+    
+    // Calcular volatilidad realizada rolling 21 días para cada fecha del backtest
+    const buildVixProxy = (closes: number[], targetLen: number): number[] => {
+      if (closes.length < 22) return Array(targetLen).fill(currentVix);
+      const vixProxy: number[] = [];
+      for (let i = 0; i < closes.length - 1; i++) {
+        if (closes[i] > 0 && closes[i + 1] > 0) {
+          vixProxy.push(Math.log(closes[i + 1] / closes[i]));
+        }
+      }
+      const result: number[] = [];
+      for (let i = 0; i < vixProxy.length; i++) {
+        const window = vixProxy.slice(Math.max(0, i - 21), i + 1);
+        if (window.length < 5) { result.push(currentVix); continue; }
+        const mean = window.reduce((s, v) => s + v, 0) / window.length;
+        const variance = window.reduce((s, v) => s + (v - mean) ** 2, 0) / window.length;
+        const annualVol = Math.sqrt(variance * 252);
+        // Calibrar: vol 15% ≈ VIX 15, vol 40% ≈ VIX 40
+        result.push(Math.max(10, Math.min(80, annualVol * 100)));
+      }
+      // Pad to targetLen with currentVix
+      while (result.length < targetLen) result.unshift(currentVix);
+      return result.slice(-targetLen);
+    };
+
+    // Proxy de credit spread histórico: usar constanteElevated en stress (cuando vixProxy>25)
+    // Regla: creditSpread_proxy = currentCreditSpread × max(1, vixProxy/17)^0.5
+    const buildCreditProxy = (vixArr: number[]): number[] =>
+      vixArr.map(v => Math.min(8, currentCreditSpread * Math.sqrt(Math.max(1, v / 17))));
+
+    const vixHistorical = buildVixProxy(spxCloses, length);
+    const creditHistorical = buildCreditProxy(vixHistorical);
+    
     const macroHistory = {
-      vix: Array(length).fill(currentVix),
-      yieldSpread: Array(length).fill(0),
-      creditSpread: Array(length).fill(currentCreditSpread),
+      vix: vixHistorical,
+      yieldSpread: Array(length).fill(0), // yield spread histórico: sin datos → 0 (conservador)
+      creditSpread: creditHistorical,
     };
     return runBacktest({
       closesHistory: marketData.closesHistory,

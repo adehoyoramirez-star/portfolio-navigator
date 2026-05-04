@@ -156,8 +156,20 @@ export function computeRebalanceSuggestions(
         if (cost > loopCash) continue;
 
         const absDrift = Math.abs(asset.drift * 100);
-        const priority: "HIGH" | "MEDIUM" | "LOW" =
+        // FIX-REBALANCER-CORR: degradar HIGH si el activo tiene alta correlación con BTC
+        // y BTC ya está sobreexpuesto (> 25%). Evita añadir cluster tech-crypto involuntariamente.
+        const BTC_CORR: Record<string, number> = {
+          'XNAS.DE': 0.68, 'VVSM.DE': 0.72, 'IS3Q.DE': 0.52, 'EMXC.DE': 0.45,
+          'PPFB.DE': -0.12, 'URNU.DE': 0.28, 'BTC-EUR': 1.0,
+        };
+        const btcEntry = allAssets?.find((a: { ticker: string; currentPct: number }) => a.ticker === 'BTC-EUR');
+        const btcOverweight = btcEntry && btcEntry.currentPct > 0.25;
+        const assetBtcCorr = BTC_CORR[asset.ticker] ?? 0;
+        let priority: "HIGH" | "MEDIUM" | "LOW" =
           absDrift > 10 ? "HIGH" : absDrift > 5 ? "MEDIUM" : "LOW";
+        if (btcOverweight && assetBtcCorr > 0.55 && priority === "HIGH") {
+          priority = "MEDIUM"; // cluster BTC activo — bajar prioridad
+        }
 
         suggestions.push({
           ticker: asset.ticker, name: asset.name, action: "BUY",
