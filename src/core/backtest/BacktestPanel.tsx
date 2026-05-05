@@ -104,6 +104,7 @@ export default function BacktestPanel({
       transactionCostBps: 10,
     });
   })();
+    console.log('BACKTEST TÁCTICO metrics', result?.metrics);
 
   if (!marketData) {
     return (
