@@ -287,12 +287,6 @@ const InstitutionalDashboard: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [marketData, setMarketData] = useState<MarketData | null>(null);
-  // Almacenar marketData en una variable global para el backtest táctico
-useEffect(() => {
-  if (marketData) {
-    (window as any).__marketData = marketData;
-  }
-}, [marketData]);
 
   // NIVEL 4: alertas, régimen y persistencia
   const [activeAlerts, setActiveAlerts] = useState<RegimeAlert[]>([]);

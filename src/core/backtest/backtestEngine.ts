@@ -1,6 +1,6 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/backtestEngine.ts
-// VERSIÓN CORREGIDA CON TAIL RISK OVERLAY Y MACRO HISTORY
+// VERSIÓN CORREGIDA CON TAIL RISK OVERLAY, MACRO HISTORY Y CAPA TÁCTICA
 // ===============================================
 
 import { ASSETS } from "@/lib/constants";
@@ -12,6 +12,7 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
+import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from "../engine/regimeTacticalAllocation";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
@@ -297,8 +298,7 @@ function computeAllocationsWithRegime(
   else if (macro.vix > 25) regime = "CONTRACTION";
   else regime = "EXPANSION";
 
-  const regimePenalty = regime === "CRISIS" ? 0.4 : regime === "CONTRACTION" ? 0.7 : 1.0;
-
+  // En lugar de usar un multiplicador fijo, usaremos la capa táctica
   const returnCache = new Map<string, { r12m: number; r3m: number; r1m: number }>();
   const getReturns = (ticker: string) => {
     if (!returnCache.has(ticker)) {
@@ -339,8 +339,8 @@ function computeAllocationsWithRegime(
   const corrMatrix = computeWindowCorrelation(closesHistory, backtestTickers, t, 63);
   const corrPen = correlationPenalty(corrMatrix);
 
-  const raw: Record<string, number> = {};
-  let totalRaw = 0;
+  const rawBase: Record<string, number> = {};
+  let totalBase = 0;
 
   assetFactors.forEach(({ ticker, momentum, vol, earningsYield }) => {
     const { r12m, r3m, r1m } = getReturns(ticker);
@@ -360,14 +360,34 @@ function computeAllocationsWithRegime(
       lowVolScore:   lowVol.lowVolScore + lowVol.downsideVolPenalty,
     });
     const kelly = calculateKelly({ expectedReturn: calibrated.expectedReturn, volatility: vol });
-    const alloc = kelly.kellyFraction * corrPen * regimePenalty;
-    raw[ticker] = Math.max(0, isFinite(alloc) ? alloc : 0);
-    totalRaw += raw[ticker];
+    // Pesos base = Kelly * penalización por correlación (sin penalización de régimen uniforme)
+    const baseWeight = kelly.kellyFraction * corrPen;
+    rawBase[ticker] = Math.max(0, isFinite(baseWeight) ? baseWeight : 0);
+    totalBase += rawBase[ticker];
   });
 
-  if (totalRaw === 0) return { allocations: equalWeightAllocations(), regime };
-  const allocations = Object.fromEntries(ASSETS.map(t => [t, raw[t] / totalRaw]));
-  return { allocations, regime };
+  if (totalBase === 0) return { allocations: equalWeightAllocations(), regime };
+
+  // Normalizar pesos base
+  const baseNormalized = Object.fromEntries(ASSETS.map(t => [t, rawBase[t] / totalBase]));
+
+  // Convertir a array en el orden de ASSETS
+  const baseArray = ASSETS.map(t => baseNormalized[t]);
+
+  // Obtener pesos tácticos para el régimen actual
+  const tacticalWeights = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
+
+  // Mezclar optimización cuantitativa (60%) con pesos tácticos (40%)
+  const blended = applyTacticalConstraints(baseArray, tacticalWeights, regime, 0.60);
+
+  // Aplicar límite de cluster tecnológico
+  const withClusterCap = enforceClusterCap(blended, ASSETS.map(t => ({ name: t })), regime);
+
+  // Normalizar de nuevo
+  const totalFinal = withClusterCap.reduce((s, w) => s + w, 0) || 1;
+  const finalAllocations = Object.fromEntries(ASSETS.map((t, i) => [t, withClusterCap[i] / totalFinal]));
+
+  return { allocations: finalAllocations, regime };
 }
 
 export function runBacktest(input: BacktestInput): BacktestOutput {
