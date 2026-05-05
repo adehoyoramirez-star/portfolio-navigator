@@ -40,6 +40,12 @@ import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaInte
 // Antes: triple hardcode en engineConfig.ts, factorCalibration.ts, y aquí.
 // Ahora: todos importan de engineConfig → un solo punto de cambio.
 import { FACTOR_CONFIG } from "../config/engineConfig";
+import {
+  getTacticalWeights,
+  applyTacticalConstraints,
+  enforceClusterCap,
+  REGIME_TACTICAL_ALLOCATIONS,
+} from "./regimeTacticalAllocation";
 
 // ==================== INTERFACES ====================
 export interface AssetInput {
@@ -377,6 +383,22 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
   const blendNorm = blendWeights.map(w => w / totalBlend);
 
+  // ── CAPA TÁCTICA POR RÉGIMEN (NUEVO) ─────────────────────────────────
+  const tacticalWeights = getTacticalWeights(masterRegime.regime, assets);
+  const blendedWithTactical = applyTacticalConstraints(
+    blendNorm,
+    tacticalWeights,
+    masterRegime.regime,
+    0.60
+  );
+  const finalWeightsBeforeCap = enforceClusterCap(
+    blendedWithTactical,
+    assets,
+    masterRegime.regime
+  );
+  const totalFinalWeights = finalWeightsBeforeCap.reduce((s, w) => s + w, 0) || 1;
+  const finalBlendNorm = finalWeightsBeforeCap.map(w => w / totalFinalWeights);
+    // ── PESOS DE REFERENCIA (Markowitz y Risk Parity) ────────────────────
   const markowitzWeights = assets.map(() => 1 / assets.length);
   const rpInputs = assets.map(a => ({
     name: a.name,
@@ -387,7 +409,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
 
   // ====== CAPA 7: VOL TARGET ======
-  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, blendNorm, input.covMatrix);
+  // CORREGIDO: usamos finalBlendNorm para que el cálculo de volatilidad
+  // refleje la composición real de la cartera tras los cambios tácticos.
+  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, finalBlendNorm, input.covMatrix);
   const volTarget = computeVolTargetMultiplier({
     targetVol: input.targetVol ?? DEFAULT_TARGET_VOL,
     realizedVol,
@@ -423,7 +447,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // ====== OUTPUT FINAL ======
   const allocations: OlympusOutput[] = kellyNorm.map(
     ({ asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyNormalized }, i) => {
-      const blended = blendNorm[i];
+      const blended = finalBlendNorm[i];
       const volAdj = blended * volTarget.multiplier;
       const final = volAdj * tailRisk.overlay;
 
