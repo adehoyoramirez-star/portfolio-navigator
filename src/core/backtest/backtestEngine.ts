@@ -305,7 +305,7 @@ function computeAllocationsWithRegime(
   ASSETS.forEach((ticker, idx) => {
     finalAllocations[ticker] = tacticalWeights[idx] / total;
   });
-
+console.log('TÁCTICO BACKTEST - régimen:', regime, 'pesos:', finalAllocations);
   return { allocations: finalAllocations, regime };
 }
 
