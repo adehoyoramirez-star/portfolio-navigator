@@ -418,7 +418,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     realizedVol,
     regimePenalty: adjustedRegimePenalty,
   });
-  // ====== CAPA 7: VOL TARGET ======
+  // ====== .CAPA 7: VOL TARGET ======
   // CORREGIDO: usamos finalBlendNorm para que el cálculo de volatilidad
   // refleje la composición real de la cartera tras los cambios tácticos.
   
@@ -568,7 +568,7 @@ function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
       }
     }
 
-    // ── FIX NaN: proteger contra grad con NaN (si covMatrix es mala a pesar del guard) ──
+    // ── .FIX NaN: proteger contra grad con NaN (si covMatrix es mala a pesar del guard) ──
     if (grad.some(g => !isFinite(g))) {
       console.warn('[Olympus] minimumVarianceWeights: gradiente NaN en iteración', iter, '→ fallback');
       return Array(n).fill(1 / n);
