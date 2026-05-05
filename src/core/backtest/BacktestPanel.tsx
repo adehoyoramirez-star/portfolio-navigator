@@ -1,6 +1,6 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/BacktestPanel.tsx
-// CORREGIDO: usa macroHistory en lugar de macro
+// CORREGIDO: usa macroHistory y cálculo táctico
 // ===============================================
 
 import React, { useState, useMemo } from "react";
@@ -44,16 +44,14 @@ export default function BacktestPanel({
     return Math.max(...lengths);
   }, [marketData]);
 
-  const result: BacktestOutput | null = useMemo(() => {
+  // ⚡ CAMBIO: IIFE en lugar de useMemo para forzar recálculo siempre
+  const result: BacktestOutput | null = (() => {
     if (!marketData?.closesHistory) return null;
 
     const length = marketData.closesHistory['BTC-EUR']?.length || 0;
-    
-    // ── VIX real histórico (descargado de Yahoo Finance como ^VIX) ───────────
     const vixCloses = marketData.closesHistory['^VIX'] ?? [];
     const spxCloses = marketData.closesHistory['^GSPC'] ?? marketData.closesHistory['SPY'] ?? [];
     
-    // Calcular volatilidad realizada rolling 21 días para cada fecha del backtest
     const buildVixProxy = (closes: number[], targetLen: number): number[] => {
       if (closes.length < 22) return Array(targetLen).fill(currentVix);
       const vixProxy: number[] = [];
@@ -75,11 +73,9 @@ export default function BacktestPanel({
       return result.slice(-targetLen);
     };
 
-    // Proxy de credit spread histórico
     const buildCreditProxy = (vixArr: number[]): number[] =>
       vixArr.map(v => Math.min(8, currentCreditSpread * Math.sqrt(Math.max(1, v / 17))));
 
-    // ── CONSTRUCCIÓN DEL HISTÓRICO DE VIX ─────────────────────────────────
     let vixHistorical: number[];
     if (vixCloses.length > 0) {
       const padded = [...vixCloses];
@@ -107,7 +103,7 @@ export default function BacktestPanel({
       initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
       transactionCostBps: 10,
     });
-  }, [marketData, currentVix, currentCreditSpread, rebalanceDays, lookbackDays, portfolioInitialValue]);
+  })();  // ← Invocación inmediata
 
   if (!marketData) {
     return (
