@@ -47,6 +47,7 @@ import {
   REGIME_TACTICAL_ALLOCATIONS,
 } from "./regimeTacticalAllocation";
 
+
 // ==================== INTERFACES ====================
 export interface AssetInput {
   name: string;
@@ -370,7 +371,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-  // ====== BLEND FINAL: BL×0.40 + HRP×0.45 + MinVar×0.15 ======
+    // ====== BLEND FINAL: BL×0.40 + HRP×0.45 + MinVar×0.15 ======
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
       const minVarW = minimumVarianceWeights(input.covMatrix!, assets.length);
@@ -398,7 +399,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   );
   const totalFinalWeights = finalWeightsBeforeCap.reduce((s, w) => s + w, 0) || 1;
   const finalBlendNorm = finalWeightsBeforeCap.map(w => w / totalFinalWeights);
-    // ── PESOS DE REFERENCIA (Markowitz y Risk Parity) ────────────────────
+  console.log('TACTICAL FINAL WEIGHTS', finalBlendNorm);
+
+  // ── PESOS DE REFERENCIA (Markowitz y Risk Parity) ────────────────────
   const markowitzWeights = assets.map(() => 1 / assets.length);
   const rpInputs = assets.map(a => ({
     name: a.name,
@@ -409,15 +412,16 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
 
   // ====== CAPA 7: VOL TARGET ======
-  // CORREGIDO: usamos finalBlendNorm para que el cálculo de volatilidad
-  // refleje la composición real de la cartera tras los cambios tácticos.
   const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, finalBlendNorm, input.covMatrix);
   const volTarget = computeVolTargetMultiplier({
     targetVol: input.targetVol ?? DEFAULT_TARGET_VOL,
     realizedVol,
     regimePenalty: adjustedRegimePenalty,
   });
-
+  // ====== CAPA 7: VOL TARGET ======
+  // CORREGIDO: usamos finalBlendNorm para que el cálculo de volatilidad
+  // refleje la composición real de la cartera tras los cambios tácticos.
+  
   // ====== CAPA 8: TAIL RISK ======
   const tailRisk = computeTailRiskOverlay({
     drawdown: input.portfolioDrawdown ?? 0,
