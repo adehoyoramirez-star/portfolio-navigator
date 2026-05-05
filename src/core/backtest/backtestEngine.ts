@@ -309,6 +309,7 @@ function computeAllocationsWithRegime(
         r1m:  periodReturn(closes, t, 21),
       });
     }
+    console.log('Backtest Táctico - Pesos finales:', finalAllocations);
     return returnCache.get(ticker)!;
   };
 
