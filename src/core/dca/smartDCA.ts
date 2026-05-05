@@ -410,13 +410,73 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   }
 
   // ── MODO ATAQUE: tiene prioridad sobre bloqueos defensivos normales
-  const attackPossible =
+  // FIX-ATTACK-SEPARATION: Las 7 señales de confluencia son MAYORITARIAMENTE señales
+  // del ciclo BTC (RSI BTC, MVRV, BTC.D, Z-Score BTC, momentum BTC).
+  // PROBLEMA DETECTADO EN AUDITORÍA: cuando 4/7 se activan → "ATAQUE FUERTE" despliega
+  // €681 en TODA la cartera (IS3Q, URNU, EMXC, XNAS...) aunque la razón sean señales BTC.
+  // Esto es incoherente: "MVRV bajo → comprar uranio" no tiene sentido.
+  //
+  // SOLUCIÓN — Dos motores separados con reglas distintas:
+  //   Motor A (Portfolio DCA): se activa por régimen macro favorable (expansión / DCA normal)
+  //   Motor B (BTC Ciclo): se activa por señales BTC y añade un BONUS BTC al portfolio DCA
+  //
+  // Cuando las 7 señales confirman un fondo BTC (4/7 activas), el DCA de cartera continúa
+  // NORMAL (motorAllocations proporcionales) PERO BTC recibe un bonus adicional del 30-60%
+  // del cash BTC normal. No se multiplica la cartera entera — solo el tramo BTC.
+  const btcSpecificSignals = attackSignals.filter(s => 
+    ['BTC Sobreventa Extrema', 'Divergencia de Momentum', 'BTC Dominance Acumulación', 'MVRV Zona de Valor'].includes(s.name)
+  );
+  const btcSignalCount = btcSpecificSignals.filter(s => s.active).length;
+  const macroSignals = attackSignals.filter(s =>
+    ['Régimen Mejorando', 'CEWS Recuperándose', 'VIX Normalizándose'].includes(s.name)
+  );
+  const macroSignalCount = macroSignals.filter(s => s.active).length;
+
+  // El "ataque completo" (multiplicador sobre TODA la cartera) requiere
+  // que TANTO las señales BTC COMO las señales macro estén activas.
+  // Si solo están las BTC → bonus BTC, DCA normal para el resto.
+  const fullAttackPossible =
     attackConfluence >= 2 &&
+    macroSignalCount >= 1 &&   // al menos 1 señal macro confirma
+    btcSignalCount >= 1 &&     // al menos 1 señal BTC confirma
     regime !== "CRISIS" &&
     !tailRiskActive &&
     regimePenalty >= 0.55;
 
-  if (attackPossible) {
+  const btcOnlyAttackPossible =
+    btcSignalCount >= 2 &&     // 2+ señales BTC
+    macroSignalCount === 0 &&  // sin señales macro → solo bonus BTC
+    regime !== "CRISIS" &&
+    !tailRiskActive &&
+    regimePenalty >= 0.55;
+
+  const attackPossible = fullAttackPossible || btcOnlyAttackPossible;
+
+  if (btcOnlyAttackPossible && !fullAttackPossible) {
+    // Solo señales BTC → DCA normal en todos los activos + bonus fraccionario en BTC
+    // No "ATTACK_STRONG" sobre toda la cartera — eso sería mezclar señales incorrectamente
+    const normalAllocations = buildAllocations(availableCash, motorAllocations, 'DCA+BTC-BONUS:');
+    const btcBonusPct = Math.min(0.30 + btcSignalCount * 0.10, 0.60); // 30-60% extra en BTC
+    const btcAlloc = normalAllocations.find(a => a.ticker === 'BTC-EUR');
+    if (btcAlloc) btcAlloc.actualCost = Math.min(btcAlloc.actualCost * (1 + btcBonusPct), availableCash * 0.35);
+    const actualTotal = normalAllocations.reduce((s, a) => s + a.actualCost, 0);
+    return {
+      action: 'ATTACK_ENTRY' as const,
+      score: attackConfluence,
+      buyFraction: availableCash > 0 ? actualTotal / availableCash : 1,
+      totalCashToInvest: actualTotal,
+      allocationByAsset: normalAllocations,
+      reasoning: `DCA con bonus BTC — ${btcSignalCount}/4 señales BTC activas (${attackConfluence}/7 total). BTC recibe ${(btcBonusPct*100).toFixed(0)}% extra. Sin señales macro suficientes para ataque completo de cartera.`,
+      blockReason: undefined,
+      attackMode: true,
+      attackConfluence,
+      attackSignals,
+      attackMultiplier: 1 + btcBonusPct,
+      attackTranche: 1,
+    };
+  }
+
+  if (fullAttackPossible) {
     const attackResult = computeAttackMode(attackSignals, availableCash, defensiveLiquidity, motorAllocations);
     if (attackResult.action !== "WAIT") {
       return {

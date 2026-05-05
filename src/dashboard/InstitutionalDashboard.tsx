@@ -2960,12 +2960,18 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
             </div>
           </div>
           {/* Indicador de progreso hacia BTC_CYCLE_OVERRIDE */}
+          {/* FIX-SIGNAL-CLARITY: Separar señales BTC de señales macro */}
           <div style={{ marginBottom: "0.75rem", padding: "0.5rem 0.75rem", borderRadius: 8, backgroundColor: "#0f172a", border: "1px solid #1e3a5f", fontSize: "0.75rem", color: "#6b7280" }}>
             <span style={{ color: "#60a5fa" }}>⚡ Motor B (BTC Ciclo): </span>
             {smartDCAResult.attackConfluence >= 4
               ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult.attackConfluence}/7 señales superan umbral de override</span>
               : <span>Necesita {4 - smartDCAResult.attackConfluence} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS macro si ≥4/7)</span>
             }
+            <br/>
+            <span style={{ color: "#9ca3af", fontSize: "0.68rem" }}>
+              ⓘ Las 7 señales son indicadores de ciclo BTC/macro. Con régimen no-CRISIS y 4/7 activas → bonus BTC en DCA.
+              El DCA completo de cartera requiere además ≥1 señal macro (Régimen, CEWS o VIX) activa.
+            </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.6rem", marginBottom: "1rem" }}>
             {smartDCAResult.attackSignals.map(signal => (

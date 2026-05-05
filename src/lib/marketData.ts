@@ -545,6 +545,13 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
 
   // ── S&P 500 ────────────────────────────────────────────────────────────────
   const sp500Closes = cleanCloses(yfData['^GSPC']?.closes ?? []);
+  // FIX-BACKTEST-VIX: añadir SP500 a closesHistory para que BacktestPanel pueda
+  // construir el proxy histórico de VIX en lugar de repetir el valor actual.
+  // Sin esto, buildVixProxy recibe un array vacío y usa currentVix para todos los días,
+  // resultando en 100% EXPANSION en el backtest (forward-looking bias confirmado en auditoría).
+  if (sp500Closes.length > 0) {
+    closesHistory['^GSPC'] = sp500Closes;
+  }
   // PASO 5: RSI S&P500 con Wilder EMA fiable (antes solo usaba 15 datos → siempre ~50)
   const sp500Rsi = calculateRSI14(sp500Closes);
   const sp500Returns = dailyReturns(sp500Closes);
