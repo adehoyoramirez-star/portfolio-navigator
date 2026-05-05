@@ -12,6 +12,9 @@
 //      tipo TacticalPosition (optimalDaysTP1/2, optimalProbTP1)
 //      ahora se calculan al confirmar la apertura manual.
 //   4. updatePositionPrices: recalcula horizonte sin cap duro.
+//      + ATR real desde entryPrice (fallback 2%).
+//      + Trailing stop dinámico cuando config.trailingStop = true.
+//      + TP2 dinámico que se ensancha si el SL trailing ha subido.
 //   5. evaluatePositionHealth: sin cambios — ya era correcto.
 // ============================================================
 
@@ -45,7 +48,6 @@ export function loadTacticalState(): TacticalEngineState | null {
     if (!raw) return null;
     const state = JSON.parse(raw) as TacticalEngineState;
 
-    // Sanear capitalUsed/capitalAvailable ante estados corruptos
     const capitalUsed = state.openPositions.reduce(
       (sum, p) => sum + (p.totalInvested ?? 0), 0,
     );
@@ -110,7 +112,6 @@ export function calcExpectedDays(
     return Math.round(Math.min(30, Math.max(10, raw)));
   }
 
-  // Difusión pura: BLOOD_IN_STREETS, MEAN_REVERSION, OVERSOLD_BOUNCE, EVENT_DRIVEN
   const sigma2 = atr * atr;
   const factor =
     signalType === 'BLOOD_IN_STREETS' ? 1.5
@@ -167,7 +168,7 @@ export function openPosition(
     return state;
   }
 
-  const atr = opportunity.asset.indicators?.atr14 ?? (opportunity.entryPrice * 0.02);
+  const atr    = opportunity.asset.indicators?.atr14 ?? (opportunity.entryPrice * 0.02);
   const atrPct = atr / Math.max(0.01, opportunity.entryPrice);
 
   const expectedDaysToTP1 = calcExpectedDays(
@@ -177,18 +178,13 @@ export function openPosition(
     opportunity.entryPrice, opportunity.takeProfit2, atr, opportunity.type,
   );
 
-  // CORRECCIÓN: NO pasar maxDays → calcOptimalHorizon usa dynMax desde ATR
-  // Antes: calcOptimalHorizon(..., atr) llamado con maxDays implícito fijo=20
-  // Ahora: maxDays=undefined → dynMax se calcula desde atrPct dentro de la función
   const optimalTP1 = calcOptimalHorizon(opportunity.entryPrice, opportunity.takeProfit1, atr);
   const optimalTP2 = calcOptimalHorizon(opportunity.entryPrice, opportunity.takeProfit2, atr);
 
-  // CORRECCIÓN: maxDaysAllowed = horizonte óptimo TP2 ×1.2
-  // SIN Math.min(30, ...) que ignoraba activos SLOW (dynMax=75) y MEDIUM (dynMax=40)
-  const dynMax = calcDynamicMaxDays(atrPct);
+  const dynMax        = calcDynamicMaxDays(atrPct);
   const maxDaysAllowed = Math.min(
-    dynMax,                                              // techo = horizonte del activo
-    Math.max(5, Math.round(optimalTP2.days * 1.2)),     // suelo = 5 días
+    dynMax,
+    Math.max(5, Math.round(optimalTP2.days * 1.2)),
   );
 
   const position: TacticalPosition = {
@@ -219,7 +215,6 @@ export function openPosition(
     expectedDaysToTP2,
     daysToBreakeven:   expectedDaysToTP1,
     timingScore:       0,
-    // Horizonte óptimo dinámico (CORRECCIÓN: calculado sin cap duro)
     optimalDaysTP1:    optimalTP1.days,
     optimalDaysTP2:    optimalTP2.days,
     optimalProbTP1:    optimalTP1.prob,
@@ -286,14 +281,47 @@ export function updatePositionPrices(
   let autoClose = { ...state };
 
   const updatedOpen = state.openPositions.map(pos => {
-    const price          = prices[pos.ticker] ?? pos.currentPrice;
-    const unrealized     = (price - pos.entryPrice) * pos.shares;
-    const unrealizedPct  = (price / pos.entryPrice - 1) * 100;
-    const daysOpen       = Math.round(
+    const price         = prices[pos.ticker] ?? pos.currentPrice;
+    const unrealized    = (price - pos.entryPrice) * pos.shares;
+    const unrealizedPct = (price / pos.entryPrice - 1) * 100;
+    const daysOpen      = Math.round(
       (Date.now() - new Date(pos.entryDate).getTime()) / 86400000,
     );
 
-    if (price <= pos.stopLoss) {
+    // ── ATR: 2% del precio de entrada como referencia estable ──────────
+    // No usamos pos.atrPct porque TacticalPosition no lo almacena.
+    // Si en el futuro se añade atrPct al interface, reemplazar por:
+    //   pos.atrPct > 0 ? price * (pos.atrPct / 100) : pos.entryPrice * 0.02
+    const atr = Math.max(0.01, pos.entryPrice * 0.02);
+
+    // ── Trailing stop dinámico ──────────────────────────────────────────
+    // Activo solo si config.trailingStop = true.
+    // Sube el SL cuando el precio avanza ≥ 50% hacia TP1.
+    // Colchón: 1.5×ATR por debajo del precio actual.
+    // Garantía: el SL nunca retrocede (Math.max).
+    const newStopLoss = (() => {
+      if (!state.config.trailingStop) return pos.stopLoss;
+      const progressToTP1 = pos.takeProfit1 > pos.entryPrice
+        ? (price - pos.entryPrice) / (pos.takeProfit1 - pos.entryPrice)
+        : 0;
+      if (progressToTP1 < 0.5) return pos.stopLoss;
+      const trailLevel = price - atr * 1.5;
+      return Math.max(pos.stopLoss, trailLevel);
+    })();
+
+    // ── TP2 dinámico ────────────────────────────────────────────────────
+    // Se recalcula como 2.5× el riesgo actualizado (entrada → SL actual).
+    // Si el trailing ha subido el SL, el TP2 se ensancha manteniendo R:R.
+    // Nunca baja del TP2 original.
+    const newTP2 = (() => {
+      const riskPerShare = pos.entryPrice - newStopLoss;
+      if (riskPerShare <= 0) return pos.takeProfit2;
+      return Math.max(pos.takeProfit2, pos.entryPrice + riskPerShare * 2.5);
+    })();
+
+    // ── Cierre automático ───────────────────────────────────────────────
+    // Usamos newStopLoss (ya actualizado) para el check de SL
+    if (price <= newStopLoss) {
       autoClose = closePosition(autoClose, pos.id, price, 'CLOSED_SL');
       return null;
     }
@@ -306,13 +334,11 @@ export function updatePositionPrices(
       return null;
     }
 
-    const atr = Math.max(0.01, pos.entryPrice * 0.02);
     const daysToBreakeven = calcDaysToBreakeven(pos.entryPrice, price, atr, pos.type);
     const timingScore     = calcTimingScore(daysOpen, pos.expectedDaysToTP1 ?? 10);
 
-    // CORRECCIÓN: recalcular horizonte SIN cap duro (undefined → dynMax interno)
     const optTP1 = calcOptimalHorizon(pos.entryPrice, pos.takeProfit1, atr);
-    const optTP2 = calcOptimalHorizon(pos.entryPrice, pos.takeProfit2, atr);
+    const optTP2 = calcOptimalHorizon(pos.entryPrice, newTP2, atr);
 
     return {
       ...pos,
@@ -322,6 +348,8 @@ export function updatePositionPrices(
       daysOpen,
       daysToBreakeven,
       timingScore,
+      stopLoss:          newStopLoss,
+      takeProfit2:       newTP2,
       optimalDaysTP1:    optTP1.days,
       optimalDaysTP2:    optTP2.days,
       optimalProbTP1:    optTP1.prob,
@@ -380,8 +408,6 @@ function recalcMetrics(state: TacticalEngineState): TacticalEngineState {
 
 // ════════════════════════════════════════════════════════════
 // MOTOR DE SALUD DE POSICIÓN — NIVEL INSTITUCIONAL
-// Evalúa en tiempo real si una posición sigue siendo válida
-// y qué acción tomar ANTES de llegar al stop.
 // ════════════════════════════════════════════════════════════
 
 export type PositionHealthStatus = 'STRONG' | 'HOLDING' | 'WEAKENING' | 'ABANDON';
@@ -393,10 +419,10 @@ export interface PositionHealth {
   action:        PositionAction;
   reason:        string;
   detail:        string;
-  confidence:    number;    // 0-100
+  confidence:    number;
   urgency:       PositionUrgency;
-  suggestedExit?: number;  // Precio sugerido de salida anticipada
-  scaleUpAmount?: number;  // € adicionales si SCALE_UP
+  suggestedExit?: number;
+  scaleUpAmount?: number;
 }
 
 export function evaluatePositionHealth(
@@ -410,11 +436,10 @@ export function evaluatePositionHealth(
   const distToTP1pct = pos.takeProfit1 > 0
     ? ((pos.takeProfit1 - pos.currentPrice) / pos.currentPrice) * 100 : 0;
 
-  const optDays    = pos.optimalDaysTP1 > 0 ? pos.optimalDaysTP1 : (pos.expectedDaysToTP1 ?? 10);
-  const timeRatio  = optDays > 0 ? pos.daysOpen / optDays : 0;
+  const optDays       = pos.optimalDaysTP1 > 0 ? pos.optimalDaysTP1 : (pos.expectedDaysToTP1 ?? 10);
+  const timeRatio     = optDays > 0 ? pos.daysOpen / optDays : 0;
   const timeEfficiency = timeRatio > 0.05 ? progress / timeRatio : null;
 
-  // ── REGLA 1: Cerca del TP1 → REDUCE_50 ─────────────────────
   if (progress >= 0.85) {
     return {
       status:     'STRONG',
@@ -427,7 +452,6 @@ export function evaluatePositionHealth(
     };
   }
 
-  // ── REGLA 2: Tiempo muy superado + poco progreso → EXIT_NOW ─
   if (timeRatio > 1.8 && progress < 0.25 && pos.daysOpen > 4) {
     return {
       status:     'ABANDON',
@@ -440,7 +464,6 @@ export function evaluatePositionHealth(
     };
   }
 
-  // ── REGLA 3: Muy cerca del stop con tiempo consumido → EXIT_NOW
   if (distToSL < 0.5 && timeRatio > 0.4) {
     const urgency: PositionUrgency = distToSL < 0.25 ? 'CRITICAL' : 'HIGH';
     return {
@@ -454,7 +477,6 @@ export function evaluatePositionHealth(
     };
   }
 
-  // ── REGLA 4: Muy eficiente y aún temprano → SCALE_UP ───────
   if (
     timeEfficiency !== null &&
     timeEfficiency > 1.4 &&
@@ -472,7 +494,6 @@ export function evaluatePositionHealth(
     };
   }
 
-  // ── REGLA 5: Ineficiente y >50% del tiempo → WEAKENING ─────
   if (
     timeEfficiency !== null &&
     timeEfficiency < 0.35 &&
@@ -488,7 +509,6 @@ export function evaluatePositionHealth(
     };
   }
 
-  // ── REGLA 6: En negativo y perdiendo tiempo → WEAKENING/EXIT
   if (progress < -0.15 && timeRatio > 0.30) {
     const shouldExit = pos.daysOpen > optDays * 0.7;
     return {
@@ -502,7 +522,6 @@ export function evaluatePositionHealth(
     };
   }
 
-  // ── Default: mantener ────────────────────────────────────────
   const isAhead = progress > 0.4 && timeRatio < 0.5;
   return {
     status:     isAhead ? 'STRONG' : 'HOLDING',

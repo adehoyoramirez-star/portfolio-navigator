@@ -3,19 +3,20 @@
 // CORRECCIONES:
 //   1. handleConfirmOpen: ahora calcula optimalDaysTP1/2 y
 //      optimalProbTP1 usando calcOptimalHorizon sin cap duro.
-//      Antes estos campos quedaban como undefined → PositionRow
-//      fallaba al leer optimalDaysTP1 y siempre mostraba "día 10".
 //   2. maxDaysAllowed en apertura manual: usa calcDynamicMaxDays
 //      en vez del valor fijo state.config.maxDaysPerTrade.
 //   3. PositionRow: muestra TP2 en la columna de niveles y en
-//      el bloque de horizonte óptimo. Antes solo se mostraba TP1.
+//      el bloque de horizonte óptimo.
 //   4. PositionRow: "fila de salud" incluye suggestedExit y
 //      scaleUpAmount cuando aplica.
-//   5. Posiciones de demo INTC y BAYN precargadas en initState
-//      para que el dashboard muestre datos reales desde el primer render.
+//   5. Posiciones de demo INTC y BAYN precargadas en initState.
+//   6. [FIX-DAY-COUNTER] useEffect con setInterval de 60s que
+//      llama a updatePositionPrices → daysOpen, timingScore y
+//      trailing stop se recalculan en tiempo real.
+//      Usa stateRef para evitar closure stale sobre openPositions.
 // ============================================================
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import type {
   TacticalEngineState, TacticalOpportunity,
@@ -102,14 +103,10 @@ const typeLabels: Record<string, string> = {
 };
 
 // ── Posiciones de demo precargadas (INTC + BAYN) ─────────────
-// Se insertan en el estado inicial si no hay estado guardado en localStorage.
-// Los valores de horizonte óptimo se calculan en tiempo de ejecución
-// usando calcOptimalHorizon sin cap duro.
 function buildDemoPositions(): TacticalPosition[] {
   const now = new Date();
   const daysAgo = (d: number) => new Date(now.getTime() - d * 86400000).toISOString();
 
-  // INTC: 1 acc entrada €72.21, SL €57, TP1 €95, TP2 €138
   const intcEntry = 72.21, intcAtr = 72.21 * 0.021;
   const intcOpt1  = calcOptimalHorizon(intcEntry, 95,  intcAtr);
   const intcOpt2  = calcOptimalHorizon(intcEntry, 138, intcAtr);
@@ -143,7 +140,6 @@ function buildDemoPositions(): TacticalPosition[] {
     optimalProbTP1: intcOpt1.prob,
   };
 
-  // BAYN: 2 acc entrada €36.63. SL, TP1, TP2 calculados por motor.
   const baynEntry = 36.63, baynAtr = 36.63 * 0.019;
   const baynSL  = baynEntry - baynAtr * 2;
   const baynTP1 = baynEntry + (baynEntry - baynSL) * 1.2;
@@ -192,9 +188,6 @@ export default function TacticalDashboard() {
     const demos = buildDemoPositions();
 
     if (saved) {
-      // FIX-INTC: Si hay estado guardado pero INTC no está en openPositions
-      // ni en closedPositions → inyectarla. Esto evita que INTC desaparezca
-      // cuando el usuario ya tiene un estado guardado sin ella.
       const hasIntc = [
         ...saved.openPositions,
         ...saved.closedPositions,
@@ -215,7 +208,6 @@ export default function TacticalDashboard() {
       return saved;
     }
 
-    // Sin estado guardado: cargar demos completos
     const base = initTacticalState(defaultTacticalConfig(300, 600));
     const capitalUsed = demos.reduce((s: number, p: TacticalPosition) => s + p.totalInvested, 0);
     return {
@@ -232,7 +224,6 @@ export default function TacticalDashboard() {
   const [lastRun, setLastRun]   = useState<string | null>(state.lastScreened);
   const [scanMode, setScanMode] = useState<ScanMode>('core');
 
-  // ── Modal "Confirmar apertura" con precios editables ────────
   const [openModal,   setOpenModal]   = useState<TacticalOpportunity | null>(null);
   const [modalEntry,  setModalEntry]  = useState('');
   const [modalStop,   setModalStop]   = useState('');
@@ -240,7 +231,6 @@ export default function TacticalDashboard() {
   const [modalTP2,    setModalTP2]    = useState('');
   const [modalShares, setModalShares] = useState('');
 
-  // ── Modal "Añadir posición manual" ──────────────────────────
   const [manualModal,   setManualModal]   = useState(false);
   const [manualTicker,  setManualTicker]  = useState('INTC');
   const [manualName,    setManualName]    = useState('Intel Corporation');
@@ -252,7 +242,6 @@ export default function TacticalDashboard() {
   const [manualShares,  setManualShares]  = useState('1');
   const [manualCurrent, setManualCurrent] = useState('68.40');
 
-  // Config local editable
   const [cfgCapital,  setCfgCapital]  = useState(state.config.tacticalCapitalEur);
   const [cfgMinScore, setCfgMinScore] = useState(state.config.minScore);
   const [cfgMinRR,    setCfgMinRR]    = useState(state.config.minRiskReward);
@@ -260,7 +249,6 @@ export default function TacticalDashboard() {
   const [cfgRiskPct,  setCfgRiskPct]  = useState(state.config.riskPerTradePct * 100);
   const [cfgMA200,    setCfgMA200]    = useState(state.config.requireAboveMA200);
 
-  // IBKR
   const [ibkrEnabled,   setIbkrEnabled]   = useState(() => localStorage.getItem('ibkr_enabled') === 'true');
   const [ibkrAccountId, setIbkrAccountId] = useState(() => localStorage.getItem('ibkr_account_id') ?? '');
   const [ibkrGateway,   setIbkrGateway]   = useState(() => localStorage.getItem('ibkr_gateway') ?? 'https://localhost:5000');
@@ -270,10 +258,38 @@ export default function TacticalDashboard() {
   const [ibkrPositions, setIbkrPositions] = useState<any[]>([]);
   const [ibkrNLV,       setIbkrNLV]       = useState<number>(0);
 
+  // ── [FIX-DAY-COUNTER] Ref para leer siempre el state más reciente ──
+  // Sin esto, el tick del interval captura el state del primer render
+  // y construye un mapa de precios siempre con los valores iniciales.
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
+  // ── [FIX-DAY-COUNTER] Loop de actualización cada 60s ───────────────
+  // Recalcula daysOpen, timingScore, trailing stop y cierre automático
+  // por SL/TP/maxDays sin necesidad de precios externos:
+  // usa el currentPrice ya almacenado en cada posición.
+  // En producción: reemplaza prices[p.ticker] por fetch a tu API.
+  useEffect(() => {
+    const tick = () => {
+      const current = stateRef.current;
+      if (current.openPositions.length === 0) return;
+
+      const prices: Record<string, number> = {};
+      current.openPositions.forEach(p => {
+        prices[p.ticker] = p.currentPrice;
+      });
+
+      setState(prev => updatePositionPrices(prev, prices));
+    };
+
+    tick(); // Ejecutar al montar para actualizar daysOpen desde entryDate real
+    const interval = setInterval(tick, 60_000);
+    return () => clearInterval(interval);
+  }, []); // Dependencia vacía: el interval se registra una sola vez
+
   useEffect(() => { saveTacticalState(state); }, [state]);
   const summary = useMemo(() => getTacticalSummary(state), [state]);
 
-  // Helper ventana óptima
   const getOptimalWindow = (optDays: number | undefined | null, currentDays: number) => {
     if (!optDays || optDays <= 0) return '';
     const start = Math.max(1, optDays - 2);
@@ -316,11 +332,7 @@ export default function TacticalDashboard() {
     setModalShares(String(autoShares));
   }, [state.config]);
 
-  // ── Confirmar apertura — CORRECCIÓN CRÍTICA ─────────────────
-  // Antes: optimalDaysTP1/2 quedaban como undefined porque handleConfirmOpen
-  // no los calculaba. Ahora se calculan con calcOptimalHorizon sin cap duro.
-  // Antes: maxDaysAllowed usaba state.config.maxDaysPerTrade (fijo 10-30d).
-  // Ahora: usa calcDynamicMaxDays desde el ATR del activo.
+  // ── Confirmar apertura ──────────────────────────────────────
   const handleConfirmOpen = useCallback(() => {
     if (!openModal) return;
     const entry  = parseFloat(modalEntry);
@@ -333,11 +345,8 @@ export default function TacticalDashboard() {
     const atr    = openModal.asset.indicators?.atr14 ?? (entry * 0.02);
     const atrPct = atr / Math.max(0.01, entry);
 
-    // CORRECCIÓN: calcOptimalHorizon sin maxDays → usa dynMax interno
     const optTP1 = calcOptimalHorizon(entry, tp1, atr);
     const optTP2 = calcOptimalHorizon(entry, tp2, atr);
-
-    // CORRECCIÓN: maxDaysAllowed usa dynMax, no el valor fijo del config
     const dynMax = calcDynamicMaxDays(atrPct);
     const maxDaysAllowed = Math.min(dynMax, Math.max(5, Math.round(optTP2.days * 1.2)));
 
@@ -373,7 +382,6 @@ export default function TacticalDashboard() {
       expectedDaysToTP2: calcExpectedDays(entry, tp2, atr, openModal.type),
       daysToBreakeven:   calcExpectedDays(entry, tp1, atr, openModal.type),
       timingScore:       0,
-      // CORRECCIÓN: campos antes undefined, ahora calculados correctamente
       optimalDaysTP1:    optTP1.days,
       optimalDaysTP2:    optTP2.days,
       optimalProbTP1:    optTP1.prob,
@@ -387,7 +395,7 @@ export default function TacticalDashboard() {
     setOpenModal(null);
   }, [openModal, modalEntry, modalStop, modalTP1, modalTP2, modalShares]);
 
-  // ── Cerrar posición COMPLETA ─────────────────────────────────
+  // ── Cerrar posición ─────────────────────────────────────────
   const handleClose = useCallback((
     posId: string, exitPrice: number,
     reason: 'CLOSED_MANUAL' | 'CLOSED_TP' | 'CLOSED_SL',
@@ -395,15 +403,7 @@ export default function TacticalDashboard() {
     setState((prev: TacticalEngineState) => closePosition(prev, posId, exitPrice, reason));
   }, []);
 
-  // ── FIX-TP1-HALF: Cerrar el 50% en TP1 — estrategia institucional ────────
-  // Cuando se pulsa TP1: vende la mitad de la posición al precio TP1,
-  // mantiene la otra mitad abierta con el StopLoss movido al precio de entrada
-  // (trailing breakeven). De esta forma el trade es libre de riesgo desde TP1.
-  //
-  // Resultado:
-  //   - Se registra una operación cerrada parcial (50%) con PnL realizado
-  //   - La posición abierta queda con el 50% restante, SL = entrada (0 riesgo)
-  //   - El capital recuperado del 50% vuelve a capitalAvailable
+  // ── Cerrar 50% en TP1 (breakeven trail) ────────────────────
   const handleCloseHalf = useCallback((posId: string, exitPrice: number) => {
     setState((prev: TacticalEngineState) => {
       const pos = prev.openPositions.find((p: TacticalPosition) => p.id === posId);
@@ -414,7 +414,6 @@ export default function TacticalDashboard() {
       const realizedPnL    = parseFloat(((exitPrice - pos.entryPrice) * halfShares).toFixed(2));
       const realizedPnLPct = parseFloat(((exitPrice / pos.entryPrice - 1) * 100).toFixed(2));
 
-      // Registro del 50% cerrado → historial
       const partialClose: TacticalPosition = {
         ...pos,
         id:               `${pos.id}-tp1-${Date.now()}`,
@@ -433,13 +432,12 @@ export default function TacticalDashboard() {
         name:             `${pos.name} (50% TP1)`,
       };
 
-      // 50% restante: SL sube a entrada (trade libre de riesgo), TP2 sigue activo
       const remaining: TacticalPosition = {
         ...pos,
         shares:           halfShares,
         totalInvested:    pos.entryPrice * halfShares,
-        capitalRisked:    0, // ya no hay riesgo — SL en breakeven
-        stopLoss:         pos.entryPrice, // trailing breakeven
+        capitalRisked:    0,
+        stopLoss:         pos.entryPrice,
         unrealizedPnL:    parseFloat(((pos.currentPrice - pos.entryPrice) * halfShares).toFixed(2)),
         unrealizedPnLPct: parseFloat(((pos.currentPrice / pos.entryPrice - 1) * 100).toFixed(2)),
         name:             `${pos.ticker} (50% → TP2)`,
@@ -454,13 +452,12 @@ export default function TacticalDashboard() {
         closedPositions:  [...prev.closedPositions, partialClose],
         totalRealizedPnL: prev.totalRealizedPnL + realizedPnL,
         capitalAvailable: prev.capitalAvailable + recoveredCapital,
-        // capitalUsed baja solo por la mitad recuperada
         capitalUsed:      Math.max(0, prev.capitalUsed - pos.entryPrice * halfShares),
       };
     });
   }, []);
 
-  // ── Añadir posición manualmente (recuperar INTC u otras) ────
+  // ── Añadir posición manual ──────────────────────────────────
   const handleAddManual = useCallback(() => {
     const entry   = parseFloat(manualEntry);
     const stop    = parseFloat(manualStop);
@@ -589,7 +586,6 @@ export default function TacticalDashboard() {
     const atrPct      = (opp.asset.price > 0 && opp.asset.indicators)
       ? (opp.asset.indicators.atr14 / opp.asset.price * 100) : 0;
 
-    // CORRECCIÓN: calcOptimalHorizon sin maxDays → dynMax interno
     const optTP1 = calcOptimalHorizon(opp.entryPrice, opp.takeProfit1, atrEur);
     const optTP2 = calcOptimalHorizon(opp.entryPrice, opp.takeProfit2, atrEur);
     const probTP1 = optTP1.prob;
@@ -654,7 +650,6 @@ export default function TacticalDashboard() {
           )}
         </div>
 
-        {/* ATR + velocidad */}
         <div style={{ background:'#0f172a', borderRadius:6, padding:'4px 8px', marginBottom:'0.5rem', border:'1px solid #1e293b', display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' as const }}>
           <span style={{ color:'#60a5fa', fontWeight:700 }}>ATR(14): €{atrEur.toFixed(2)} · {atrPct.toFixed(2)}%/día</span>
           {sp && (
@@ -666,7 +661,6 @@ export default function TacticalDashboard() {
           <span style={{ color:'#475569', fontSize:'0.65rem' }}>stop = entrada − {opp.type === 'MOMENTUM_BREAKOUT' ? '1×' : opp.type === 'BLOOD_IN_STREETS' ? '1.5×' : '2×'}ATR</span>
         </div>
 
-        {/* Horizonte óptimo dinámico TP1 + TP2 */}
         <div style={{ background:'#0f172a', borderRadius:8, padding:'8px 10px', marginBottom:'0.6rem', border:`1px solid ${probColor(probTP1)}44` }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:5 }}>
             <span style={{ fontSize:'0.65rem', color:'#64748b', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em' }}>
@@ -675,7 +669,6 @@ export default function TacticalDashboard() {
             <span style={{ fontSize:'0.7rem', fontWeight:700, color: verdict.c }}>{verdict.txt}</span>
           </div>
 
-          {/* TP1 */}
           <div style={{ marginBottom:6 }}>
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.65rem', marginBottom:2 }}>
               <span style={{ color:'#22c55e', fontWeight:700 }}>
@@ -714,7 +707,6 @@ export default function TacticalDashboard() {
             </div>
           </div>
 
-          {/* TP2 — CORRECCIÓN: antes no se mostraba */}
           <div style={{ marginBottom:4 }}>
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.65rem', marginBottom:2 }}>
               <span style={{ color:'#4ade80', fontWeight:700 }}>
@@ -785,7 +777,7 @@ export default function TacticalDashboard() {
   };
 
   // ════════════════════════════════════════════════════════════
-  // SUB-COMPONENTE: PositionRow — con TP2, salud completa
+  // SUB-COMPONENTE: PositionRow
   // ════════════════════════════════════════════════════════════
   const PositionRow = ({ pos }: { pos: TacticalPosition }) => {
     const [exitP,   setExitP]   = useState(pos.currentPrice.toFixed(2));
@@ -797,7 +789,6 @@ export default function TacticalDashboard() {
     const nearTP   = pos.currentPrice >= pos.takeProfit1 * 0.97;
     const inGreen  = pos.currentPrice >= pos.entryPrice;
 
-    // CORRECCIÓN: horizonte óptimo desde campos calculados correctamente
     const optTP1Days = (pos.optimalDaysTP1 ?? 0) > 0 ? pos.optimalDaysTP1! : (pos.expectedDaysToTP1 ?? 10);
     const optTP2Days = (pos.optimalDaysTP2 ?? 0) > 0 ? pos.optimalDaysTP2! : (pos.expectedDaysToTP2 ?? 15);
 
@@ -808,7 +799,6 @@ export default function TacticalDashboard() {
     const dtbDays  = pos.daysToBreakeven ?? 0;
     const dtbLabel = inGreen ? '✅ En verde' : dtbDays > 0 ? `~${dtbDays}d para verde` : '—';
 
-    // Motor de salud
     const health = evaluatePositionHealth(pos);
     const healthColors: Record<string, string> = {
       STRONG: '#22c55e', HOLDING: '#60a5fa', WEAKENING: '#f59e0b', ABANDON: '#ef4444',
@@ -824,7 +814,6 @@ export default function TacticalDashboard() {
                 : nearSL ? '#1c0505'
                 : 'transparent';
 
-    // Probabilidades actuales de TP1 y TP2
     const atrEst = pos.entryPrice * 0.02;
     const probTP1now = calcSuccessProb(pos.entryPrice, pos.takeProfit1, atrEst, optTP1Days);
     const probTP2now = calcSuccessProb(pos.entryPrice, pos.takeProfit2, atrEst, optTP2Days);
@@ -832,7 +821,6 @@ export default function TacticalDashboard() {
     return (
       <>
         <tr style={{ background: rowBg }}>
-          {/* Activo */}
           <td style={S.td}>
             <div style={{ fontWeight:700 }}>{pos.ticker}</div>
             <div style={{ fontSize:'0.65rem', color:'#64748b' }}>{pos.name}</div>
@@ -841,7 +829,6 @@ export default function TacticalDashboard() {
             </span>
           </td>
 
-          {/* Entrada — editable */}
           <td style={S.td}>
             <input type="number" step="0.01" value={entryP}
               onChange={e => setEntryP(e.target.value)}
@@ -880,7 +867,6 @@ export default function TacticalDashboard() {
             <div style={{ fontSize:'0.6rem', color:'#475569' }}>€{pos.totalInvested.toFixed(0)} inv.</div>
           </td>
 
-          {/* Precio actual — editable */}
           <td style={S.td}>
             <input type="number" step="0.01" value={currP}
               onChange={e => setCurrP(e.target.value)}
@@ -907,7 +893,6 @@ export default function TacticalDashboard() {
             </div>
           </td>
 
-          {/* P&L */}
           <td style={S.td}>
             <div style={{ color:pnlColor, fontWeight:700 }}>
               {pos.unrealizedPnL >= 0 ? '+' : ''}{eur(pos.unrealizedPnL)}
@@ -915,7 +900,6 @@ export default function TacticalDashboard() {
             <div style={{ fontSize:'0.7rem', color:pnlColor }}>{pct(pos.unrealizedPnLPct)}</div>
           </td>
 
-          {/* Niveles — CORRECCIÓN: incluye TP2 */}
           <td style={S.td}>
             <div style={{ color:'#ef4444', fontSize:'0.72rem' }}>SL €{pos.stopLoss.toFixed(2)}</div>
             <div style={{ color:'#22c55e', fontSize:'0.72rem' }}>TP1 €{pos.takeProfit1.toFixed(2)}</div>
@@ -930,7 +914,6 @@ export default function TacticalDashboard() {
             </div>
           </td>
 
-          {/* Timing con TP2 — CORRECCIÓN: muestra optTP2Days */}
           <td style={{ ...S.td, minWidth:145 }}>
             <div style={{ marginBottom:4 }}>
               <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.62rem', marginBottom:2 }}>
@@ -950,15 +933,13 @@ export default function TacticalDashboard() {
             </div>
           </td>
 
-          {/* Acciones */}
           <td style={{ ...S.td, minWidth:175 }}>
             <div style={{ display:'flex', gap:4, alignItems:'center', marginBottom:4, flexWrap:'wrap' }}>
               <input style={{ ...S.input, width:68 }} type="number" value={exitP}
                 onChange={e => setExitP(e.target.value)} step="0.01" />
-              {/* FIX-TP1-HALF: TP1 cierra el 50% y mueve SL a entrada (breakeven) */}
               <button style={{ ...S.btn, ...S.btnG, padding:'4px 5px', fontSize:'0.65rem' }}
                 onClick={() => { setExitP(pos.takeProfit1.toFixed(2)); handleCloseHalf(pos.id, pos.takeProfit1); }}
-                title={`Vender 50% en TP1 €${pos.takeProfit1.toFixed(2)} — mantiene 50% con SL en entrada`}>
+                title={`Vender 50% en TP1 €${pos.takeProfit1.toFixed(2)}`}>
                 TP1 50%
               </button>
               <button style={{ ...S.btn, background:'#14532d', color:'#86efac', border:'1px solid #22c55e', padding:'4px 5px', fontSize:'0.65rem' }}
@@ -969,7 +950,7 @@ export default function TacticalDashboard() {
                 title="Cerrar en Stop Loss">SL</button>
               <button style={{ ...S.btn, ...S.btnGr, padding:'4px 5px', fontSize:'0.65rem' }}
                 onClick={() => handleClose(pos.id, parseFloat(exitP), 'CLOSED_MANUAL')}
-                title="Cierre manual al precio del input">M</button>
+                title="Cierre manual">M</button>
             </div>
             {health.suggestedExit && health.action === 'EXIT_NOW' && (
               <button onClick={() => handleClose(pos.id, health.suggestedExit!, 'CLOSED_MANUAL')}
@@ -990,7 +971,6 @@ export default function TacticalDashboard() {
           </td>
         </tr>
 
-        {/* Fila de salud expandida */}
         <tr>
           <td colSpan={7} style={{ padding:'0 8px 8px', background: rowBg }}>
             <div style={{
@@ -1007,10 +987,7 @@ export default function TacticalDashboard() {
                 </div>
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
-                <div style={{
-                  fontSize:'0.6rem', color:hClr, fontWeight:700,
-                  background: hClr + '22', padding:'2px 6px', borderRadius:4,
-                }}>
+                <div style={{ fontSize:'0.6rem', color:hClr, fontWeight:700, background: hClr + '22', padding:'2px 6px', borderRadius:4 }}>
                   {health.action.replace('_',' ')} · conf {health.confidence}%
                 </div>
                 {health.urgency === 'CRITICAL' && (
@@ -1031,7 +1008,6 @@ export default function TacticalDashboard() {
   // ════════════════════════════════════════════════════════════
   return (
     <div style={S.page}>
-      {/* Cabecera */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'1.25rem' }}>
         <div>
           <h1 style={{ margin:0, fontSize:'1.3rem', fontWeight:800, color:'#f8fafc' }}>
@@ -1048,14 +1024,12 @@ export default function TacticalDashboard() {
         </button>
       </div>
 
-      {/* Error */}
       {error && (
         <div style={{ background:'#450a0a', border:'1px solid #ef4444', borderRadius:8, padding:'0.6rem 1rem', marginBottom:'1rem', fontSize:'0.78rem', color:'#fca5a5' }}>
           ⚠️ {error}
         </div>
       )}
 
-      {/* Alertas */}
       {summary.alertsToAction.length > 0 && (
         <div style={{ background:'#422006', border:'1px solid #f59e0b', borderRadius:8, padding:'0.75rem 1rem', marginBottom:'1rem' }}>
           <div style={{ fontWeight:700, color:'#fcd34d', fontSize:'0.8rem', marginBottom:4 }}>🔔 Alertas ({summary.alertsToAction.length})</div>
@@ -1065,7 +1039,6 @@ export default function TacticalDashboard() {
         </div>
       )}
 
-      {/* Métricas */}
       <div style={S.mGrid}>
         {[
           { l:'Capital táctico',  v:eur(state.config.tacticalCapitalEur), c:'#60a5fa' },
@@ -1084,7 +1057,6 @@ export default function TacticalDashboard() {
         ))}
       </div>
 
-      {/* Selector de universo */}
       <div style={{ display:'flex', gap:6, marginBottom:'0.75rem' }}>
         {(['volatile','core','full'] as ScanMode[]).map(mode => (
           <button key={mode} onClick={() => setScanMode(mode)} style={{
@@ -1100,7 +1072,6 @@ export default function TacticalDashboard() {
         ))}
       </div>
 
-      {/* Tabs */}
       <div style={{ display:'flex', gap:4, marginBottom:'1rem' }}>
         {(['opportunities','positions','history','config'] as const).map(t => (
           <button key={t}
@@ -1147,7 +1118,6 @@ export default function TacticalDashboard() {
       {/* ── TAB: POSICIONES ── */}
       {tab === 'positions' && (
         <div style={S.card}>
-          {/* Botón añadir posición manual */}
           <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'0.75rem' }}>
             <button style={{ ...S.btn, background:'#1e3a5f', color:'#93c5fd', border:'1px solid #3b82f6', fontSize:'0.78rem' }}
               onClick={() => setManualModal(true)}>
@@ -1239,14 +1209,12 @@ export default function TacticalDashboard() {
                               {typeLabels[pos.type]}
                             </span>
                           </td>
-                          {/* Entrada editable */}
                           <td style={S.td}>
                             <input type="number" step="0.01" value={entryEdit}
                               onChange={e => setEntryEdit(e.target.value)}
                               onBlur={handleEntryBlur}
                               style={{ ...S.input, width:72 }} />
                           </td>
-                          {/* Salida editable */}
                           <td style={S.td}>
                             <input type="number" step="0.01" value={exitEdit}
                               onChange={e => setExitEdit(e.target.value)}
@@ -1275,25 +1243,13 @@ export default function TacticalDashboard() {
                               onClick={() => setState((prev: TacticalEngineState) => {
                                 const pos2 = prev.closedPositions.find((p: TacticalPosition) => p.id === pos.id);
                                 if (!pos2) return prev;
-
-                                // FIX-REOPEN-1: no reabrir si ya hay una posición abierta del mismo ticker
-                                const alreadyOpen = prev.openPositions.some(
-                                  (p: TacticalPosition) => p.ticker === pos2.ticker
-                                );
+                                const alreadyOpen = prev.openPositions.some((p: TacticalPosition) => p.ticker === pos2.ticker);
                                 if (alreadyOpen) {
                                   alert(`Ya tienes ${pos2.ticker} en posiciones abiertas. Ciérrala antes de reabrir.`);
                                   return prev;
                                 }
-
-                                // FIX-REOPEN-2: eliminar TODAS las entradas cerradas del mismo ticker base
-                                // (incluye parciales tp1 con id como "demo-intc-1-tp1-xxxxx")
                                 const baseTicker = pos2.ticker;
-                                const closedFiltered = prev.closedPositions.filter(
-                                  (p: TacticalPosition) => p.ticker !== baseTicker
-                                );
-
-                                // FIX-REOPEN-3: restaurar el estado original de la posición
-                                // (shares originales = si era parcial, usamos el original del nombre base)
+                                const closedFiltered = prev.closedPositions.filter((p: TacticalPosition) => p.ticker !== baseTicker);
                                 const reopened: TacticalPosition = {
                                   ...pos2,
                                   id:               `${pos2.ticker.toLowerCase()}-reopened-${Date.now()}`,
@@ -1303,14 +1259,12 @@ export default function TacticalDashboard() {
                                   exitReason:       null,
                                   realizedPnL:      null,
                                   realizedPnLPct:   null,
-                                  // Reset P&L no realizado al precio actual (currentPrice = entryPrice como punto neutro)
                                   currentPrice:     pos2.entryPrice,
                                   unrealizedPnL:    0,
                                   unrealizedPnLPct: 0,
                                   daysOpen:         0,
-                                  name:             pos2.ticker, // nombre limpio sin "(50% TP1)" etc.
+                                  name:             pos2.ticker,
                                 };
-
                                 const capitalNeeded = reopened.entryPrice * reopened.shares;
                                 return {
                                   ...prev,
@@ -1400,7 +1354,6 @@ export default function TacticalDashboard() {
             }}>🗑 Reset completo</button>
           </div>
 
-          {/* Reglas de operativa */}
           <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:'1px solid #334155' }}>
             <div style={{ ...S.h3, marginBottom:'0.75rem' }}>📋 Reglas de operativa</div>
             {[
@@ -1415,7 +1368,6 @@ export default function TacticalDashboard() {
             ))}
           </div>
 
-          {/* IBKR */}
           <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:'1px solid #334155' }}>
             <div style={{ ...S.h3, marginBottom:'0.75rem' }}>🔌 Conexión IBKR</div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:8 }}>
@@ -1473,12 +1425,11 @@ export default function TacticalDashboard() {
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'1rem' }}>
               <div>
                 <div style={{ fontWeight:800, fontSize:'1.05rem', color:'#f8fafc' }}>➕ Añadir posición manual</div>
-                <div style={{ fontSize:'0.7rem', color:'#64748b', marginTop:2 }}>Útil para recuperar posiciones perdidas (ej. INTC) o añadir cualquier operación</div>
+                <div style={{ fontSize:'0.7rem', color:'#64748b', marginTop:2 }}>Útil para recuperar posiciones perdidas o añadir cualquier operación</div>
               </div>
               <button onClick={() => setManualModal(false)} style={{ background:'none', border:'none', color:'#64748b', fontSize:'1.4rem', cursor:'pointer', lineHeight:1, padding:0 }}>×</button>
             </div>
 
-            {/* Ticker / nombre / tipo */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 2fr', gap:'0.5rem', marginBottom:'0.5rem' }}>
               <div>
                 <div style={{ fontSize:'0.65rem', color:'#60a5fa', fontWeight:700, marginBottom:2 }}>Ticker</div>
@@ -1500,7 +1451,6 @@ export default function TacticalDashboard() {
               </select>
             </div>
 
-            {/* Precios */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.5rem', marginBottom:'0.5rem' }}>
               {([
                 { label:'Entrada (€)',       val:manualEntry,   set:setManualEntry,   c:'#e2e8f0' },
@@ -1518,7 +1468,6 @@ export default function TacticalDashboard() {
               ))}
             </div>
 
-            {/* Resumen R:R */}
             {(() => {
               const e = parseFloat(manualEntry), s = parseFloat(manualStop);
               const t1 = parseFloat(manualTP1), t2 = parseFloat(manualTP2);
@@ -1569,7 +1518,6 @@ export default function TacticalDashboard() {
               tipo <span style={{ color: typeColors[openModal.type] ?? '#fff' }}>{typeLabels[openModal.type]}</span>
             </div>
 
-            {/* Grid precios editables — incluye TP2 */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.6rem', marginBottom:'0.75rem' }}>
               {([
                 { label:'Entrada real (€)',    val:modalEntry,  set:setModalEntry,  c:'#e2e8f0' },
@@ -1590,7 +1538,6 @@ export default function TacticalDashboard() {
               <input type="number" step="1" min="1" value={modalShares} onChange={e => setModalShares(e.target.value)} style={S.input} />
             </div>
 
-            {/* Resumen R:R en tiempo real */}
             {(() => {
               const e = parseFloat(modalEntry), s = parseFloat(modalStop);
               const t1 = parseFloat(modalTP1), t2 = parseFloat(modalTP2);
