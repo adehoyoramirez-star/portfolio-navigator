@@ -763,7 +763,11 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     return runWalkForward(weeklyReturns, 5);
   }, [marketData?.closesHistory]);
 
-  const engineResult = useMemo(() => {
+  // ── Forzar recálculo del motor al cambiar de régimen ─────────────────
+const [lastRegime, setLastRegime] = useState<string>('');
+const [regimeChangeCounter, setRegimeChangeCounter] = useState(0);
+
+const engineResult = useMemo(() => {
     if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
     return runOlympusEngine({
       assets: assetInputs,
@@ -786,12 +790,20 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       cewsHistory: effectiveCEWSHistory,
       adaptiveFactorWeights: walkForwardResult?.adaptiveFactorWeights,
     });
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights]);
+}, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights, regimeChangeCounter]);
 
-  const liquidityOutput = useMemo(() =>
+// Actualiza el contador de cambio de régimen cuando el régimen es distinto
+useEffect(() => {
+  if (engineResult?.regime && engineResult.regime !== lastRegime) {
+    setLastRegime(engineResult.regime);
+    setRegimeChangeCounter(c => c + 1);
+  }
+}, [engineResult?.regime, lastRegime]);
+
+const liquidityOutput = useMemo(() =>
     fromManualInputs({ liquidityGrowth, dxy }),
     [liquidityGrowth, dxy]
-  );
+);
 
   // NIVEL 4: detectar cambios de régimen y generar alertas
   useEffect(() => {
