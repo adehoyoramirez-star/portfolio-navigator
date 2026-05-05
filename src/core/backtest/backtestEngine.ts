@@ -12,7 +12,8 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
-import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from "../engine/regimeTacticalAllocation";
+import { getTacticalWeights } from "../engine/regimeTacticalAllocation";
+// ❌ Se eliminan applyTacticalConstraints y enforceClusterCap para evitar el error
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
@@ -298,95 +299,15 @@ function computeAllocationsWithRegime(
   else if (macro.vix > 25) regime = "CONTRACTION";
   else regime = "EXPANSION";
 
-  // En lugar de usar un multiplicador fijo, usaremos la capa táctica
-  const returnCache = new Map<string, { r12m: number; r3m: number; r1m: number }>();
-  const getReturns = (ticker: string) => {
-    if (!returnCache.has(ticker)) {
-      const closes = closesHistory[backtestTickers[ticker]] ?? [];
-      returnCache.set(ticker, {
-        r12m: periodReturn(closes, t, 252),
-        r3m:  periodReturn(closes, t, 63),
-        r1m:  periodReturn(closes, t, 21),
-      });
-    }
-    console.log('Backtest Táctico - Pesos finales:', finalAllocations);
-    return returnCache.get(ticker)!;
-  };
+  // ─── INTEGRACIÓN TÁCTICA PURA (SIN MEZCLA) ───
+  // Obtenemos los pesos tácticos del régimen actual
+  const tacticalWeightsArray = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
 
-  const assetFactors = ASSETS.map(ticker => {
-    const bticker = backtestTickers[ticker];
-    const closes = closesHistory[bticker] ?? [];
-    const { r12m, r3m, r1m } = getReturns(ticker);
-    const momentum = calculateMomentum({ returns12m: r12m, returns3m: r3m, returns1m: r1m });
-    const window = closes.slice(Math.max(0, t - lookbackDays), t);
-    const dailyRet = dailyReturns(window);
-    const vol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * 252)) : 0.25;
-    return { ticker, momentum, vol, earningsYield: 0 };
-  });
-
-  const universeStats = computeUniverseStats(assetFactors.map(a => ({ earningsYield: a.earningsYield })));
-  const qualityStats = computeQualityUniverseStats(
-    assetFactors.map(a => {
-      const { r12m, r3m, r1m } = getReturns(a.ticker);
-      return { volatility: a.vol, returns12m: r12m, returns3m: r3m, returns1m: r1m };
-    })
+  // Normalizar por si no suman exactamente 1
+  const totalTactical = tacticalWeightsArray.reduce((s, w) => s + w, 0) || 1;
+  const finalAllocations = Object.fromEntries(
+    ASSETS.map((ticker, idx) => [ticker, tacticalWeightsArray[idx] / totalTactical])
   );
-  const lowVolStats = computeLowVolUniverseStats(
-    assetFactors.map(a => {
-      const { r12m, r3m } = getReturns(a.ticker);
-      return { volatility: a.vol, returns12m: r12m, returns3m: r3m };
-    })
-  );
-  const corrMatrix = computeWindowCorrelation(closesHistory, backtestTickers, t, 63);
-  const corrPen = correlationPenalty(corrMatrix);
-
-  const rawBase: Record<string, number> = {};
-  let totalBase = 0;
-
-  assetFactors.forEach(({ ticker, momentum, vol, earningsYield }) => {
-    const { r12m, r3m, r1m } = getReturns(ticker);
-    const value = calculateValue({ earningsYield }, universeStats);
-    const quality = calculateQuality(
-      { volatility: vol, returns12m: r12m, returns3m: r3m, returns1m: r1m },
-      qualityStats
-    );
-    const lowVol = calculateLowVol(
-      { volatility: vol, returns12m: r12m, returns3m: r3m },
-      lowVolStats
-    );
-    const calibrated = calibrateExpectedReturn({
-      momentumScore: momentum.momentumScore,
-      valueScore:    value.valueScore,
-      qualityScore:  quality.qualityScore,
-      lowVolScore:   lowVol.lowVolScore + lowVol.downsideVolPenalty,
-    });
-    const kelly = calculateKelly({ expectedReturn: calibrated.expectedReturn, volatility: vol });
-    // Pesos base = Kelly * penalización por correlación (sin penalización de régimen uniforme)
-    const baseWeight = kelly.kellyFraction * corrPen;
-    rawBase[ticker] = Math.max(0, isFinite(baseWeight) ? baseWeight : 0);
-    totalBase += rawBase[ticker];
-  });
-
-  if (totalBase === 0) return { allocations: equalWeightAllocations(), regime };
-
-  // Normalizar pesos base
-  const baseNormalized = Object.fromEntries(ASSETS.map(t => [t, rawBase[t] / totalBase]));
-
-  // Convertir a array en el orden de ASSETS
-  const baseArray = ASSETS.map(t => baseNormalized[t]);
-
-  // Obtener pesos tácticos para el régimen actual
-  const tacticalWeights = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
-
-  // Mezclar optimización cuantitativa (60%) con pesos tácticos (40%)
-  const blended = applyTacticalConstraints(baseArray, tacticalWeights, regime, 0.60);
-
-  // Aplicar límite de cluster tecnológico
-  const withClusterCap = enforceClusterCap(blended, ASSETS.map(t => ({ name: t })), regime);
-
-  // Normalizar de nuevo
-  const totalFinal = withClusterCap.reduce((s, w) => s + w, 0) || 1;
-  const finalAllocations = Object.fromEntries(ASSETS.map((t, i) => [t, withClusterCap[i] / totalFinal]));
 
   return { allocations: finalAllocations, regime };
 }
