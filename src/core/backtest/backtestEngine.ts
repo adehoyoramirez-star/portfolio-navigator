@@ -1,6 +1,6 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/backtestEngine.ts
-// VERSIÓN CORREGIDA CON TAIL RISK OVERLAY, MACRO HISTORY Y CAPA TÁCTICA
+// VERSIÓN TÁCTICA: solo getTacticalWeights
 // ===============================================
 
 import { ASSETS } from "@/lib/constants";
@@ -13,7 +13,6 @@ import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { getTacticalWeights } from "../engine/regimeTacticalAllocation";
-// ❌ Se eliminan applyTacticalConstraints y enforceClusterCap para evitar el error
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
@@ -299,15 +298,13 @@ function computeAllocationsWithRegime(
   else if (macro.vix > 25) regime = "CONTRACTION";
   else regime = "EXPANSION";
 
-  // ─── INTEGRACIÓN TÁCTICA PURA (SIN MEZCLA) ───
-  // Obtenemos los pesos tácticos del régimen actual
-  const tacticalWeightsArray = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
-
-  // Normalizar por si no suman exactamente 1
-  const totalTactical = tacticalWeightsArray.reduce((s, w) => s + w, 0) || 1;
-  const finalAllocations = Object.fromEntries(
-    ASSETS.map((ticker, idx) => [ticker, tacticalWeightsArray[idx] / totalTactical])
-  );
+  // ─── CARTERA TÁCTICA PURA (sin mezcla) ───
+  const tacticalWeights = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
+  const total = tacticalWeights.reduce((s, w) => s + w, 0) || 1;
+  const finalAllocations: Record<string, number> = {};
+  ASSETS.forEach((ticker, idx) => {
+    finalAllocations[ticker] = tacticalWeights[idx] / total;
+  });
 
   return { allocations: finalAllocations, regime };
 }

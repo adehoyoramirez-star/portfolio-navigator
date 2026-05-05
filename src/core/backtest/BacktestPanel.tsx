@@ -1,6 +1,6 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/BacktestPanel.tsx
-// CORREGIDO: usa macroHistory y cálculo táctico
+// CORREGIDO: IIFE para forzar recálculo del backtest
 // ===============================================
 
 import React, { useState, useMemo } from "react";
@@ -44,7 +44,7 @@ export default function BacktestPanel({
     return Math.max(...lengths);
   }, [marketData]);
 
-  // ⚡ CAMBIO: IIFE en lugar de useMemo para forzar recálculo siempre
+  // Cálculo del backtest SIN useMemo, ejecutado en cada render
   const result: BacktestOutput | null = (() => {
     if (!marketData?.closesHistory) return null;
 
@@ -103,7 +103,7 @@ export default function BacktestPanel({
       initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
       transactionCostBps: 10,
     });
-  })();  // ← Invocación inmediata
+  })();
 
   if (!marketData) {
     return (
