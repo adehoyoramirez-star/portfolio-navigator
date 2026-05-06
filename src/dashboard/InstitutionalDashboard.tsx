@@ -930,7 +930,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
   const btcRet1m = btcAsset?.return1m ?? 0;
   const olympusAvailableCash = (defensiveLiquidity * 0.80) + monthlyInjection;
-  const tacticalAvailableCash = (defensiveLiquidity * tacticalPct / 100) + tacticalAccumulated;
+  const tacticalAvailableCash = (defensiveLiquidity * tacticalPct / 100);
 
   const smartDCAResult = useMemo(() => {
     return computeSmartDCA({
@@ -991,11 +991,11 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   }, [dcaBlocked, engineResult?.regime]);
 
   useEffect(() => {
-    if (smartDCAResult) {
-      setTacticalAccumulated(smartDCAResult.tacticalAccumulated);
-    }
-  }, [smartDCAResult?.tacticalAccumulated]);
-
+  if (smartDCAResult) {
+    const monthlyLeftover = smartDCAResult.tacticalAccumulated;
+    setTacticalAccumulated(prev => prev + monthlyLeftover);
+  }
+}, [smartDCAResult?.tacticalAccumulated]);
   useEffect(() => {
     try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
   }, [tacticalAccumulated]);
