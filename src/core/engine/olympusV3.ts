@@ -9,7 +9,7 @@
 //   3. FACTOR SCORES      → momentum + value + quality + lowVol
 //   4. KELLY FRACTION     → half-kelly cap 0.20
 //   5. CORRELACIÓN        → penalización si correlación media > 0.5
-//   6. BLEND 2-PATH       → BL×0.40 + HRP×0.45 + MinVar×0.15
+//   6. BLEND 2-PATH       → BL×0.20 + HRP×0.65 + MinVar×0.15
 //   7. VOL TARGET         → escalar a vol objetivo 18%
 //   8. TAIL RISK V5       → kill switch 5 niveles DD 5/10/15/20/25%
 //   9. BTC CAP            → máximo 20% (no 70% de V4.1)
@@ -37,8 +37,6 @@ import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay
 import { computeDCADecision } from "../dca/dcaEngine";  // ✅ CORREGIDO: import al inicio
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 // FIX-CRÍTICO-2: ÚNICA fuente de verdad para pesos de factores.
-// Antes: triple hardcode en engineConfig.ts, factorCalibration.ts, y aquí.
-// Ahora: todos importan de engineConfig → un solo punto de cambio.
 import { FACTOR_CONFIG } from "../config/engineConfig";
 import {
   getTacticalWeights,
@@ -47,6 +45,13 @@ import {
   REGIME_TACTICAL_ALLOCATIONS,
 } from "./regimeTacticalAllocation";
 
+// ══════════════════════════════════════════════════════════════════
+// FIX: Constante BLEND_WEIGHTS restaurada (eliminada accidentalmente)
+// ══════════════════════════════════════════════════════════════════
+const BLEND_WEIGHTS = {
+  WITH_COV:    { BL: 0.20, HRP: 0.65, MIN_VAR: 0.15 },
+  WITHOUT_COV: { KELLY: 0.25, HRP: 0.75 },
+} as const;
 
 // ==================== INTERFACES ====================
 export interface AssetInput {
@@ -257,14 +262,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const regimeNumeric = adjustedRegimePenalty;
   const btcNumeric = btcCycle.btcNumeric;
   const riskNumeric = 1 - ((input.portfolioRealizedVol ?? 0.18) / 0.50);
-  // FIX-IMP-6: rebalancear pesos coreSignal.
-  // PROBLEMA ANTERIOR: 0.45×btcNumeric + 0.35×regimeNumeric
-  //   BTC on-chain dominaba más que el régimen macro global.
-  //   En 2023: BTC bear + equity global en rally → el motor infraexponía equity innecesariamente.
-  // CORRECCIÓN: régimen macro es el driver primario, BTC es señal secundaria proporcional a su cap (20%).
-  //   0.45 × regimeNumeric  ← macro global es el sistema nervioso del portfolio
-  //   0.35 × btcNumeric     ← BTC on-chain relevante pero no dominante
-  //   0.20 × riskNumeric    ← vol del portfolio: sin cambio
   const coreSignalScore = 0.45 * regimeNumeric + 0.35 * btcNumeric + 0.20 * Math.max(0, riskNumeric);
 
   // ====== ESCENARIOS PROBABILÍSTICOS ======
@@ -289,9 +286,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     const quality = calculateQuality(asset as QualityInput, qualityStats);
     const lowVol = calculateLowVol(asset, lowVolStats);
 
-    // FIX-CRÍTICO-2: usar FACTOR_CONFIG.DEFAULT_WEIGHTS como fuente única.
-    // Antes era { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 } hardcodeado.
-    // Ahora cualquier cambio en engineConfig.ts se propaga automáticamente.
     const fw = input.adaptiveFactorWeights ?? FACTOR_CONFIG.DEFAULT_WEIGHTS;
     const calibrated = calibrateExpectedReturn({
       momentumScore: momentum.momentumScore,
@@ -308,7 +302,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     const kelly = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility });
     const isEquity = asset.earningsYield > 0;
     const erpAdj = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0);
-    const kellyAlloc = kelly.kellyFraction * corrPenalty * adjustedRegimePenalty * erpAdj;
+    const kellyAlloc = kelly.kellyFraction * corrPenalty * coreSignalScore * erpAdj;
     return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn: rawExpectedReturn, calibrated, kelly, kellyAlloc };
   });
 
@@ -356,7 +350,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         masterRegime.regime,
         input.liquidityGrowth ?? 0
       );
-      const marketWeights = assets.map(() => 1 / assets.length);
+      const invVols = assets.map(a => 1 / Math.max(a.volatility, 0.05));
+      const invVolSum = invVols.reduce((s, v) => s + v, 0);
+      const marketWeights = invVols.map(v => v / invVolSum);
       const blResult = runBlackLitterman({
         assetNames: assets.map(a => a.name),
         covMatrix: input.covMatrix,
@@ -371,20 +367,23 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-    // ====== BLEND FINAL: BL×0.40 + HRP×0.45 + MinVar×0.15 ======
+  // ====== BLEND FINAL: BL×0.20 + HRP×0.65 + MinVar×0.15 ======
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
       const minVarW = minimumVarianceWeights(input.covMatrix!, assets.length);
-      return blWeights[i] * 0.40 + hrpWeights[i] * 0.45 + minVarW[i] * 0.15;
+      return blWeights[i] * BLEND_WEIGHTS.WITH_COV.BL
+           + hrpWeights[i] * BLEND_WEIGHTS.WITH_COV.HRP
+           + minVarW[i]    * BLEND_WEIGHTS.WITH_COV.MIN_VAR;
     } else {
-      return kellyNorm[i].kellyNormalized * 0.40 + hrpWeights[i] * 0.60;
+      return kellyNorm[i].kellyNormalized * BLEND_WEIGHTS.WITHOUT_COV.KELLY
+           + hrpWeights[i]                * BLEND_WEIGHTS.WITHOUT_COV.HRP;
     }
   });
 
   const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
   const blendNorm = blendWeights.map(w => w / totalBlend);
 
-  // ── CAPA TÁCTICA POR RÉGIMEN (NUEVO) ─────────────────────────────────
+  // ── CAPA TÁCTICA POR RÉGIMEN ─────────────────────────────────────────
   const tacticalWeights = getTacticalWeights(masterRegime.regime, assets);
   const blendedWithTactical = applyTacticalConstraints(
     blendNorm,
@@ -399,7 +398,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   );
   const totalFinalWeights = finalWeightsBeforeCap.reduce((s, w) => s + w, 0) || 1;
   const finalBlendNorm = finalWeightsBeforeCap.map(w => w / totalFinalWeights);
-  console.log('TACTICAL FINAL WEIGHTS', finalBlendNorm);
 
   // ── PESOS DE REFERENCIA (Markowitz y Risk Parity) ────────────────────
   const markowitzWeights = assets.map(() => 1 / assets.length);
@@ -418,10 +416,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     realizedVol,
     regimePenalty: adjustedRegimePenalty,
   });
-  // ====== .CAPA 7: VOL TARGET ======
-  // CORREGIDO: usamos finalBlendNorm para que el cálculo de volatilidad
-  // refleje la composición real de la cartera tras los cambios tácticos.
-  
+
   // ====== CAPA 8: TAIL RISK ======
   const tailRisk = computeTailRiskOverlay({
     drawdown: input.portfolioDrawdown ?? 0,
@@ -541,18 +536,12 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
 // ==================== HELPERS INTERNOS ====================
 function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
-  // ── FIX NaN: validar covMatrix antes de cualquier operación ──────────────
-  // Si covMatrix contiene NaN o Inf (ej: activo con datos insuficientes que
-  // no fue protegido por el shrinkage adaptativo), la optimización producirá
-  // grad[i]=NaN → weights=NaN → blendNorm=NaN → finalAllocation=NaN en cascade.
-  // Fallback: igual weight es mejor que NaN — el motor puede continuar.
   const hasInvalidValues = covMatrix.some(row => row.some(v => !isFinite(v)));
   if (hasInvalidValues) {
     console.warn('[Olympus] minimumVarianceWeights: covMatrix contiene NaN/Inf → fallback equal weight');
     return Array(n).fill(1 / n);
   }
 
-  // ── FIX NaN: si n no coincide con la dimensión de la matriz ─────────────
   if (covMatrix.length !== n || covMatrix.some(row => row.length !== n)) {
     console.warn('[Olympus] minimumVarianceWeights: dimensión n no coincide con covMatrix → fallback');
     return Array(n).fill(1 / n);
@@ -568,7 +557,6 @@ function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
       }
     }
 
-    // ── .FIX NaN: proteger contra grad con NaN (si covMatrix es mala a pesar del guard) ──
     if (grad.some(g => !isFinite(g))) {
       console.warn('[Olympus] minimumVarianceWeights: gradiente NaN en iteración', iter, '→ fallback');
       return Array(n).fill(1 / n);

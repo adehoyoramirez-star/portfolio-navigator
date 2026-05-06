@@ -23,6 +23,12 @@ export interface DCAEngineOutput {
   description: string;
 }
 
+// FIX-BUG-3: PANIC_VOLATILITY calibrado en vol ANUALIZADA.
+// BUG ANTERIOR: 0.04 = umbral de volatilidad DIARIA (~0.63% diario = ~10% anual).
+// El input portfolioVolatility es SIEMPRE vol anualizada (0.18 = 18% anual).
+// Con el umbral en 0.04: 0.18 > 0.04 = TRUE → pánico PERMANENTE → vendía 30% siempre.
+// CORRECCIÓN: umbral 0.40 = 40% vol anual (nivel de stress real: COVID pico = 0.60).
+// Rangos normales: 0.14–0.25 anual → sin pánico. Crisis severa: 0.40+ → activa.
 const DCA_CONFIG = {
   INTENSITY: {
     CRISIS: 0.02,
@@ -33,7 +39,7 @@ const DCA_CONFIG = {
     RECOVERY_BOOST: 3.5,
   },
   RISK_LIMITS: {
-    PANIC_VOLATILITY: 0.04,
+    PANIC_VOLATILITY: 0.40,   // FIX-BUG-3: era 0.04 (diario). Ahora 0.40 (anual).
     LIQUIDATION_RATIO: 0.30,
   }
 };
