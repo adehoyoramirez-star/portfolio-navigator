@@ -1,6 +1,15 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/backtestEngine.ts
-// VERSIÓN TÁCTICA: solo getTacticalWeights
+// VERSIÓN ESPEJO DEL MOTOR REAL (V5.1)
+// ===============================================
+// Ahora el backtest utiliza:
+//   - Factores de retorno reales (momentum, value, quality, low‑vol)
+//   - Kelly + HRP + MinVar blend (como en olympusV3)
+//   - Black‑Litterman con prior de volatilidad inversa (sin views históricas)
+//   - Pesos tácticos por régimen
+//   - Tail risk overlay que REALMENTE reduce exposición (no se cancela)
+//   - Vol target que escala la exposición total
+//   - Efectivo implícito (la suma de pesos puede ser < 1)
 // ===============================================
 
 import { ASSETS } from "@/lib/constants";
@@ -11,8 +20,11 @@ import { calculateLowVol, computeLowVolUniverseStats } from "../factors/lowVolat
 import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
+import { computeHRP } from "../risk/hrp";
+import { runBlackLitterman } from "../portfolio/blackLitterman";
+import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from "../engine/regimeTacticalAllocation";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
-import { getTacticalWeights } from "../engine/regimeTacticalAllocation";
+import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
@@ -55,6 +67,7 @@ export interface DailyRecord {
   allocations: Record<string, number>;
   regime: BacktestRegime;
   rolling252Sharpe: number | null;
+  cash: number; // fracción no invertida (1 - suma de pesos)
 }
 
 export interface BacktestMetrics {
@@ -96,6 +109,7 @@ export interface BacktestOutput {
   rebalanceCount: number;
 }
 
+// ── Utilidades estadísticas ─────────────────────────────────────────────
 function ensureLength(arr: number[], targetLen: number): number[] {
   if (arr.length >= targetLen) return arr.slice(0, targetLen);
   const padded = [...arr];
@@ -153,12 +167,13 @@ function emptyMetrics(initialCapital: number): BacktestMetrics {
   return { cagr: 0, sharpe: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, volatility: 0, finalValue: initialCapital };
 }
 
-function computeWindowCorrelation(
+// ── Cálculo de covarianza y correlación en una ventana ─────────────────
+function computeWindowCovAndCorr(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
   t: number,
   window: number
-): number[][] {
+): { covMatrix: number[][]; corrMatrix: number[][] } {
   const n = ASSETS.length;
   const returns = ASSETS.map(ticker => {
     const bticker = backtestTickers[ticker];
@@ -168,76 +183,369 @@ function computeWindowCorrelation(
   const minLen = Math.min(...returns.map(r => r.length));
   const trimmed = returns.map(r => r.slice(r.length - minLen));
   const means = trimmed.map(mean);
-  const corr: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+
+  const covMatrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  const corrMatrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let j = i; j < n; j++) {
-      if (i === j) { corr[i][j] = 1; continue; }
-      let num = 0, si = 0, sj = 0;
+      let cov = 0, vi = 0, vj = 0;
       for (let k = 0; k < minLen; k++) {
         const di = trimmed[i][k] - means[i];
         const dj = trimmed[j][k] - means[j];
-        num += di * dj; si += di * di; sj += dj * dj;
+        cov += di * dj;
+        vi += di * di;
+        vj += dj * dj;
       }
-      const c = (si > 0 && sj > 0) ? num / Math.sqrt(si * sj) : 0;
-      corr[i][j] = isFinite(c) ? c : 0;
-      corr[j][i] = corr[i][j];
+      const denom = Math.max(1, minLen - 1);
+      cov = cov / denom;
+      covMatrix[i][j] = cov * 252;
+      covMatrix[j][i] = cov * 252;
+
+      const stdi = Math.sqrt(vi / denom);
+      const stdj = Math.sqrt(vj / denom);
+      const corr = (stdi > 0 && stdj > 0) ? cov / (stdi * stdj) : (i === j ? 1 : 0);
+      corrMatrix[i][j] = isFinite(corr) ? corr : 0;
+      corrMatrix[j][i] = corrMatrix[i][j];
     }
   }
-  return corr;
+  return { covMatrix, corrMatrix };
 }
 
+// ── Estimación de volatilidad del portfolio ────────────────────────────
 function estimatePortfolioVolatility(
   allocations: Record<string, number>,
-  closesHistory: Record<string, number[]>,
-  backtestTickers: Record<string, string>,
-  t: number
+  covMatrix: number[][]
 ): number {
-  let weightedVar = 0;
-  for (const ticker of ASSETS) {
-    const w = allocations[ticker] ?? 0;
-    if (w === 0) continue;
-    const bticker = backtestTickers[ticker];
-    const closes = closesHistory[bticker] ?? [];
-    const rets = dailyReturns(closes.slice(Math.max(0, t - 63), t));
-    if (rets.length < 10) continue;
-    const vol = Math.sqrt(variance(rets) * 252);
-    weightedVar += w * w * vol * vol;
+  const n = ASSETS.length;
+  const weights = ASSETS.map(t => allocations[t] ?? 0);
+  let varPort = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      varPort += weights[i] * weights[j] * covMatrix[i][j];
+    }
   }
-  return Math.sqrt(weightedVar);
+  return Math.sqrt(Math.max(0, varPort));
 }
 
-function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
-  const clean = dailyRets.filter(r => isFinite(r));
-  if (clean.length < 10) {
-    return { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 };
+// ── Clasificación de régimen (simplificada, igual que antes) ───────────
+function detectRegime(vix: number): BacktestRegime {
+  if (vix > 35) return "CRISIS";
+  if (vix > 25) return "CONTRACTION";
+  return "EXPANSION";
+}
+
+// ── Factor scores para un activo en un momento dado ────────────────────
+function computeAssetFactors(
+  ticker: string,
+  closesHistory: Record<string, number[]>,
+  backtestTickers: Record<string, string>,
+  t: number,
+  lookbackDays: number
+) {
+  const bticker = backtestTickers[ticker];
+  const closes = closesHistory[bticker] ?? [];
+  const r12m = periodReturn(closes, t, 252);
+  const r3m  = periodReturn(closes, t, 63);
+  const r1m  = periodReturn(closes, t, 21);
+  const window = closes.slice(Math.max(0, t - lookbackDays), t);
+  const dailyRet = dailyReturns(window);
+  const vol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * 252)) : 0.25;
+  return { returns12m: r12m, returns3m: r3m, returns1m: r1m, volatility: vol, earningsYield: 0 };
+}
+
+// ── Asignación táctica real (réplica de olympusV3) ─────────────────────
+function computeAllocationsWithRegime(
+  closesHistory: Record<string, number[]>,
+  backtestTickers: Record<string, string>,
+  t: number,
+  lookbackDays: number,
+  macro: { vix: number; yieldSpread: number; creditSpread: number },
+  portfolioDrawdown: number,
+  currentAllocations: Record<string, number> // para estimar vol del portfolio
+): { allocations: Record<string, number>; regime: BacktestRegime; cash: number } {
+  const regime = detectRegime(macro.vix);
+  const n = ASSETS.length;
+
+  // 1. Factores por activo
+  const assetFactors = ASSETS.map(ticker => {
+    const fact = computeAssetFactors(ticker, closesHistory, backtestTickers, t, lookbackDays);
+    return { ticker, ...fact };
+  });
+
+  // 2. Scores de factores
+  const universeStats = computeUniverseStats(assetFactors.map(a => ({ earningsYield: a.earningsYield })));
+  const qualityStats = computeQualityUniverseStats(assetFactors.map(a => ({
+    volatility: a.volatility,
+    returns12m: a.returns12m,
+    returns3m: a.returns3m,
+    returns1m: a.returns1m,
+  })));
+  const lowVolStats = computeLowVolUniverseStats(assetFactors.map(a => ({
+    volatility: a.volatility,
+    returns12m: a.returns12m,
+    returns3m: a.returns3m,
+  })));
+
+  const rawScores = assetFactors.map(af => {
+    const momentum = calculateMomentum({ returns12m: af.returns12m, returns1m: af.returns1m, returns3m: af.returns3m });
+    const value = calculateValue({ earningsYield: af.earningsYield }, universeStats);
+    const quality = calculateQuality(af, qualityStats);
+    const lowVol = calculateLowVol(af, lowVolStats);
+    const calibrated = calibrateExpectedReturn({
+      momentumScore: momentum.momentumScore,
+      valueScore: value.valueScore,
+      qualityScore: quality.qualityScore,
+      lowVolScore: lowVol.lowVolScore + lowVol.downsideVolPenalty,
+    });
+    return { ticker: af.ticker, expectedReturn: calibrated.expectedReturn, volatility: af.volatility, momentum, value, quality, lowVol };
+  });
+
+  // 3. Covarianza y correlación
+  const { covMatrix, corrMatrix } = computeWindowCovAndCorr(closesHistory, backtestTickers, t, 63);
+  const corrPen = correlationPenalty(corrMatrix);
+
+  // 4. Kelly fractions
+  const kellyFractions = rawScores.map(s => {
+    const kelly = calculateKelly({ expectedReturn: s.expectedReturn, volatility: s.volatility });
+    const alloc = kelly.kellyFraction * corrPen;
+    return Math.max(0, isFinite(alloc) ? alloc : 0);
+  });
+  const totalKelly = kellyFractions.reduce((s, v) => s + v, 0);
+  const kellyNorm = totalKelly > 0 ? kellyFractions.map(k => k / totalKelly) : ASSETS.map(() => 1 / n);
+
+  // 5. HRP
+  const hrpResult = computeHRP(covMatrix, n);
+  const hrpWeights = hrpResult.weights;
+
+  // 6. Mínima varianza
+  const minVarW = minimumVarianceWeights(covMatrix, n);
+
+  // 7. Black-Litterman (sin views)
+  const marketWeights = equalWeightAllocations();
+  const blResult = runBlackLitterman({
+    assetNames: [...ASSETS],
+    covMatrix,
+    marketWeights: ASSETS.map(() => 1 / n),
+    views: [],
+    riskAversion: regime === "CRISIS" ? 4.0 : regime === "CONTRACTION" ? 3.0 : 2.5,
+    tau: 0.05,
+  });
+  const blWeights = blResult.posteriorWeights;
+
+  // 8. Blend (BL×0.20 + HRP×0.65 + MinVar×0.15)
+  const blendWeights = ASSETS.map((_, i) =>
+    blWeights[i] * 0.20 + hrpWeights[i] * 0.65 + minVarW[i] * 0.15
+  );
+  const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
+  const blendNorm = blendWeights.map(w => w / totalBlend);
+
+  // 9. Capa táctica
+  const tacticalWeights = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
+  const blendedWithTactical = applyTacticalConstraints(blendNorm, tacticalWeights, regime, 0.60);
+  const finalWeightsBeforeCap = enforceClusterCap(blendedWithTactical, ASSETS.map(t => ({ name: t })), regime);
+
+  // 10. Pesos relativos (suman 1)
+  const totalTactical = finalWeightsBeforeCap.reduce((s, w) => s + w, 0) || 1;
+  const relativeWeights = finalWeightsBeforeCap.map(w => w / totalTactical);
+
+  // 11. Vol target
+  const portfolioVol = estimatePortfolioVolatility(
+    Object.fromEntries(ASSETS.map((t, i) => [t, relativeWeights[i]])),
+    covMatrix
+  );
+  const regimePenalty = regime === "CRISIS" ? 0.4 : regime === "CONTRACTION" ? 0.7 : 1.0;
+  const volTarget = computeVolTargetMultiplier({
+    targetVol: DEFAULT_TARGET_VOL,
+    realizedVol: portfolioVol,
+    regimePenalty,
+  });
+
+  // 12. Tail risk (drawdown, VIX, credit spread)
+  const stressScore = regime === "CRISIS" ? 8 : regime === "CONTRACTION" ? 4 : 1;
+  const tailRisk = computeTailRiskOverlay({
+    drawdown: portfolioDrawdown,
+    vix: macro.vix,
+    creditSpread: macro.creditSpread,
+    stressScore,
+    portfolioVolatility: portfolioVol,
+    avgCorrelation: 0.5,
+  });
+
+  // 13. Exposición total (fix V5-2)
+  const totalInvested = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
+
+  // 14. Asignaciones finales (fracción del capital total)
+  const finalAllocations: Record<string, number> = {};
+  ASSETS.forEach((ticker, i) => {
+    finalAllocations[ticker] = relativeWeights[i] * totalInvested;
+  });
+
+  const cash = 1 - totalInvested;
+
+  return { allocations: finalAllocations, regime, cash };
+}
+
+// ── Bucle principal del backtest ───────────────────────────────────────
+export function runBacktest(input: BacktestInput): BacktestOutput {
+  const {
+    closesHistory,
+    macroHistory,
+    lookbackDays = 252,
+    rebalanceDays = 21,
+    initialCapital = 10_000,
+    transactionCostBps = 15,
+  } = input;
+  const txCostRate = transactionCostBps / 10_000;
+  let totalTransactionCosts = 0;
+  let rebalanceCount = 0;
+
+  const backtestTickers = Object.fromEntries(
+    ASSETS.map(t => [t, getBacktestTicker(t, closesHistory)])
+  );
+
+  const lengths = ASSETS.map(t => (closesHistory[backtestTickers[t]] ?? []).length);
+  const maxLen = Math.max(...lengths);
+  if (maxLen < lookbackDays + rebalanceDays * 2) {
+    if (maxLen < 90) return emptyBacktest(initialCapital);
+    return runBacktest({ ...input, lookbackDays: Math.floor(maxLen * 0.6) });
   }
-  const years = clean.length / 252;
-  const totalRet = clean.reduce((acc, r) => acc * (1 + r), 1) - 1;
-  const cagr = years > 0 ? Math.pow(Math.max(0.001, 1 + totalRet), 1 / years) - 1 : 0;
-  const dailyMean = mean(clean);
-  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
-  const rfDaily = 0.04 / 252;
-  const excess = clean.map(r => r - rfDaily);
-  const exMean = mean(excess);
-  const exStd = Math.sqrt(variance(excess.map(r => r - exMean)) * 252);
-  const sharpe = exStd > 0 ? (exMean * 252) / exStd : 0;
-  let peak = 1, val = 1, maxDD = 0;
-  for (const r of clean) {
-    val *= (1 + r);
-    if (val > peak) peak = val;
-    const dd = (val - peak) / peak;
-    if (dd < maxDD) maxDD = dd;
+
+  const minProxyLen = Math.min(...lengths);
+  const backtestStart = lookbackDays;
+  const backtestEnd = maxLen - 1;
+
+  const dailyRecords: DailyRecord[] = [];
+  let portfolioValue = initialCapital;
+  let peakValue = initialCapital;
+  let currentAllocations = equalWeightAllocations();
+  let currentRegime: BacktestRegime = "EXPANSION";
+  let currentCash = 0;
+
+  let benchmarkValue = initialCapital;
+  const benchmarkAlloc = equalWeightAllocations();
+
+  const strategyDailyReturns: number[] = [];
+  const benchmarkDailyReturns: number[] = [];
+
+  const regimeReturns: Record<BacktestRegime, number[]> = {
+    EXPANSION: [], CONTRACTION: [], CRISIS: [],
+  };
+  const regimeDays: Record<BacktestRegime, number> = {
+    EXPANSION: 0, CONTRACTION: 0, CRISIS: 0,
+  };
+
+  let daysWithProxies = 0;
+  let daysWithRealData = 0;
+
+  const vixArray = ensureLength(macroHistory.vix, maxLen);
+  const yieldSpreadArray = ensureLength(macroHistory.yieldSpread, maxLen);
+  const creditSpreadArray = ensureLength(macroHistory.creditSpread, maxLen);
+
+  for (let t = backtestStart; t < backtestEnd; t++) {
+    const dayIndex = t - backtestStart;
+
+    if (dayIndex % rebalanceDays === 0) {
+      const vix = vixArray[t];
+      const yieldSpread = yieldSpreadArray[t];
+      const creditSpread = creditSpreadArray[t];
+      const drawdown = portfolioValue < peakValue ? (portfolioValue - peakValue) / peakValue : 0;
+
+      const result = computeAllocationsWithRegime(
+        closesHistory, backtestTickers, t, lookbackDays,
+        { vix, yieldSpread, creditSpread },
+        drawdown,
+        currentAllocations
+      );
+      currentAllocations = result.allocations;
+      currentRegime = result.regime;
+      currentCash = result.cash;
+
+      // Costes de transacción basados en el cambio de pesos
+      const activeTickers = Object.values(currentAllocations).filter(w => w > 0.01).length;
+      const costThisRebalance = portfolioValue * txCostRate * activeTickers;
+      portfolioValue -= costThisRebalance;
+      totalTransactionCosts += costThisRebalance;
+      rebalanceCount++;
+    }
+
+    // Retorno diario: suma de retornos ponderados por pesos (que pueden sumar < 1)
+    let portfolioReturn = 0;
+    let benchmarkReturn = 0;
+    let activeWeight = 0;
+
+    const usingProxy = t < (maxLen - minProxyLen + lookbackDays);
+    if (usingProxy) daysWithProxies++; else daysWithRealData++;
+
+    for (const ticker of ASSETS) {
+      const bticker = backtestTickers[ticker];
+      const closes = closesHistory[bticker] ?? [];
+      const c0 = closes[t];
+      const c1 = closes[t - 1];
+      if (c0 != null && c1 != null && isFinite(c0) && isFinite(c1) && c1 > 0 && c0 > 0) {
+        const dailyRet = c0 / c1 - 1;
+        if (isFinite(dailyRet)) {
+          portfolioReturn += (currentAllocations[ticker] ?? 0) * dailyRet;
+          benchmarkReturn += (benchmarkAlloc[ticker] ?? 0) * dailyRet;
+          activeWeight += (currentAllocations[ticker] ?? 0);
+        }
+      }
+    }
+
+    // Añadir retorno del efectivo (0%)
+    portfolioReturn += currentCash * 0;
+
+    if (!isFinite(portfolioReturn)) portfolioReturn = 0;
+    if (!isFinite(benchmarkReturn)) benchmarkReturn = 0;
+
+    portfolioValue *= (1 + portfolioReturn);
+    benchmarkValue *= (1 + benchmarkReturn);
+    if (portfolioValue > peakValue) peakValue = portfolioValue;
+    const dd = (portfolioValue - peakValue) / peakValue;
+
+    strategyDailyReturns.push(portfolioReturn);
+    benchmarkDailyReturns.push(benchmarkReturn);
+
+    regimeReturns[currentRegime].push(portfolioReturn);
+    regimeDays[currentRegime]++;
+
+    let rolling252Sharpe: number | null = null;
+    if (strategyDailyReturns.length >= 252) {
+      const window = strategyDailyReturns.slice(-252);
+      rolling252Sharpe = computeRollingSharpe(window);
+    }
+
+    dailyRecords.push({
+      day: dayIndex,
+      portfolioValue,
+      drawdown: dd,
+      allocations: { ...currentAllocations },
+      regime: currentRegime,
+      rolling252Sharpe,
+      cash: currentCash,
+    });
   }
+
+  const regimeConditional: RegimeConditionalMetrics = {
+    EXPANSION:   computeRegimeMetrics(regimeReturns.EXPANSION),
+    CONTRACTION: computeRegimeMetrics(regimeReturns.CONTRACTION),
+    CRISIS:      computeRegimeMetrics(regimeReturns.CRISIS),
+  };
+
   return {
-    cagr: isFinite(cagr) ? cagr : 0,
-    sharpe: isFinite(sharpe) ? sharpe : 0,
-    maxDrawdown: isFinite(maxDD) ? maxDD : 0,
-    annualizedReturn: isFinite(dailyMean * 252) ? dailyMean * 252 : 0,
-    volatility: isFinite(vol) ? vol : 0,
-    totalDays: clean.length,
+    dailyRecords,
+    metrics:          computeMetrics(strategyDailyReturns, initialCapital, portfolioValue),
+    benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue),
+    regimeConditional,
+    regimeDays,
+    daysWithProxies,
+    daysWithRealData,
+    transactionCostBps,
+    totalTransactionCosts,
+    rebalanceCount,
   };
 }
 
+// ── Funciones métricas (sin cambios) ────────────────────────────────────
 function computeRollingSharpe(window: number[]): number {
   if (window.length < 21) return 0;
   const rfDaily = 0.04 / 252;
@@ -286,204 +594,53 @@ function computeMetrics(dailyRets: number[], initialCapital: number, finalValue:
   };
 }
 
-function computeAllocationsWithRegime(
-  closesHistory: Record<string, number[]>,
-  backtestTickers: Record<string, string>,
-  t: number,
-  lookbackDays: number,
-  macro: { vix: number; yieldSpread: number; creditSpread: number }
-): { allocations: Record<string, number>; regime: BacktestRegime } {
-  let regime: BacktestRegime;
-  if (macro.vix > 35) regime = "CRISIS";
-  else if (macro.vix > 25) regime = "CONTRACTION";
-  else regime = "EXPANSION";
-
-  // ─── CARTERA TÁCTICA PURA (sin mezcla) ───
-  const tacticalWeights = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
-  const total = tacticalWeights.reduce((s, w) => s + w, 0) || 1;
-  const finalAllocations: Record<string, number> = {};
-  ASSETS.forEach((ticker, idx) => {
-    finalAllocations[ticker] = tacticalWeights[idx] / total;
-  });
-console.log('TÁCTICO BACKTEST - régimen:', regime, 'pesos:', finalAllocations);
-  return { allocations: finalAllocations, regime };
+function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
+  const clean = dailyRets.filter(r => isFinite(r));
+  if (clean.length < 10) {
+    return { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 };
+  }
+  const years = clean.length / 252;
+  const totalRet = clean.reduce((acc, r) => acc * (1 + r), 1) - 1;
+  const cagr = years > 0 ? Math.pow(Math.max(0.001, 1 + totalRet), 1 / years) - 1 : 0;
+  const dailyMean = mean(clean);
+  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
+  const rfDaily = 0.04 / 252;
+  const excess = clean.map(r => r - rfDaily);
+  const exMean = mean(excess);
+  const exStd = Math.sqrt(variance(excess.map(r => r - exMean)) * 252);
+  const sharpe = exStd > 0 ? (exMean * 252) / exStd : 0;
+  let peak = 1, val = 1, maxDD = 0;
+  for (const r of clean) {
+    val *= (1 + r);
+    if (val > peak) peak = val;
+    const dd = (val - peak) / peak;
+    if (dd < maxDD) maxDD = dd;
+  }
+  return {
+    cagr: isFinite(cagr) ? cagr : 0,
+    sharpe: isFinite(sharpe) ? sharpe : 0,
+    maxDrawdown: isFinite(maxDD) ? maxDD : 0,
+    annualizedReturn: isFinite(dailyMean * 252) ? dailyMean * 252 : 0,
+    volatility: isFinite(vol) ? vol : 0,
+    totalDays: clean.length,
+  };
 }
 
-export function runBacktest(input: BacktestInput): BacktestOutput {
-  const {
-    closesHistory,
-    macroHistory,
-    lookbackDays = 252,
-    rebalanceDays = 21,
-    initialCapital = 10_000,
-    transactionCostBps = 15,
-  } = input;
-  const txCostRate = transactionCostBps / 10_000;
-  let totalTransactionCosts = 0;
-  let rebalanceCount = 0;
-
-  const backtestTickers = Object.fromEntries(
-    ASSETS.map(t => [t, getBacktestTicker(t, closesHistory)])
-  );
-
-  const lengths = ASSETS.map(t => (closesHistory[backtestTickers[t]] ?? []).length);
-  const maxLen = Math.max(...lengths);
-  if (maxLen < lookbackDays + rebalanceDays * 2) {
-    if (maxLen < 90) return emptyBacktest(initialCapital);
-    return runBacktest({ ...input, lookbackDays: Math.floor(maxLen * 0.6) });
+// Mínima varianza (réplica del helper en olympusV3)
+function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
+  if (covMatrix.some(row => row.some(v => !isFinite(v))) || covMatrix.length !== n) {
+    return Array(n).fill(1 / n);
   }
-
-  const minProxyLen = Math.min(...lengths);
-  const backtestStart = lookbackDays;
-  const backtestEnd = maxLen - 1;
-
-  const dailyRecords: DailyRecord[] = [];
-  let portfolioValue = initialCapital;
-  let peakValue = initialCapital;
-  let currentAllocations = equalWeightAllocations();
-  let currentRegime: BacktestRegime = "EXPANSION";
-
-  let benchmarkValue = initialCapital;
-  const benchmarkAlloc = equalWeightAllocations();
-
-  const strategyDailyReturns: number[] = [];
-  const benchmarkDailyReturns: number[] = [];
-
-  const regimeReturns: Record<BacktestRegime, number[]> = {
-    EXPANSION: [], CONTRACTION: [], CRISIS: [],
-  };
-  const regimeDays: Record<BacktestRegime, number> = {
-    EXPANSION: 0, CONTRACTION: 0, CRISIS: 0,
-  };
-
-  let daysWithProxies = 0;
-  let daysWithRealData = 0;
-
-  const vixArray = ensureLength(macroHistory.vix, maxLen);
-  const yieldSpreadArray = ensureLength(macroHistory.yieldSpread, maxLen);
-  const creditSpreadArray = ensureLength(macroHistory.creditSpread, maxLen);
-
-  for (let t = backtestStart; t < backtestEnd; t++) {
-    const dayIndex = t - backtestStart;
-
-    if (dayIndex % rebalanceDays === 0) {
-      const vix = vixArray[t];
-      const yieldSpread = yieldSpreadArray[t];
-      const creditSpread = creditSpreadArray[t];
-
-      const result = computeAllocationsWithRegime(
-        closesHistory, backtestTickers, t, lookbackDays,
-        { vix, yieldSpread, creditSpread }
-      );
-      let allocations = result.allocations;
-      let regime = result.regime;
-      currentRegime = regime;
-
-      const drawdown = (portfolioValue - peakValue) / peakValue;
-      const portfolioVol = estimatePortfolioVolatility(allocations, closesHistory, backtestTickers, t);
-      const stressScore = regime === "CRISIS" ? 8 : regime === "CONTRACTION" ? 4 : 1;
-      const avgCorr = 0.5;
-
-      const tailRisk = computeTailRiskOverlay({
-        drawdown,
-        vix,
-        creditSpread,
-        stressScore,
-        portfolioVolatility: portfolioVol,
-        avgCorrelation: avgCorr,
-      });
-
-      const totalWeight = Object.values(allocations).reduce((s, w) => s + w, 0);
-      if (totalWeight > 0) {
-        for (const ticker of ASSETS) {
-          allocations[ticker] = (allocations[ticker] / totalWeight) * tailRisk.overlay;
-        }
-        const newTotal = Object.values(allocations).reduce((s, w) => s + w, 0);
-        if (newTotal > 0) {
-          for (const ticker of ASSETS) {
-            allocations[ticker] /= newTotal;
-          }
-        }
-      }
-
-      currentAllocations = allocations;
-      rebalanceCount++;
-
-      const activeTickers = Object.values(currentAllocations).filter(w => w > 0.01).length;
-      const costThisRebalance = portfolioValue * txCostRate * activeTickers;
-      portfolioValue -= costThisRebalance;
-      totalTransactionCosts += costThisRebalance;
-    }
-
-    let portfolioReturn = 0;
-    let benchmarkReturn = 0;
-    let activeWeight = 0;
-
-    const usingProxy = t < (maxLen - minProxyLen + lookbackDays);
-    if (usingProxy) daysWithProxies++; else daysWithRealData++;
-
-    for (const ticker of ASSETS) {
-      const bticker = backtestTickers[ticker];
-      const closes = closesHistory[bticker] ?? [];
-      const c0 = closes[t];
-      const c1 = closes[t - 1];
-      if (c0 != null && c1 != null && isFinite(c0) && isFinite(c1) && c1 > 0 && c0 > 0) {
-        const dailyRet = c0 / c1 - 1;
-        if (isFinite(dailyRet)) {
-          portfolioReturn += (currentAllocations[ticker] ?? 0) * dailyRet;
-          benchmarkReturn += (benchmarkAlloc[ticker] ?? 0) * dailyRet;
-          activeWeight += (currentAllocations[ticker] ?? 0);
-        }
-      }
-    }
-
-    if (activeWeight > 0 && activeWeight < 0.99) portfolioReturn = portfolioReturn / activeWeight;
-    if (!isFinite(portfolioReturn)) portfolioReturn = 0;
-    if (!isFinite(benchmarkReturn)) benchmarkReturn = 0;
-
-    portfolioValue *= (1 + portfolioReturn);
-    benchmarkValue *= (1 + benchmarkReturn);
-    if (portfolioValue > peakValue) peakValue = portfolioValue;
-    const drawdown = (portfolioValue - peakValue) / peakValue;
-
-    strategyDailyReturns.push(portfolioReturn);
-    benchmarkDailyReturns.push(benchmarkReturn);
-
-    regimeReturns[currentRegime].push(portfolioReturn);
-    regimeDays[currentRegime]++;
-
-    let rolling252Sharpe: number | null = null;
-    if (strategyDailyReturns.length >= 252) {
-      const window = strategyDailyReturns.slice(-252);
-      rolling252Sharpe = computeRollingSharpe(window);
-    }
-
-    dailyRecords.push({
-      day: dayIndex,
-      portfolioValue,
-      drawdown,
-      allocations: { ...currentAllocations },
-      regime: currentRegime,
-      rolling252Sharpe,
-    });
+  const iters = 500;
+  let weights = Array(n).fill(1 / n);
+  for (let iter = 0; iter < iters; iter++) {
+    const grad = Array(n).fill(0);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) grad[i] += 2 * weights[j] * covMatrix[i][j];
+    if (grad.some(g => !isFinite(g))) return Array(n).fill(1 / n);
+    const lr = 0.05 / (1 + iter * 0.01);
+    const updated = weights.map((w, i) => Math.max(0.01, w - lr * grad[i]));
+    const sum = updated.reduce((a, b) => a + b, 0) || 1;
+    weights = updated.map(w => w / sum);
   }
-
-  const regimeConditional: RegimeConditionalMetrics = {
-    EXPANSION:   computeRegimeMetrics(regimeReturns.EXPANSION),
-    CONTRACTION: computeRegimeMetrics(regimeReturns.CONTRACTION),
-    CRISIS:      computeRegimeMetrics(regimeReturns.CRISIS),
-  };
-
-  return {
-    dailyRecords,
-    metrics:          computeMetrics(strategyDailyReturns, initialCapital, portfolioValue),
-    benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue),
-    regimeConditional,
-    regimeDays,
-    daysWithProxies,
-    daysWithRealData,
-    transactionCostBps,
-    totalTransactionCosts,
-    rebalanceCount,
-  };
+  return weights;
 }
