@@ -990,11 +990,16 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     }
   }, [dcaBlocked, engineResult?.regime]);
 
-  useEffect(() => {
-  if (smartDCAResult) {
-    const monthlyLeftover = smartDCAResult.tacticalAccumulated;
-    setTacticalAccumulated(prev => prev + monthlyLeftover);
-  }
+const lastProcessedMonth = useRef<string | null>(null);
+
+useEffect(() => {
+  if (!smartDCAResult) return;
+  const currentMonth = new Date().toISOString().slice(0, 7); // formato "2026-05"
+  if (lastProcessedMonth.current === currentMonth) return; // ya hemos sumado este mes
+
+  const monthlyLeftover = smartDCAResult.tacticalAccumulated;
+  setTacticalAccumulated(prev => prev + monthlyLeftover);
+  lastProcessedMonth.current = currentMonth;
 }, [smartDCAResult?.tacticalAccumulated]);
   useEffect(() => {
     try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
