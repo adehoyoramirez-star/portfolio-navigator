@@ -30,6 +30,8 @@ import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
 import BacktestPanel from "@/core/backtest/BacktestPanel";
 import { logEngineDecision } from "@/lib/decisionLog";
+import { getCurrentKalmanWeights } from "@/core/factors/kalmanFactorWeights";
+import { getDynamicCovMatrix } from "@/core/risk/dccGarch";
 
 // ── Persistence & portfolio tools ────────────────────────────────────────
 import {
@@ -765,6 +767,19 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
 
   // ── Forzar recálculo del motor al cambiar de régimen ─────────────────
 const [lastRegime, setLastRegime] = useState<string>('');
+const kalmanWeights = getCurrentKalmanWeights();
+const dynamicCovMatrix = useMemo(() => {
+  if (!marketData?.closesHistory || !marketData?.covMatrix) return undefined;
+  try {
+    return getDynamicCovMatrix(
+      ASSETS as unknown as string[],
+      marketData.closesHistory,
+      marketData.covMatrix
+    );
+  } catch {
+    return marketData.covMatrix; // fallback a estática si algo falla
+  }
+}, [marketData?.closesHistory, marketData?.covMatrix]);
 const [regimeChangeCounter, setRegimeChangeCounter] = useState(0);
 
 const engineResult = useMemo(() => {
@@ -782,13 +797,13 @@ const engineResult = useMemo(() => {
         btcVol,
         wtiOil,
       },
-      covMatrix: marketData?.covMatrix,
+      covMatrix: dynamicCovMatrix ?? marketData?.covMatrix,
       portfolioDrawdown,
       portfolioRealizedVol,
       erpValue,
       liquidityGrowth,
       cewsHistory: effectiveCEWSHistory,
-      adaptiveFactorWeights: walkForwardResult?.adaptiveFactorWeights,
+      adaptiveFactorWeights: kalmanWeights,
     });
 }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights, regimeChangeCounter]);
 
