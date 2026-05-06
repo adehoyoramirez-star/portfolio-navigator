@@ -1025,118 +1025,122 @@ tacticalAvailableCash,
   const availableCash = dcaBlocked ? cashReserve : cashReserve + monthlyInjection;
 
   // ── AUTO-ACUMULACIÓN DE LIQUIDEZ DEFENSIVA ─────────────────────────────
-  // Cuando el motor bloquea el DCA, la aportación mensual se guarda como
-  // "pólvora seca" para desplegarse en Modo Ataque (Tramo 1-2-3).
-  // El capital se descuenta automáticamente cuando el motor entra en ataque.
-  const defensiveLiquidityRef = React.useRef<boolean>(false);
-  React.useEffect(() => {
-    if (!engineResult) return;
-    if (dcaBlocked && monthlyInjection > 0) {
-      // Solo acumular una vez por sesión de bloqueo (no en cada render)
-      if (!defensiveLiquidityRef.current) {
-        defensiveLiquidityRef.current = true;
-        setDefensiveLiquidity(prev => {useEffect(() => {
+// Cuando el motor bloquea el DCA, la aportación mensual se guarda como
+// "pólvora seca" para desplegarse en Modo Ataque (Tramo 1-2-3).
+// El capital se descuenta automáticamente cuando el motor entra en ataque.
+const defensiveLiquidityRef = React.useRef<boolean>(false);
+React.useEffect(() => {
+  if (!engineResult) return;
+  if (dcaBlocked && monthlyInjection > 0) {
+    if (!defensiveLiquidityRef.current) {
+      defensiveLiquidityRef.current = true;
+      setDefensiveLiquidity(prev => {
+        const next = Math.round((prev + monthlyInjection) * 100) / 100;
+        try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
+        return next;
+      });
+    }
+  } else {
+    defensiveLiquidityRef.current = false;
+    if (smartDCAResult.attackMode && smartDCAResult.totalCashToInvest > 0) {
+      setDefensiveLiquidity(prev => {
+        const deployed = Math.min(prev, smartDCAResult.totalCashToInvest * 0.8);
+        const next = Math.max(0, Math.round((prev - deployed) * 100) / 100);
+        try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
+        return next;
+      });
+    }
+  }
+}, [dcaBlocked, engineResult?.regime]);
+
+// ── ACTUALIZAR ACUMULADO TÁCTICO CUANDO CAMBIA EL RESULTADO DEL SMART DCA
+useEffect(() => {
   if (smartDCAResult) {
     setTacticalAccumulated(smartDCAResult.tacticalAccumulated);
   }
 }, [smartDCAResult?.tacticalAccumulated]);
-          const next = Math.round((prev + monthlyInjection) * 100) / 100;
-          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
-          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
 
-          return next;
-        });
-      }
-    } else {
-      defensiveLiquidityRef.current = false;
-      // Cuando el motor despliega en ataque, descontar lo que realmente se invirtió
-      if (smartDCAResult.attackMode && smartDCAResult.totalCashToInvest > 0) {
-        setDefensiveLiquidity(prev => {
-          const deployed = Math.min(prev, smartDCAResult.totalCashToInvest * 0.8);
-          const next = Math.max(0, Math.round((prev - deployed) * 100) / 100);
-          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
-          return next;
-        });
-      }
-    }
-  }, [dcaBlocked, engineResult?.regime]);
+// ── PERSISTENCIA DEL ACUMULADO TÁCTICO EN LOCAL STORAGE
+useEffect(() => {
+  try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
+}, [tacticalAccumulated]);
 
-  const rebalanceFinal = useMemo(() => {
-    if (!engineResult || engineResult.regime === "ALL_CASH") return null;
-    const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
-      const alloc = engineResult.allocations.find(a => a.name === asset.name);
-      return {
-        ticker:           asset.ticker,
-        name:             asset.name,
-        price:            asset.price,
-        shares:           asset.shares,
-        targetAllocation: alloc?.finalAllocation ?? 0,
-      };
-    });
-    return computeRebalanceSuggestions(
-      rebalanceAssets,
-      availableCash,
-      totalPortfolioValue,
-      0.02,
-      cycleTopResult.signals
-    );
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult]);
-
-  const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
-    const sells = rebalanceFinal?.sellSuggestions ?? [];
-    if (sells.length === 0) return null;
-    return analyzeSpainTax(
-      portfolio.assets.map(a => ({
-        ticker: a.ticker, name: a.name,
-        shares: a.shares, avgPrice: a.avgPrice, price: a.price,
-      })),
-      sells.map((s: RebalanceSuggestion) => ({
-        ticker: s.ticker, sharesToSell: s.sharesToSell,
-        trimPct: s.trimPct, cycleZone: s.cycleZone,
-      }))
-    );
-  }, [rebalanceFinal, portfolio.assets]);
-
-  const taxAwareRebalance = useMemo(() => {
-    if (!rebalanceFinal || !taxAnalysis) return rebalanceFinal;
-    const modifiedSells = rebalanceFinal.sellSuggestions.map((sell: RebalanceSuggestion) => {
-      const taxInfo = taxAnalysis.analyses.find(t => t.ticker === sell.ticker);
-      if (!taxInfo) return sell;
-      const taxLabel = taxInfo.verdict === "NO_CONVIENE"
-        ? `⚠️ FISCAL: Pagar ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF NO compensa (ratio ${taxInfo.taxVsLossRatio.toFixed(1)}x). Espera corrección adicional.`
-        : taxInfo.verdict === "EN_PERDIDAS"
-        ? `✅ FISCAL: Posición en pérdidas — venta sin impuesto. Aprovecha para compensar ganancias.`
-        : taxInfo.verdict === "CONVIENE"
-        ? `✅ FISCAL: Coste fiscal ${taxInfo.taxAfterOffset.toFixed(0)}€ (${(taxInfo.effectiveRate * 100).toFixed(1)}% ef.) — conviene vender antes de mayor caída.`
-        : `🟡 FISCAL: Analizar — ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF. Breakeven precio: ${taxInfo.breakEvenPrice.toFixed(0)}€.`;
-      return {
-        ...sell,
-        reason: `${sell.reason} | ${taxLabel}`,
-        priority: (taxInfo.verdict === "NO_CONVIENE" && taxAnalysis.availableLossOffset < taxInfo.taxGross * 0.5)
-          ? "LOW" as const
-          : sell.priority,
-      };
-    });
+const rebalanceFinal = useMemo(() => {
+  if (!engineResult || engineResult.regime === "ALL_CASH") return null;
+  const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
+    const alloc = engineResult.allocations.find(a => a.name === asset.name);
     return {
-      ...rebalanceFinal,
-      suggestions: [...modifiedSells, ...rebalanceFinal.buySuggestions],
-      sellSuggestions: modifiedSells,
+      ticker:           asset.ticker,
+      name:             asset.name,
+      price:            asset.price,
+      shares:           asset.shares,
+      targetAllocation: alloc?.finalAllocation ?? 0,
     };
-  }, [rebalanceFinal, taxAnalysis]);
+  });
+  return computeRebalanceSuggestions(
+    rebalanceAssets,
+    availableCash,
+    totalPortfolioValue,
+    0.02,
+    cycleTopResult.signals
+  );
+}, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult]);
 
-  const btcEntry = (() => {
-    let score = 0;
-    if (btcRsi < 35) score++;
-    if (btcZ < -1.5) score++;
-    if (btcRet1m < -0.08) score++;
+const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
+  const sells = rebalanceFinal?.sellSuggestions ?? [];
+  if (sells.length === 0) return null;
+  return analyzeSpainTax(
+    portfolio.assets.map(a => ({
+      ticker: a.ticker, name: a.name,
+      shares: a.shares, avgPrice: a.avgPrice, price: a.price,
+    })),
+    sells.map((s: RebalanceSuggestion) => ({
+      ticker: s.ticker, sharesToSell: s.sharesToSell,
+      trimPct: s.trimPct, cycleZone: s.cycleZone,
+    }))
+  );
+}, [rebalanceFinal, portfolio.assets]);
 
-    let signal: "NONE" | "WATCH" | "BUY" | "STRONG_BUY" = "NONE";
-    if (score === 1) signal = "WATCH";
-    else if (score === 2) signal = "BUY";
-    else if (score === 3) signal = "STRONG_BUY";
+const taxAwareRebalance = useMemo(() => {
+  if (!rebalanceFinal || !taxAnalysis) return rebalanceFinal;
+  const modifiedSells = rebalanceFinal.sellSuggestions.map((sell: RebalanceSuggestion) => {
+    const taxInfo = taxAnalysis.analyses.find(t => t.ticker === sell.ticker);
+    if (!taxInfo) return sell;
+    const taxLabel = taxInfo.verdict === "NO_CONVIENE"
+      ? `⚠️ FISCAL: Pagar ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF NO compensa (ratio ${taxInfo.taxVsLossRatio.toFixed(1)}x). Espera corrección adicional.`
+      : taxInfo.verdict === "EN_PERDIDAS"
+      ? `✅ FISCAL: Posición en pérdidas — venta sin impuesto. Aprovecha para compensar ganancias.`
+      : taxInfo.verdict === "CONVIENE"
+      ? `✅ FISCAL: Coste fiscal ${taxInfo.taxAfterOffset.toFixed(0)}€ (${(taxInfo.effectiveRate * 100).toFixed(1)}% ef.) — conviene vender antes de mayor caída.`
+      : `🟡 FISCAL: Analizar — ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF. Breakeven precio: ${taxInfo.breakEvenPrice.toFixed(0)}€.`;
+    return {
+      ...sell,
+      reason: `${sell.reason} | ${taxLabel}`,
+      priority: (taxInfo.verdict === "NO_CONVIENE" && taxAnalysis.availableLossOffset < taxInfo.taxGross * 0.5)
+        ? "LOW" as const
+        : sell.priority,
+    };
+  });
+  return {
+    ...rebalanceFinal,
+    suggestions: [...modifiedSells, ...rebalanceFinal.buySuggestions],
+    sellSuggestions: modifiedSells,
+  };
+}, [rebalanceFinal, taxAnalysis]);
 
-    return { score, signal };
-  })();
+const btcEntry = (() => {
+  let score = 0;
+  if (btcRsi < 35) score++;
+  if (btcZ < -1.5) score++;
+  if (btcRet1m < -0.08) score++;
+
+  let signal: "NONE" | "WATCH" | "BUY" | "STRONG_BUY" = "NONE";
+  if (score === 1) signal = "WATCH";
+  else if (score === 2) signal = "BUY";
+  else if (score === 3) signal = "STRONG_BUY";
+
+  return { score, signal };
+})();
 
   // ==================== MONTE CARLO ====================
   const expectedReturn = useMemo(() => {
@@ -2489,40 +2493,40 @@ tacticalAvailableCash,
               </div>
 
               {/* Tabla de capas */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "8px" }}>
-                <div style={{ padding: "10px", background: "#1f2937", borderRadius: "6px", borderTop: "3px solid #374151" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: "4px" }}>🔒 Buffer Op.</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#9ca3af" }}>€{buffer.toFixed(0)}</div>
-                  <div style={{ fontSize: "0.6rem", color: "#6b7280", marginTop: "3px" }}>Nunca tocar</div>
-                </div>
-                <div style={{ padding: "10px", background: "#1c1506", borderRadius: "6px", borderTop: "3px solid #d97706" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#f59e0b", textTransform: "uppercase", marginBottom: "4px" }}>₿ Órdenes BTC</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#f59e0b" }}>€{committed.toFixed(0)}</div>
-                  <div style={{ fontSize: "0.6rem", color: "#92400e", marginTop: "3px" }}>
-                    {btcOrders > 0 ? `${btcOrders > 0 ? "Comprometido en límites" : "Sin órdenes"}` : "Meter en campo BTC Órdenes"}
-                  </div>
-                </div>
-                <div style={{ padding: "10px", background: "#0d1b3e", borderRadius: "6px", borderTop: "3px solid #2563eb" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "4px" }}>⚡ Táctico Libre</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#60a5fa" }}>€{tactical.toFixed(0)}</div>
-                  <div style={{ fontSize: "0.6rem", color: "#1d4ed8", marginTop: "3px" }}>Motor screener</div>
-                </div>
-                <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #16a34a" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "4px" }}>📅 Aportación</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#4ade80" }}>€{monthlyInjection.toFixed(0)}</div>
-                  <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Mensual disponible</div>
-                </div>
-                <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #15803d" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#86efac", textTransform: "uppercase", marginBottom: "4px" }}>🛡 Def. Acumulada</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#86efac" }}>€{defensiveLiquidity.toFixed(0)}</div>
-                  <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div><div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #22c55e" }}>
-  <div style={{ fontSize: "0.65rem", color: "#bbf7d0", textTransform: "uppercase", marginBottom: "4px" }}>🎯 TÁCTICO ACUMULADO</div>
-  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#bbf7d0" }}>€{tacticalAccumulated.toFixed(0)}</div>
-  <div style={{ fontSize: "0.6rem", color: "#86efac", marginTop: "3px" }}>Solo se usa si ataque ≥4/7</div>
+<div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "8px" }}>
+  <div style={{ padding: "10px", background: "#1f2937", borderRadius: "6px", borderTop: "3px solid #374151" }}>
+    <div style={{ fontSize: "0.65rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: "4px" }}>🔒 Buffer Op.</div>
+    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#9ca3af" }}>€{buffer.toFixed(0)}</div>
+    <div style={{ fontSize: "0.6rem", color: "#6b7280", marginTop: "3px" }}>Nunca tocar</div>
+  </div>
+  <div style={{ padding: "10px", background: "#1c1506", borderRadius: "6px", borderTop: "3px solid #d97706" }}>
+    <div style={{ fontSize: "0.65rem", color: "#f59e0b", textTransform: "uppercase", marginBottom: "4px" }}>₿ Órdenes BTC</div>
+    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#f59e0b" }}>€{committed.toFixed(0)}</div>
+    <div style={{ fontSize: "0.6rem", color: "#92400e", marginTop: "3px" }}>
+      {btcOrders > 0 ? "Comprometido en límites" : "Sin órdenes"}
+    </div>
+  </div>
+  <div style={{ padding: "10px", background: "#0d1b3e", borderRadius: "6px", borderTop: "3px solid #2563eb" }}>
+    <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "4px" }}>⚡ Táctico Libre</div>
+    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#60a5fa" }}>€{tactical.toFixed(0)}</div>
+    <div style={{ fontSize: "0.6rem", color: "#1d4ed8", marginTop: "3px" }}>Motor screener</div>
+  </div>
+  <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #16a34a" }}>
+    <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "4px" }}>📅 Aportación</div>
+    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#4ade80" }}>€{monthlyInjection.toFixed(0)}</div>
+    <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Mensual disponible</div>
+  </div>
+  <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #15803d" }}>
+    <div style={{ fontSize: "0.65rem", color: "#86efac", textTransform: "uppercase", marginBottom: "4px" }}>🛡 Def. Acumulada</div>
+    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#86efac" }}>€{defensiveLiquidity.toFixed(0)}</div>
+    <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div>
+  </div>
+  <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #22c55e" }}>
+    <div style={{ fontSize: "0.65rem", color: "#bbf7d0", textTransform: "uppercase", marginBottom: "4px" }}>🎯 TÁCTICO ACUMULADO</div>
+    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#bbf7d0" }}>€{tacticalAccumulated.toFixed(0)}</div>
+    <div style={{ fontSize: "0.6rem", color: "#86efac", marginTop: "3px" }}>Solo se usa si ataque ≥4/7</div>
+  </div>
 </div>
-                </div>
-              </div>
-
               {/* Disponible para motor DCA */}
               <div style={{ marginTop: "10px", padding: "10px 14px", background: "#0f172a", borderRadius: "6px", border: "1px solid #1e3a5f", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
