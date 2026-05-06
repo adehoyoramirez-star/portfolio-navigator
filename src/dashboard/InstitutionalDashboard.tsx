@@ -80,8 +80,6 @@ import {
   type ElliottWaveLabel,
 } from "@/core/crypto/bitcoinCycleAnalyzer";
 
-// GaugeChart eliminado — AUDIT-FIX-02: velocímetros reemplazados por header compacto de estado
-
 // ==================== MONTE CARLO JUMP DIFFUSION ====================
 function monteCarloJumpDiffusion(
   initialCapital: number,
@@ -93,23 +91,21 @@ function monteCarloJumpDiffusion(
   jumpStd: number,
   years: number,
   simulations: number = 10000,
-  // Parámetros multivariante opcionales — si se pasan, se usan activos individuales con correlaciones reales
   multivariate?: {
-    weights: number[];          // pesos del portfolio [suma=1]
-    mus: number[];              // retornos esperados anualizados por activo
-    sigmas: number[];           // volatilidades anualizadas por activo
-    covMatrix: number[][];      // covarianza anualizada n×n
-    jumpIntensityBTC: number;   // λ solo para BTC (los ETFs tienen menos saltos bruscos)
+    weights: number[];
+    mus: number[];
+    sigmas: number[];
+    covMatrix: number[][];
+    jumpIntensityBTC: number;
     jumpMean: number;
     jumpStd: number;
-    btcIdx: number;             // índice del activo BTC en el array
+    btcIdx: number;
   }
 ): { mean: number; median: number; p25: number; p75: number; worst5: number; best95: number; simulations: number[]; muUsed: number } {
   const months = years * 12;
   const finalValues: number[] = [];
 
   if (multivariate && multivariate.covMatrix.length > 1 && multivariate.weights.length > 1) {
-    // ── SIMULACIÓN MULTIVARIANTE (Cholesky) ──────────────────────────────────
     const n = multivariate.weights.length;
     const monthlyMus = multivariate.mus.map(m => m / 12);
     const monthlySigmas = multivariate.sigmas.map(s => s / Math.sqrt(12));
@@ -137,7 +133,6 @@ function monteCarloJumpDiffusion(
       finalValues.push(assetValues.reduce((s, v) => s + v, 0));
     }
   } else {
-    // ── SIMULACIÓN UNIVARIANTE (fallback cuando no hay covMatrix) ────────────
     const monthlyMu = mu / 12;
     const monthlySigma = sigma / Math.sqrt(12);
     for (let sim = 0; sim < simulations; sim++) {
@@ -155,16 +150,15 @@ function monteCarloJumpDiffusion(
 
   finalValues.sort((a, b) => a - b);
   const nSim = finalValues.length;
-  const mean   = finalValues.reduce((a, b) => a + b, 0) / nSim;
+  const mean = finalValues.reduce((a, b) => a + b, 0) / nSim;
   const median = finalValues[Math.floor(nSim * 0.50)];
-  const p25    = finalValues[Math.floor(nSim * 0.25)];
-  const p75    = finalValues[Math.floor(nSim * 0.75)];
+  const p25 = finalValues[Math.floor(nSim * 0.25)];
+  const p75 = finalValues[Math.floor(nSim * 0.75)];
   const worst5 = finalValues[Math.floor(nSim * 0.05)];
   const best95 = finalValues[Math.floor(nSim * 0.95)];
   return { mean, median, p25, p75, worst5, best95, simulations: finalValues, muUsed: mu };
 }
 
-// Cholesky decomposition: L tal que L*Lᵀ = A (A debe ser definida positiva)
 function choleskyDecomposition(A: number[][], n: number): number[][] {
   const L: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
@@ -201,14 +195,11 @@ const InstitutionalDashboard: React.FC = () => {
   const [monthlyInjection, setMonthlyInjection] = useState(portfolio.monthlyInjection);
   const [years, setYears] = useState(10);
 
-  // Parámetros de jump (ahora editables)
-  // AUDIT-FIX-01: separar jumpIntensity BTC (λ_btc ≈ 5-8/año) del portfolio (λ_p ≈ 0.5-1.5/año)
   const [jumpIntensity, setJumpIntensity] = useState(7.0);
   const [jumpIntensityPortfolio, setJumpIntensityPortfolio] = useState(1.0);
   const [jumpMean, setJumpMean] = useState(-0.08);
   const [jumpStd, setJumpStd] = useState(0.12);
 
-  // Inputs manuales macro
   const [vix, setVix] = useState(19);
   const [manualPER, setManualPER] = useState(29.69);
   const [manualBond10y, setManualBond10y] = useState(4.2);
@@ -218,7 +209,6 @@ const InstitutionalDashboard: React.FC = () => {
   const [rsi, setRsi] = useState(55);
   const [momentum, setMomentum] = useState(0.2);
 
-  // Nuevos parámetros manuales para las señales macro
   const [liquidityGrowth, setLiquidityGrowth] = useState(3.2);
   const [dxy, setDxy] = useState(99.7);
   const [moveIndex, setMoveIndex] = useState(120);
@@ -229,17 +219,14 @@ const InstitutionalDashboard: React.FC = () => {
   const [btcRsiWeekly, setBtcRsiWeekly] = useState<number | undefined>(undefined);
   const [prevBtcDominance, setPrevBtcDominance] = useState<number | undefined>(undefined);
 
-  // PASO 3: Fear & Greed Index — Alternative.me (sin key)
   const [fearGreedIndex, setFearGreedIndex] = useState<{
     value: number;
     label: string;
     source: string;
   } | null>(null);
 
-  // PASO 4: fuente de datos on-chain
   const [onChainSource, setOnChainSource] = useState<"GLASSNODE" | "MANUAL">("MANUAL");
 
-  // BTC Cycle Analyzer inputs (persistidos)
   const [puellMultiple, setPuellMultiple] = useState<number | undefined>(undefined);
   const [hashRibbonState, setHashRibbonState] = useState<"CAPITULATION" | "RECOVERY" | "EXPANSION" | undefined>(undefined);
   const [piCycleMa111, setPiCycleMa111] = useState<number | undefined>(undefined);
@@ -248,11 +235,9 @@ const InstitutionalDashboard: React.FC = () => {
   const [elliottCurrentWave, setElliottCurrentWave] = useState<ElliottWaveLabel | undefined>(undefined);
   const [elliottPivotsText, setElliottPivotsText] = useState<string>("");
 
-  // PASO 6: Motor de Inteligencia AI — Ollama (local, gratuito)
-  // Roles: Macro Strategist · Elliott Analyst · Market Sentinel
   const [aiIntelligence, setAiIntelligence] = useState<{
     gemini: { regimeNarrative: string; macroValidation: string; btcCycleSummary: string; model: string; cachedAt: string; error?: string } | null;
-    grok:   { marketSentiment: string; topNarratives: string[]; blackSwanAlert: boolean; blackSwanReason: string | null; model: string; cachedAt: string; error?: string } | null;
+    grok: { marketSentiment: string; topNarratives: string[]; blackSwanAlert: boolean; blackSwanReason: string | null; model: string; cachedAt: string; error?: string } | null;
     claude: { elliottAnalysis: string; rebalanceAdvice: string; contradictionAnalysis: string; model: string; cachedAt: string; error?: string } | null;
     fetchedAt: string;
     cacheHit: boolean;
@@ -262,26 +247,19 @@ const InstitutionalDashboard: React.FC = () => {
   const [ollamaModel, setOllamaModel] = useState<string>('llama3.1:8b');
   const [telegramStatus, setTelegramStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
   const [telegramError, setTelegramError] = useState<string>('');
-// Liquidez defensiva acumulada — capital guardado cuando DCA está bloqueado (BLOCK_CRISIS/VOL)
-// Se incrementa automáticamente cada vez que el motor bloquea la aportación mensual.
-// El motor la despliega en Modo Ataque: 10% Tramo1 · 35% Tramo2 · 80% Tramo3.
-const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
-  try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
-});
 
-// Táctico acumulado — capital del motor táctico que se acumula mes a mes
-// Solo se invierte si attackConfluence ≥ 4/7
-const [tacticalAccumulated, setTacticalAccumulated] = useState<number>(() => {
-  try { return parseFloat(localStorage.getItem('olympus_tactical_accumulated') ?? '0') || 0; } catch { return 0; }
-});
+  const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
+    try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
+  });
 
-  // FIX-BTC-ORDERS: estado React para las órdenes BTC límite pendientes en IBKR.
-  // PROBLEMA ANTERIOR: el input leía value={localStorage.getItem(...)} directamente.
-  // localStorage no es reactivo — React no sabe cuándo cambia → el campo parecía
-  // congelado porque el valor leído siempre devolvía el mismo dato sin re-render.
-  // SOLUCIÓN: useState con inicialización desde localStorage (igual que defensiveLiquidity).
-  // Ahora cuando escribes en el campo, setBtcOrdersEur actualiza el estado React
-  // Y guarda en localStorage. React re-renderiza → el campo se actualiza visualmente.
+  const [tacticalAccumulated, setTacticalAccumulated] = useState<number>(() => {
+    try { return parseFloat(localStorage.getItem('olympus_tactical_accumulated') ?? '0') || 0; } catch { return 0; }
+  });
+
+  const [tacticalPct, setTacticalPct] = useState<number>(() => {
+    try { return parseFloat(localStorage.getItem('olympus_tactical_pct') ?? '20') || 20; } catch { return 20; }
+  });
+
   const [btcOrdersEur, setBtcOrdersEur] = useState<number>(() => {
     try { return parseFloat(localStorage.getItem('olympus_btc_orders_eur') ?? '0') || 0; } catch { return 0; }
   });
@@ -295,14 +273,13 @@ const [tacticalAccumulated, setTacticalAccumulated] = useState<number>(() => {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [marketData, setMarketData] = useState<MarketData | null>(null);
-  // Exponer marketData para scripts de simulación en consola
-useEffect(() => {
-  if (marketData) {
-    (window as any).__marketData = marketData;
-  }
-}, [marketData]);
 
-  // NIVEL 4: alertas, régimen y persistencia
+  useEffect(() => {
+    if (marketData) {
+      (window as any).__marketData = marketData;
+    }
+  }, [marketData]);
+
   const [activeAlerts, setActiveAlerts] = useState<RegimeAlert[]>([]);
   const [regimeHistory, setRegimeHistory] = useState<RegimeHistoryEntry[]>(() => loadRegimeHistory());
   const [cewsHistory, setCewsHistory] = useState<CEWSDataPoint[]>(() => loadCEWSHistory());
@@ -321,14 +298,11 @@ useEffect(() => {
     }
   }, [manualPER, manualBond10y]);
 
-  // FIX-HYST-01: isUserInitiated controla el bypass de hysteresis.
-  // AUTO-LOAD (isUserInitiated=false): respeta la hysteresis de 6h → no genera oscilaciones
-  // USER CLICK  (isUserInitiated=true): salta la hysteresis → datos frescos inmediatamente
   const refreshMarketData = async (isUserInitiated = false) => {
     setLoading(true);
     setApiError(null);
     if (isUserInitiated) {
-      signalManualRefresh(); // solo bypass cuando el usuario hace clic explícitamente
+      signalManualRefresh();
     }
     try {
       const { marketData: md, fetchErrors } = await fetchRealMarketData();
@@ -387,8 +361,8 @@ useEffect(() => {
             history: closes,
             volatility: (md.realizedVols[idx] ?? asset.volatility / 100) * 100,
             return12m: md.returns12m[idx] ?? asset.return12m,
-            return3m:  md.returns3m[idx]  ?? asset.return3m,
-            return1m:  md.returns1m[idx]  ?? asset.return1m,
+            return3m: md.returns3m[idx] ?? asset.return3m,
+            return1m: md.returns1m[idx] ?? asset.return1m,
             ...(asset.ticker === 'BTC-EUR' ? {
               zScore: md.btcZScore,
               rsi: md.btcRsi,
@@ -422,7 +396,7 @@ useEffect(() => {
           }
         }
       } catch {
-        // CoinGecko/Alt.me no críticos
+        // no crítico
       }
 
       try {
@@ -434,7 +408,7 @@ useEffect(() => {
           setOnChainSource("GLASSNODE");
         }
       } catch {
-        // Glassnode no crítico
+        // no crítico
       }
 
     } catch (error) {
@@ -444,15 +418,6 @@ useEffect(() => {
     }
   };
 
-  // ── PASO 6: Motor de Inteligencia AI — Ollama LOCAL (gratuito, sin API keys) ──
-  // Llama directamente a Ollama en localhost:11434 — bypass total de Supabase Edge Functions
-  // Prerequisito: ollama debe estar corriendo con CORS habilitado.
-  // En Windows PowerShell antes de npm run dev:
-  //   $env:OLLAMA_ORIGINS="*"; ollama serve
-  // En Mac/Linux:
-  //   OLLAMA_ORIGINS="*" ollama serve
-
-  // Caché local para no llamar Ollama en cada render
   const aiCacheRef = React.useRef<{ hash: string; result: any; expiresAt: number } | null>(null);
 
   const callOllama = async (systemPrompt: string, userContent: string, model: string): Promise<string> => {
@@ -473,13 +438,11 @@ useEffect(() => {
     if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
     const json = await res.json();
     const text: string = json.message?.content ?? '';
-    // Limpiar posibles markdown fences
     return text.replace(/```json[\s\S]*?```|```[\s\S]*?```/g, m =>
       m.replace(/```json\n?|```\n?/g, '').trim()
     ).trim();
   };
 
-  // Auto-detectar modelo disponible en Ollama
   const detectOllamaModel = async (): Promise<string> => {
     try {
       const res = await fetch('http://127.0.0.1:11434/api/tags');
@@ -487,17 +450,14 @@ useEffect(() => {
       const json = await res.json();
       const models: string[] = (json.models ?? []).map((m: any) => m.name as string);
       if (models.length === 0) return ollamaModel;
-      // Preferencia explícita: llama3.1:8b primero (modelo confirmado disponible),
-      // luego los más capaces para análisis financiero
       const preferred = ['llama3.1:8b', 'llama3.1', 'llama3.3', 'llama3.2', 'llama3', 'mistral', 'mixtral', 'qwen2.5', 'deepseek-r1'];
       for (const p of preferred) {
-        // Coincidencia exacta primero, luego por prefijo
         const exact = models.find(m => m === p);
         if (exact) return exact;
         const prefix = models.find(m => m.startsWith(p));
         if (prefix) return prefix;
       }
-      return models[0]; // usar el primero disponible
+      return models[0];
     } catch {
       return ollamaModel;
     }
@@ -514,10 +474,9 @@ useEffect(() => {
 
       const totalPortfolioVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
 
-      // Hash para caché — si el contexto no cambió, no volvemos a llamar Ollama
       const ctxHash = `${engineResult.regime}-${Math.round(vix)}-${Math.round((mvrvRatio ?? 0) * 100)}-${Math.round((fearGreedIndex?.value ?? 50))}`;
       const now = Date.now();
-      const CACHE_TTL = 15 * 60 * 1000; // 15 minutos
+      const CACHE_TTL = 15 * 60 * 1000;
 
       if (aiCacheRef.current && aiCacheRef.current.hash === ctxHash && aiCacheRef.current.expiresAt > now) {
         setAiIntelligence({ ...aiCacheRef.current.result, cacheHit: true });
@@ -525,13 +484,11 @@ useEffect(() => {
         return;
       }
 
-      // Auto-detectar modelo disponible
       const model = await detectOllamaModel();
       setOllamaModel(model);
 
       const ts = new Date().toISOString();
 
-      // Contexto compartido para los 3 roles
       const ctx = `FECHA: ${ts.slice(0, 10)}
 RÉGIMEN: ${engineResult.regime} | penalty=${((engineResult.masterRegime.regimePenalty ?? 1) * 100).toFixed(0)}% | P(crisis)=${(((engineResult.masterRegime as any).crisisProb ?? 0) * 100).toFixed(0)}%
 MACRO: VIX=${vix.toFixed(1)} MOVE=${moveIndex.toFixed(0)} Bond10y=${manualBond10y.toFixed(2)}% Bond2y=${bond2y.toFixed(2)}% CreditSprd=${creditSpread.toFixed(2)}% M2=${m2Growth.toFixed(1)}% DXY=${dxy.toFixed(1)} Brent=$${wtiOil.toFixed(0)}
@@ -540,20 +497,16 @@ PORTFOLIO: €${totalPortfolioVal.toFixed(0)} vol=${((portfolioVol ?? 0.18) * 10
 ELLIOTT: Onda ${elliottCurrentWave ?? 'N/D'} | Hash Ribbon: ${hashRibbonState ?? 'N/D'} | Puell: ${(puellMultiple ?? 0).toFixed(2)}
 ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') : ''}`.trim();
 
-      // ── ROL 1: Macro Strategist ─────────────────────────────────────────
       const macroPrompt = `Eres estratega macro senior de hedge fund institucional. Analiza el contexto y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones fuera del JSON:
 {"regimeNarrative":"<3 frases sobre el régimen macro actual y sus implicaciones para el portfolio>","macroValidation":"<2 frases sobre coherencia entre las señales macro>","btcCycleSummary":"<2 frases sobre la posición actual en el ciclo BTC y qué esperar>"}`;
 
-      // ── ROL 2: Elliott Wave Analyst ─────────────────────────────────────
       const elliottPrompt = `Eres analista técnico especialista en ciclos crypto y Elliott Wave. Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown:
 {"elliottAnalysis":"<3 frases sobre la onda actual, dirección y proyección de precio>","rebalanceAdvice":"<2 frases de rebalanceo concreto dado el ciclo>","contradictionAnalysis":"<2 frases sobre señales contradictorias detectadas>"}`;
 
-      // ── ROL 3: Market Sentinel ──────────────────────────────────────────
       const bsAlert = (vix ?? 0) > 35 && (creditSpread ?? 0) > 6 || (mvrvRatio ?? 0) > 7;
       const sentinelPrompt = `Eres analista de riesgo sistémico y vigilante de cisnes negros. Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown:
 {"marketSentiment":"<2 frases del sentimiento actual del mercado>","topNarratives":["<narrativa dominante 1>","<narrativa dominante 2>","<narrativa dominante 3>"],"blackSwanAlert":${bsAlert},"blackSwanReason":${bsAlert ? '"<describe el riesgo sistémico detectado>"' : 'null'}}`;
 
-      // Llamar los 3 roles en paralelo
       const [r1, r2, r3] = await Promise.allSettled([
         callOllama(macroPrompt, ctx, model),
         callOllama(elliottPrompt, ctx, model),
@@ -563,7 +516,6 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       const parseRole = (r: PromiseSettledResult<string>, fallback: object) => {
         if (r.status === 'rejected') return { ...fallback, error: String(r.reason).slice(0, 200), model, cachedAt: ts };
         try {
-          // Extraer JSON del texto — Ollama a veces añade texto antes/después
           const match = r.value.match(/\{[\s\S]*\}/);
           const parsed = JSON.parse(match ? match[0] : r.value);
           return { ...parsed, model, cachedAt: ts };
@@ -574,7 +526,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
 
       const geminiResult = parseRole(r1, { regimeNarrative: '', macroValidation: '', btcCycleSummary: '' });
       const claudeResult = parseRole(r2, { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '' });
-      const grokResult   = parseRole(r3, { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null });
+      const grokResult = parseRole(r3, { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null });
 
       const output = {
         gemini: geminiResult,
@@ -588,7 +540,6 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       aiCacheRef.current = { hash: ctxHash, result: output, expiresAt: now + CACHE_TTL };
       setAiIntelligence(output);
 
-      // Alerta Telegram si sentinel detecta cisne negro
       if (grokResult.blackSwanAlert && grokResult.blackSwanReason && !grokResult.error) {
         supabase.functions.invoke('telegram-alerts', {
           body: {
@@ -613,7 +564,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       setAiIntelligence({
         gemini: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', ...errResult },
         claude: { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '', ...errResult },
-        grok:   { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, ...errResult },
+        grok: { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, ...errResult },
         fetchedAt: ts, cacheHit: false, ollamaModel,
       });
     } finally {
@@ -621,9 +572,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     }
   };
 
-
   useEffect(() => {
-    // NIVEL 4: cargar estado persistido al arrancar
     const savedPortfolio = loadPortfolio();
     if (savedPortfolio) {
       setPortfolio(prev => ({
@@ -675,7 +624,6 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     refreshMarketData();
   }, []);
 
-  // NIVEL 4: auto-guardar portfolio cuando cambia
   useEffect(() => {
     savePortfolio({
       positions: portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice })),
@@ -685,7 +633,6 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     });
   }, [portfolio.assets, cashReserve, monthlyInjection]);
 
-  // NIVEL 4: auto-guardar macro cuando cambia
   useEffect(() => {
     saveMacro({
       vix, manualPER, manualBond10y, bond2y, m2Growth,
@@ -777,24 +724,23 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     return runWalkForward(weeklyReturns, 5);
   }, [marketData?.closesHistory]);
 
-  // ── Forzar recálculo del motor al cambiar de régimen ─────────────────
-const [lastRegime, setLastRegime] = useState<string>('');
-const kalmanWeights = getCurrentKalmanWeights();
-const dynamicCovMatrix = useMemo(() => {
-  if (!marketData?.closesHistory || !marketData?.covMatrix) return undefined;
-  try {
-    return getDynamicCovMatrix(
-      ASSETS as unknown as string[],
-      marketData.closesHistory,
-      marketData.covMatrix
-    );
-  } catch {
-    return marketData.covMatrix; // fallback a estática si algo falla
-  }
-}, [marketData?.closesHistory, marketData?.covMatrix]);
-const [regimeChangeCounter, setRegimeChangeCounter] = useState(0);
+  const [lastRegime, setLastRegime] = useState<string>('');
+  const kalmanWeights = getCurrentKalmanWeights();
+  const dynamicCovMatrix = useMemo(() => {
+    if (!marketData?.closesHistory || !marketData?.covMatrix) return undefined;
+    try {
+      return getDynamicCovMatrix(
+        ASSETS as unknown as string[],
+        marketData.closesHistory,
+        marketData.covMatrix
+      );
+    } catch {
+      return marketData.covMatrix;
+    }
+  }, [marketData?.closesHistory, marketData?.covMatrix]);
+  const [regimeChangeCounter, setRegimeChangeCounter] = useState(0);
 
-const engineResult = useMemo(() => {
+  const engineResult = useMemo(() => {
     if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
     return runOlympusEngine({
       assets: assetInputs,
@@ -817,22 +763,20 @@ const engineResult = useMemo(() => {
       cewsHistory: effectiveCEWSHistory,
       adaptiveFactorWeights: kalmanWeights,
     });
-}, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights, regimeChangeCounter]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights, regimeChangeCounter]);
 
-// Actualiza el contador de cambio de régimen cuando el régimen es distinto
-useEffect(() => {
-  if (engineResult?.regime && engineResult.regime !== lastRegime) {
-    setLastRegime(engineResult.regime);
-    setRegimeChangeCounter(c => c + 1);
-  }
-}, [engineResult?.regime, lastRegime]);
+  useEffect(() => {
+    if (engineResult?.regime && engineResult.regime !== lastRegime) {
+      setLastRegime(engineResult.regime);
+      setRegimeChangeCounter(c => c + 1);
+    }
+  }, [engineResult?.regime, lastRegime]);
 
-const liquidityOutput = useMemo(() =>
+  const liquidityOutput = useMemo(() =>
     fromManualInputs({ liquidityGrowth, dxy }),
     [liquidityGrowth, dxy]
-);
+  );
 
-  // NIVEL 4: detectar cambios de régimen y generar alertas
   useEffect(() => {
     if (!engineResult) return;
     const currentRegime = engineResult.regime;
@@ -850,8 +794,6 @@ const liquidityOutput = useMemo(() =>
     if (newAlerts.length > 0) {
       setActiveAlerts(prev => [...newAlerts, ...prev].slice(0, 10));
 
-      // FIX-03: guard corregido — NO guardar historial en el primer render
-      // (cuando previousRegimeRef.current === null aún no hay cambio real)
       if (currentRegime !== previousRegimeRef.current && previousRegimeRef.current !== null) {
         const entry: RegimeHistoryEntry = {
           timestamp: new Date().toISOString(),
@@ -864,7 +806,6 @@ const liquidityOutput = useMemo(() =>
         setRegimeHistory(loadRegimeHistory());
       }
 
-      // ── PASO 7: Alertas Push Telegram ────────────────────────────────────
       const totalValue = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
 
       if (currentRegime !== previousRegimeRef.current && previousRegimeRef.current !== null) {
@@ -910,7 +851,6 @@ const liquidityOutput = useMemo(() =>
     previousRegimeRef.current = currentRegime;
   }, [engineResult, vix, portfolioDrawdown, portfolio]);
 
-  // CEWS: guardar punto de datos diariamente cuando cambian las macro inputs
   useEffect(() => {
     if (vix === 0) return;
     const updated = saveCEWSDataPoint({
@@ -975,7 +915,7 @@ const liquidityOutput = useMemo(() =>
       hashRibbonState,
       piCycleMa111,
       piCycleMa350x2,
-      elliottPivots:      elliottPivots.length >= 2 ? elliottPivots : undefined,
+      elliottPivots: elliottPivots.length >= 2 ? elliottPivots : undefined,
       elliottCurrentWave: elliottCurrentWave,
       eurUsdRate: 1.08,
     };
@@ -989,8 +929,9 @@ const liquidityOutput = useMemo(() =>
   const btcRsi = btcAsset?.rsi ?? calculateRSI(btcAsset?.history || [], 14);
   const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
   const btcRet1m = btcAsset?.return1m ?? 0;
-const olympusAvailableCash = (defensiveLiquidity * 0.80) + monthlyInjection;
-const tacticalAvailableCash = (defensiveLiquidity * 0.20) + tacticalAccumulated;
+  const olympusAvailableCash = (defensiveLiquidity * 0.80) + monthlyInjection;
+  const tacticalAvailableCash = (defensiveLiquidity * tacticalPct / 100) + tacticalAccumulated;
+
   const smartDCAResult = useMemo(() => {
     return computeSmartDCA({
       btcRsi,
@@ -1004,7 +945,7 @@ const tacticalAvailableCash = (defensiveLiquidity * 0.20) + tacticalAccumulated;
       tailRiskActive: engineResult?.tailRiskActive ?? false,
       tailRiskOverlay: engineResult?.tailRiskOverlay ?? 1.0,
       olympusAvailableCash,
-tacticalAvailableCash,
+      tacticalAvailableCash,
       accumulatedDefensiveLiquidity: defensiveLiquidity,
       motorAllocations: engineResult?.allocations.map(a => {
         const asset = portfolio.assets.find(pa => pa.name === a.name);
@@ -1020,129 +961,126 @@ tacticalAvailableCash,
     });
   }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, monthlyInjection, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity]);
 
-  const dcaAction  = smartDCAResult?.action ?? "WATCH";
+  const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
   const availableCash = dcaBlocked ? cashReserve : cashReserve + monthlyInjection;
 
-  // ── AUTO-ACUMULACIÓN DE LIQUIDEZ DEFENSIVA ─────────────────────────────
-// Cuando el motor bloquea el DCA, la aportación mensual se guarda como
-// "pólvora seca" para desplegarse en Modo Ataque (Tramo 1-2-3).
-// El capital se descuenta automáticamente cuando el motor entra en ataque.
-const defensiveLiquidityRef = React.useRef<boolean>(false);
-React.useEffect(() => {
-  if (!engineResult) return;
-  if (dcaBlocked && monthlyInjection > 0) {
-    if (!defensiveLiquidityRef.current) {
-      defensiveLiquidityRef.current = true;
-      setDefensiveLiquidity(prev => {
-        const next = Math.round((prev + monthlyInjection) * 100) / 100;
-        try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
-        return next;
-      });
+  const defensiveLiquidityRef = React.useRef<boolean>(false);
+  React.useEffect(() => {
+    if (!engineResult) return;
+    if (dcaBlocked && monthlyInjection > 0) {
+      if (!defensiveLiquidityRef.current) {
+        defensiveLiquidityRef.current = true;
+        setDefensiveLiquidity(prev => {
+          const next = Math.round((prev + monthlyInjection) * 100) / 100;
+          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
+          return next;
+        });
+      }
+    } else {
+      defensiveLiquidityRef.current = false;
+      if (smartDCAResult.attackMode && smartDCAResult.totalCashToInvest > 0) {
+        setDefensiveLiquidity(prev => {
+          const deployed = Math.min(prev, smartDCAResult.totalCashToInvest * 0.8);
+          const next = Math.max(0, Math.round((prev - deployed) * 100) / 100);
+          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
+          return next;
+        });
+      }
     }
-  } else {
-    defensiveLiquidityRef.current = false;
-    if (smartDCAResult.attackMode && smartDCAResult.totalCashToInvest > 0) {
-      setDefensiveLiquidity(prev => {
-        const deployed = Math.min(prev, smartDCAResult.totalCashToInvest * 0.8);
-        const next = Math.max(0, Math.round((prev - deployed) * 100) / 100);
-        try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
-        return next;
-      });
+  }, [dcaBlocked, engineResult?.regime]);
+
+  useEffect(() => {
+    if (smartDCAResult) {
+      setTacticalAccumulated(smartDCAResult.tacticalAccumulated);
     }
-  }
-}, [dcaBlocked, engineResult?.regime]);
+  }, [smartDCAResult?.tacticalAccumulated]);
 
-// ── ACTUALIZAR ACUMULADO TÁCTICO CUANDO CAMBIA EL RESULTADO DEL SMART DCA
-useEffect(() => {
-  if (smartDCAResult) {
-    setTacticalAccumulated(smartDCAResult.tacticalAccumulated);
-  }
-}, [smartDCAResult?.tacticalAccumulated]);
+  useEffect(() => {
+    try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
+  }, [tacticalAccumulated]);
 
-// ── PERSISTENCIA DEL ACUMULADO TÁCTICO EN LOCAL STORAGE
-useEffect(() => {
-  try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
-}, [tacticalAccumulated]);
+  useEffect(() => {
+    try { localStorage.setItem('olympus_tactical_pct', String(tacticalPct)); } catch {}
+  }, [tacticalPct]);
 
-const rebalanceFinal = useMemo(() => {
-  if (!engineResult || engineResult.regime === "ALL_CASH") return null;
-  const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
-    const alloc = engineResult.allocations.find(a => a.name === asset.name);
+  const rebalanceFinal = useMemo(() => {
+    if (!engineResult || engineResult.regime === "ALL_CASH") return null;
+    const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
+      const alloc = engineResult.allocations.find(a => a.name === asset.name);
+      return {
+        ticker: asset.ticker,
+        name: asset.name,
+        price: asset.price,
+        shares: asset.shares,
+        targetAllocation: alloc?.finalAllocation ?? 0,
+      };
+    });
+    return computeRebalanceSuggestions(
+      rebalanceAssets,
+      availableCash,
+      totalPortfolioValue,
+      0.02,
+      cycleTopResult.signals
+    );
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult]);
+
+  const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
+    const sells = rebalanceFinal?.sellSuggestions ?? [];
+    if (sells.length === 0) return null;
+    return analyzeSpainTax(
+      portfolio.assets.map(a => ({
+        ticker: a.ticker, name: a.name,
+        shares: a.shares, avgPrice: a.avgPrice, price: a.price,
+      })),
+      sells.map((s: RebalanceSuggestion) => ({
+        ticker: s.ticker, sharesToSell: s.sharesToSell,
+        trimPct: s.trimPct, cycleZone: s.cycleZone,
+      }))
+    );
+  }, [rebalanceFinal, portfolio.assets]);
+
+  const taxAwareRebalance = useMemo(() => {
+    if (!rebalanceFinal || !taxAnalysis) return rebalanceFinal;
+    const modifiedSells = rebalanceFinal.sellSuggestions.map((sell: RebalanceSuggestion) => {
+      const taxInfo = taxAnalysis.analyses.find(t => t.ticker === sell.ticker);
+      if (!taxInfo) return sell;
+      const taxLabel = taxInfo.verdict === "NO_CONVIENE"
+        ? `⚠️ FISCAL: Pagar ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF NO compensa (ratio ${taxInfo.taxVsLossRatio.toFixed(1)}x). Espera corrección adicional.`
+        : taxInfo.verdict === "EN_PERDIDAS"
+        ? `✅ FISCAL: Posición en pérdidas — venta sin impuesto. Aprovecha para compensar ganancias.`
+        : taxInfo.verdict === "CONVIENE"
+        ? `✅ FISCAL: Coste fiscal ${taxInfo.taxAfterOffset.toFixed(0)}€ (${(taxInfo.effectiveRate * 100).toFixed(1)}% ef.) — conviene vender antes de mayor caída.`
+        : `🟡 FISCAL: Analizar — ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF. Breakeven precio: ${taxInfo.breakEvenPrice.toFixed(0)}€.`;
+      return {
+        ...sell,
+        reason: `${sell.reason} | ${taxLabel}`,
+        priority: (taxInfo.verdict === "NO_CONVIENE" && taxAnalysis.availableLossOffset < taxInfo.taxGross * 0.5)
+          ? "LOW" as const
+          : sell.priority,
+      };
+    });
     return {
-      ticker:           asset.ticker,
-      name:             asset.name,
-      price:            asset.price,
-      shares:           asset.shares,
-      targetAllocation: alloc?.finalAllocation ?? 0,
+      ...rebalanceFinal,
+      suggestions: [...modifiedSells, ...rebalanceFinal.buySuggestions],
+      sellSuggestions: modifiedSells,
     };
-  });
-  return computeRebalanceSuggestions(
-    rebalanceAssets,
-    availableCash,
-    totalPortfolioValue,
-    0.02,
-    cycleTopResult.signals
-  );
-}, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult]);
+  }, [rebalanceFinal, taxAnalysis]);
 
-const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
-  const sells = rebalanceFinal?.sellSuggestions ?? [];
-  if (sells.length === 0) return null;
-  return analyzeSpainTax(
-    portfolio.assets.map(a => ({
-      ticker: a.ticker, name: a.name,
-      shares: a.shares, avgPrice: a.avgPrice, price: a.price,
-    })),
-    sells.map((s: RebalanceSuggestion) => ({
-      ticker: s.ticker, sharesToSell: s.sharesToSell,
-      trimPct: s.trimPct, cycleZone: s.cycleZone,
-    }))
-  );
-}, [rebalanceFinal, portfolio.assets]);
+  const btcEntry = (() => {
+    let score = 0;
+    if (btcRsi < 35) score++;
+    if (btcZ < -1.5) score++;
+    if (btcRet1m < -0.08) score++;
 
-const taxAwareRebalance = useMemo(() => {
-  if (!rebalanceFinal || !taxAnalysis) return rebalanceFinal;
-  const modifiedSells = rebalanceFinal.sellSuggestions.map((sell: RebalanceSuggestion) => {
-    const taxInfo = taxAnalysis.analyses.find(t => t.ticker === sell.ticker);
-    if (!taxInfo) return sell;
-    const taxLabel = taxInfo.verdict === "NO_CONVIENE"
-      ? `⚠️ FISCAL: Pagar ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF NO compensa (ratio ${taxInfo.taxVsLossRatio.toFixed(1)}x). Espera corrección adicional.`
-      : taxInfo.verdict === "EN_PERDIDAS"
-      ? `✅ FISCAL: Posición en pérdidas — venta sin impuesto. Aprovecha para compensar ganancias.`
-      : taxInfo.verdict === "CONVIENE"
-      ? `✅ FISCAL: Coste fiscal ${taxInfo.taxAfterOffset.toFixed(0)}€ (${(taxInfo.effectiveRate * 100).toFixed(1)}% ef.) — conviene vender antes de mayor caída.`
-      : `🟡 FISCAL: Analizar — ${taxInfo.taxAfterOffset.toFixed(0)}€ en IRPF. Breakeven precio: ${taxInfo.breakEvenPrice.toFixed(0)}€.`;
-    return {
-      ...sell,
-      reason: `${sell.reason} | ${taxLabel}`,
-      priority: (taxInfo.verdict === "NO_CONVIENE" && taxAnalysis.availableLossOffset < taxInfo.taxGross * 0.5)
-        ? "LOW" as const
-        : sell.priority,
-    };
-  });
-  return {
-    ...rebalanceFinal,
-    suggestions: [...modifiedSells, ...rebalanceFinal.buySuggestions],
-    sellSuggestions: modifiedSells,
-  };
-}, [rebalanceFinal, taxAnalysis]);
+    let signal: "NONE" | "WATCH" | "BUY" | "STRONG_BUY" = "NONE";
+    if (score === 1) signal = "WATCH";
+    else if (score === 2) signal = "BUY";
+    else if (score === 3) signal = "STRONG_BUY";
 
-const btcEntry = (() => {
-  let score = 0;
-  if (btcRsi < 35) score++;
-  if (btcZ < -1.5) score++;
-  if (btcRet1m < -0.08) score++;
+    return { score, signal };
+  })();
 
-  let signal: "NONE" | "WATCH" | "BUY" | "STRONG_BUY" = "NONE";
-  if (score === 1) signal = "WATCH";
-  else if (score === 2) signal = "BUY";
-  else if (score === 3) signal = "STRONG_BUY";
-
-  return { score, signal };
-})();
-
-  // ==================== MONTE CARLO ====================
   const expectedReturn = useMemo(() => {
     if (!engineResult) return 0.07;
     const regimePenalty = engineResult.masterRegime.regimePenalty ?? 1;
@@ -1171,9 +1109,9 @@ const btcEntry = (() => {
 
   const portfolioVol = portfolioRealizedVol
     ?? portfolio.assets.reduce(
-        (acc, asset) => acc + (asset.volatility / 100) * (asset.price * asset.shares / totalPortfolioValue),
-        0
-       );
+      (acc, asset) => acc + (asset.volatility / 100) * (asset.price * asset.shares / totalPortfolioValue),
+      0
+    );
 
   const jumpSim = useMemo(() => {
     const muCapped = Math.min(0.15, expectedReturn);
@@ -1195,7 +1133,7 @@ const btcEntry = (() => {
 
       return monteCarloJumpDiffusion(
         totalPortfolioValue, monthlyInjection, muCapped, portfolioVol,
-        jumpIntensity, jumpMean, jumpStd, years, 10000, // FIX AUDIT: mínimo institucional 10k simulaciones
+        jumpIntensity, jumpMean, jumpStd, years, 10000,
         {
           weights, mus, sigmas,
           covMatrix: marketData!.covMatrix,
@@ -1208,11 +1146,11 @@ const btcEntry = (() => {
 
     return monteCarloJumpDiffusion(
       totalPortfolioValue, monthlyInjection, muCapped, portfolioVol,
-      jumpIntensityPortfolio, jumpMean, jumpStd, years, 10000 // FIX AUDIT: mínimo institucional 10k simulaciones
+      jumpIntensityPortfolio, jumpMean, jumpStd, years, 10000
     );
   }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol,
-      jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, years,
-      marketData?.covMatrix, marketData?.expectedReturns, engineResult]);
+    jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, years,
+    marketData?.covMatrix, marketData?.expectedReturns, engineResult]);
 
   const { mean: meanValue, median: medianValue, p25, p75, worst5, best95, simulations } = jumpSim;
 
@@ -1300,10 +1238,6 @@ const btcEntry = (() => {
     const excessReturn = annualReturn - rf;
     const sharpe = excessReturn / portfolioVol;
 
-    // FIX-IMP-4: Sortino con semi-desviación REAL sobre retornos diarios históricos.
-    // ANTES: downsideVol = portfolioVol / Math.sqrt(2) — asume distribución normal perfecta.
-    // Con BTC (fat tails, skewness -), el Sortino estaba inflado hasta 1.4× el real.
-    // AHORA: filtrar retornos diarios < rf_diario y calcular su std real.
     const dailyPortfolioReturns: number[] = [];
     if (portfolio.assets.length > 0 && portfolio.assets[0].history.length > 1) {
       const totalVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
@@ -1321,10 +1255,8 @@ const btcEntry = (() => {
     }
     const sortino = dailyPortfolioReturns.length >= 10
       ? sortinoRatioReal(dailyPortfolioReturns, annualReturn, rf)
-      : excessReturn / (portfolioVol / Math.sqrt(2)); // fallback si no hay histórico
+      : excessReturn / (portfolioVol / Math.sqrt(2));
 
-    // FIX-IMP-6-BETA: Beta vs benchmark usando IS3Q.DE como proxy MSCI World Quality.
-    // IS3Q.DE es el activo del portfolio más correlacionado con mercado global desarrollado.
     const benchmarkAsset = portfolio.assets.find(a => a.ticker === 'IS3Q.DE');
     let beta = 1.0, alpha = 0;
     if (benchmarkAsset && benchmarkAsset.history.length > 20 && dailyPortfolioReturns.length > 20) {
@@ -1341,16 +1273,10 @@ const btcEntry = (() => {
       }
     }
 
-    // FIX-AUDIT: indicador de ruta Monte Carlo — visible en dashboard
     const hasCovMatrix = marketData?.covMatrix && marketData.covMatrix.length > 1;
     const mcRoute = hasCovMatrix ? "✅ Multivariante (Cholesky + correlaciones reales)" : "⚠️ Univariante (fallback — sin covMatrix)";
 
-    // ── FIX CALMAR: usar el MAX drawdown histórico (backtest), NO el drawdown actual.
-    // PROBLEMA: portfolioDrawdown actual = -0.1% → Calmar = 9.2%/0.001 = 9200. FRAUDE.
-    // Un portfolio con -50% histórico (backtest) y -0.1% hoy sigue teniendo Calmar 0.27.
-    // Usar max(drawdownActual, maxHistoricalDrawdown) — conservador y honesto.
-    // maxHistoricalDrawdown: -50% del backtest walk-forward (valor fijo auditado).
-    const MAX_HISTORICAL_DD = 0.50; // del backtest de 6.2 años — actualizar si cambia
+    const MAX_HISTORICAL_DD = 0.50;
     const effectiveMaxDD = Math.max(Math.abs(portfolioDrawdown), MAX_HISTORICAL_DD);
     const calmar = effectiveMaxDD > 0 ? annualReturn / effectiveMaxDD : 0;
     return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol, beta, alpha, mcRoute, hasCovMatrix };
@@ -1365,7 +1291,6 @@ const btcEntry = (() => {
           {loading ? "Actualizando..." : "🔄 Actualizar precios y datos macro"}
         </button>
 
-        {/* PASO 6: Botón Motor Intelligence — llama a Gemini, Grok y Claude */}
         <button
           onClick={refreshAIIntelligence}
           disabled={aiLoading || !engineResult}
@@ -1382,7 +1307,6 @@ const btcEntry = (() => {
           {aiLoading ? "⏳ Analizando..." : "🧠 Motor Intelligence AI"}
         </button>
 
-        {/* PASO 7: Botón resumen diario Telegram */}
         <button
           onClick={async () => {
             if (!engineResult) return;
@@ -1452,7 +1376,6 @@ const btcEntry = (() => {
       </div>
       {apiError && <div style={{ color: "#ef4444", marginBottom: "10px" }}>{apiError}</div>}
 
-      {/* ── AUDIT-FIX-02: Header de Estado del Motor ── */}
       {engineResult && (
         <div style={{
           display: "grid",
@@ -1460,7 +1383,6 @@ const btcEntry = (() => {
           gap: "0.5rem",
           marginBottom: "1.5rem",
         }}>
-          {/* Régimen */}
           <div style={{
             background: engineResult.regime === "CRISIS" ? "#1c0a0a" : engineResult.regime === "CONTRACTION" ? "#1c1107" : "#071c10",
             border: `1px solid ${engineResult.regime === "CRISIS" ? "#ef4444" : engineResult.regime === "CONTRACTION" ? "#f59e0b" : "#10b981"}`,
@@ -1478,7 +1400,6 @@ const btcEntry = (() => {
             </div>
           </div>
 
-          {/* VIX */}
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>VIX <span style={{ color: "#10b981" }}>● auto</span></div>
             <div style={{
@@ -1490,7 +1411,6 @@ const btcEntry = (() => {
             </div>
           </div>
 
-          {/* ERP */}
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>ERP</div>
             <div style={{
@@ -1502,7 +1422,6 @@ const btcEntry = (() => {
             </div>
           </div>
 
-          {/* Mu MC */}
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>μ MONTE CARLO</div>
             <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#818cf8" }}>
@@ -1513,7 +1432,6 @@ const btcEntry = (() => {
             </div>
           </div>
 
-          {/* Vol Target */}
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>σ PORTFOLIO</div>
             <div style={{
@@ -1523,7 +1441,6 @@ const btcEntry = (() => {
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>volatilidad realizada</div>
           </div>
 
-          {/* Señal DCA */}
           <div style={{
             background: engineResult.regime === "CRISIS" ? "#1c0a0a" : "#071c10",
             border: `1px solid ${engineResult.regime === "CRISIS" ? "#ef4444" : "#10b981"}`,
@@ -1535,14 +1452,13 @@ const btcEntry = (() => {
               color: engineResult.regime === "CRISIS" ? "#ef4444" : "#10b981"
             }}>
               {engineResult.regime === "CRISIS" ? "🛑 BLOQUEADO" :
-               engineResult.regime === "CONTRACTION" ? "⚠️ REDUCIDO" : "✅ ACTIVO"}
+                engineResult.regime === "CONTRACTION" ? "⚠️ REDUCIDO" : "✅ ACTIVO"}
             </div>
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>
               {engineResult.regime === "CRISIS" ? "mantener liquidez" : "compras permitidas"}
             </div>
           </div>
 
-          {/* Liquidez */}
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>LIQUIDEZ <span style={{ color: "#10b981" }}>● auto</span></div>
             <div style={{
@@ -1554,7 +1470,6 @@ const btcEntry = (() => {
             </div>
           </div>
 
-          {/* Fear & Greed */}
           {fearGreedIndex && (
             <div style={{
               background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem"
@@ -1563,16 +1478,15 @@ const btcEntry = (() => {
               <div style={{
                 fontSize: "1.1rem", fontWeight: "bold",
                 color: fearGreedIndex.value <= 25 ? "#ef4444"
-                     : fearGreedIndex.value <= 45 ? "#f59e0b"
-                     : fearGreedIndex.value <= 55 ? "#9ca3af"
-                     : fearGreedIndex.value <= 75 ? "#10b981"
-                     : "#818cf8"
+                  : fearGreedIndex.value <= 45 ? "#f59e0b"
+                  : fearGreedIndex.value <= 55 ? "#9ca3af"
+                  : fearGreedIndex.value <= 75 ? "#10b981"
+                  : "#818cf8"
               }}>{fearGreedIndex.value}</div>
               <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>{fearGreedIndex.label}</div>
             </div>
           )}
 
-          {/* On-Chain */}
           <div style={{ background: "#111827", border: "1px solid #1f2937", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>ON-CHAIN</div>
             <div style={{ fontSize: "0.75rem", color: onChainSource === "GLASSNODE" ? "#10b981" : "#f59e0b", fontWeight: "bold" }}>
@@ -1583,7 +1497,6 @@ const btcEntry = (() => {
             </div>
           </div>
 
-          {/* Fuente datos */}
           <div style={{ background: "#111827", border: "1px solid #1f2937", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>FUENTE DATOS</div>
             <div style={{ fontSize: "0.75rem", color: "#d1d5db", fontWeight: "bold" }}>
@@ -1596,7 +1509,6 @@ const btcEntry = (() => {
         </div>
       )}
 
-      {/* Inputs macro */}
       <div style={{ ...styles.card, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem" }}>
         <div>
           <label style={styles.label}>PER S&P 500 {" "}
@@ -1627,11 +1539,11 @@ const btcEntry = (() => {
           <label style={styles.label}>Credit Spread %{" "}
             <span style={{ fontSize: "0.65rem", fontWeight: "normal",
               color: marketData?.creditSpreadSource === "FRED" ? "#10b981"
-                   : marketData?.creditSpreadSource === "YAHOO_PROXY" ? "#f59e0b"
-                   : "#ef4444" }}>
+                : marketData?.creditSpreadSource === "YAHOO_PROXY" ? "#f59e0b"
+                : "#ef4444" }}>
               {marketData?.creditSpreadSource === "FRED" ? "● FRED auto"
-               : marketData?.creditSpreadSource === "YAHOO_PROXY" ? "● Yahoo proxy (HYG-LQD)"
-               : "● manual"}
+                : marketData?.creditSpreadSource === "YAHOO_PROXY" ? "● Yahoo proxy (HYG-LQD)"
+                : "● manual"}
             </span>
           </label>
           <input type="number" value={creditSpread} onChange={(e) => setCreditSpread(Number(e.target.value))} style={styles.smallInput} step="0.1" />
@@ -1697,9 +1609,9 @@ const btcEntry = (() => {
           }} step="0.5" min="0" />
           <p style={{ fontSize: "0.65rem", margin: "0.2rem 0 0", color: wtiOil >= 115 ? "#ef4444" : wtiOil >= 95 ? "#f59e0b" : "#6b7280" }}>
             {wtiOil >= 115 ? "🔴 CRISIS ENERGÉTICA — penalización ×0.50 al motor"
-             : wtiOil >= 95  ? "🟠 SHOCK GEOPOLÍTICO — penalización ×0.70 al motor"
-             : wtiOil >= 75  ? "🟡 Tensión elevada — penalización ×0.85 al motor"
-             : "🟢 Normal — sin penalización por petróleo"}
+              : wtiOil >= 95 ? "🟠 SHOCK GEOPOLÍTICO — penalización ×0.70 al motor"
+              : wtiOil >= 75 ? "🟡 Tensión elevada — penalización ×0.85 al motor"
+              : "🟢 Normal — sin penalización por petróleo"}
           </p>
         </div>
         <div>
@@ -1735,7 +1647,6 @@ const btcEntry = (() => {
           <input type="number" placeholder="—" value={prevBtcDominance ?? ""} onChange={e => setPrevBtcDominance(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="100" />
         </div>
 
-        {/* ── SEÑALES DE TECHO DE CICLO ── */}
         <div style={{ gridColumn: "1 / -1", borderTop: "1px solid #374151", paddingTop: "0.75rem", marginTop: "0.25rem" }}>
           <p style={{ color: "#f59e0b", fontSize: "0.78rem", fontWeight: "bold", marginBottom: "0.5rem" }}>
             ⚠️ Señales de Techo de Ciclo — activar ventas parciales automáticas
@@ -1766,7 +1677,6 @@ const btcEntry = (() => {
           </div>
         </div>
 
-        {/* AUDIT-FIX-01: separación jumpIntensity BTC vs portfolio */}
         <div style={{ gridColumn: "1 / -1", borderTop: "1px solid #1f2937", paddingTop: "0.75rem", marginTop: "0.25rem" }}>
           <div style={{ fontSize: "0.75rem", color: "#f59e0b", marginBottom: "0.5rem", fontWeight: "bold" }}>
             ⚡ Parámetros Jump Diffusion — Monte Carlo
@@ -1828,7 +1738,6 @@ const btcEntry = (() => {
         </div>
       </div>
 
-      {/* AUDIT-FIX-03: Validación cruzada de inputs manuales */}
       {(() => {
         const warnings: { label: string; detail: string; severity: "high" | "medium" }[] = [];
         if (dxy > 103 && wtiOil > 90) {
@@ -1868,7 +1777,6 @@ const btcEntry = (() => {
         );
       })()}
 
-      {/* BTC CYCLE INPUTS */}
       <div style={{ ...styles.card, border: "1px solid #1d4ed8", background: "linear-gradient(135deg, #0c1228 0%, #111827 100%)" }}>
         <h3 style={{ color: "#60a5fa", marginBottom: "0.75rem" }}>🔬 BTC Cycle Analyzer — Inputs Avanzados</h3>
         <p style={{ color: "#6b7280", fontSize: "0.75rem", marginBottom: "1rem" }}>
@@ -2001,9 +1909,9 @@ const btcEntry = (() => {
                 {isBlocked
                   ? <p style={{ color: "#ef4444", fontSize: "0.8rem" }}>{dca.blockReason}</p>
                   : <>
-                      <p>Invertir: <strong>{formatCurrency(dca.totalCashToInvest)}</strong> ({(dca.buyFraction * 100).toFixed(0)}%)</p>
-                      <p style={{ color: "#9ca3af", fontSize: "0.78rem" }}>{dca.reasoning}</p>
-                    </>
+                    <p>Invertir: <strong>{formatCurrency(dca.totalCashToInvest)}</strong> ({(dca.buyFraction * 100).toFixed(0)}%)</p>
+                    <p style={{ color: "#9ca3af", fontSize: "0.78rem" }}>{dca.reasoning}</p>
+                  </>
                 }
               </>
             );
@@ -2083,7 +1991,6 @@ const btcEntry = (() => {
         </div>
       )}
 
-      {/* PASO 6: Motor Intelligence AI */}
       {aiIntelligence && (
         <div style={{ ...styles.card, border: "1px solid #4c1d95", background: "linear-gradient(135deg, #0c0a1f 0%, #111827 100%)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -2105,7 +2012,6 @@ const btcEntry = (() => {
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
-            {/* ROL 1: Macro Strategist */}
             {aiIntelligence.gemini && !aiIntelligence.gemini.error && (
               <div style={{ background: "#0c1228", border: "1px solid #1d4ed8", borderRadius: 10, padding: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -2139,7 +2045,6 @@ const btcEntry = (() => {
               </div>
             )}
 
-            {/* ROL 3: Market Sentinel */}
             {aiIntelligence.grok && !aiIntelligence.grok.error && (
               <div style={{ background: "#0a0a0a", border: `1px solid ${aiIntelligence.grok.blackSwanAlert ? "#ef4444" : "#374151"}`, borderRadius: 10, padding: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -2173,7 +2078,6 @@ const btcEntry = (() => {
               </div>
             )}
 
-            {/* ROL 2: Elliott Wave Analyst */}
             {aiIntelligence.claude && !aiIntelligence.claude.error && (
               <div style={{ background: "#0d1117", border: "1px solid #d97706", borderRadius: 10, padding: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -2204,7 +2108,6 @@ const btcEntry = (() => {
         </div>
       )}
 
-      {/* NIVEL 3: Backtesting */}
       <BacktestPanel
         marketData={marketData}
         currentVix={vix}
@@ -2212,7 +2115,6 @@ const btcEntry = (() => {
         portfolioInitialValue={totalPortfolioValue}
       />
 
-      {/* ANALYTICS: SHARPE / SORTINO / DRAWDOWN */}
       {portfolioAnalytics && (
         <div style={styles.card}>
           <h2>📊 Portfolio Analytics</h2>
@@ -2253,7 +2155,6 @@ const btcEntry = (() => {
               </div>
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>×{(engineResult?.masterRegime.regimePenalty ?? 1).toFixed(2)} penalty régimen</div>
             </div>
-            {/* FIX-AUDIT: Beta vs benchmark — nuevo */}
             <div style={{ background: (portfolioAnalytics.beta ?? 1) > 1.3 ? "#78350f" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "#1e3a5f" : "#065f46", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
               <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Beta vs IS3Q (MSCI World)</div>
               <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#ffffff" }}>{(portfolioAnalytics.beta ?? 1).toFixed(2)}</div>
@@ -2261,7 +2162,6 @@ const btcEntry = (() => {
                 {(portfolioAnalytics.beta ?? 1) > 1.2 ? "Agresivo" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "Mercado" : "Defensivo"}
               </div>
             </div>
-            {/* FIX-AUDIT: Jensen Alpha — nuevo */}
             <div style={{ background: (portfolioAnalytics.alpha ?? 0) > 0.02 ? "#065f46" : (portfolioAnalytics.alpha ?? 0) > 0 ? "#1e3a5f" : "#7f1d1d", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
               <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Alpha de Jensen</div>
               <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: (portfolioAnalytics.alpha ?? 0) >= 0 ? "#10b981" : "#ef4444" }}>
@@ -2270,7 +2170,6 @@ const btcEntry = (() => {
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>r_p - [rf + β(r_m - rf)]</div>
             </div>
           </div>
-          {/* FIX-AUDIT: MC route indicator + metodología Sortino */}
           <div style={{ marginTop: "0.75rem", background: "#0f172a", borderRadius: 6, padding: "0.5rem 0.75rem", fontSize: "0.7rem", color: "#6b7280", display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
             <span>Sharpe = (r_p − r_f) / σ_p · r_f = {(portfolioAnalytics.rf * 100).toFixed(1)}%</span>
             <span>·</span>
@@ -2394,7 +2293,7 @@ const btcEntry = (() => {
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
-           PANEL DE LIQUIDEZ — 4 capas de cash con órdenes BTC límite
+           PANEL DE LIQUIDEZ — HendenFund (sin buffer, con % táctico editable)
            ══════════════════════════════════════════════════════════════════════ */}
       <div style={{ ...styles.card }}>
         <h2 style={{ marginBottom: "1rem", fontSize: "1rem" }}>
@@ -2407,145 +2306,84 @@ const btcEntry = (() => {
             <label htmlFor="cashReserve" style={styles.label}>Caja de reserva (€)</label>
             <input id="cashReserve" name="cashReserve" type="number" value={cashReserve}
               onChange={(e) => setCashReserve(Number(e.target.value))} style={styles.input} />
-            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
-              Cash total en cuenta ahora mismo
-            </p>
+            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>Cash total en cuenta ahora mismo</p>
           </div>
           <div>
             <label htmlFor="btcOrdersInput" style={styles.label}>Órdenes BTC límite (€)</label>
-            <input id="btcOrdersInput" type="number"
-              value={btcOrdersEur}
-              onChange={(e) => {
-                const val = Math.max(0, Number(e.target.value));
-                setBtcOrdersEur(val);
-                try { localStorage.setItem("olympus_btc_orders_eur", String(val)); } catch {}
-              }}
+            <input id="btcOrdersInput" type="number" value={btcOrdersEur}
+              onChange={(e) => { const val = Math.max(0, Number(e.target.value)); setBtcOrdersEur(val); try { localStorage.setItem("olympus_btc_orders_eur", String(val)); } catch {} }}
               style={{ ...styles.input, borderColor: "#f59e0b" }} />
-            <p style={{ fontSize: "0.7rem", color: "#f59e0b", marginTop: "3px", maxWidth: "140px" }}>
-              Capital comprometido en órdenes BTC pendientes
-            </p>
+            <p style={{ fontSize: "0.7rem", color: "#f59e0b", marginTop: "3px", maxWidth: "140px" }}>Capital comprometido en órdenes BTC pendientes</p>
           </div>
           <div>
             <label htmlFor="monthlyInjection" style={styles.label}>Aportación mensual (€)</label>
             <input id="monthlyInjection" name="monthlyInjection" type="number" value={monthlyInjection}
               onChange={(e) => setMonthlyInjection(Number(e.target.value))} style={styles.input} />
-            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>
-              Lo que aportas cada mes
-            </p>
+            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>Lo que aportas cada mes</p>
           </div>
           <div style={{ borderLeft: "2px solid #16a34a", paddingLeft: "1rem" }}>
-            <label htmlFor="defensiveLiqInput" style={{ ...styles.label, color: "#4ade80" }}>
-              💰 Liquidez defensiva acumulada (€)
-            </label>
+            <label htmlFor="defensiveLiqInput" style={{ ...styles.label, color: "#4ade80" }}>💰 Liquidez defensiva acumulada (€)</label>
             <input id="defensiveLiqInput" type="number" value={defensiveLiquidity} min={0} step={50}
-              onChange={(e) => {
-                const val = Math.max(0, Number(e.target.value));
-                setDefensiveLiquidity(val);
-                try { localStorage.setItem("olympus_defensive_liq", String(val)); } catch {}
-              }}
+              onChange={(e) => { const val = Math.max(0, Number(e.target.value)); setDefensiveLiquidity(val); try { localStorage.setItem("olympus_defensive_liq", String(val)); } catch {} }}
               style={{ ...styles.input, borderColor: "#16a34a", backgroundColor: "#052e16" }} />
-            <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "160px" }}>
-              Acumulado en meses de bloqueo DCA
-            </p>
-            {defensiveLiquidity > 0 && (
-              <div style={{ marginTop: "6px", fontSize: "0.7rem", color: "#86efac" }}>
-                Tramo 2: <strong>€{Math.round(defensiveLiquidity * 0.35).toLocaleString("es-ES")}</strong>
-                {" · "}Tramo 3: <strong>€{Math.round(defensiveLiquidity * 0.80).toLocaleString("es-ES")}</strong>
-              </div>
-            )}
+            <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "160px" }}>Acumulado en meses de bloqueo DCA</p>
+          </div>
+          <div style={{ borderLeft: "2px solid #22c55e", paddingLeft: "1rem" }}>
+            <label htmlFor="tacticalPctInput" style={{ ...styles.label, color: "#bbf7d0" }}>🎯 % Liquidez para Táctico</label>
+            <input id="tacticalPctInput" type="number" value={tacticalPct} min={0} max={100} step={1}
+              onChange={(e) => { const val = Math.max(0, Math.min(100, Number(e.target.value))); setTacticalPct(val); try { localStorage.setItem("olympus_tactical_pct", String(val)); } catch {} }}
+              style={{ ...styles.input, borderColor: "#22c55e", backgroundColor: "#052e16", width: "80px" }} />
+            <p style={{ fontSize: "0.7rem", color: "#bbf7d0", marginTop: "3px", maxWidth: "120px" }}>Default: 20%</p>
           </div>
         </div>
 
-        {/* ── Breakdown visual de las 4 capas ── */}
-        {(() => {
-          // FIX-BTC-ORDERS: usar btcOrdersEur (estado React) en vez de leer
-          // localStorage directamente. Ahora el cálculo se actualiza en tiempo real.
-          const btcOrders = btcOrdersEur;
-          const buffer = Math.min(cashReserve, 350);
-          const committed = Math.min(btcOrders, Math.max(0, cashReserve - buffer));
-          const tactical = Math.max(0, cashReserve - buffer - committed);
-          const totalKnown = cashReserve + monthlyInjection + defensiveLiquidity;
-          const pctBuffer = totalKnown > 0 ? buffer / totalKnown * 100 : 0;
-          const pctBtc    = totalKnown > 0 ? committed / totalKnown * 100 : 0;
-          const pctTact   = totalKnown > 0 ? tactical / totalKnown * 100 : 0;
-          const pctMonthly= totalKnown > 0 ? monthlyInjection / totalKnown * 100 : 0;
-          const pctDef    = totalKnown > 0 ? defensiveLiquidity / totalKnown * 100 : 0;
+        {/* ── Tabla de capas (6 columnas) ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "8px", marginBottom: "10px" }}>
+          <div style={{ padding: "10px", background: "#1c1506", borderRadius: "6px", borderTop: "3px solid #d97706" }}>
+            <div style={{ fontSize: "0.65rem", color: "#f59e0b", textTransform: "uppercase", marginBottom: "4px" }}>₿ Órdenes BTC</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#f59e0b" }}>€{btcOrdersEur.toFixed(0)}</div>
+            <div style={{ fontSize: "0.6rem", color: "#92400e", marginTop: "3px" }}>Comprometido</div>
+          </div>
+          <div style={{ padding: "10px", background: "#0d1b3e", borderRadius: "6px", borderTop: "3px solid #2563eb" }}>
+            <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "4px" }}>⚡ Táctico Libre</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#60a5fa" }}>€{(defensiveLiquidity * tacticalPct / 100).toFixed(0)}</div>
+            <div style={{ fontSize: "0.6rem", color: "#1d4ed8", marginTop: "3px" }}>{tacticalPct}% de Defensiva</div>
+          </div>
+          <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #16a34a" }}>
+            <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "4px" }}>📅 Aportación</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#4ade80" }}>€{monthlyInjection.toFixed(0)}</div>
+            <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Mensual disponible</div>
+          </div>
+          <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #15803d" }}>
+            <div style={{ fontSize: "0.65rem", color: "#86efac", textTransform: "uppercase", marginBottom: "4px" }}>🛡 Def. Acumulada</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#86efac" }}>€{defensiveLiquidity.toFixed(0)}</div>
+            <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div>
+          </div>
+          <div style={{ padding: "10px", background: "#1f2937", borderRadius: "6px", borderTop: "3px solid #9ca3af" }}>
+            <div style={{ fontSize: "0.65rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: "4px" }}>💵 Caja</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#9ca3af" }}>€{cashReserve.toFixed(0)}</div>
+            <div style={{ fontSize: "0.6rem", color: "#6b7280", marginTop: "3px" }}>Cash líquido</div>
+          </div>
+          <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #22c55e" }}>
+            <div style={{ fontSize: "0.65rem", color: "#bbf7d0", textTransform: "uppercase", marginBottom: "4px" }}>🎯 TÁCTICO ACUMULADO</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#bbf7d0" }}>€{tacticalAccumulated.toFixed(0)}</div>
+            <div style={{ fontSize: "0.6rem", color: "#86efac", marginTop: "3px" }}>Solo se usa si ataque ≥4/7</div>
+          </div>
+        </div>
 
-          return (
-            <div>
-              {/* Barra de distribución */}
-              <div style={{ display: "flex", height: "28px", borderRadius: "6px", overflow: "hidden", marginBottom: "10px" }}>
-                {pctBuffer > 0 && <div style={{ width: `${pctBuffer}%`, background: "#374151", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ fontSize: "9px", color: "#9ca3af", fontWeight: 600 }}>BUFFER</span>
-                </div>}
-                {pctBtc > 0 && <div style={{ width: `${pctBtc}%`, background: "#d97706", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ fontSize: "9px", color: "#fff", fontWeight: 600 }}>BTC ORD.</span>
-                </div>}
-                {pctTact > 0 && <div style={{ width: `${pctTact}%`, background: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ fontSize: "9px", color: "#fff", fontWeight: 600 }}>TÁCTICO</span>
-                </div>}
-                {pctMonthly > 0 && <div style={{ width: `${pctMonthly}%`, background: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ fontSize: "9px", color: "#fff", fontWeight: 600 }}>MENSUAL</span>
-                </div>}
-                {pctDef > 0 && <div style={{ width: `${pctDef}%`, background: "#166534", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ fontSize: "9px", color: "#4ade80", fontWeight: 600 }}>DEF.LIQ.</span>
-                </div>}
-              </div>
+        {/* ── Total disponible ── */}
+        <div style={{ marginTop: "10px", padding: "10px 14px", background: "#0f172a", borderRadius: "6px", border: "1px solid #1e3a5f", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
+            <strong style={{ color: "#e2e8f0" }}>Total disponible para DCA/Rebalanceo:</strong>
+            {" "}€{monthlyInjection.toFixed(0)} mensual
+            {defensiveLiquidity > 0 ? ` + €${(defensiveLiquidity * (1 - tacticalPct / 100)).toFixed(0)} de Defensiva` : ""}
+          </div>
+          <div style={{ fontSize: "0.75rem", color: btcOrdersEur > cashReserve ? "#ef4444" : "#10b981" }}>
+            {btcOrdersEur > cashReserve ? `⚠️ Órdenes BTC (€${btcOrdersEur.toFixed(0)}) > cash disponible — revisar` : `✓ Órdenes BTC cubiertas por caja`}
+          </div>
+        </div>
 
-              {/* Tabla de capas */}
-<div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "8px" }}>
-  <div style={{ padding: "10px", background: "#1f2937", borderRadius: "6px", borderTop: "3px solid #374151" }}>
-    <div style={{ fontSize: "0.65rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: "4px" }}>🔒 Buffer Op.</div>
-    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#9ca3af" }}>€{buffer.toFixed(0)}</div>
-    <div style={{ fontSize: "0.6rem", color: "#6b7280", marginTop: "3px" }}>Nunca tocar</div>
-  </div>
-  <div style={{ padding: "10px", background: "#1c1506", borderRadius: "6px", borderTop: "3px solid #d97706" }}>
-    <div style={{ fontSize: "0.65rem", color: "#f59e0b", textTransform: "uppercase", marginBottom: "4px" }}>₿ Órdenes BTC</div>
-    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#f59e0b" }}>€{committed.toFixed(0)}</div>
-    <div style={{ fontSize: "0.6rem", color: "#92400e", marginTop: "3px" }}>
-      {btcOrders > 0 ? "Comprometido en límites" : "Sin órdenes"}
-    </div>
-  </div>
-  <div style={{ padding: "10px", background: "#0d1b3e", borderRadius: "6px", borderTop: "3px solid #2563eb" }}>
-    <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "4px" }}>⚡ Táctico Libre</div>
-    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#60a5fa" }}>€{tactical.toFixed(0)}</div>
-    <div style={{ fontSize: "0.6rem", color: "#1d4ed8", marginTop: "3px" }}>Motor screener</div>
-  </div>
-  <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #16a34a" }}>
-    <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "4px" }}>📅 Aportación</div>
-    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#4ade80" }}>€{monthlyInjection.toFixed(0)}</div>
-    <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Mensual disponible</div>
-  </div>
-  <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #15803d" }}>
-    <div style={{ fontSize: "0.65rem", color: "#86efac", textTransform: "uppercase", marginBottom: "4px" }}>🛡 Def. Acumulada</div>
-    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#86efac" }}>€{defensiveLiquidity.toFixed(0)}</div>
-    <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div>
-  </div>
-  <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #22c55e" }}>
-    <div style={{ fontSize: "0.65rem", color: "#bbf7d0", textTransform: "uppercase", marginBottom: "4px" }}>🎯 TÁCTICO ACUMULADO</div>
-    <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#bbf7d0" }}>€{tacticalAccumulated.toFixed(0)}</div>
-    <div style={{ fontSize: "0.6rem", color: "#86efac", marginTop: "3px" }}>Solo se usa si ataque ≥4/7</div>
-  </div>
-</div>
-              {/* Disponible para motor DCA */}
-              <div style={{ marginTop: "10px", padding: "10px 14px", background: "#0f172a", borderRadius: "6px", border: "1px solid #1e3a5f", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-                  <strong style={{ color: "#e2e8f0" }}>Total disponible para DCA/Rebalanceo:</strong>
-                  {" "}€{(tactical + monthlyInjection).toFixed(0)} libre
-                  {defensiveLiquidity > 0 ? ` + €${Math.round(defensiveLiquidity * 0.35)} del ataque Tramo 2` : ""}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: committed < btcOrders ? "#ef4444" : "#10b981" }}>
-                  {committed < btcOrders
-                    ? `⚠️ Órdenes BTC (€${btcOrders}) > cash disponible — revisar`
-                    : `✓ Órdenes BTC cubiertas por caja`
-                  }
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Resumen portfolio */}
+        {/* ── Resumen portfolio ── */}
         <div style={{ marginTop: "1rem", display: "flex", gap: "2rem", flexWrap: "wrap" }}>
           <p><strong>Valor total cartera:</strong> {formatCurrency(totalPortfolioValue)}</p>
           <p><strong>Objetivo:</strong> {formatCurrency(portfolio.targetGoal)}</p>
@@ -3015,7 +2853,6 @@ const btcEntry = (() => {
             </div>
           </div>
           {/* Indicador de progreso hacia BTC_CYCLE_OVERRIDE */}
-          {/* FIX-SIGNAL-CLARITY: Separar señales BTC de señales macro */}
           <div style={{ marginBottom: "0.75rem", padding: "0.5rem 0.75rem", borderRadius: 8, backgroundColor: "#0f172a", border: "1px solid #1e3a5f", fontSize: "0.75rem", color: "#6b7280" }}>
             <span style={{ color: "#60a5fa" }}>⚡ Motor B (BTC Ciclo): </span>
             {smartDCAResult.attackConfluence >= 4
@@ -3230,5 +3067,4 @@ const styles: { [key: string]: React.CSSProperties } = {
   button: { backgroundColor: "#3b82f6", color: "white", border: "none", padding: "8px 16px", borderRadius: "6px", cursor: "pointer", fontSize: "14px", fontWeight: "bold" },
 };
 
-// ── ÚNICO export default del módulo ──────────────────────────────────────
 export default InstitutionalDashboard;
