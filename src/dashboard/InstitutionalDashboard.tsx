@@ -262,12 +262,18 @@ const InstitutionalDashboard: React.FC = () => {
   const [ollamaModel, setOllamaModel] = useState<string>('llama3.1:8b');
   const [telegramStatus, setTelegramStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
   const [telegramError, setTelegramError] = useState<string>('');
-  // Liquidez defensiva acumulada — capital guardado cuando DCA está bloqueado (BLOCK_CRISIS/VOL)
-  // Se incrementa automáticamente cada vez que el motor bloquea la aportación mensual.
-  // El motor la despliega en Modo Ataque: 10% Tramo1 · 35% Tramo2 · 80% Tramo3.
-  const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
-    try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
-  });
+// Liquidez defensiva acumulada — capital guardado cuando DCA está bloqueado (BLOCK_CRISIS/VOL)
+// Se incrementa automáticamente cada vez que el motor bloquea la aportación mensual.
+// El motor la despliega en Modo Ataque: 10% Tramo1 · 35% Tramo2 · 80% Tramo3.
+const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
+  try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
+});
+
+// Táctico acumulado — capital del motor táctico que se acumula mes a mes
+// Solo se invierte si attackConfluence ≥ 4/7
+const [tacticalAccumulated, setTacticalAccumulated] = useState<number>(() => {
+  try { return parseFloat(localStorage.getItem('olympus_tactical_accumulated') ?? '0') || 0; } catch { return 0; }
+});
 
   // FIX-BTC-ORDERS: estado React para las órdenes BTC límite pendientes en IBKR.
   // PROBLEMA ANTERIOR: el input leía value={localStorage.getItem(...)} directamente.
@@ -983,7 +989,8 @@ const liquidityOutput = useMemo(() =>
   const btcRsi = btcAsset?.rsi ?? calculateRSI(btcAsset?.history || [], 14);
   const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
   const btcRet1m = btcAsset?.return1m ?? 0;
-
+const olympusAvailableCash = (defensiveLiquidity * 0.80) + monthlyInjection;
+const tacticalAvailableCash = (defensiveLiquidity * 0.20) + tacticalAccumulated;
   const smartDCAResult = useMemo(() => {
     return computeSmartDCA({
       btcRsi,
@@ -996,7 +1003,8 @@ const liquidityOutput = useMemo(() =>
       volTargetMultiplier: engineResult?.volTargetMultiplier ?? 1.0,
       tailRiskActive: engineResult?.tailRiskActive ?? false,
       tailRiskOverlay: engineResult?.tailRiskOverlay ?? 1.0,
-      availableCash: totalCashForDCA,
+      olympusAvailableCash,
+tacticalAvailableCash,
       accumulatedDefensiveLiquidity: defensiveLiquidity,
       motorAllocations: engineResult?.allocations.map(a => {
         const asset = portfolio.assets.find(pa => pa.name === a.name);
@@ -1027,9 +1035,15 @@ const liquidityOutput = useMemo(() =>
       // Solo acumular una vez por sesión de bloqueo (no en cada render)
       if (!defensiveLiquidityRef.current) {
         defensiveLiquidityRef.current = true;
-        setDefensiveLiquidity(prev => {
+        setDefensiveLiquidity(prev => {useEffect(() => {
+  if (smartDCAResult) {
+    setTacticalAccumulated(smartDCAResult.tacticalAccumulated);
+  }
+}, [smartDCAResult?.tacticalAccumulated]);
           const next = Math.round((prev + monthlyInjection) * 100) / 100;
           try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
+          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
+
           return next;
         });
       }
@@ -2501,7 +2515,11 @@ const liquidityOutput = useMemo(() =>
                 <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #15803d" }}>
                   <div style={{ fontSize: "0.65rem", color: "#86efac", textTransform: "uppercase", marginBottom: "4px" }}>🛡 Def. Acumulada</div>
                   <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#86efac" }}>€{defensiveLiquidity.toFixed(0)}</div>
-                  <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div>
+                  <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div><div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #22c55e" }}>
+  <div style={{ fontSize: "0.65rem", color: "#bbf7d0", textTransform: "uppercase", marginBottom: "4px" }}>🎯 TÁCTICO ACUMULADO</div>
+  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#bbf7d0" }}>€{tacticalAccumulated.toFixed(0)}</div>
+  <div style={{ fontSize: "0.6rem", color: "#86efac", marginTop: "3px" }}>Solo se usa si ataque ≥4/7</div>
+</div>
                 </div>
               </div>
 
