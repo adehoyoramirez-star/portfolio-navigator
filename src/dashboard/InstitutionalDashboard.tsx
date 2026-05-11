@@ -32,6 +32,7 @@ import BacktestPanel from "@/core/backtest/BacktestPanel";
 import { logEngineDecision } from "@/lib/decisionLog";
 import { getCurrentKalmanWeights } from "@/core/factors/kalmanFactorWeights";
 import { getDynamicCovMatrix } from "@/core/risk/dccGarch";
+import { savePredictionRecord, evaluatePrediction } from "@/core/risk/metaIntelligence";
 
 // ── Persistence & portfolio tools ────────────────────────────────────────
 import {
@@ -805,6 +806,15 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         };
         saveRegimeEntry(entry);
         setRegimeHistory(loadRegimeHistory());
+                // ── META-INTELIGENCIA: guardar predicción para aprendizaje ────────
+        try {
+          savePredictionRecord({
+            predictedRegime: currentRegime as "EXPANSION" | "CONTRACTION" | "CRISIS",
+            actualReturn1m: 0, // se actualizará el mes siguiente con datos reales
+            wasCorrect: true,  // se corregirá al evaluar
+            penaltyApplied: engineResult.masterRegime.regimePenalty,
+          });
+        } catch {}
       }
 
       const totalValue = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
