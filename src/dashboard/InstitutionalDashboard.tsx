@@ -265,7 +265,8 @@ const InstitutionalDashboard: React.FC = () => {
   });
   const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);
   const [uraniumLT, setUraniumLT] = useState<number | undefined>(undefined);
-  const [bookToBill, setBookToBill] = useState<number | undefined>(undefined);
+ const [siaSalesYoY, setSiaSalesYoY] = useState<number | undefined>(undefined);
+ const [soxRsiWeekly, setSoxRsiWeekly] = useState<number | undefined>(undefined);
   const [inflationBreakeven, setInflationBreakeven] = useState<number | undefined>(undefined);
 
   const [erpValue, setErpValue] = useState(0.025);
@@ -898,13 +899,14 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       btcRsiWeekly,
       uraniumSpotPrice: uraniumSpot,
       uraniumLTPrice: uraniumLT,
-      bookToBill,
+      siaSalesYoY,
+soxRsiWeekly,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, bookToBill, manualBond10y, inflationBreakeven, wtiOil]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil]);
 
   const btcCycleResult = useMemo((): BitcoinCycleOutput | null => {
     const btcAssetLocal = portfolio.assets.find(a => a.ticker === "BTC-EUR");
@@ -1666,8 +1668,14 @@ useEffect(() => {
               <input type="number" placeholder="—" value={uraniumLT ?? ""} onChange={e => setUraniumLT(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" />
             </div>
             <div>
-              <label style={styles.label}>Semis Book-to-Bill {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>semi.org mensual</span></label>
-              <input type="number" placeholder="—" value={bookToBill ?? ""} onChange={e => setBookToBill(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="3" />
+            <div>
+  <label style={styles.label}>Semis SIA Sales YoY% {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>SIA/WSTS mensual</span></label>
+  <input type="number" placeholder="—" value={siaSalesYoY ?? ""} onChange={e => setSiaSalesYoY(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" />
+</div>
+<div>
+  <label style={styles.label}>SOX RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: ^SOX · W · RSI(14)</span></label>
+  <input type="number" placeholder="—" value={soxRsiWeekly ?? ""} onChange={e => setSoxRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
+</div>
             </div>
             <div>
               <label style={styles.label}>Breakeven Inflación 5y %{" "}

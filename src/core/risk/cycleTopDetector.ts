@@ -27,7 +27,8 @@ export interface CycleTopInputs {
   uraniumLTPrice?: number;     // $/lb precio largo plazo — misma fuente
 
   // Semiconductores
-  bookToBill?: number;         // SEMI.org — publicado mensualmente (ej: 1.15)
+siaSalesYoY?: number;        // Crecimiento interanual de ventas globales de semis (%) — SIA/WSTS
+soxRsiWeekly?: number;       // RSI semanal del índice PHLX Semiconductor (^SOX)
 
   // Oro
   bondYield10y: number;        // ya disponible en dashboard
@@ -167,60 +168,84 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── SEMICONDUCTORES ──────────────────────────────────────────────
 function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { bookToBill } = inputs;
+  const { siaSalesYoY, soxRsiWeekly } = inputs;
 
-  if (bookToBill === undefined) {
+  // Si no hay datos de ningún indicador, señal neutra
+  if (siaSalesYoY === undefined && soxRsiWeekly === undefined) {
     return {
       asset: "Semiconductors",
       ticker: "VVSM.DE",
       allocationMultiplier: 1.0,
       zone: "SAFE",
-      reason: "Sin datos Book-to-Bill — introduce el valor de SEMI.org para activar esta señal",
-      indicator: "SEMI Book-to-Bill",
+      reason: "Sin datos de ventas SIA ni RSI del SOX — introduce ambos para activar esta señal",
+      indicator: "SIA Sales YoY + SOX RSI Semanal",
       indicatorValue: "Sin datos",
       shouldTrim: false,
       trimPct: 0,
     };
   }
 
-  // B2B histórico:
-  //   >1.30 = demanda muy fuerte pero inventarios acumulándose → techo próximo
-  //   1.0-1.30 = ciclo alcista saludable → mantener
-  //   0.90-1.0 = neutralidad → cautela
-  //   <0.90 = contracción de inventarios → fondo, no vender
-  //   <0.75 = recesión del sector → fondo extremo, acumular
+  // Contar señales de techo activas (0, 1 o 2)
+  let topSignals = 0;
+  const reasons: string[] = [];
 
+  // Evaluar SIA Sales YoY%
+  if (siaSalesYoY !== undefined) {
+    if (siaSalesYoY > 40) {
+      topSignals += 2;
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — euforia insostenible`);
+    } else if (siaSalesYoY > 30) {
+      topSignals += 1;
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — ciclo muy caliente`);
+    } else if (siaSalesYoY > 25) {
+      topSignals += 0.5; // Señal débil
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — crecimiento elevado, vigilar`);
+    }
+  }
+
+  // Evaluar RSI semanal del SOX
+  if (soxRsiWeekly !== undefined) {
+    if (soxRsiWeekly > 85) {
+      topSignals += 2;
+      reasons.push(`RSI semanal SOX ${soxRsiWeekly.toFixed(0)} — sobrecompra extrema`);
+    } else if (soxRsiWeekly > 80) {
+      topSignals += 1;
+      reasons.push(`RSI semanal SOX ${soxRsiWeekly.toFixed(0)} — sobrecompra`);
+    }
+  }
+
+  // Asignar multiplicador y zona según puntuación acumulada
   let multiplier: number;
   let zone: CycleTopSignal["zone"];
   let trimPct = 0;
-  let reason: string;
 
-  if (bookToBill > 1.40) {
-    multiplier = 0.30; zone = "DANGER";  trimPct = 60;
-    reason = `B2B ${bookToBill.toFixed(2)} — clientes acumulando inventario de forma insostenible. Corrección inminente.`;
-  } else if (bookToBill > 1.25) {
+  // Umbrales ajustados: con dos señales ya estamos en DANGER
+  if (topSignals >= 3) {
+    multiplier = 0.15; zone = "EXTREME"; trimPct = 80;
+  } else if (topSignals >= 2) {
+    multiplier = 0.35; zone = "DANGER";  trimPct = 60;
+  } else if (topSignals >= 1) {
     multiplier = 0.55; zone = "CAUTION"; trimPct = 35;
-    reason = `B2B ${bookToBill.toFixed(2)} — ciclo maduro. Demanda fuerte pero el ciclo empieza a estirarse.`;
-  } else if (bookToBill > 1.10) {
-    multiplier = 0.80; zone = "CAUTION"; trimPct = 10;
-    reason = `B2B ${bookToBill.toFixed(2)} — ciclo saludable pero vigilar si continúa subiendo.`;
-  } else if (bookToBill >= 0.90) {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-    reason = `B2B ${bookToBill.toFixed(2)} — equilibrio neutral. Sin señal de techo.`;
+  } else if (topSignals >= 0.5) {
+    multiplier = 0.75; zone = "CAUTION"; trimPct = 15; // señal débil
   } else {
-    // B2B bajo = señal de fondo, no de techo → no recortar, sino mantener
     multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-    reason = `B2B ${bookToBill.toFixed(2)} — contracción del sector. Zona de acumulación, no de venta.`;
   }
+
+  // Construir valor del indicador para mostrar
+  const parts: string[] = [];
+  if (siaSalesYoY !== undefined) parts.push(`SIA sales +${siaSalesYoY.toFixed(1)}% YoY`);
+  if (soxRsiWeekly !== undefined) parts.push(`SOX RSI-W ${soxRsiWeekly.toFixed(0)}`);
+  const indicatorValue = parts.join(" · ") || "Sin datos";
 
   return {
     asset: "Semiconductors",
     ticker: "VVSM.DE",
     allocationMultiplier: multiplier,
     zone,
-    reason,
-    indicator: "SEMI Book-to-Bill",
-    indicatorValue: `B2B ${bookToBill.toFixed(2)} (umbral techo: >1.25)`,
+    reason: reasons.length > 0 ? reasons.join(" · ") : "Ciclo saludable, sin señales de techo",
+    indicator: "SIA Sales YoY + SOX RSI Semanal",
+    indicatorValue,
     shouldTrim: trimPct > 0,
     trimPct,
   };
