@@ -752,6 +752,10 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   }, [marketData?.closesHistory]);
 
   const [lastRegime, setLastRegime] = useState<string>('');
+  // FIX-ORDER-01: regimeChangeCounter declarado ANTES de kalmanWeights useMemo
+  // que lo referencia en sus deps. El orden de hooks en React debe ser
+  // estrictamente top-down: primero el useState, luego el useMemo que lo consume.
+  const [regimeChangeCounter, setRegimeChangeCounter] = useState(0);
 
   // FIX-KALMAN-01: kalmanWeights como useMemo para que React detecte cambios
   // y lo propague correctamente al engine useMemo.
@@ -770,7 +774,6 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       return marketData.covMatrix;
     }
   }, [marketData?.closesHistory, marketData?.covMatrix]);
-  const [regimeChangeCounter, setRegimeChangeCounter] = useState(0);
 
   const engineResult = useMemo(() => {
     if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
