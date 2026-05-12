@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════
-// HENDE FUND — Institutional Portfolio Dashboard (Olympus Engine V3+)
+// HENDE FUND. — Institutional Portfolio Dashboard (Olympus Engine V3+)
 // AUDIT-CLEAN v5 — Fixes aplicados:
 //   FIX-01: Eliminado stub duplicado (líneas 1–58 originales)
 //   FIX-02: Todos los imports consolidados al inicio del módulo
