@@ -1,12 +1,3 @@
-import { createClient } from '@supabase/supabase-js'
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    'Faltan variables de entorno VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY'
-  )
-}
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// FIX-SUPA-01: Re-exporta desde el singleton canónico.
+// No añadir createClient() aquí. Ver src/dashboard/supabaseClient.ts
+export { supabase } from '@/dashboard/supabaseClient';
