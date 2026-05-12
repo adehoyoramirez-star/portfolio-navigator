@@ -1481,38 +1481,167 @@ soxRsiWeekly,
       {/* PERSIST-04: Banner de sesión anterior — aparece al abrir el motor si hay datos guardados */}
       {showSessionBanner && (
         <div style={{
-          background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: '10px',
-          padding: '14px 18px', marginBottom: '16px', color: '#e2e8f0',
+          background: '#0f1f38', border: '1.5px solid #3b82f6', borderRadius: '10px',
+          padding: '16px 20px', marginBottom: '16px', color: '#e2e8f0',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontWeight: 700, color: '#60a5fa', marginBottom: '6px', fontSize: '0.95rem' }}>
-                📂 Cartera restaurada desde la última sesión
-                {lastSavedAt && <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: '8px', fontSize: '0.8rem' }}>
+          {/* Cabecera */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ fontWeight: 700, color: '#60a5fa', fontSize: '0.95rem' }}>
+              📂 Cartera restaurada desde la última sesión
+              {lastSavedAt && (
+                <span style={{ fontWeight: 400, color: '#64748b', marginLeft: '8px', fontSize: '0.78rem' }}>
                   Guardada el {lastSavedAt}
-                </span>}
-              </div>
-              {pendingChanges.length > 0 ? (
-                <div style={{ fontSize: '0.82rem', color: '#cbd5e1' }}>
-                  <span style={{ color: '#94a3b8' }}>Datos cargados: </span>
-                  {pendingChanges.slice(0, 4).join(' · ')}
-                  {pendingChanges.length > 4 && ` · +${pendingChanges.length - 4} más`}
-                </div>
-              ) : (
-                <div style={{ fontSize: '0.82rem', color: '#94a3b8' }}>
-                  Acciones, precios medios y cash cargados correctamente.
-                </div>
+                </span>
               )}
-              <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '4px' }}>
-                💡 Revisa la tabla de cartera y corrige solo lo que haya cambiado desde la última vez.
-              </div>
             </div>
             <button
               onClick={() => setShowSessionBanner(false)}
-              style={{ background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 14px', cursor: 'pointer', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+              style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 16px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
             >
-              ✓ Datos correctos
+              ✓ Todo correcto — continuar
             </button>
+          </div>
+
+          {/* Instrucción */}
+          <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginBottom: '12px', background: '#1e3a5f', padding: '7px 10px', borderRadius: '6px' }}>
+            ⚠️ <strong style={{ color: '#e2e8f0' }}>Revisa cada dato.</strong> Si algo no es correcto, cámbialo directamente aquí antes de continuar. Los cambios se guardan solos.
+          </div>
+
+          {/* Tabla de activos editable */}
+          <div style={{ overflowX: 'auto', marginBottom: '12px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+              <thead>
+                <tr style={{ color: '#64748b', borderBottom: '1px solid #1e3a5f' }}>
+                  <th style={{ textAlign: 'left',  padding: '4px 8px' }}>Activo</th>
+                  <th style={{ textAlign: 'right', padding: '4px 8px' }}>Acciones actuales</th>
+                  <th style={{ textAlign: 'center', padding: '4px 4px', color: '#94a3b8' }}>→</th>
+                  <th style={{ textAlign: 'right', padding: '4px 8px', color: '#fbbf24' }}>Corregir acciones</th>
+                  <th style={{ textAlign: 'right', padding: '4px 8px' }}>Precio medio actual</th>
+                  <th style={{ textAlign: 'center', padding: '4px 4px', color: '#94a3b8' }}>→</th>
+                  <th style={{ textAlign: 'right', padding: '4px 8px', color: '#fbbf24' }}>Corregir precio medio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {portfolio.assets.map(asset => (
+                  <tr key={asset.ticker} style={{ borderBottom: '1px solid #1e3a5f' }}>
+                    <td style={{ padding: '5px 8px', color: '#cbd5e1', fontWeight: 600 }}>
+                      {asset.name}
+                      <span style={{ color: '#475569', fontWeight: 400, marginLeft: '6px', fontSize: '0.72rem' }}>{asset.ticker}</span>
+                    </td>
+                    {/* Acciones guardadas (solo lectura) */}
+                    <td style={{ textAlign: 'right', padding: '5px 8px', color: '#94a3b8' }}>
+                      {asset.ticker === 'BTC-EUR' ? asset.shares.toFixed(6) : asset.shares}
+                    </td>
+                    <td style={{ textAlign: 'center', color: '#374151' }}>→</td>
+                    {/* Acciones corregibles */}
+                    <td style={{ textAlign: 'right', padding: '5px 8px' }}>
+                      <input
+                        type="number"
+                        defaultValue={asset.ticker === 'BTC-EUR' ? asset.shares.toFixed(6) : asset.shares}
+                        step={asset.ticker === 'BTC-EUR' ? '0.000001' : '1'}
+                        min={0}
+                        onBlur={(e) => {
+                          const val = Number(e.target.value);
+                          if (!isNaN(val) && val !== asset.shares) {
+                            setPortfolio(prev => ({
+                              ...prev,
+                              assets: prev.assets.map(a =>
+                                a.ticker === asset.ticker ? { ...a, shares: val } : a
+                              )
+                            }));
+                          }
+                        }}
+                        style={{
+                          width: '90px', background: '#1e293b', border: '1px solid #f59e0b',
+                          color: '#fbbf24', borderRadius: '4px', padding: '3px 6px',
+                          fontSize: '0.82rem', textAlign: 'right',
+                        }}
+                      />
+                    </td>
+                    {/* Precio medio guardado (solo lectura) */}
+                    <td style={{ textAlign: 'right', padding: '5px 8px', color: '#94a3b8' }}>
+                      €{asset.avgPrice.toFixed(2)}
+                    </td>
+                    <td style={{ textAlign: 'center', color: '#374151' }}>→</td>
+                    {/* Precio medio corregible */}
+                    <td style={{ textAlign: 'right', padding: '5px 8px' }}>
+                      <input
+                        type="number"
+                        defaultValue={asset.avgPrice.toFixed(2)}
+                        step="0.01"
+                        min={0}
+                        onBlur={(e) => {
+                          const val = Number(e.target.value);
+                          if (!isNaN(val) && val > 0 && val !== asset.avgPrice) {
+                            setPortfolio(prev => ({
+                              ...prev,
+                              assets: prev.assets.map(a =>
+                                a.ticker === asset.ticker ? { ...a, avgPrice: val } : a
+                              )
+                            }));
+                          }
+                        }}
+                        style={{
+                          width: '90px', background: '#1e293b', border: '1px solid #f59e0b',
+                          color: '#fbbf24', borderRadius: '4px', padding: '3px 6px',
+                          fontSize: '0.82rem', textAlign: 'right',
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Cash editable */}
+          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'flex-end', padding: '10px 12px', background: '#1e293b', borderRadius: '7px' }}>
+            <div>
+              <label style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>
+                💵 Cash en broker
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.75rem', color: '#475569' }}>€</span>
+                <input
+                  type="number" value={cashReserve} min={0} step={10}
+                  onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
+                  style={{ width: '100px', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem' }}
+                />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>
+                🛡 Liquidez defensiva
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.75rem', color: '#475569' }}>€</span>
+                <input
+                  type="number" value={defensiveLiquidity} min={0} step={10}
+                  onChange={(e) => {
+                    const val = Math.max(0, Number(e.target.value));
+                    setDefensiveLiquidity(val);
+                    try { localStorage.setItem('olympus_defensive_liq', String(val)); } catch {}
+                  }}
+                  style={{ width: '100px', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem' }}
+                />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>
+                📅 Aportación mensual (proyecciones)
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.75rem', color: '#475569' }}>€</span>
+                <input
+                  type="number" value={monthlyInjection} min={0} step={50}
+                  onChange={(e) => setMonthlyInjection(Math.max(0, Number(e.target.value)))}
+                  style={{ width: '100px', background: '#0f172a', border: '1px solid #475569', color: '#94a3b8', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem' }}
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#4b5563', maxWidth: '200px', lineHeight: '1.5' }}>
+              Cualquier cambio se guarda automáticamente. Cuando todo esté correcto pulsa "✓ Todo correcto".
+            </div>
           </div>
         </div>
       )}
