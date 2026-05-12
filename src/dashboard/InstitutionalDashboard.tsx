@@ -1,11 +1,26 @@
 // ═══════════════════════════════════════════════════════════════════════
 // HENDE FUND — Institutional Portfolio Dashboard (Olympus Engine V3+)
-// AUDIT-CLEAN v4 — Fixes aplicados:
+// AUDIT-CLEAN v5 — Fixes aplicados:
 //   FIX-01: Eliminado stub duplicado (líneas 1–58 originales)
 //   FIX-02: Todos los imports consolidados al inicio del módulo
 //   FIX-03: Guard de historial de régimen corregido (primer render espurio)
 //   FIX-04: supabaseClient.ts usa variables de entorno (ver .env.local)
 //   FIX-05: Eliminada interfaz Asset/Portfolio duplicada (conflicto factorRole)
+//   --- Segunda auditoría (2026-05) ---
+//   FIX-DCC-01:    dynamicCovMatrix añadido a deps de engineResult useMemo
+//                  → DCC-GARCH ahora propaga Σ dinámica al optimizador (antes stale closure)
+//   FIX-KALMAN-01: kalmanWeights movido a useMemo propio (era variable inline, React no detectaba cambios)
+//   FIX-KALMAN-02: kalmanWeights añadido a deps de engineResult useMemo
+//   FIX-KALMAN-03: updateKalmanFactorWeights() implementado en bucle mensual (antes nunca se llamaba)
+//   FIX-META-01:   savePredictionRecord: actualReturn1m y wasCorrect ahora calculados con datos reales
+//                  (antes hardcoded a 0/true → learning loop envenenado)
+//   FIX-META-02:   evaluatePrediction() ahora se invoca mensualmente sobre la predicción anterior
+//   FIX-META-03:   Bucle de aprendizaje ahora mensual (no solo en cambio de régimen)
+//   FIX-DCA-01:    SmartDCA: guard engineResult null → no emitir BUY prematuro en primer render
+//   FIX-DCA-02:    tacticalPct añadido a deps de smartDCAResult useMemo (antes stale si usuario cambiaba %)
+//   FIX-CASH-01:   monthlyInjection eliminado de availableCash cuando DCA activo
+//                  → evita double-counting entre Rebalancer y SmartDCA en mismo mes
+//   FIX-DEFLIQ-01: smartDCAResult añadido a deps del useEffect de defensiveLiquidity (stale closure)
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Core React ──────────────────────────────────────────────────────────
@@ -30,15 +45,25 @@ import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
 import BacktestPanel from "@/core/backtest/BacktestPanel";
 import { logEngineDecision } from "@/lib/decisionLog";
-import { getCurrentKalmanWeights } from "@/core/factors/kalmanFactorWeights";
+import {
+  getCurrentKalmanWeights,
+  updateKalmanFactorWeights,
+  type FactorObservation,
+} from "@/core/factors/kalmanFactorWeights";
 import { getDynamicCovMatrix } from "@/core/risk/dccGarch";
-import { savePredictionRecord, evaluatePrediction } from "@/core/risk/metaIntelligence";
+import {
+  savePredictionRecord,
+  evaluatePrediction,
+  loadPredictionHistory,
+  type RegimePrediction,
+} from "@/core/risk/metaIntelligence";
 
 // ── Persistence & portfolio tools ────────────────────────────────────────
 import {
   savePortfolio, loadPortfolio,
   saveMacro, loadMacro,
   saveRegimeEntry, loadRegimeHistory,
+  loadDailySnapshots,
   clearAll, RegimeHistoryEntry,
 } from "@/core/persistence/portfolioStorage";
 import {
@@ -727,7 +752,12 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   }, [marketData?.closesHistory]);
 
   const [lastRegime, setLastRegime] = useState<string>('');
-  const kalmanWeights = getCurrentKalmanWeights();
+
+  // FIX-KALMAN-01: kalmanWeights como useMemo para que React detecte cambios
+  // y lo propague correctamente al engine useMemo.
+  // updateKalmanFactorWeights se llama en el useEffect mensual (ver más abajo).
+  const kalmanWeights = useMemo(() => getCurrentKalmanWeights(), [regimeChangeCounter]);
+
   const dynamicCovMatrix = useMemo(() => {
     if (!marketData?.closesHistory || !marketData?.covMatrix) return undefined;
     try {
@@ -765,7 +795,10 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       cewsHistory: effectiveCEWSHistory,
       adaptiveFactorWeights: kalmanWeights,
     });
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, walkForwardResult?.adaptiveFactorWeights, regimeChangeCounter]);
+  // FIX-DCC-01: dynamicCovMatrix añadido a deps para que el engine reaccione
+  // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
+  // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovMatrix, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter]);
 
   useEffect(() => {
     if (engineResult?.regime && engineResult.regime !== lastRegime) {
@@ -806,15 +839,6 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         };
         saveRegimeEntry(entry);
         setRegimeHistory(loadRegimeHistory());
-                // ── META-INTELIGENCIA: guardar predicción para aprendizaje ────────
-        try {
-          savePredictionRecord({
-            predictedRegime: currentRegime as "EXPANSION" | "CONTRACTION" | "CRISIS",
-            actualReturn1m: 0, // se actualizará el mes siguiente con datos reales
-            wasCorrect: true,  // se corregirá al evaluar
-            penaltyApplied: engineResult.masterRegime.regimePenalty,
-          });
-        } catch {}
       }
 
       const totalValue = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
@@ -861,6 +885,101 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     }
     previousRegimeRef.current = currentRegime;
   }, [engineResult, vix, portfolioDrawdown, portfolio]);
+
+  // ── FIX-META-01 + FIX-KALMAN-03: Bucle de aprendizaje mensual ─────────────
+  // Ejecuta una vez por mes calendario. Hace tres cosas en orden:
+  //   1. Evalúa la predicción guardada hace ~30 días con el retorno REAL del portfolio
+  //   2. Guarda una nueva predicción para el mes actual (con wasCorrect calculado, no hardcoded)
+  //   3. Actualiza los pesos del filtro de Kalman con las observaciones de factor del mes
+  // Esto cierra los tres bucles de aprendizaje que estaban abiertos.
+  const lastMetaMonth = useRef<string | null>(null);
+  useEffect(() => {
+    if (!engineResult || !marketData?.closesHistory) return;
+
+    const currentMonth = new Date().toISOString().slice(0, 7); // "2026-05"
+    if (lastMetaMonth.current === currentMonth) return;        // ya procesado este mes
+
+    try {
+      // ── PASO 1: Evaluar predicción del mes anterior ──────────────────────
+      const snapshots = loadDailySnapshots();
+      const currentValue = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      const oldSnap = snapshots.find(s => s.timestamp < thirtyDaysAgo);
+
+      const actualReturn1m = oldSnap && oldSnap.portfolioValue > 0
+        ? (currentValue - oldSnap.portfolioValue) / oldSnap.portfolioValue
+        : 0;
+
+      // Recuperar la predicción que hicimos hace ~30 días (el último registro guardado)
+      const predHistory = loadPredictionHistory();
+      const prevPrediction = predHistory.length > 0
+        ? predHistory[predHistory.length - 1]
+        : null;
+
+      // ── PASO 2: Guardar predicción del mes actual con datos REALES ───────
+      // wasCorrect evalúa el régimen que predijimos el mes pasado vs lo que pasó
+      const wasCorrect = prevPrediction
+        ? evaluatePrediction(
+            prevPrediction.predictedRegime as RegimePrediction,
+            actualReturn1m
+          )
+        : true; // sin historial previo → neutro
+
+      const regime = engineResult.regime;
+      if (regime !== "ALL_CASH") {
+        savePredictionRecord({
+          predictedRegime: regime as RegimePrediction,
+          actualReturn1m,
+          wasCorrect,
+          penaltyApplied: engineResult.masterRegime.regimePenalty,
+        });
+      }
+
+      // ── PASO 3: Actualizar filtro de Kalman con observaciones del mes ────
+      // Aproximamos los retornos de cada factor premium usando los activos del universo:
+      //   momentum  → promedio top-3 por retorno 1m (IS3Q, XNAS, VVSM si subieron)
+      //   value     → retorno de EMXC + PPFB (proxies value/commodity)
+      //   quality   → retorno de IS3Q (ETF de calidad pura)
+      //   lowVol    → retorno de PPFB (oro, menor volatilidad del universo)
+      const closes = marketData.closesHistory;
+      const getMonthlyReturn = (ticker: string): number => {
+        const series = closes[ticker] ?? [];
+        if (series.length < 22) return 0;
+        const prev = series[series.length - 22]; // ~1 mes atrás
+        const curr = series[series.length - 1];
+        return prev > 0 ? (curr - prev) / prev : 0;
+      };
+
+      const retIS3Q  = getMonthlyReturn("IS3Q.DE");
+      const retXNAS  = getMonthlyReturn("XNAS.DE");
+      const retVVSM  = getMonthlyReturn("VVSM.DE");
+      const retEMXC  = getMonthlyReturn("EMXC.DE");
+      const retPPFB  = getMonthlyReturn("PPFB.DE");
+
+      const momentumReturn = (retIS3Q + retXNAS + retVVSM) / 3;
+      const valueReturn    = (retEMXC + retPPFB) / 2;
+      const qualityReturn  = retIS3Q;
+      const lowVolReturn   = retPPFB;
+
+      const kalmanObs: FactorObservation = {
+        momentumReturn,
+        valueReturn,
+        qualityReturn,
+        lowVolReturn,
+        portfolioReturn: actualReturn1m,
+        regime: (regime === "ALL_CASH" ? "CRISIS" : regime) as "EXPANSION" | "CONTRACTION" | "CRISIS",
+      };
+
+      updateKalmanFactorWeights(kalmanObs);
+
+      // Forzar recálculo del engine en el siguiente render
+      setRegimeChangeCounter(c => c + 1);
+      lastMetaMonth.current = currentMonth;
+
+    } catch (e) {
+      console.warn("MetaIntelligence/Kalman monthly update error:", e);
+    }
+  }, [engineResult?.regime, marketData?.closesHistory, portfolio.assets]);
 
   useEffect(() => {
     if (vix === 0) return;
@@ -945,21 +1064,24 @@ soxRsiWeekly,
   const tacticalAvailableCash = (defensiveLiquidity * tacticalPct / 100);
 
   const smartDCAResult = useMemo(() => {
+    // FIX-DCA-01: no emitir señal de compra si el engine todavía no tiene datos.
+    // El default "EXPANSION" original podía producir un BUY prematuro en el primer render.
+    if (!engineResult) return null;
     return computeSmartDCA({
       btcRsi,
       btcZScore: btcZ,
       btcMomentum1m: btcRet1m,
       btcDominance,
       mvrvRatio,
-      regime: engineResult?.regime ?? "EXPANSION",
-      regimePenalty: engineResult?.masterRegime.regimePenalty ?? 1.0,
-      volTargetMultiplier: engineResult?.volTargetMultiplier ?? 1.0,
-      tailRiskActive: engineResult?.tailRiskActive ?? false,
-      tailRiskOverlay: engineResult?.tailRiskOverlay ?? 1.0,
+      regime: engineResult.regime,
+      regimePenalty: engineResult.masterRegime.regimePenalty,
+      volTargetMultiplier: engineResult.volTargetMultiplier,
+      tailRiskActive: engineResult.tailRiskActive,
+      tailRiskOverlay: engineResult.tailRiskOverlay,
       olympusAvailableCash,
       tacticalAvailableCash,
       accumulatedDefensiveLiquidity: defensiveLiquidity,
-      motorAllocations: engineResult?.allocations.map(a => {
+      motorAllocations: engineResult.allocations.map(a => {
         const asset = portfolio.assets.find(pa => pa.name === a.name);
         return {
           name: a.name,
@@ -967,15 +1089,20 @@ soxRsiWeekly,
           finalAllocation: a.finalAllocation,
           price: asset?.price ?? 0,
         };
-      }) ?? [],
+      }),
       cewsOutput: cewsResult ?? undefined,
       cewsPreviousLevel,
     });
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, monthlyInjection, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity]);
+  // FIX-DCA-02: tacticalPct añadido a deps. Antes, cambiar el % táctico en el UI
+  // no recomputaba smartDCA hasta que otro dep cambiaba → asignación táctica estale.
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, monthlyInjection, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, tacticalPct]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
-  const availableCash = dcaBlocked ? cashReserve : cashReserve + monthlyInjection;
+  // FIX-CASH-01: availableCash para el Rebalancer NO incluye monthlyInjection cuando
+  // SmartDCA no está bloqueado, porque ese dinero ya está comprometido en olympusAvailableCash.
+  // Antes: ambos sistemas asumían tener monthlyInjection → double-counting en mismo mes.
+  const availableCash = dcaBlocked ? cashReserve + monthlyInjection : cashReserve;
 
   const defensiveLiquidityRef = React.useRef<boolean>(false);
   React.useEffect(() => {
@@ -991,7 +1118,10 @@ soxRsiWeekly,
       }
     } else {
       defensiveLiquidityRef.current = false;
-      if (smartDCAResult.attackMode && smartDCAResult.totalCashToInvest > 0) {
+      // FIX-DEFLIQ-01: smartDCAResult añadido a deps (antes no estaba).
+      // El closure leía un smartDCAResult potencialmente stale → podía desplegar
+      // el monto del ciclo anterior si attackMode cambiaba sin que regime cambiase.
+      if (smartDCAResult?.attackMode && smartDCAResult.totalCashToInvest > 0) {
         setDefensiveLiquidity(prev => {
           const deployed = Math.min(prev, smartDCAResult.totalCashToInvest * 0.8);
           const next = Math.max(0, Math.round((prev - deployed) * 100) / 100);
@@ -1000,7 +1130,7 @@ soxRsiWeekly,
         });
       }
     }
-  }, [dcaBlocked, engineResult?.regime]);
+  }, [dcaBlocked, engineResult?.regime, smartDCAResult]);
 
 const lastProcessedMonth = useRef<string | null>(null);
 
