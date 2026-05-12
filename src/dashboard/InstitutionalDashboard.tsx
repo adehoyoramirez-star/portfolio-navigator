@@ -219,6 +219,11 @@ const InstitutionalDashboard: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
   const [cashReserve, setCashReserve] = useState(portfolio.cashReserve);
   const [monthlyInjection, setMonthlyInjection] = useState(portfolio.monthlyInjection);
+  // PERSIST-01: rastrea cuándo se guardaron los datos por última vez y si hay
+  // cambios sin guardar desde la última sesión (para mostrar el banner de confirmación)
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [showSessionBanner, setShowSessionBanner] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState<string[]>([]);
   const [years, setYears] = useState(10);
 
   const [jumpIntensity, setJumpIntensity] = useState(7.0);
@@ -602,17 +607,49 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   useEffect(() => {
     const savedPortfolio = loadPortfolio();
     if (savedPortfolio) {
+      // PERSIST-02: Detectar qué cambió desde la última vez que el usuario
+      // introdujo datos. Si el sistema cargó valores guardados, mostramos
+      // un banner de confirmación en lugar de sobreescribir silenciosamente.
+      const changes: string[] = [];
+      const prevAt = savedPortfolio.savedAt
+        ? new Date(savedPortfolio.savedAt).toLocaleDateString('es-ES', {
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          })
+        : null;
+
+      setLastSavedAt(prevAt);
+
+      // Cargar datos guardados
       setPortfolio(prev => ({
         ...prev,
         cashReserve: savedPortfolio.cashReserve,
         monthlyInjection: savedPortfolio.monthlyInjection,
         assets: prev.assets.map(asset => {
           const saved = savedPortfolio.positions.find(p => p.ticker === asset.ticker);
-          return saved ? { ...asset, shares: saved.shares, avgPrice: saved.avgPrice } : asset;
+          if (saved) {
+            if (saved.shares !== asset.shares)
+              changes.push(`${asset.name}: ${asset.shares} → ${saved.shares} acc.`);
+            if (Math.abs(saved.avgPrice - asset.avgPrice) > 0.01)
+              changes.push(`${asset.name}: precio medio ${asset.avgPrice.toFixed(2)} → ${saved.avgPrice.toFixed(2)}€`);
+            return { ...asset, shares: saved.shares, avgPrice: saved.avgPrice };
+          }
+          return asset;
         }),
       }));
       setCashReserve(savedPortfolio.cashReserve);
       setMonthlyInjection(savedPortfolio.monthlyInjection);
+
+      if (savedPortfolio.cashReserve !== initialPortfolio.cashReserve)
+        changes.push(`Cash: ${savedPortfolio.cashReserve}€`);
+      if (savedPortfolio.monthlyInjection !== initialPortfolio.monthlyInjection)
+        changes.push(`Aportación mensual: ${savedPortfolio.monthlyInjection}€`);
+
+      // Mostrar banner solo si hay datos guardados (no es primera vez)
+      if (changes.length > 0 || prevAt) {
+        setPendingChanges(changes);
+        setShowSessionBanner(true);
+      }
     }
     const savedMacro = loadMacro();
     if (savedMacro) {
@@ -652,12 +689,20 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   }, []);
 
   useEffect(() => {
+    const now = new Date().toISOString();
     savePortfolio({
       positions: portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice })),
       cashReserve,
       monthlyInjection,
-      savedAt: new Date().toISOString(),
+      savedAt: now,
     });
+    // PERSIST-03: actualizar el timestamp visible cada vez que se guarda
+    setLastSavedAt(
+      new Date(now).toLocaleDateString('es-ES', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
+    );
   }, [portfolio.assets, cashReserve, monthlyInjection]);
 
   useEffect(() => {
@@ -1435,6 +1480,52 @@ useEffect(() => {
   return (
     <div style={styles.container}>
       <h1 style={styles.title}>Institutional Portfolio Dashboard (Olympus Engine V3+)</h1>
+
+      {/* PERSIST-04: Banner de sesión anterior — aparece al abrir el motor si hay datos guardados */}
+      {showSessionBanner && (
+        <div style={{
+          background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: '10px',
+          padding: '14px 18px', marginBottom: '16px', color: '#e2e8f0',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontWeight: 700, color: '#60a5fa', marginBottom: '6px', fontSize: '0.95rem' }}>
+                📂 Cartera restaurada desde la última sesión
+                {lastSavedAt && <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: '8px', fontSize: '0.8rem' }}>
+                  Guardada el {lastSavedAt}
+                </span>}
+              </div>
+              {pendingChanges.length > 0 ? (
+                <div style={{ fontSize: '0.82rem', color: '#cbd5e1' }}>
+                  <span style={{ color: '#94a3b8' }}>Datos cargados: </span>
+                  {pendingChanges.slice(0, 4).join(' · ')}
+                  {pendingChanges.length > 4 && ` · +${pendingChanges.length - 4} más`}
+                </div>
+              ) : (
+                <div style={{ fontSize: '0.82rem', color: '#94a3b8' }}>
+                  Acciones, precios medios y cash cargados correctamente.
+                </div>
+              )}
+              <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '4px' }}>
+                💡 Revisa la tabla de cartera y corrige solo lo que haya cambiado desde la última vez.
+              </div>
+            </div>
+            <button
+              onClick={() => setShowSessionBanner(false)}
+              style={{ background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 14px', cursor: 'pointer', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+            >
+              ✓ Datos correctos
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* PERSIST-05: Indicador de guardado automático — siempre visible arriba a la derecha */}
+      {lastSavedAt && !showSessionBanner && (
+        <div style={{ fontSize: '0.72rem', color: '#475569', textAlign: 'right', marginBottom: '8px' }}>
+          💾 Guardado automáticamente · {lastSavedAt}
+        </div>
+      )}
 
       <div style={{ marginBottom: "20px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
         <button onClick={() => refreshMarketData(true)} style={styles.button} disabled={loading}>
