@@ -282,14 +282,11 @@ const InstitutionalDashboard: React.FC = () => {
   const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
     try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
   });
-
-  const [tacticalAccumulated, setTacticalAccumulated] = useState<number>(() => {
-    try { return parseFloat(localStorage.getItem('olympus_tactical_accumulated') ?? '0') || 0; } catch { return 0; }
-  });
-
-  const [tacticalPct, setTacticalPct] = useState<number>(() => {
-    try { return parseFloat(localStorage.getItem('olympus_tactical_pct') ?? '20') || 20; } catch { return 20; }
-  });
+  // CASH-REDESIGN: tacticalAccumulated y tacticalPct eliminados.
+  // El táctico era una subcuenta automática que nunca existía en el broker real.
+  // Ahora: defensiveLiquidity es el único colchón de oportunidad, gestionado 100% manual.
+  // transferAmount: importe que el usuario quiere mover de cashReserve → defensiveLiquidity
+  const [transferAmount, setTransferAmount] = useState<number>(0);
 
   const [btcOrdersEur, setBtcOrdersEur] = useState<number>(() => {
     try { return parseFloat(localStorage.getItem('olympus_btc_orders_eur') ?? '0') || 0; } catch { return 0; }
@@ -1102,14 +1099,24 @@ soxRsiWeekly,
     catch { return null; }
   }, [portfolio.assets, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
 
-  const totalCashForDCA = cashReserve + monthlyInjection;
-
-  const btcAsset = portfolio.assets.find(a => a.ticker === "BTC-EUR");
-  const btcRsi = btcAsset?.rsi ?? calculateRSI(btcAsset?.history || [], 14);
-  const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
-  const btcRet1m = btcAsset?.return1m ?? 0;
-  const olympusAvailableCash = (defensiveLiquidity * 0.80) + monthlyInjection;
-  const tacticalAvailableCash = (defensiveLiquidity * tacticalPct / 100);
+  // CASH-REDESIGN-02: modelo de cash simplificado y alineado con el flujo real del usuario.
+  //
+  // ANTES (modelo automático — nunca coincidía con el broker real):
+  //   olympusAvailableCash = defensiveLiquidity * 0.80 + monthlyInjection
+  //   tacticalAvailableCash = defensiveLiquidity * tacticalPct / 100
+  //
+  // AHORA (modelo manual — lo que realmente existe en la cuenta):
+  //   cashReserve       = todo el dinero disponible en broker ahora mismo
+  //                       (aportación ya incluida si se hizo, sobrante de compras, etc.)
+  //   defensiveLiquidity = colchón de oportunidad, solo para señales ATTACK ≥4/7
+  //   monthlyInjection   = solo para proyecciones Monte Carlo (no es cash real ahora)
+  //
+  // SmartDCA compra usando cashReserve.
+  // En modo ATTACK (≥4 señales), también puede usar defensiveLiquidity.
+  // El usuario transfiere manualmente el sobrante a defensiveLiquidity con el botón.
+  const totalCashForDCA = cashReserve;
+  const olympusAvailableCash = cashReserve;
+  const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK ≥4/7
 
   const smartDCAResult = useMemo(() => {
     // FIX-DCA-01: no emitir señal de compra si el engine todavía no tiene datos.
@@ -1141,63 +1148,47 @@ soxRsiWeekly,
       cewsOutput: cewsResult ?? undefined,
       cewsPreviousLevel,
     });
-  // FIX-DCA-02: tacticalPct añadido a deps. Antes, cambiar el % táctico en el UI
-  // no recomputaba smartDCA hasta que otro dep cambiaba → asignación táctica estale.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, monthlyInjection, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, tacticalPct]);
+  // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
+  // cashReserve es ahora el único input de cash real para SmartDCA.
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
-  // FIX-CASH-01: availableCash para el Rebalancer NO incluye monthlyInjection cuando
-  // SmartDCA no está bloqueado, porque ese dinero ya está comprometido en olympusAvailableCash.
-  // Antes: ambos sistemas asumían tener monthlyInjection → double-counting en mismo mes.
-  const availableCash = dcaBlocked ? cashReserve + monthlyInjection : cashReserve;
+  // CASH-REDESIGN-04: availableCash para el Rebalancer = cashReserve siempre.
+  // monthlyInjection ya no es cash real (es input de proyecciones), no se suma aquí.
+  const availableCash = cashReserve;
 
-  const defensiveLiquidityRef = React.useRef<boolean>(false);
-  React.useEffect(() => {
-    if (!engineResult) return;
-    if (dcaBlocked && monthlyInjection > 0) {
-      if (!defensiveLiquidityRef.current) {
-        defensiveLiquidityRef.current = true;
-        setDefensiveLiquidity(prev => {
-          const next = Math.round((prev + monthlyInjection) * 100) / 100;
-          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
-          return next;
-        });
-      }
-    } else {
-      defensiveLiquidityRef.current = false;
-      // FIX-DEFLIQ-01: smartDCAResult añadido a deps (antes no estaba).
-      // El closure leía un smartDCAResult potencialmente stale → podía desplegar
-      // el monto del ciclo anterior si attackMode cambiaba sin que regime cambiase.
-      if (smartDCAResult?.attackMode && smartDCAResult.totalCashToInvest > 0) {
-        setDefensiveLiquidity(prev => {
-          const deployed = Math.min(prev, smartDCAResult.totalCashToInvest * 0.8);
-          const next = Math.max(0, Math.round((prev - deployed) * 100) / 100);
-          try { localStorage.setItem('olympus_defensive_liq', String(next)); } catch {}
-          return next;
-        });
-      }
-    }
-  }, [dcaBlocked, engineResult?.regime, smartDCAResult]);
+  // CASH-REDESIGN-05: eliminados los 3 useEffects de auto-acumulación.
+  //   - defensiveLiquidityRef + useEffect que movía monthlyInjection → defensiveLiquidity en CRISIS
+  //   - useEffect que vaciaba defensiveLiquidity en attackMode
+  //   - useEffect que acumulaba tacticalAccumulated mensualmente
+  //   - useEffect de persistencia de tacticalAccumulated
+  //   - useEffect de persistencia de tacticalPct
+  // El usuario gestiona defensiveLiquidity manualmente con el botón de transferencia.
+  // Nada toca defensiveLiquidity automáticamente.
 
-const lastProcessedMonth = useRef<string | null>(null);
+  // Botón "Transferir sobrante a Liquidez Defensiva"
+  const handleTransferToDefensive = () => {
+    const amount = Math.min(transferAmount, cashReserve);
+    if (amount <= 0) return;
+    const newCash = Math.round((cashReserve - amount) * 100) / 100;
+    const newDefensive = Math.round((defensiveLiquidity + amount) * 100) / 100;
+    setCashReserve(newCash);
+    setDefensiveLiquidity(newDefensive);
+    try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
+    setTransferAmount(0);
+  };
 
-useEffect(() => {
-  if (!smartDCAResult) return;
-  const currentMonth = new Date().toISOString().slice(0, 7); // formato "2026-05"
-  if (lastProcessedMonth.current === currentMonth) return; // ya hemos sumado este mes
-
-  const monthlyLeftover = smartDCAResult.tacticalAccumulated;
-  setTacticalAccumulated(prev => prev + monthlyLeftover);
-  lastProcessedMonth.current = currentMonth;
-}, [smartDCAResult?.tacticalAccumulated]);
-  useEffect(() => {
-    try { localStorage.setItem('olympus_tactical_accumulated', String(tacticalAccumulated)); } catch {}
-  }, [tacticalAccumulated]);
-
-  useEffect(() => {
-    try { localStorage.setItem('olympus_tactical_pct', String(tacticalPct)); } catch {}
-  }, [tacticalPct]);
+  // Botón "Usar Liquidez Defensiva" (después de un ataque manual)
+  const handleDeployDefensive = (amount: number) => {
+    const toUse = Math.min(amount, defensiveLiquidity);
+    if (toUse <= 0) return;
+    const newDefensive = Math.round((defensiveLiquidity - toUse) * 100) / 100;
+    const newCash = Math.round((cashReserve + toUse) * 100) / 100;
+    setDefensiveLiquidity(newDefensive);
+    setCashReserve(newCash);
+    try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
+  };
 
   const rebalanceFinal = useMemo(() => {
     if (!engineResult || engineResult.regime === "ALL_CASH") return null;
@@ -2576,58 +2567,133 @@ useEffect(() => {
             <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "160px" }}>Acumulado en meses de bloqueo DCA</p>
           </div>
           <div style={{ borderLeft: "2px solid #22c55e", paddingLeft: "1rem" }}>
-            <label htmlFor="tacticalPctInput" style={{ ...styles.label, color: "#bbf7d0" }}>🎯 % Liquidez para Táctico</label>
-            <input id="tacticalPctInput" type="number" value={tacticalPct} min={0} max={100} step={1}
-              onChange={(e) => { const val = Math.max(0, Math.min(100, Number(e.target.value))); setTacticalPct(val); try { localStorage.setItem("olympus_tactical_pct", String(val)); } catch {} }}
-              style={{ ...styles.input, borderColor: "#22c55e", backgroundColor: "#052e16", width: "80px" }} />
-            <p style={{ fontSize: "0.7rem", color: "#bbf7d0", marginTop: "3px", maxWidth: "120px" }}>Default: 20%</p>
           </div>
         </div>
 
-        {/* ── Tabla de capas (6 columnas) ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "8px", marginBottom: "10px" }}>
-          <div style={{ padding: "10px", background: "#1c1506", borderRadius: "6px", borderTop: "3px solid #d97706" }}>
-            <div style={{ fontSize: "0.65rem", color: "#f59e0b", textTransform: "uppercase", marginBottom: "4px" }}>₿ Órdenes BTC</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#f59e0b" }}>€{btcOrdersEur.toFixed(0)}</div>
-            <div style={{ fontSize: "0.6rem", color: "#92400e", marginTop: "3px" }}>Comprometido</div>
+        {/* ── CASH-REDESIGN: Panel de liquidez manual ── */}
+        {/* Tres columnas: cashReserve | defensiveLiquidity | totalDisponible */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginBottom: "12px" }}>
+
+          {/* Columna 1: Cash en broker */}
+          <div style={{ padding: "14px", background: "#1f2937", borderRadius: "8px", borderTop: "3px solid #6366f1" }}>
+            <div style={{ fontSize: "0.65rem", color: "#818cf8", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
+              💵 Cash en broker ahora mismo
+            </div>
+            <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#e2e8f0" }}>
+              €{cashReserve.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "4px" }}>
+              Incluye aportaciones ya realizadas y sobrante de compras
+            </div>
+            <div style={{ marginTop: "10px" }}>
+              <label style={{ fontSize: "0.7rem", color: "#94a3b8", display: "block", marginBottom: "3px" }}>Actualizar saldo</label>
+              <input type="number" value={cashReserve} min={0} step={10}
+                onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
+                style={{ ...styles.input, width: "100%", boxSizing: "border-box" }} />
+            </div>
+            {btcOrdersEur > 0 && (
+              <div style={{ marginTop: "6px", fontSize: "0.7rem", color: btcOrdersEur > cashReserve ? "#ef4444" : "#f59e0b" }}>
+                {btcOrdersEur > cashReserve
+                  ? `⚠️ Órdenes BTC (€${btcOrdersEur.toFixed(0)}) > cash — revisar`
+                  : `₿ €${btcOrdersEur.toFixed(0)} comprometido en órdenes BTC`}
+              </div>
+            )}
           </div>
-          <div style={{ padding: "10px", background: "#0d1b3e", borderRadius: "6px", borderTop: "3px solid #2563eb" }}>
-            <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "4px" }}>⚡ Táctico Libre</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#60a5fa" }}>€{(defensiveLiquidity * tacticalPct / 100).toFixed(0)}</div>
-            <div style={{ fontSize: "0.6rem", color: "#1d4ed8", marginTop: "3px" }}>{tacticalPct}% de Defensiva</div>
+
+          {/* Columna 2: Liquidez Defensiva */}
+          <div style={{ padding: "14px", background: "#052e16", borderRadius: "8px", borderTop: "3px solid #16a34a" }}>
+            <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
+              🛡 Liquidez defensiva (colchón de ataque)
+            </div>
+            <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#86efac" }}>
+              €{defensiveLiquidity.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.7rem", color: "#166534", marginTop: "4px" }}>
+              Solo se despliega con señal ATTACK ≥4/7. No tocar en meses normales.
+            </div>
+            {/* Transferencia manual desde cashReserve */}
+            <div style={{ marginTop: "10px", padding: "8px", background: "#071a0d", borderRadius: "6px" }}>
+              <label style={{ fontSize: "0.68rem", color: "#4ade80", display: "block", marginBottom: "4px" }}>
+                ↓ Mover de Cash → Defensiva (fin de mes)
+              </label>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <input type="number" value={transferAmount} min={0} max={cashReserve} step={10}
+                  onChange={(e) => setTransferAmount(Math.min(cashReserve, Math.max(0, Number(e.target.value))))}
+                  placeholder="€ importe"
+                  style={{ ...styles.input, flex: 1, fontSize: "0.8rem" }} />
+                <button
+                  onClick={handleTransferToDefensive}
+                  disabled={transferAmount <= 0 || transferAmount > cashReserve}
+                  style={{
+                    background: transferAmount > 0 && transferAmount <= cashReserve ? "#16a34a" : "#374151",
+                    color: "white", border: "none", borderRadius: "5px",
+                    padding: "6px 10px", cursor: transferAmount > 0 ? "pointer" : "not-allowed",
+                    fontSize: "0.75rem", whiteSpace: "nowrap",
+                  }}
+                >
+                  Transferir ↓
+                </button>
+              </div>
+              <div style={{ fontSize: "0.62rem", color: "#166534", marginTop: "3px" }}>
+                Úsalo cuando quieras apartar sobrante del mes como colchón de oportunidad
+              </div>
+            </div>
+            {/* Desplegar defensiva (modo ataque manual) */}
+            {defensiveLiquidity > 0 && smartDCAResult?.attackMode && (
+              <div style={{ marginTop: "8px", padding: "6px 8px", background: "#14532d", borderRadius: "5px", border: "1px solid #16a34a" }}>
+                <div style={{ fontSize: "0.68rem", color: "#86efac", marginBottom: "4px" }}>
+                  ⚡ Señal ATTACK activa — ¿desplegar defensiva?
+                </div>
+                <button
+                  onClick={() => handleDeployDefensive(defensiveLiquidity)}
+                  style={{ background: "#15803d", color: "white", border: "none", borderRadius: "5px", padding: "5px 10px", cursor: "pointer", fontSize: "0.72rem" }}
+                >
+                  Mover €{defensiveLiquidity.toFixed(0)} → Cash ↑
+                </button>
+              </div>
+            )}
           </div>
-          <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #16a34a" }}>
-            <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "4px" }}>📅 Aportación</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#4ade80" }}>€{monthlyInjection.toFixed(0)}</div>
-            <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Mensual disponible</div>
-          </div>
-          <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #15803d" }}>
-            <div style={{ fontSize: "0.65rem", color: "#86efac", textTransform: "uppercase", marginBottom: "4px" }}>🛡 Def. Acumulada</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#86efac" }}>€{defensiveLiquidity.toFixed(0)}</div>
-            <div style={{ fontSize: "0.6rem", color: "#166534", marginTop: "3px" }}>Ataque ciclo BTC</div>
-          </div>
-          <div style={{ padding: "10px", background: "#1f2937", borderRadius: "6px", borderTop: "3px solid #9ca3af" }}>
-            <div style={{ fontSize: "0.65rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: "4px" }}>💵 Caja</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#9ca3af" }}>€{cashReserve.toFixed(0)}</div>
-            <div style={{ fontSize: "0.6rem", color: "#6b7280", marginTop: "3px" }}>Cash líquido</div>
-          </div>
-          <div style={{ padding: "10px", background: "#052e16", borderRadius: "6px", borderTop: "3px solid #22c55e" }}>
-            <div style={{ fontSize: "0.65rem", color: "#bbf7d0", textTransform: "uppercase", marginBottom: "4px" }}>🎯 TÁCTICO ACUMULADO</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#bbf7d0" }}>€{tacticalAccumulated.toFixed(0)}</div>
-            <div style={{ fontSize: "0.6rem", color: "#86efac", marginTop: "3px" }}>Solo se usa si ataque ≥4/7</div>
+
+          {/* Columna 3: Totales y proyección */}
+          <div style={{ padding: "14px", background: "#0f172a", borderRadius: "8px", borderTop: "3px solid #3b82f6" }}>
+            <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
+              📊 Resumen de liquidez
+            </div>
+            <div style={{ fontSize: "0.8rem", color: "#94a3b8", lineHeight: "1.8" }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>Cash disponible hoy</span>
+                <strong style={{ color: "#e2e8f0" }}>€{cashReserve.toFixed(0)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>Defensiva apartada</span>
+                <strong style={{ color: "#4ade80" }}>€{defensiveLiquidity.toFixed(0)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #1e3a5f", marginTop: "6px", paddingTop: "6px" }}>
+                <span>Total liquidez</span>
+                <strong style={{ color: "#60a5fa" }}>€{(cashReserve + defensiveLiquidity).toFixed(0)}</strong>
+              </div>
+            </div>
+            <div style={{ marginTop: "12px" }}>
+              <label style={{ fontSize: "0.68rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>
+                📅 Aportación mensual habitual (solo para proyecciones)
+              </label>
+              <input type="number" value={monthlyInjection} min={0} step={50}
+                onChange={(e) => setMonthlyInjection(Math.max(0, Number(e.target.value)))}
+                style={{ ...styles.input, width: "100%", boxSizing: "border-box", borderColor: "#374151" }} />
+              <div style={{ fontSize: "0.62rem", color: "#4b5563", marginTop: "3px" }}>
+                No es cash real ahora. Se usa para simular tu cartera a 10 años.
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* ── Total disponible ── */}
-        <div style={{ marginTop: "10px", padding: "10px 14px", background: "#0f172a", borderRadius: "6px", border: "1px solid #1e3a5f", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-            <strong style={{ color: "#e2e8f0" }}>Total disponible para DCA/Rebalanceo:</strong>
-            {" "}€{monthlyInjection.toFixed(0)} mensual
-            {defensiveLiquidity > 0 ? ` + €${(defensiveLiquidity * (1 - tacticalPct / 100)).toFixed(0)} de Defensiva` : ""}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: btcOrdersEur > cashReserve ? "#ef4444" : "#10b981" }}>
-            {btcOrdersEur > cashReserve ? `⚠️ Órdenes BTC (€${btcOrdersEur.toFixed(0)}) > cash disponible — revisar` : `✓ Órdenes BTC cubiertas por caja`}
-          </div>
+        {/* ── Órdenes BTC (mantener) ── */}
+        <div style={{ marginBottom: "12px" }}>
+          <label htmlFor="btcOrdersInput" style={styles.label}>₿ Capital comprometido en órdenes BTC límite (€)</label>
+          <input id="btcOrdersInput" type="number" value={btcOrdersEur} min={0}
+            onChange={(e) => { const val = Math.max(0, Number(e.target.value)); setBtcOrdersEur(val); try { localStorage.setItem("olympus_btc_orders_eur", String(val)); } catch {} }}
+            style={{ ...styles.input, borderColor: "#f59e0b", width: "160px" }} />
+          <p style={{ fontSize: "0.7rem", color: "#f59e0b", marginTop: "3px" }}>Capital reservado en órdenes BTC pendientes — descuéntalo del cash disponible mentalmente</p>
         </div>
 
         {/* ── Resumen portfolio ── */}
