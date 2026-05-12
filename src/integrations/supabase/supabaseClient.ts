@@ -1,29 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════
 // HENDE FUND — Supabase Singleton Client
-// AUDIT-CLEAN v5 — FIX-SUPA-01
+// FIX-SUPA-02: Singleton + lock override para eliminar TDZ 'tx'
 //
-// PROBLEMA RAÍZ DE LOS DOS ERRORES EN CONSOLA:
+// ERRORES RESUELTOS:
+//   1. "Multiple GoTrueClient instances" → un solo createClient() en toda la app
+//   2. "Cannot access 'tx' before initialization" → dos causas:
+//      a) Múltiples instancias compartiendo la misma storageKey (resuelto con singleton)
+//      b) Bug en supabase-js 2.39+ con Web Locks API en contextos con HMR/Vite
+//         (resuelto con lock override que serializa el acceso)
 //
-//   ERROR 1: "Multiple GoTrueClient instances detected in the same browser context"
-//   CAUSA:   Existían 3 archivos que llamaban createClient() de forma independiente:
-//              - src/dashboard/supabaseClient.ts       (singleton correcto)
-//              - src/integrations/supabase/client.ts   (createClient() desnudo, sin singleton)
-//              - src/supabaseClient.ts                 (createClient() desnudo, sin singleton)
-//            marketData.ts y decisionLog.ts importaban desde @/integrations/supabase/client,
-//            creando una segunda instancia con la misma storage key
-//            ("sb-<projectRef>-auth-token").
-//
-//   ERROR 2: ReferenceError: Cannot access 'tx' before initialization
-//   CAUSA:   'tx' es el nombre minificado de una variable interna de GoTrueClient
-//            (lockManager transaction). Cuando dos instancias comparten la misma
-//            storage key y ambas intentan adquirir un lock de BroadcastChannel
-//            simultáneamente, la segunda instancia accede al objeto 'tx' antes de
-//            que la primera lo haya inicializado → TDZ (Temporal Dead Zone).
-//            Es decir: el ERROR 2 es consecuencia directa del ERROR 1.
-//
-// SOLUCIÓN: Un único createClient() en este archivo. Todos los demás módulos
-//           importan desde aquí. Los archivos @/integrations/supabase/client.ts
-//           y src/supabaseClient.ts (si existe) re-exportan desde este singleton.
+// REGLA: Ningún otro archivo llama createClient(). Todos importan { supabase }
+//        desde este archivo o desde @/integrations/supabase/client (que re-exporta aquí).
 // ═══════════════════════════════════════════════════════════════════════
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -38,22 +25,43 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-// Patrón singleton con globalThis para garantizar una única instancia incluso
-// en entornos con HMR (Vite hot-reload) o múltiples chunks que importan este módulo.
 declare global {
   // eslint-disable-next-line no-var
   var __supabaseClient: SupabaseClient | undefined;
 }
 
+// FIX-SUPA-02b: lock override serializado con una Promise chain.
+// supabase-js 2.39+ usa Web Locks API internamente para sincronizar el estado
+// de auth entre pestañas. En entornos con Vite HMR o múltiples chunks que
+// inicializan simultáneamente, dos gorutinas pueden intentar acceder a la
+// variable interna 'tx' antes de que esté inicializada → TDZ.
+// Reemplazamos el lock por una cola de Promises que garantiza acceso secuencial
+// sin depender de la Web Locks API del navegador.
+let _lockQueue = Promise.resolve();
+const acquireLock = <T>(
+  _name: string,
+  _timeout: number,
+  fn: () => Promise<T>
+): Promise<T> => {
+  const result = _lockQueue.then(() => fn());
+  // Absorber errores en la cola para que no bloqueen futuras adquisiciones
+  _lockQueue = result.then(
+    () => {},
+    () => {}
+  );
+  return result;
+};
+
 export const supabase: SupabaseClient =
   globalThis.__supabaseClient ??
   (globalThis.__supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
-      // storageKey explícito: evita colisiones si el mismo proyecto tiene varios
-      // entornos (staging/prod) abiertos en pestañas distintas del mismo navegador.
-      storageKey: `sb-olympus-auth-${supabaseUrl.split('.')[0].split('//')[1]}`,
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
+      persistSession:      true,
+      autoRefreshToken:    true,
+      detectSessionInUrl:  true,
+      // storageKey: usar el valor por defecto (sb-<ref>-auth-token)
+      // NO cambiar este valor: cambiar la key invalida sesiones existentes
+      // y causa que el BroadcastChannel emita eventos de logout a otras pestañas.
+      lock: acquireLock,
     },
   }));
