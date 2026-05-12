@@ -1118,6 +1118,12 @@ soxRsiWeekly,
   const olympusAvailableCash = cashReserve;
   const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK ≥4/7
 
+  // Declaraciones BTC para SmartDCA (se movieron al redesign cash, se restauran aquí)
+  const btcAsset = portfolio.assets.find(a => a.ticker === "BTC-EUR");
+  const btcRsi = btcAsset?.rsi ?? calculateRSI(btcAsset?.history || [], 14);
+  const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
+  const btcRet1m = btcAsset?.return1m ?? 0;
+
   const smartDCAResult = useMemo(() => {
     // FIX-DCA-01: no emitir señal de compra si el engine todavía no tiene datos.
     // El default "EXPANSION" original podía producir un BUY prematuro en el primer render.
