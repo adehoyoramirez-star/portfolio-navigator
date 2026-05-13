@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════
-// HENDE FUND. — Institutional Portfolio Dashboard (Olympus Engine V3+)
+// HENDE FUND — Institutional Portfolio Dashboard (Olympus Engine V3+)
 // AUDIT-CLEAN v5 — Fixes aplicados:
 //   FIX-01: Eliminado stub duplicado (líneas 1–58 originales)
 //   FIX-02: Todos los imports consolidados al inicio del módulo
@@ -287,6 +287,32 @@ const InstitutionalDashboard: React.FC = () => {
   // Ahora: defensiveLiquidity es el único colchón de oportunidad, gestionado 100% manual.
   // transferAmount: importe que el usuario quiere mover de cashReserve → defensiveLiquidity
   const [transferAmount, setTransferAmount] = useState<number>(0);
+
+  // MEJORA-9: Log de operaciones ejecutadas — persiste en localStorage
+  // Cada vez que el usuario confirma una operación real, se registra aquí.
+  interface TradeRecord {
+    id: string;
+    date: string;           // ISO timestamp
+    ticker: string;
+    name: string;
+    action: 'BUY' | 'SELL';
+    shares: number;
+    priceExecuted: number;  // precio real al que se ejecutó en el broker
+    totalCost: number;      // shares * priceExecuted
+    source: 'DCA' | 'REBALANCE' | 'MANUAL';
+    regime: string;
+    notes?: string;
+  }
+  const [tradeLog, setTradeLog] = useState<TradeRecord[]>(() => {
+    try { return JSON.parse(localStorage.getItem('olympus_trade_log') ?? '[]'); } catch { return []; }
+  });
+  // Modal de confirmación de operación ejecutada
+  const [pendingTrade, setPendingTrade] = useState<{
+    ticker: string; name: string; action: 'BUY' | 'SELL';
+    suggestedShares: number; suggestedPrice: number; source: 'DCA' | 'REBALANCE';
+  } | null>(null);
+  const [execPrice, setExecPrice] = useState<number>(0);
+  const [execShares, setExecShares] = useState<number>(0);
 
   const [btcOrdersEur, setBtcOrdersEur] = useState<number>(() => {
     try { return parseFloat(localStorage.getItem('olympus_btc_orders_eur') ?? '0') || 0; } catch { return 0; }
@@ -819,6 +845,14 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
 
   const engineResult = useMemo(() => {
     if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
+    // MEJORA-7: El WFO autocorrige los blend weights cuando detecta overfitting HIGH.
+    // Si overfittingRisk > 0.50 → aumenta HRP, reduce Kelly, para mayor robustez OOS.
+    // El motor documenta en meta si el blend fue autocorregido para transparencia.
+    const wfoOverfit = walkForwardResult?.overfittingRisk ?? 0;
+    const autoBlend = wfoOverfit > 0.50
+      ? { kelly: 0.20, markowitz: 0.25, hrp: 0.55 }   // más HRP, menos Kelly (WFO recomienda)
+      : undefined;                                       // undefined → el engine usa sus defaults
+
     return runOlympusEngine({
       assets: assetInputs,
       correlationMatrix: corrMatrix,
@@ -839,11 +873,13 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       liquidityGrowth,
       cewsHistory: effectiveCEWSHistory,
       adaptiveFactorWeights: kalmanWeights,
+      ...(autoBlend ? { blendWeights: autoBlend } : {}),
     });
   // FIX-DCC-01: dynamicCovMatrix añadido a deps para que el engine reaccione
   // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
   // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovMatrix, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter]);
+  // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovMatrix, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult]);
 
   useEffect(() => {
     if (engineResult?.regime && engineResult.regime !== lastRegime) {
@@ -1095,7 +1131,30 @@ soxRsiWeekly,
       elliottCurrentWave: elliottCurrentWave,
       eurUsdRate: 1.08,
     };
-    try { return analyzeBitcoinCycle(inputs); }
+    try {
+      const result = analyzeBitcoinCycle(inputs);
+      if (!result) return null;
+      // MEJORA-6: Elliott Wave penaliza el score cuando la dirección es bajista.
+      // Una Onda A o C confirmada DOWN reduce el score para evitar señales STRONG_BUY
+      // contradictorias con una estructura de ondas bajista.
+      const bearishWaves = ['A', 'C', '1', '3', '5']; // ondas con dirección potencialmente bajista
+      const elliottResult = result.indicators?.elliottWave;
+      if (elliottResult && elliottResult.direction === 'DOWN' && elliottResult.confidence !== 'LOW') {
+        const penalty = elliottResult.confidence === 'HIGH' ? 20 : 12;
+        const adjustedScore = Math.max(0, result.score - penalty);
+        const adjustedSignal = adjustedScore >= 75 ? 'STRONG_BUY'
+          : adjustedScore >= 60 ? 'BUY'
+          : adjustedScore >= 40 ? 'NEUTRAL'
+          : adjustedScore >= 25 ? 'CAUTION' : 'AVOID';
+        return {
+          ...result,
+          score: adjustedScore,
+          signal: adjustedSignal as typeof result.signal,
+          summary: `${result.summary} ⚠️ Elliott Wave ${elliottCurrentWave} DOWN: −${penalty}pts (score ajustado de ${result.score} → ${adjustedScore}).`,
+        };
+      }
+      return result;
+    }
     catch { return null; }
   }, [portfolio.assets, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
 
@@ -1194,6 +1253,59 @@ soxRsiWeekly,
     setDefensiveLiquidity(newDefensive);
     setCashReserve(newCash);
     try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
+  };
+
+  // MEJORA-9: Confirmar operación ejecutada en broker
+  // Actualiza shares, recalcula avgPrice y descuenta del cashReserve automáticamente.
+  const confirmTradeExecution = () => {
+    if (!pendingTrade || execShares <= 0 || execPrice <= 0) return;
+    const { ticker, name, action, source } = pendingTrade;
+    const totalCost = execShares * execPrice;
+
+    // 1. Actualizar portfolio (shares + avgPrice)
+    setPortfolio(prev => ({
+      ...prev,
+      assets: prev.assets.map(asset => {
+        if (asset.ticker !== ticker) return asset;
+        if (action === 'BUY') {
+          const newShares = asset.shares + execShares;
+          const newAvg = newShares > 0
+            ? (asset.shares * asset.avgPrice + execShares * execPrice) / newShares
+            : execPrice;
+          return { ...asset, shares: newShares, avgPrice: Math.round(newAvg * 100) / 100 };
+        } else {
+          const newShares = Math.max(0, asset.shares - execShares);
+          return { ...asset, shares: newShares }; // avgPrice no cambia al vender
+        }
+      }),
+    }));
+
+    // 2. Actualizar cashReserve
+    if (action === 'BUY') {
+      setCashReserve(prev => Math.max(0, Math.round((prev - totalCost) * 100) / 100));
+    } else {
+      setCashReserve(prev => Math.round((prev + totalCost) * 100) / 100);
+    }
+
+    // 3. Registrar en trade log
+    const record: TradeRecord = {
+      id: `${Date.now()}-${ticker}`,
+      date: new Date().toISOString(),
+      ticker, name, action,
+      shares: execShares,
+      priceExecuted: execPrice,
+      totalCost,
+      source,
+      regime: engineResult?.regime ?? 'UNKNOWN',
+    };
+    const newLog = [record, ...tradeLog];
+    setTradeLog(newLog);
+    try { localStorage.setItem('olympus_trade_log', JSON.stringify(newLog.slice(0, 200))); } catch {}
+
+    // 4. Cerrar modal
+    setPendingTrade(null);
+    setExecPrice(0);
+    setExecShares(0);
   };
 
   const rebalanceFinal = useMemo(() => {
@@ -2318,6 +2430,43 @@ soxRsiWeekly,
               <p><strong>Señal dominante:</strong> {engineResult.meta.dominantSignal}</p>
               <p><strong>Prob. crisis:</strong> {engineResult.masterRegime.crisisDetail.crisisProbability.toFixed(1)}%</p>
               <p><strong>p(exp/cont/crisis):</strong> {((engineResult.masterRegime.regimeProbs?.expansion ?? 0) * 100).toFixed(0)}% / {((engineResult.masterRegime.regimeProbs?.contraction ?? 0) * 100).toFixed(0)}% / {((engineResult.masterRegime.regimeProbs?.crisis ?? 0) * 100).toFixed(0)}%</p>
+              {/* MEJORA-3: Explicar override cuando el modelo probabilístico y el régimen final difieren */}
+              {(() => {
+                const probRegime = engineResult.masterRegime.regimeProbs;
+                const finalRegime = engineResult.regime;
+                const probModel = probRegime
+                  ? (probRegime.expansion > 0.5 ? 'EXPANSION' : probRegime.crisis > 0.3 ? 'CRISIS' : 'CONTRACTION')
+                  : null;
+                const hasOverride = probModel && probModel !== finalRegime && finalRegime !== 'ALL_CASH';
+                const wtiShock = engineResult.masterRegime.stressDetail?.wtiShock !== 'NONE';
+                const creditHigh = creditSpread > 3.5;
+                const overrideReasons = [
+                  wtiShock && `WTI geopolítico ×${engineResult.masterRegime.stressDetail?.wtiPenalty?.toFixed(2)}`,
+                  creditHigh && `Credit spread ${creditSpread.toFixed(2)}% (>3.5% umbral crisis)`,
+                  engineResult.meta.dominantSignal === 'STRESS_MODEL' && 'Stress model activo',
+                ].filter(Boolean).join(' + ');
+                return hasOverride ? (
+                  <div style={{ marginTop: '6px', padding: '7px 10px', background: '#1c1506', borderRadius: '6px', border: '1px solid #d97706' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#f59e0b', fontWeight: 700, marginBottom: '3px' }}>
+                      ⚠️ Override de régimen activo
+                    </div>
+                    <div style={{ fontSize: '0.70rem', color: '#d97706', lineHeight: 1.6 }}>
+                      Modelo probabilístico → <strong style={{ color: '#fbbf24' }}>{probModel}</strong>
+                      {' '}pero régimen final → <strong style={{ color: '#ef4444' }}>{finalRegime}</strong>
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: '#92400e', marginTop: '2px' }}>
+                      Motivo del override: {overrideReasons || 'modelo más conservador'}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: '#78350f', marginTop: '2px' }}>
+                      Regla: el modelo más conservador de los 3 determina el régimen final.
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '4px' }}>
+                    ⓘ Modelo probabilístico y régimen final coinciden. Sin override activo.
+                  </p>
+                );
+              })()}
               <p><strong>Penalización régimen:</strong> <span style={{ color: "#f59e0b" }}>×{engineResult.masterRegime.regimePenalty.toFixed(3)}</span></p>
               <p style={{ fontSize: "0.7rem", color: "#9ca3af", marginTop: "4px" }}>
                 <strong>p(exp/cont/crisis): {(engineResult.masterRegime.regimeProbs.expansion * 100).toFixed(0)}% / {(engineResult.masterRegime.regimeProbs.contraction * 100).toFixed(0)}% / {(engineResult.masterRegime.regimeProbs.crisis * 100).toFixed(0)}%</strong>
@@ -3266,6 +3415,35 @@ soxRsiWeekly,
                         color: s.priority === "HIGH" ? "#ef4444" : s.priority === "MEDIUM" ? "#f59e0b" : "#9ca3af",
                         padding: "0.1rem 0.4rem", borderRadius: 4, marginRight: "0.3rem",
                       }}>{s.priority}</span>
+                      {/* MEJORA-4: Cycle Top override label */}
+                      {s.cycleZone && s.action === "SELL" && (
+                        <span style={{ fontSize: "0.65rem", color: "#f97316", background: "#431407", padding: "0.1rem 0.4rem", borderRadius: 4 }}>
+                          🔴 Cycle Top override · {s.cycleZone}
+                        </span>
+                      )}
+                    </td>
+                    {/* MEJORA-9: Botón Ejecutado en rebalanceo */}
+                    <td style={{ padding: "0.5rem" }}>
+                      <button
+                        onClick={() => {
+                          const asset = portfolio.assets.find(a => a.ticker === s.ticker);
+                          setPendingTrade({
+                            ticker: s.ticker,
+                            name: s.ticker,
+                            action: s.action as 'BUY' | 'SELL',
+                            suggestedShares: s.action === 'SELL' ? s.sharesToSell : s.sharesToBuy,
+                            suggestedPrice: asset?.price ?? 0,
+                            source: 'REBALANCE',
+                          });
+                          setExecShares(s.action === 'SELL' ? s.sharesToSell : s.sharesToBuy);
+                          setExecPrice(asset?.price ?? 0);
+                        }}
+                        style={{
+                          background: "#1e3a5f", color: "#60a5fa", border: "1px solid #3b82f6",
+                          borderRadius: 4, padding: "0.2rem 0.5rem", cursor: "pointer",
+                          fontSize: "0.72rem", whiteSpace: "nowrap",
+                        }}
+                      >✓ Ejecutado</button>
                     </td>
                   </tr>
                 ))}
@@ -3383,6 +3561,27 @@ soxRsiWeekly,
                     <td style={{ padding: "0.5rem", color: "#6b7280", fontSize: "0.75rem" }}>
                       {a.skipped ? `Necesita €${a.pricePerShare.toFixed(0)} mín.` : a.reason.split("→")[1]?.trim() ?? a.reason}
                     </td>
+                    {/* MEJORA-9: Ejecutado en DCA */}
+                    <td style={{ padding: "0.5rem" }}>
+                      {!a.skipped && (
+                        <button
+                          onClick={() => {
+                            setPendingTrade({
+                              ticker: a.ticker, name: a.name, action: 'BUY',
+                              suggestedShares: a.shares, suggestedPrice: a.pricePerShare,
+                              source: 'DCA',
+                            });
+                            setExecShares(a.shares);
+                            setExecPrice(a.pricePerShare);
+                          }}
+                          style={{
+                            background: "#052e16", color: "#4ade80", border: "1px solid #16a34a",
+                            borderRadius: 4, padding: "0.2rem 0.5rem", cursor: "pointer",
+                            fontSize: "0.72rem", whiteSpace: "nowrap",
+                          }}
+                        >✓ Ejecutado</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -3499,6 +3698,143 @@ soxRsiWeekly,
           </table>
         </div>
       </div>
+
+      {/* MEJORA-9: Modal de confirmación de operación ejecutada */}
+      {pendingTrade && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+        }}>
+          <div style={{ background: '#1e293b', borderRadius: 12, padding: 28, width: 380, border: '1px solid #3b82f6' }}>
+            <h3 style={{ color: '#60a5fa', marginBottom: 16, fontSize: '1rem' }}>
+              ✓ Confirmar operación ejecutada en broker
+            </h3>
+            <div style={{ background: '#0f172a', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '0.85rem' }}>
+              <div style={{ color: '#94a3b8', marginBottom: 4 }}>Motor sugería:</div>
+              <div style={{ color: '#e2e8f0', fontWeight: 600 }}>
+                {pendingTrade.action} {pendingTrade.suggestedShares} × {pendingTrade.ticker} @ €{pendingTrade.suggestedPrice.toFixed(2)}
+              </div>
+              <div style={{ color: '#475569', fontSize: '0.72rem', marginTop: 2 }}>
+                Coste estimado: €{(pendingTrade.suggestedShares * pendingTrade.suggestedPrice).toFixed(2)}
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: '0.78rem', color: '#94a3b8', display: 'block', marginBottom: 4 }}>
+                Precio real de ejecución (€/acc)
+              </label>
+              <input type="number" value={execPrice} step="0.01" min={0}
+                onChange={e => setExecPrice(Number(e.target.value))}
+                style={{ width: '100%', boxSizing: 'border-box', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: 6, padding: '8px 12px', fontSize: '0.9rem' }}
+              />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: '0.78rem', color: '#94a3b8', display: 'block', marginBottom: 4 }}>
+                Acciones realmente {pendingTrade.action === 'BUY' ? 'compradas' : 'vendidas'}
+              </label>
+              <input type="number"
+                value={execShares}
+                step={pendingTrade.ticker === 'BTC-EUR' ? '0.000001' : '1'}
+                min={0}
+                onChange={e => setExecShares(Number(e.target.value))}
+                style={{ width: '100%', boxSizing: 'border-box', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: 6, padding: '8px 12px', fontSize: '0.9rem' }}
+              />
+            </div>
+            {execPrice > 0 && execShares > 0 && (
+              <div style={{ background: '#052e16', borderRadius: 6, padding: '8px 12px', marginBottom: 14, fontSize: '0.82rem' }}>
+                <div style={{ color: '#4ade80' }}>
+                  Total {pendingTrade.action === 'BUY' ? 'gastado' : 'recibido'}: <strong>€{(execPrice * execShares).toFixed(2)}</strong>
+                </div>
+                <div style={{ color: '#166534', fontSize: '0.72rem', marginTop: 2 }}>
+                  CashReserve {pendingTrade.action === 'BUY' ? 'bajará' : 'subirá'} a €{pendingTrade.action === 'BUY'
+                    ? Math.max(0, cashReserve - execPrice * execShares).toFixed(2)
+                    : (cashReserve + execPrice * execShares).toFixed(2)}
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={confirmTradeExecution}
+                disabled={execPrice <= 0 || execShares <= 0}
+                style={{
+                  flex: 1, background: execPrice > 0 && execShares > 0 ? '#16a34a' : '#374151',
+                  color: 'white', border: 'none', borderRadius: 6, padding: '10px',
+                  cursor: execPrice > 0 && execShares > 0 ? 'pointer' : 'not-allowed',
+                  fontWeight: 700, fontSize: '0.85rem',
+                }}
+              >Confirmar y actualizar cartera</button>
+              <button
+                onClick={() => { setPendingTrade(null); setExecPrice(0); setExecShares(0); }}
+                style={{ background: '#374151', color: '#9ca3af', border: 'none', borderRadius: 6, padding: '10px 16px', cursor: 'pointer', fontSize: '0.85rem' }}
+              >Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MEJORA-9: Log de operaciones ejecutadas */}
+      {tradeLog.length > 0 && (
+        <div style={styles.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h2 style={{ margin: 0 }}>📒 Historial de Operaciones Ejecutadas</h2>
+            <button
+              onClick={() => {
+                const csv = ['Fecha,Ticker,Acción,Acciones,Precio,Total,Régimen,Fuente',
+                  ...tradeLog.map(t =>
+                    `${new Date(t.date).toLocaleDateString('es-ES')},${t.ticker},${t.action},${t.shares},${t.priceExecuted.toFixed(4)},${t.totalCost.toFixed(2)},${t.regime},${t.source}`
+                  )].join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `olympus_trades_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click(); URL.revokeObjectURL(url);
+              }}
+              style={{ background: '#1e3a5f', color: '#60a5fa', border: '1px solid #3b82f6', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: '0.78rem' }}
+            >⬇ Exportar CSV</button>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #374151', color: '#6b7280' }}>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Fecha</th>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Activo</th>
+                  <th style={{ textAlign: 'center', padding: '0.4rem 0.6rem' }}>Acción</th>
+                  <th style={{ textAlign: 'right', padding: '0.4rem 0.6rem' }}>Acciones</th>
+                  <th style={{ textAlign: 'right', padding: '0.4rem 0.6rem' }}>Precio ejec.</th>
+                  <th style={{ textAlign: 'right', padding: '0.4rem 0.6rem' }}>Total</th>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Régimen</th>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Fuente</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tradeLog.slice(0, 50).map(t => (
+                  <tr key={t.id} style={{ borderBottom: '1px solid #1f2937' }}>
+                    <td style={{ padding: '0.4rem 0.6rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                      {new Date(t.date).toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' })}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: '#e2e8f0' }}>{t.ticker}</td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>
+                      <span style={{ background: t.action === 'BUY' ? '#052e16' : '#7f1d1d', color: t.action === 'BUY' ? '#4ade80' : '#f87171', padding: '0.1rem 0.5rem', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700 }}>
+                        {t.action}
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', color: '#e2e8f0' }}>
+                      {t.ticker === 'BTC-EUR' ? t.shares.toFixed(6) : t.shares}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', color: '#94a3b8' }}>€{t.priceExecuted.toFixed(2)}</td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', fontWeight: 600, color: t.action === 'BUY' ? '#ef4444' : '#4ade80' }}>
+                      {t.action === 'BUY' ? '−' : '+'}€{t.totalCost.toFixed(2)}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.72rem', color: t.regime === 'EXPANSION' ? '#4ade80' : t.regime === 'CRISIS' ? '#ef4444' : '#f59e0b' }}>
+                      {t.regime}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.72rem', color: '#475569' }}>{t.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
