@@ -76,10 +76,16 @@ import {
   enforceClusterCap,
 } from "./regimeTacticalAllocation";
 
-// ── Blend weights (única fuente de verdad) ───────────────────────────────────
+// ── Blend weights (fuente de verdad dinámica) ───────────────────────────────────
 const BLEND_WEIGHTS = {
-  WITH_COV:    { BL: 0.20, HRP: 0.65, MIN_VAR: 0.15 },
-  WITHOUT_COV: { KELLY: 0.25, HRP: 0.75 },
+  WITH_COV: {
+    CONSERVATIVE: { BL: 0.20, HRP: 0.65, MIN_VAR: 0.15 },
+    AGGRESSIVE:   { BL: 0.40, HRP: 0.40, MIN_VAR: 0.20 },
+  },
+  WITHOUT_COV: {
+    CONSERVATIVE: { KELLY: 0.25, HRP: 0.75 },
+    AGGRESSIVE:   { KELLY: 0.40, HRP: 0.60 },
+  }
 } as const;
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
@@ -434,22 +440,25 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-  // ====== BLEND FINAL: BL×0.20 + HRP×0.65 + MinVar×0.15 ======
-  // FIX-V5-3: minimumVarianceWeights se llamaba DENTRO del map (N=7 veces).
-  // Para n=7: 7 × 500 iters × 49 ops = 171,500 operaciones por recálculo.
-  // CORRECCIÓN: llamar UNA SOLA VEZ antes del map → 500 × 49 = 24,500 ops (7× más rápido).
+  // ====== BLEND FINAL: Dinámico según Régimen ──────────────────────────────────
+  // Slicing de Blend: En EXPANSION somos más agresivos con las Views (BL)
+  const useAggressiveBlend = masterRegime.regime === 'EXPANSION';
+  const currentBlend = useAggressiveBlend
+    ? (hasRealCovMatrix ? BLEND_WEIGHTS.WITH_COV.AGGRESSIVE : BLEND_WEIGHTS.WITHOUT_COV.AGGRESSIVE)
+    : (hasRealCovMatrix ? BLEND_WEIGHTS.WITH_COV.CONSERVATIVE : BLEND_WEIGHTS.WITHOUT_COV.CONSERVATIVE);
+
   const minVarW = hasRealCovMatrix
     ? minimumVarianceWeights(input.covMatrix!, assets.length)
     : assets.map(() => 1 / assets.length);
 
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
-      const weights = input.blendWeights ?? BLEND_WEIGHTS.WITH_COV;
+      const weights = input.blendWeights ?? currentBlend;
       return blWeights[i]             * (weights.BL ?? weights.kelly ?? 0.20)
            + hrpWeights[i]            * (weights.HRP ?? weights.hrp ?? 0.65)
            + minVarW[i]               * (weights.MIN_VAR ?? weights.markowitz ?? 0.15);
     } else {
-      const weights = input.blendWeights ?? BLEND_WEIGHTS.WITHOUT_COV;
+      const weights = input.blendWeights ?? currentBlend;
       return kellyNorm[i].kellyNormalized * (weights.KELLY ?? weights.kelly ?? 0.25)
            + hrpWeights[i]               * (weights.HRP ?? weights.hrp ?? 0.75);
     }
@@ -505,21 +514,37 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   La exposición total (totalInvested) = volTarget × tailRisk, clamped a [0.05, 1.0].
   //   finalAllocation[i] = relativeWeight[i] × totalInvested
   //   La parte no invertida (1 - totalInvested) es cash implícito.
-  const totalInvested = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
+  const totalInvested_raw = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
 
-  // ── BTC CAP (aplicado sobre pesos relativos, antes de escalar por totalInvested) ──
-  // El cap se aplica sobre los pesos relativos para que el rebalanceo sea correcto.
+  // 🚀 ALPHA-BOOST: "The Perfect Storm"
+  // Si Régimen=EXPANSION, BTC=STRONG_BUY y Liquidez M2 > 0 → Forzamos exposición máxima.
+  const isAlphaMode = (
+    masterRegime.regime === 'EXPANSION' &&
+    btcCycle.signal === 'STRONG_BUY' &&
+    (input.liquidityGrowth ?? 0) > 0
+  );
+  const totalInvested = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
+
+  // ── BTC CAP (SISTEMA DINÁMICO) ──────────────────────────────────────────────────
+  // El cap se ajusta según el ciclo de BTC y la burbuja (MVRV).
+  const mvrv = input.btcOnChain?.mvrvRatio ?? 0;
+  let dynamicBtcCap = 0.20; // Default
+  if (btcCycle.signal === 'STRONG_BUY' && mvrv < 3.0) {
+    dynamicBtcCap = 0.35; // Permite correr el rally
+  } else if (mvrv > 3.5) {
+    dynamicBtcCap = 0.10; // Protección contra euforia
+  }
+
   const relativeWeightsAfterCap = [...relativeWeights];
-  const MAX_BTC_WEIGHT_V5 = 0.20;
   const btcIdx = relativeWeightsAfterCap.findIndex(
     (_, i) => {
       const name = assets[i].name.toLowerCase();
       return name.includes('btc') || name.includes('bitcoin');
     }
   );
-  if (btcIdx >= 0 && relativeWeightsAfterCap[btcIdx] > MAX_BTC_WEIGHT_V5) {
-    const excess    = relativeWeightsAfterCap[btcIdx] - MAX_BTC_WEIGHT_V5;
-    relativeWeightsAfterCap[btcIdx] = MAX_BTC_WEIGHT_V5;
+  if (btcIdx >= 0 && relativeWeightsAfterCap[btcIdx] > dynamicBtcCap) {
+    const excess    = relativeWeightsAfterCap[btcIdx] - dynamicBtcCap;
+    relativeWeightsAfterCap[btcIdx] = dynamicBtcCap;
     const otherTotal = relativeWeightsAfterCap.reduce((s, w, i) => i !== btcIdx ? s + w : s, 0);
     if (otherTotal > 0) {
       relativeWeightsAfterCap.forEach((_, i) => {
