@@ -846,10 +846,9 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   const engineResult = useMemo(() => {
     if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
     // MEJORA-7: El WFO autocorrige los blend weights cuando detecta overfitting HIGH.
-    // Si overfittingRisk > 0.50 → aumenta HRP, reduce Kelly, para mayor robustez OOS.
-    // El motor documenta en meta si el blend fue autocorregido para transparencia.
-    const wfoOverfit = walkForwardResult?.overfittingRisk ?? 0;
-    const autoBlend = wfoOverfit > 0.50
+    // Si overfittingRisk === HIGH → aumenta HRP, reduce Kelly, para mayor robustez OOS.
+    const wfoOverfit = walkForwardResult?.overfittingRisk;
+    const autoBlend = wfoOverfit === 'HIGH'
       ? { kelly: 0.20, markowitz: 0.25, hrp: 0.55 }   // más HRP, menos Kelly (WFO recomienda)
       : undefined;                                       // undefined → el engine usa sus defaults
 
@@ -1134,23 +1133,26 @@ soxRsiWeekly,
     try {
       const result = analyzeBitcoinCycle(inputs);
       if (!result) return null;
-      // MEJORA-6: Elliott Wave penaliza el score cuando la dirección es bajista.
-      // Una Onda A o C confirmada DOWN reduce el score para evitar señales STRONG_BUY
-      // contradictorias con una estructura de ondas bajista.
-      const bearishWaves = ['A', 'C', '1', '3', '5']; // ondas con dirección potencialmente bajista
-      const elliottResult = result.indicators?.elliottWave;
-      if (elliottResult && elliottResult.direction === 'DOWN' && elliottResult.confidence !== 'LOW') {
+      // MEJORA-6: Elliott Wave penaliza cycleScore cuando la dirección es bajista.
+      // Onda A/C DOWN confirmada → reduce el score para evitar STRONG_BUY contradictorio.
+      const elliottResult = result.elliottWave;
+      if (
+        elliottResult &&
+        elliottResult.currentWaveDirection === 'DOWN' &&
+        elliottResult.confidence !== 'LOW'
+      ) {
         const penalty = elliottResult.confidence === 'HIGH' ? 20 : 12;
-        const adjustedScore = Math.max(0, result.score - penalty);
-        const adjustedSignal = adjustedScore >= 75 ? 'STRONG_BUY'
+        const adjustedScore = Math.max(0, result.cycleScore - penalty);
+        const adjustedBias: BitcoinCycleOutput['actionBias'] =
+          adjustedScore >= 75 ? 'STRONG_BUY'
           : adjustedScore >= 60 ? 'BUY'
-          : adjustedScore >= 40 ? 'NEUTRAL'
-          : adjustedScore >= 25 ? 'CAUTION' : 'AVOID';
+          : adjustedScore >= 40 ? 'HOLD'
+          : adjustedScore >= 25 ? 'REDUCE' : 'SELL';
         return {
           ...result,
-          score: adjustedScore,
-          signal: adjustedSignal as typeof result.signal,
-          summary: `${result.summary} ⚠️ Elliott Wave ${elliottCurrentWave} DOWN: −${penalty}pts (score ajustado de ${result.score} → ${adjustedScore}).`,
+          cycleScore: adjustedScore,
+          actionBias: adjustedBias,
+          summary: `${result.summary} ⚠️ Elliott Wave ${elliottResult.currentWave} DOWN: −${penalty}pts (${result.cycleScore} → ${adjustedScore}).`,
         };
       }
       return result;
