@@ -51,6 +51,7 @@ export interface BacktestInput {
     vix: number[];
     yieldSpread: number[];
     creditSpread: number[];
+    m2Growth?: number[]; // Añadido para Alpha-Boost
   };
   lookbackDays?: number;
   rebalanceDays?: number;
@@ -211,7 +212,17 @@ function computeWindowCovAndCorr(
   return { covMatrix, corrMatrix };
 }
 
-// ── Estimación de volatilidad del portfolio ────────────────────────────
+// ── Blend weights (Dinámicos según Régimen) ────────────────────────────────────
+const BLEND_WEIGHTS = {
+  WITH_COV: {
+    CONSERVATIVE: { BL: 0.20, HRP: 0.65, MIN_VAR: 0.15 },
+    AGGRESSIVE:   { BL: 0.40, HRP: 0.40, MIN_VAR: 0.20 },
+  },
+  WITHOUT_COV: {
+    CONSERVATIVE: { KELLY: 0.25, HRP: 0.75 },
+    AGGRESSIVE:   { KELLY: 0.40, HRP: 0.60 },
+  }
+} as const;
 function estimatePortfolioVolatility(
   allocations: Record<string, number>,
   covMatrix: number[][]
@@ -259,7 +270,7 @@ function computeAllocationsWithRegime(
   backtestTickers: Record<string, string>,
   t: number,
   lookbackDays: number,
-  macro: { vix: number; yieldSpread: number; creditSpread: number },
+  macro: { vix: number; yieldSpread: number; creditSpread: number; m2Growth?: number },
   portfolioDrawdown: number,
   currentAllocations: Record<string, number> // para estimar vol del portfolio
 ): { allocations: Record<string, number>; regime: BacktestRegime; cash: number } {
@@ -332,10 +343,21 @@ function computeAllocationsWithRegime(
   });
   const blWeights = blResult.posteriorWeights;
 
-  // 8. Blend (BL×0.20 + HRP×0.65 + MinVar×0.15)
-  const blendWeights = ASSETS.map((_, i) =>
-    blWeights[i] * 0.20 + hrpWeights[i] * 0.65 + minVarW[i] * 0.15
-  );
+  // 8. Blend Dinámico (Slicing de Blend)
+  const useAggressiveBlend = regime === "EXPANSION";
+  const currentBlend = useAggressiveBlend
+    ? (covMatrix.length > 0 ? BLEND_WEIGHTS.WITH_COV.AGGRESSIVE : BLEND_WEIGHTS.WITHOUT_COV.AGGRESSIVE)
+    : (covMatrix.length > 0 ? BLEND_WEIGHTS.WITH_COV.CONSERVATIVE : BLEND_WEIGHTS.WITHOUT_COV.CONSERVATIVE);
+
+  const blendWeights = ASSETS.map((_, i) => {
+    if (covMatrix.length > 0) {
+      const b = currentBlend as any;
+      return blWeights[i] * (b.BL ?? 0.20) + hrpWeights[i] * (b.HRP ?? 0.65) + minVarW[i] * (b.MIN_VAR ?? 0.15);
+    } else {
+      const b = currentBlend as any;
+      return kellyNorm[i] * (b.KELLY ?? 0.25) + hrpWeights[i] * (b.HRP ?? 0.75);
+    }
+  });
   const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
   const blendNorm = blendWeights.map(w => w / totalBlend);
 
@@ -371,16 +393,53 @@ function computeAllocationsWithRegime(
     avgCorrelation: 0.5,
   });
 
-  // 13. Exposición total (fix V5-2)
-  const totalInvested = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
+  // 13. Exposición total con ALPHA-BOOST
+  const totalInvested_raw = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
 
-  // 14. Asignaciones finales (fracción del capital total)
+  // Alpha Mode Trigger: EXPANSION + BTC Momentum (Strong Buy) + Liquidez Positiva
+  const btcTicker = ASSETS.find(t => t.includes('BTC'));
+  const btcCloses = closesHistory[backtestTickers[btcTicker!]] ?? [];
+  const btcRet1m = btcCloses.length > 21 ? btcCloses[btcCloses.length - 1] / btcCloses[btcCloses.length - 21] - 1 : 0;
+  const isStrongBuy = btcRet1m > 0.10; // Proxy para STRONG_BUY
+
+  const isAlphaMode = (
+    regime === "EXPANSION" &&
+    isStrongBuy &&
+    (macro.m2Growth ?? 0) > 0
+  );
+  const totalInvested = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
+
+  // 14. BTC Dynamic Cap
+  const mvrvProxy = 1.5 + (btcRet1m * 2); // Proxy simple para MVRV en backtest
+  let dynamicBtcCap = 0.20;
+  if (isStrongBuy && mvrvProxy < 3.0) {
+    dynamicBtcCap = 0.35;
+  } else if (mvrvProxy > 3.5) {
+    dynamicBtcCap = 0.10;
+  }
+
+  const relativeWeightsAfterCap = [...relativeWeights];
+  const btcIdx = relativeWeightsAfterCap.findIndex((_, i) => ASSETS[i].includes('BTC'));
+  if (btcIdx >= 0 && relativeWeightsAfterCap[btcIdx] > dynamicBtcCap) {
+    const excess = relativeWeightsAfterCap[btcIdx] - dynamicBtcCap;
+    relativeWeightsAfterCap[btcIdx] = dynamicBtcCap;
+    const otherTotal = relativeWeightsAfterCap.reduce((s, w, i) => i !== btcIdx ? s + w : s, 0);
+    if (otherTotal > 0) {
+      relativeWeightsAfterCap.forEach((_, i) => {
+        if (i !== btcIdx) relativeWeightsAfterCap[i] += excess * (relativeWeightsAfterCap[i] / otherTotal);
+      });
+    }
+  }
+  const relCapTotal = relativeWeightsAfterCap.reduce((s, w) => s + w, 0) || 1;
+  relativeWeightsAfterCap.forEach((_, i) => { relativeWeightsAfterCap[i] /= relCapTotal; });
+
+  // 15. Asignaciones finales
   const finalAllocations: Record<string, number> = {};
   ASSETS.forEach((ticker, i) => {
-    finalAllocations[ticker] = relativeWeights[i] * totalInvested;
+    finalAllocations[ticker] = relativeWeightsAfterCap[i] * totalInvested;
   });
 
-  const cash = 1 - totalInvested;
+  const cash = 1 - (ASSETS.reduce((s, t) => s + finalAllocations[t], 0));
 
   return { allocations: finalAllocations, regime, cash };
 }
