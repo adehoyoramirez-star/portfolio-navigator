@@ -751,6 +751,8 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     0
   );
 
+  const availableCash = cashReserve;
+
   const corrMatrix = useMemo(() =>
     calculateCorrelationMatrix(portfolio.assets),
     [portfolio.assets]
@@ -830,7 +832,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   // updateKalmanFactorWeights se llama en el useEffect mensual (ver más abajo).
   const kalmanWeights = useMemo(() => getCurrentKalmanWeights(), [regimeChangeCounter]);
 
-  const dynamicCovMatrix = useMemo(() => {
+  const dynamicCovResult = useMemo(() => {
     if (!marketData?.closesHistory || !marketData?.covMatrix) return undefined;
     try {
       return getDynamicCovMatrix(
@@ -839,7 +841,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         marketData.covMatrix
       );
     } catch {
-      return marketData.covMatrix;
+      return { covMatrix: marketData.covMatrix, avgCorrelation: 0.3 };
     }
   }, [marketData?.closesHistory, marketData?.covMatrix]);
 
@@ -865,20 +867,28 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         btcVol,
         wtiOil,
       },
-      covMatrix: dynamicCovMatrix ?? marketData?.covMatrix,
+      covMatrix: dynamicCovResult?.covMatrix ?? marketData?.covMatrix,
       portfolioDrawdown,
       portfolioRealizedVol,
       erpValue,
       liquidityGrowth,
       cewsHistory: effectiveCEWSHistory,
       adaptiveFactorWeights: kalmanWeights,
-      ...(autoBlend ? { blendWeights: autoBlend } : {}),
+      btcOnChain: {
+        mvrvRatio,
+        puellMultiple,
+        rsiWeekly: btcRsiWeekly,
+      },
+      availableCash,
+      totalPortfolioValue,
+      avgCorrelation: dynamicCovResult?.avgCorrelation,
+      blendWeights: autoBlend,
     });
-  // FIX-DCC-01: dynamicCovMatrix añadido a deps para que el engine reaccione
+  // FIX-DCC-01: dynamicCovResult añadido a deps para que el engine reaccione
   // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
   // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
   // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovMatrix, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue]);
 
   useEffect(() => {
     if (engineResult?.regime && engineResult.regime !== lastRegime) {
@@ -1221,9 +1231,6 @@ soxRsiWeekly,
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
-  // CASH-REDESIGN-04: availableCash para el Rebalancer = cashReserve siempre.
-  // monthlyInjection ya no es cash real (es input de proyecciones), no se suma aquí.
-  const availableCash = cashReserve;
 
   // CASH-REDESIGN-05: eliminados los 3 useEffects de auto-acumulación.
   //   - defensiveLiquidityRef + useEffect que movía monthlyInjection → defensiveLiquidity en CRISIS

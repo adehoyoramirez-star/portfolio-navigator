@@ -210,6 +210,11 @@ export interface OlympusEngineInput {
   availableCash?: number;
   totalPortfolioValue?: number;
   avgCorrelation?: number;
+  blendWeights?: {
+    kelly: number;
+    markowitz: number;
+    hrp: number;
+  };
 }
 
 // ── ESCENARIOS PROBABILÍSTICOS ────────────────────────────────────────────────
@@ -439,12 +444,14 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
-      return blWeights[i]             * BLEND_WEIGHTS.WITH_COV.BL
-           + hrpWeights[i]            * BLEND_WEIGHTS.WITH_COV.HRP
-           + minVarW[i]               * BLEND_WEIGHTS.WITH_COV.MIN_VAR;
+      const weights = input.blendWeights ?? BLEND_WEIGHTS.WITH_COV;
+      return blWeights[i]             * (weights.BL ?? weights.kelly ?? 0.20)
+           + hrpWeights[i]            * (weights.HRP ?? weights.hrp ?? 0.65)
+           + minVarW[i]               * (weights.MIN_VAR ?? weights.markowitz ?? 0.15);
     } else {
-      return kellyNorm[i].kellyNormalized * BLEND_WEIGHTS.WITHOUT_COV.KELLY
-           + hrpWeights[i]               * BLEND_WEIGHTS.WITHOUT_COV.HRP;
+      const weights = input.blendWeights ?? BLEND_WEIGHTS.WITHOUT_COV;
+      return kellyNorm[i].kellyNormalized * (weights.KELLY ?? weights.kelly ?? 0.25)
+           + hrpWeights[i]               * (weights.HRP ?? weights.hrp ?? 0.75);
     }
   });
 

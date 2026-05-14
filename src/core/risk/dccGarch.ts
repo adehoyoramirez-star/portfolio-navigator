@@ -412,32 +412,33 @@ export function getDynamicCovMatrix(
   tickers: string[],
   closesHistory: Record<string, number[]>,
   staticCovMatrix: number[][]
-): number[][] {
+): { covMatrix: number[][], avgCorrelation: number } {
   const returnMatrix = tickers.map(ticker => {
     const closes = closesHistory[ticker] ?? [];
     if (closes.length < 2) return [0];
     const rets: number[] = [];
     for (let i = 1; i < closes.length; i++) {
-      // FIX: verificar también closes[i] > 0 para evitar retornos -100% por datos corruptos
       if (closes[i - 1] > 0 && closes[i] > 0) rets.push(closes[i] / closes[i - 1] - 1);
     }
     return rets;
   });
 
-  // Necesitamos al menos 60 observaciones para que DCC sea fiable
   const minObs = Math.min(...returnMatrix.map(r => r.length));
   if (minObs < 60) {
     console.warn('DCC-GARCH: datos insuficientes (< 60 días), usando covarianza estática');
-    return staticCovMatrix;
+    return { covMatrix: staticCovMatrix, avgCorrelation: 0.3 };
   }
 
   try {
     const dccOutput = runDCCGARCH(tickers, returnMatrix, staticCovMatrix);
     saveDCCState(dccOutput.garchStates, dccOutput.dccState);
-    return dccOutput.dynamicCovariance;
+    return {
+      covMatrix: dccOutput.dynamicCovariance,
+      avgCorrelation: dccOutput.avgCorrelation
+    };
   } catch (e) {
     console.warn('DCC-GARCH: error en el cálculo, fallback a covarianza estática:', e);
-    return staticCovMatrix;
+    return { covMatrix: staticCovMatrix, avgCorrelation: 0.3 };
   }
 }
 
