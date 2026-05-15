@@ -59,7 +59,7 @@ const DCA_CONFIG = {
   },
   // FIX-DCA-1: frecuencia por régimen (antes hardcodeado a monthly siempre)
   FREQUENCY: {
-    CRISIS:      { label: 'monthly',   days: 63 } as const,
+    CRISIS:      { label: 'monthly',   days: 30 } as const,
     CONTRACTION: { label: 'biweekly',  days: 14 } as const,
     EXPANSION:   { label: 'weekly',    days:  7 } as const,
   },
@@ -99,7 +99,7 @@ export function computeDCADecision(input: DCAEngineInput): DCAEngineOutput {
       boostMultiplier:       0,
       effectiveIntensity:    0,
       frequency:            'monthly',
-      frequencyDays:         63,
+      frequencyDays:         30,
       riskConstraintActive:  true,
       cashConstrained:       false,
       riskConstraintReason: `🚨 VENTA DE EMERGENCIA — vol ${((portfolioVolatility ?? 0) * 100).toFixed(0)}% > umbral ${(DCA_CONFIG.RISK_LIMITS.PANIC_VOLATILITY * 100).toFixed(0)}%`,
@@ -126,7 +126,7 @@ export function computeDCADecision(input: DCAEngineInput): DCAEngineOutput {
   const cashConstrained = availableCash < targetAmount && availableCash >= 0;
 
   // ── FRECUENCIA (FIX-DCA-1) ───────────────────────────────────────────────
-  // Antes: siempre 'monthly' / 63 días, ignorando el régimen.
+  // Antes: siempre 'monthly' / 30 días, ignorando el régimen.
   // Ahora: ajustado por régimen. CRISIS mensual (bajo riesgo DCA), EXPANSION semanal.
   const freqConfig = DCA_CONFIG.FREQUENCY[regime] ?? DCA_CONFIG.FREQUENCY.CONTRACTION;
 

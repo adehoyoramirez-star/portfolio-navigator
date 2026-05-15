@@ -43,7 +43,7 @@ export const DEFAULT_POSITIONS = {
   "PPFB.DE":  { shares: 4,        avgPrice: 69.39 },
   "URNU.DE":  { shares: 13,       avgPrice: 26.48 },
   "VVSM.DE":  { shares: 2,        avgPrice: 52.01 },
-  "XNAS.DE":  { shares: 6,        avgPrice: 61.67 },
+  "XNAS.DE":  { shares: 0,        avgPrice: 0 },
 };
 
 // ─── NOTA: IS3R.DE y IS3Q.DE — NO SON LO MISMO ────────────────────────────

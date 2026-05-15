@@ -69,11 +69,12 @@ import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 import { FACTOR_CONFIG } from "../config/engineConfig";
-// FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
+// P3: REGIME_TACTICAL_ALLOCATIONS re-importado para leer kellyCapOverride por régimen
 import {
   getTacticalWeights,
   applyTacticalConstraints,
   enforceClusterCap,
+  REGIME_TACTICAL_ALLOCATIONS,
 } from "./regimeTacticalAllocation";
 
 // ── Blend weights (fuente de verdad dinámica) ───────────────────────────────────
@@ -281,7 +282,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   const erpRaw        = input.erpValue ?? 0.02;
   const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
-  const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
+  // P2: verificar que covMatrix existe Y tiene dimensión n×n correcta
+  const n = assets.length;
+  const hasRealCovMatrix = !!(
+    input.covMatrix &&
+    input.covMatrix.length === n &&
+    input.covMatrix.every(row => row.length === n)
+  );
 
   // ====== CAPA 0: BTC CYCLE OVERLAY ======
   const btcCycleInput: BTCCycleInput = {
@@ -369,8 +376,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   // ====== CAPA 4: KELLY ======
   // coreSignalScore integra régimen + BTC on-chain + vol-risk como modulador global.
+  // P3: leer kellyCapOverride del régimen táctico activo (undefined = usa default de config)
+  const kellyCapOverride = REGIME_TACTICAL_ALLOCATIONS[masterRegime.regime]?.kellyCapOverride;
   const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, calibrated }) => {
-    const kelly   = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility });
+    const kelly   = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility, capOverride: kellyCapOverride });
     const isEquity = asset.earningsYield > 0;
     const erpAdj  = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0);
     const kellyAlloc = kelly.kellyFraction * corrPenalty * coreSignalScore * erpAdj;
