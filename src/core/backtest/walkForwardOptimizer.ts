@@ -18,7 +18,7 @@
 // Parámetros que se validan:
 //   - Peso del factor momentum (0.6 actual)
 //   - Peso del factor value (0.4 actual)
-//   - Umbral de Kelly cap (0.25 actual)
+//   - Umbral de Kelly cap (0.20 actual — reducido de 0.25 por walk-forward optimizer)
 //   - Blend Kelly/Markowitz/HRP (50/20/30 actual)
 //
 // Output: stability score [0-1] por parámetro + recomendación
@@ -264,7 +264,7 @@ function buildRecommendation(
   if (risk === "MEDIUM") {
     return `Robustez moderada (${(stability * 100).toFixed(0)}%). La ventana ${windows.indexOf(worstWindow) + 1} mostró divergencia IS/OOS. Considera reducir el peso del factor momentum ligeramente.`;
   }
-  return `Riesgo de overfitting detectado (${(stability * 100).toFixed(0)}%). Los parámetros actuales pueden estar demasiado ajustados al histórico reciente. Recomendación: aumentar blend de HRP, reducir Kelly cap a 0.20.`;
+  return `Riesgo de overfitting detectado (${(stability * 100).toFixed(0)}%). Los parámetros actuales pueden estar demasiado ajustados al histórico reciente. Blend autocorregido a HRP 55% / Kelly 20% / Markowitz 25%. Kelly cap ya en 0.20 (fix aplicado).`;
 }
 
 function insufficientDataResult(): WalkForwardResult {
