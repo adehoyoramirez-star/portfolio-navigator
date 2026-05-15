@@ -352,10 +352,10 @@ function computeAllocationsWithRegime(
   const blendWeights = ASSETS.map((_, i) => {
     if (covMatrix.length > 0) {
       const b = currentBlend as any;
-      return blWeights[i] * (b.BL ?? 0.20) + hrpWeights[i] * (b.HRP ?? 0.65) + minVarW[i] * (b.MIN_VAR ?? 0.15);
+      return blWeights[i] * b.BL + hrpWeights[i] * b.HRP + minVarW[i] * b.MIN_VAR;
     } else {
       const b = currentBlend as any;
-      return kellyNorm[i] * (b.KELLY ?? 0.25) + hrpWeights[i] * (b.HRP ?? 0.75);
+      return kellyNorm[i] * b.KELLY + hrpWeights[i] * b.HRP;
     }
   });
   const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
@@ -519,9 +519,14 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       currentRegime = result.regime;
       currentCash = result.cash;
 
-      // Costes de transacción basados en el cambio de pesos
-      const activeTickers = Object.values(currentAllocations).filter(w => w > 0.01).length;
-      const costThisRebalance = portfolioValue * txCostRate * activeTickers;
+      // Costes de transacción basados en el giro (turnover) de la cartera
+      let turnover = 0;
+      for (const ticker of ASSETS) {
+        const newWeight = currentAllocations[ticker] ?? 0;
+        const oldWeight = result.allocations[ticker] ?? 0;
+        turnover += Math.abs(newWeight - oldWeight);
+      }
+      const costThisRebalance = portfolioValue * txCostRate * turnover;
       portfolioValue -= costThisRebalance;
       totalTransactionCosts += costThisRebalance;
       rebalanceCount++;
