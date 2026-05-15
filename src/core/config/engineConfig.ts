@@ -138,10 +138,10 @@ export const SECTOR_RISK_BUDGET: Record<string, number> = {
 // ── FACTOR CALIBRATION (primas AQR) ───────────────────────────────────────
 export const FACTOR_CONFIG = {
   DEFAULT_WEIGHTS: {
-    momentum: 0.35,  // FIX: reducido de 0.40 — menos concentración en momentum
-    value:    0.25,
-    quality:  0.25,  // FIX: aumentado de 0.20 — quality es más estable en ciclo bajista
-    lowVol:   0.15,
+    momentum: 0.45,  // Elite: aumentado para capturar más prima de momentum
+    value:    0.30,  // Elite: aumentado para capturar prima de value
+    quality:  0.15,  // reducido para balancear
+    lowVol:   0.10,  // reducido para balancear
   },
 
   FACTOR_PREMIUMS: {

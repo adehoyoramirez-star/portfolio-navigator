@@ -4,7 +4,9 @@
       "Bash(rm:*)",
       "Bash(npm test:*)",
       "Bash(npm list *)",
-      "Bash(npx ts-node *)"
+      "Bash(npx ts-node *)",
+      "Bash(npx tsc *)",
+      "Bash(TS_NODE_PROJECT=tsconfig.json npx ts-node *)"
     ]
   }
 }

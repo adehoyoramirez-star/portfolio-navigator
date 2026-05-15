@@ -16,9 +16,16 @@
 //   } else if (portfolioVol > 0.25) {  ← duplicado (nunca ejecutaba el tercer branch)
 //     volatilityReduction = 0.20;
 //   Corregido: el tercer branch ahora comprueba portfolioVol > 0.22.
+//
+// FIX-IMPORT-PATH:
+//   tailRisk.ts está en src/core/risk/
+//   engineConfig.ts está en src/core/config/
+//   → subir UN nivel (risk → core) + entrar en config = ../config/
+//   ANTES (INCORRECTO): "../../config/engineConfig.ts"  (subía a src/)
+//   AHORA (CORRECTO):   "../config/engineConfig.ts"     (llega a src/core/config/)
 // ===============================================
 
-import { TAIL_RISK_CONFIG } from "@/core/config/engineConfig";
+import { TAIL_RISK_CONFIG } from "../config/engineConfig";
 
 export interface TailRiskInput {
   drawdown: number;

@@ -15,9 +15,16 @@
 //   EXPANSION  (penalty=1.0): target efectivo = 20% × 1.0 = 20%
 //   CONTRACTION(penalty=0.58): target efectivo = 20% × 0.73 = 14.6%
 //   CRISIS     (penalty=0.40): target efectivo = 20% × 0.60 = 12%
+//
+// FIX-IMPORT-PATH:
+//   volatilityTarget.ts está en src/core/risk/
+//   engineConfig.ts está en src/core/config/
+//   → subir UN nivel (risk → core) + entrar en config = ../config/
+//   ANTES (INCORRECTO): "../../../config/engineConfig.ts"  (subía a PAPA/)
+//   AHORA (CORRECTO):   "../config/engineConfig.ts"        (llega a src/core/config/)
 // ===============================================
 
-import { VOLATILITY_CONFIG } from "@/core/config/engineConfig";
+import { VOLATILITY_CONFIG } from "../config/engineConfig";
 
 export interface VolTargetInput {
   targetVol: number;

@@ -14,7 +14,7 @@
 // Sports Betting, and the Stock Market" — recomienda half-kelly para mercados reales
 // ===============================================
 
-import { KELLY_CONFIG } from "@/core/config/engineConfig";
+import { KELLY_CONFIG } from "../config/engineConfig";
 
 export interface KellyInput {
   expectedReturn: number; // retorno esperado normalizado (output de olympusV3)
