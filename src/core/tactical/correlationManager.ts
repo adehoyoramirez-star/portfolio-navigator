@@ -1,5 +1,6 @@
 // ============================================================
 // src/core/tactical/correlationManager.ts
+// VERSIÓN CORREGIDA — BUG CRÍTICO ARREGLADO
 // Control de correlación y concentración sectorial
 // Evita abrir 5 posiciones en tech pensando que diversificas
 // ============================================================
@@ -71,8 +72,20 @@ export function checkCorrelation(
   // 3. Límite por grupo sectorial
   const sectorGroup = SECTOR_GROUPS[opportunity.asset.sector] ?? 'OTHER';
   const maxSector   = MAX_PER_SECTOR_GROUP[sectorGroup] ?? DEFAULT_MAX;
+  
+  // 🔴 BUG FIX: Línea 74-77 
+  // ANTES (ROTO): const pg = SECTOR_GROUPS[opportunity.asset.sector] ?? 'OTHER';
+  //   → Siempre usa el sector del CANDIDATO, no de la posición abierta
+  //   → sectorCount = openPositions.length (siempre)
+  //   → Bloquea todas las nuevas posiciones después de MAX_PER_SECTOR
+  //
+  // AHORA (ARREGLADO): const pg = SECTOR_GROUPS[p.type] ?? 'OTHER';
+  //   → Usa el sector de CADA posición abierta
+  //   → sectorCount = número real de posiciones en ese sector
+  //   → Permite diversificación real
+  
   const sectorCount = openPositions.filter(p => {
-    const pg = SECTOR_GROUPS[opportunity.asset.sector] ?? 'OTHER';
+    const pg = SECTOR_GROUPS[p.type] ?? 'OTHER';  // ✅ FIX: p.type, no opportunity.asset.sector
     return pg === sectorGroup;
   }).length;
 

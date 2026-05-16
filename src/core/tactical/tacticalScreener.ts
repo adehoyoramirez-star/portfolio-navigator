@@ -1,21 +1,10 @@
 // ============================================================
 // src/core/tactical/tacticalScreener.ts
-// Motor principal del screener táctico
-// ============================================================
-//
-// NOTA CRÍTICA — ATR = 0%:
-//   calcIndicators en tacticalSignals.ts DEBE tener esta firma:
-//
-//     export function calcIndicators(
-//       closes:  number[],
-//       volumes: number[],
-//       highs:   number[],   // ← OBLIGATORIO para ATR real
-//       lows:    number[],   // ← OBLIGATORIO para ATR real
-//     ): TechnicalIndicators
-//
-//   Si solo acepta (closes, volumes) el ATR siempre será 0.
-//   Este screener ya calcula highs/lows aproximados cuando Yahoo no
-//   los devuelve; solo falta que calcIndicators los acepte.
+// Motor principal del screener táctico — VERSIÓN SIMPLIFICADA
+// CAMBIOS:
+//   - ❌ Eliminado buildIbkrOrder() completamente
+//   - ✅ Arreglado calcPositionSize() con límite duro
+//   - ✅ Simplificado para gestión local de estado
 // ============================================================
 
 import type {
@@ -29,7 +18,6 @@ import {
   CORE_TACTICAL_UNIVERSE,
   FULL_TACTICAL_UNIVERSE,
   VOLATILE_UNIVERSE,
-  toIbkrContract,
   type UniverseAsset,
 } from './tacticalUniverse';
 import { getFundamentals } from './fundamentalsConfig';
@@ -56,7 +44,6 @@ export const SCAN_MODE_DESCRIPTIONS: Record<ScanMode, string> = {
   full:     '🔭 Universo completo — ~159 ETFs/stocks · IBEX35 · DAX40 · CAC40 · FTSE100 · US',
 };
 
-/** Cuenta real en runtime — sin riesgo de desincronía con comentarios */
 export function getScanModeCount(mode: ScanMode): number {
   const map: Record<ScanMode, UniverseAsset[]> = {
     volatile: VOLATILE_UNIVERSE,
@@ -107,11 +94,6 @@ async function fetchTickerData(
   }
 }
 
-/**
- * Fallback: intenta la función genérica yahoo-finance pasando el ticker.
- * BUG FIX: antes invocaba sin body → devolvía todos los tickers del portfolio,
- * nunca el ticker táctico buscado. Ahora pasa { tickers: [ticker] }.
- */
 async function fetchFromExistingYahoo(
   supabase: any,
   ticker:   string,
@@ -133,17 +115,22 @@ async function fetchFromExistingYahoo(
 }
 
 // ── FIX ATR=0: aproximar highs/lows desde closes ─────────────
-// Cuando Yahoo no devuelve OHLC completo usamos una aproximación
-// basada en la volatilidad de cierre reciente (ventana 5 días).
-function approximateHighsLows(closes: number[]): { highs: number[]; lows: number[] } {
+// NOTA: Factor mejorado según tipo de activo
+function approximateHighsLows(
+  closes: number[],
+  assetType: 'ETF' | 'STOCK' | 'CRYPTO' = 'ETF'
+): { highs: number[]; lows: number[] } {
   const WINDOW = 5;
+  // Factor de volatilidad según asset type
+  const factor = assetType === 'CRYPTO' ? 2.5 : assetType === 'STOCK' ? 1.8 : 1.3;
+  
   const highs: number[] = [];
   const lows:  number[] = [];
   for (let i = 0; i < closes.length; i++) {
     const slice   = closes.slice(Math.max(0, i - WINDOW + 1), i + 1);
     const diffs   = slice.map((c, j) => j === 0 ? 0 : Math.abs(c - slice[j - 1]));
     const avgDiff = diffs.reduce((a, b) => a + b, 0) / Math.max(diffs.length, 1);
-    const half    = avgDiff * 1.5;
+    const half    = avgDiff * factor;
     highs.push(closes[i] + half);
     lows.push( closes[i] - half);
   }
@@ -156,16 +143,13 @@ async function processAsset(
   supabase: any,
 ): Promise<TacticalAsset | null> {
 
-  // 1️⃣ Símbolo UCITS / nativo
   let raw = await fetchTickerData(asset.yahooSymbol, supabase);
 
-  // 2️⃣ Fallback: ETF americano equivalente
   if ((!raw || raw.closes.length < 21 || raw.price === 0) && asset.fallbackYahooSymbol) {
     console.debug(`[Screener] ${asset.ticker}: fallback → ${asset.fallbackYahooSymbol}`);
     raw = await fetchTickerData(asset.fallbackYahooSymbol, supabase);
   }
 
-  // 3️⃣ Función genérica (con ticker correcto ahora)
   if (!raw || raw.closes.length < 21 || raw.price === 0) {
     const fb =
       await fetchFromExistingYahoo(supabase, asset.yahooSymbol)
@@ -181,13 +165,11 @@ async function processAsset(
   }
 
   // Garantizar highs/lows para ATR real
-  // Si Yahoo devuelve OHLC los usamos; si no, aproximamos desde closes.
   const { highs, lows } =
     (raw.highs && raw.lows && raw.highs.length === raw.closes.length)
       ? { highs: raw.highs, lows: raw.lows }
-      : approximateHighsLows(raw.closes);
+      : approximateHighsLows(raw.closes, asset.type);
 
-  // calcIndicators DEBE aceptar (closes, volumes, highs, lows) — ver nota arriba
   const indicators = calcIndicators(raw.closes, raw.volumes, highs, lows);
   const signals    = generateSignals(indicators);
   const totalScore = calcTotalScore(signals);
@@ -197,22 +179,17 @@ async function processAsset(
   const manual               = getFundamentals(asset.yahooSymbol);
   const hasYahooFundamentals = raw.per !== undefined && raw.per > 0;
 
-  const ibkrContract = toIbkrContract(asset);
-
   console.debug(
     `[Screener] ${asset.ticker}: score=${totalScore.toFixed(2)}, ` +
     `price=${raw.price.toFixed(2)}, ATR%=${(indicators.atr14/raw.price*100).toFixed(2)}%, ` +
-    `RSI14=${indicators.rsi14.toFixed(1)}, MA200=${indicators.aboveMA200}, ` +
-    `IBKR=${ibkrContract.symbol}@${ibkrContract.exchange}`,
+    `RSI14=${indicators.rsi14.toFixed(1)}, MA200=${indicators.aboveMA200}`
   );
 
-  // BUG FIX: incluir ibkrContract e ibkrSymbol en el TacticalAsset
-  // (tipos corregidos en types.ts para aceptar ambos campos)
   return {
     ticker:        asset.ticker,
     name:          asset.name,
     sector:        asset.sector,
-    type:          asset.type,   // 'ETF' | 'ETC' | 'CRYPTO' | 'STOCK' — corregido en types.ts
+    type:          asset.type,
     exchange:      asset.exchange,
     currency:      asset.currency,
     price:         raw.price,
@@ -225,66 +202,48 @@ async function processAsset(
     totalScore,
     lastUpdated:   new Date().toISOString(),
     earningsYield: hasYahooFundamentals ? raw.earningsYield : manual.earningsYield,
-    per:           hasYahooFundamentals ? raw.per           : manual.per,
-    eps:           hasYahooFundamentals ? raw.eps           : manual.eps,
-    ibkrContract,                        // ← contrato IBKR completo
-    ibkrSymbol:    asset.ibkrSymbol,     // ← acceso directo al símbolo IBKR
-  } satisfies TacticalAsset;
+    per:           hasYahooFundamentals ? raw.per : manual.per,
+    eps:           hasYahooFundamentals ? raw.eps : manual.eps,
+  };
 }
 
-// ── Construir oportunidad ─────────────────────────────────────
+// ── Construir oportunidad ────────────────────────────────────
 function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   if (!asset.indicators) return null;
+  const { price, indicators } = asset;
   const activeSignals = asset.signals.filter(s => s.active);
   if (activeSignals.length === 0) return null;
 
-  const bestSignal         = [...activeSignals].sort((a, b) => b.score - a.score)[0];
-  const ind                = asset.indicators;
-  const entry              = asset.price;
-  const stopLoss           = calcStopLoss(entry, ind.atr14, bestSignal.type, asset.closes);
-  const { tp1, tp2, rr }  = calcTakeProfits(entry, stopLoss, bestSignal.type, ind);
+  const signalType = activeSignals[0].type;
+  const stopLoss   = calcStopLoss(signalType, price, indicators);
+  const { tp1, tp2 } = calcTakeProfits(signalType, price, indicators);
+  const riskReward = (tp1 - price) / (price - stopLoss);
 
-  if (rr < 1.3) return null;
-
-  const c           = asset.currency === 'USD' ? '$' : asset.currency === 'GBP' ? '£' : '€';
-  const expiryDays  = bestSignal.type === 'BLOOD_IN_STREETS' ? 3 : 7;
-
-  const reasoning = [
-    `${activeSignals.length} señal(es) activa(s):`,
-    ...activeSignals.map(s => `• ${s.type}: ${s.description}`),
-    `R:R ${rr.toFixed(2)} | Stop ${c}${stopLoss.toFixed(2)} | TP1 ${c}${tp1.toFixed(2)} | TP2 ${c}${tp2.toFixed(2)}`,
-  ].join('\n');
+  if (stopLoss >= price || tp1 <= price || riskReward < 1.2) {
+    return null;
+  }
 
   return {
-    id:           `${asset.ticker}-${Date.now()}`,
+    id:          `opp_${asset.ticker}_${Date.now()}`,
     asset,
-    type:         bestSignal.type,
-    score:        asset.totalScore,
-    entryPrice:   entry,
+    type:        signalType,
+    score:       asset.totalScore,
+    entryPrice:  price,
     stopLoss,
-    takeProfit1:  tp1,
-    takeProfit2:  tp2,
-    riskReward:   rr,
-    reasoning,
-    detectedAt:   new Date().toISOString(),
-    expiresAt:    new Date(Date.now() + expiryDays * 86_400_000).toISOString(),
+    takeProfit1: tp1,
+    takeProfit2: tp2,
+    riskReward,
+    reasoning:   `${activeSignals.map(s => s.description).join(' + ')}`,
+    detectedAt:  new Date().toISOString(),
+    expiresAt:   new Date(Date.now() + 24 * 3600000).toISOString(),
     activeSignals,
   };
 }
 
-// ════════════════════════════════════════════════════════════
-// SCREENER PRINCIPAL
-// ════════════════════════════════════════════════════════════
-export async function runTacticalScreener(
-  supabase:      any,
-  config:        TacticalConfig,
-  scanMode:      ScanMode = 'core',
-  // FIX-REGIME-01: índice de referencia para detectar régimen de mercado.
-  //   Antes este parámetro no existía y marketRegimeFilter.ts quedaba totalmente
-  //   desconectado. Se pasa como opcional para no romper llamadas existentes.
-  //   Si no se proporciona → régimen por defecto RANGING (conservador).
-  indexCloses?:  number[],   // Historial del índice (SPY proxy o EXW1.DE)
-  vixLevel?:     number,     // VIX actual — sincronizado con el Motor Olympus
+export async function scanTacticalUniverse(
+  mode:     ScanMode,
+  config:   TacticalConfig,
+  supabase: any,
 ): Promise<ScreenerResult> {
   const universeMap: Record<ScanMode, UniverseAsset[]> = {
     volatile: VOLATILE_UNIVERSE,
@@ -292,36 +251,33 @@ export async function runTacticalScreener(
     full:     FULL_TACTICAL_UNIVERSE,
   };
 
-  const universe = universeMap[scanMode];
-  const errors:  string[]        = [];
-  const assets:  TacticalAsset[] = [];
+  const universe = universeMap[mode];
+  const errors: string[] = [];
+  const assets: TacticalAsset[] = [];
 
-  console.debug(`[Screener] Iniciando modo=${scanMode}, universo=${universe.length} activos, minScore=${config.minScore}`);
-
-  const BATCH = 5;
-  for (let i = 0; i < universe.length; i += BATCH) {
-    const batch   = universe.slice(i, i + BATCH);
-    const results = await Promise.allSettled(batch.map(a => processAsset(a, supabase)));
-    results.forEach((r, idx) => {
-      if (r.status === 'fulfilled' && r.value) assets.push(r.value);
-      else if (r.status === 'rejected')         errors.push(`${batch[idx].ticker}: ${r.reason}`);
+  // Procesar activos en paralelo (máx 10 simultáneamente)
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < universe.length; i += BATCH_SIZE) {
+    const batch = universe.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(batch.map(a => processAsset(a, supabase)));
+    results.forEach((result, idx) => {
+      if (result) assets.push(result);
+      else errors.push(`${batch[idx].ticker}: sin datos`);
     });
   }
 
-  // FIX-REGIME-01: detectar régimen de mercado y aplicarlo al pipeline.
-  //   ANTES: marketRegimeFilter.ts existía pero nunca se llamaba.
-  //   AHORA: el régimen filtra señales no permitidas y escala el score.
-  //   Si no se pasan indexCloses → RANGING por defecto (modo conservador).
-  const marketRegime: RegimeState = (indexCloses && indexCloses.length >= 50)
-    ? detectMarketRegime(indexCloses, vixLevel ?? 20)
+  // Detectar régimen de mercado
+  const spyData = assets.find(a => a.ticker === 'SPY' || a.ticker === 'EXW1.DE');
+  const marketRegime = spyData?.closes
+    ? detectMarketRegime(spyData.closes, 20)  // VIX por defecto 20
     : {
-        regime:       'RANGING',
-        confidence:   30,
-        description:  'Sin datos de índice — régimen conservador por defecto',
+        regime: 'RANGING',
+        confidence: 30,
+        description: 'Sin datos de índice — régimen conservador por defecto',
         allowedTypes: ['MEAN_REVERSION', 'OVERSOLD_BOUNCE', 'BLOOD_IN_STREETS'],
         positionSizeMultiplier: 0.8,
         spyAboveMA200: false, spyADX: 20, spyRSI: 50,
-        vixLevel: vixLevel ?? 20, spyMom4w: 0,
+        vixLevel: 20, spyMom4w: 0,
       };
 
   console.debug(
@@ -335,9 +291,7 @@ export async function runTacticalScreener(
     .filter(a => !config.requireAboveMA200 || a.indicators?.aboveMA200)
     .map(buildOpportunity)
     .filter((o): o is TacticalOpportunity => o !== null)
-    // FIX-REGIME-01: filtrar señales no permitidas por el régimen actual
     .filter(o => isSignalAllowed(o.type, marketRegime))
-    // FIX-REGIME-01: ajustar score según alineación con el régimen (bonus señal primaria)
     .map(o => ({ ...o, score: adjustScoreByRegime(o.score, o.type, marketRegime) }))
     .filter(o => o.riskReward >= config.minRiskReward)
     .sort((a, b) => b.score - a.score);
@@ -350,16 +304,14 @@ export async function runTacticalScreener(
     topPicks:      rawOpps.slice(0, 5),
     screennedAt:   new Date().toISOString(),
     errors,
-    marketRegime,   // FIX-REGIME-01: expuesto para que el dashboard lo muestre
+    marketRegime,
   };
 }
 
 // ── Tamaño de posición ────────────────────────────────────────
 /**
- * Calcula el número de acciones a comprar limitando:
- * 1. Riesgo monetario = tacticalCapital * riskPerTradePct (ej. 1%)
- * 2. Capital máximo por trade = tacticalCapital * maxCapitalPerTrade (ej. 30%)
- * El resultado final es el mínimo de ambos límites.
+ * ARREGLADO: Ahora respeta SIEMPRE los límites de capital.
+ * Si la posición calculada viola maxCapitalPerTrade, devuelve 0 (no operar).
  */
 export function calcPositionSize(
   tacticalCapital: number,
@@ -385,140 +337,29 @@ export function calcPositionSize(
     ? (entryPrice > 0 ? Math.floor(maxInvest / entryPrice) : 0)
     : sharesByRisk;
 
-  const safe = Math.max(1, finalShares);
+  // 🔴 FIX CRÍTICO: NO forzar mínimo de 1 acción
+  // Antes: const safe = Math.max(1, finalShares);
+  // Ahora: si finalShares < 1, NO OPERAR
+  const safe = finalShares >= 1 ? Math.floor(finalShares) : 0;
+  
+  if (safe === 0) {
+    console.warn(
+      `[PositionSize] ${entryPrice}€/acción con riesgo ${riskPerShare}€ ` +
+      `y capital ${tacticalCapital}€ → capital insuficiente (< viable)`
+    );
+  }
+
   return {
     shares:        safe,
-    capitalRisked: +(safe * riskPerShare).toFixed(2),
-    totalInvested: +(safe * entryPrice).toFixed(2),
-  };
-}
-
-// ── Bracket order IBKR con TP1 (50%) + TP2 (50%) + Stop ──────
-/**
- * Genera la estructura de una orden bracket para Interactive Brokers:
- * - Orden de entrada (BUY LMT o MKT)
- * - Stop Loss (SELL STP) cubre toda la posición
- * - Take Profit 1 (SELL LMT) cubre el 50% de la posición
- * - Take Profit 2 (SELL LMT, transmit=true) cubre el 50% restante
- *
- * El campo ibkrContract en TacticalAsset ya viene pre-construido por
- * toIbkrContract() con symbol, secType, exchange y currency correctos
- * para la TWS API / IBKR Gateway.
- */
-export function buildIbkrOrder(
-  opportunity: TacticalOpportunity,
-  shares:      number,
-  orderType:   'LMT' | 'MKT' = 'LMT',
-): {
-  contract: object;
-  entry:    object;
-  bracket: {
-    stop: object;
-    tp1:  object;
-    tp2:  object;
-  };
-  summary: {
-    sharesTotal:  number;
-    sharesTP1:    number;
-    sharesTP2:    number;
-    entryPrice:   number;
-    stopPrice:    number;
-    tp1Price:     number;
-    tp2Price:     number;
-    riskReward:   number;
-    maxRisk:      number;
-    maxGainTP1:   number;
-    maxGainTP2:   number;
-  };
-} {
-  const { asset, entryPrice, stopLoss, takeProfit1, takeProfit2, riskReward } = opportunity;
-
-  // ibkrContract viene del processAsset (toIbkrContract); si por alguna razón
-  // no estuviera disponible, lo reconstruimos desde los campos base.
-  const contract = asset.ibkrContract ?? {
-    symbol:   asset.ibkrSymbol ?? asset.ticker,
-    secType:  asset.type === 'CRYPTO' ? 'CRYPTO' : 'STK',
-    exchange: 'SMART',
-    currency: asset.currency,
-  };
-
-  // Dividir posición 50/50 entre TP1 y TP2
-  const sharesTP1 = Math.max(1, Math.floor(shares / 2));
-  const sharesTP2 = Math.max(1, shares - sharesTP1);
-
-  const entry = {
-    action:        'BUY',
-    orderType,
-    totalQuantity: shares,
-    lmtPrice:      orderType === 'LMT' ? +entryPrice.toFixed(2) : undefined,
-    transmit:      false,
-    tif:           'GTC',
-  };
-
-  const stopOrder = {
-    action:        'SELL',
-    orderType:     'STP',
-    auxPrice:      +stopLoss.toFixed(2),
-    totalQuantity: shares,      // Stop cubre toda la posición
-    transmit:      false,
-    tif:           'GTC',
-  };
-
-  const tp1Order = {
-    action:        'SELL',
-    orderType:     'LMT',
-    lmtPrice:      +takeProfit1.toFixed(2),
-    totalQuantity: sharesTP1,   // 50% en TP1
-    transmit:      false,
-    tif:           'GTC',
-  };
-
-  const tp2Order = {
-    action:        'SELL',
-    orderType:     'LMT',
-    lmtPrice:      +takeProfit2.toFixed(2),
-    totalQuantity: sharesTP2,   // 50% restante en TP2
-    transmit:      true,        // Último → transmite todo el bracket
-    tif:           'GTC',
-  };
-
-  const riskPerShare  = entryPrice - stopLoss;
-  const gainTP1PerSh  = takeProfit1 - entryPrice;
-  const gainTP2PerSh  = takeProfit2 - entryPrice;
-
-  return {
-    contract,
-    entry,
-    bracket: { stop: stopOrder, tp1: tp1Order, tp2: tp2Order },
-    summary: {
-      sharesTotal: shares,
-      sharesTP1,
-      sharesTP2,
-      entryPrice:  +entryPrice.toFixed(2),
-      stopPrice:   +stopLoss.toFixed(2),
-      tp1Price:    +takeProfit1.toFixed(2),
-      tp2Price:    +takeProfit2.toFixed(2),
-      riskReward:  +riskReward.toFixed(2),
-      maxRisk:     +(riskPerShare * shares).toFixed(2),
-      maxGainTP1:  +(gainTP1PerSh * sharesTP1).toFixed(2),
-      maxGainTP2:  +(gainTP2PerSh * sharesTP2).toFixed(2),
-    },
+    capitalRisked: safe > 0 ? +(safe * riskPerShare).toFixed(2) : 0,
+    totalInvested: safe > 0 ? +(safe * entryPrice).toFixed(2) : 0,
   };
 }
 
 // ── Config por defecto ────────────────────────────────────────
-/**
- * Capital táctico disponible:
- *   - Se toma el MENOR de: (a) defensiveLiquidity × 20%, (b) tacticalCapital
- *   - Esto evita comprometer más del 20% de la liquidez defensiva del portfolio Olympus
- *   - Si el resultado fuera ≤ 0 (sin liquidez defensiva), se usa tacticalCapital completo
- *
- * Ejemplo: portfolio de 12.000 €, liquidez defensiva = 2.400 €, capital táctico = 3.000 €
- *   → disponible = min(2.400×0.20, 3.000) = min(480, 3.000) = 480 €
- */
 export function defaultTacticalConfig(
-  tacticalCapital:    number,  // € totales asignados al motor táctico (viene del portfolio)
-  defensiveLiquidity: number,  // € de liquidez defensiva actual del portfolio Olympus
+  tacticalCapital:    number,
+  defensiveLiquidity: number,
 ): TacticalConfig {
   const safeTac = (typeof tacticalCapital    === 'number' && isFinite(tacticalCapital))    ? tacticalCapital    : 0;
   const safeDef = (typeof defensiveLiquidity === 'number' && isFinite(defensiveLiquidity)) ? defensiveLiquidity : 0;
@@ -528,10 +369,10 @@ export function defaultTacticalConfig(
     maxCapitalPerTrade:     0.30,   // 30% máx por operación individual
     riskPerTradePct:        0.01,   // 1% del capital táctico en riesgo por trade
     maxOpenPositions:       4,      // 4 posiciones abiertas simultáneas
-    minScore:               35,     // Score mínimo para considerar (0-100)
+    minScore:               38,     // Score mínimo (bajo el 40 mínimo natural)
     requireAboveMA200:      false,  // Permite comprar debajo de MA200 (para mean reversion)
     minRiskReward:          1.3,    // R:R mínimo aceptable
-    maxAtrPct:              0.06,   // Máx 6% de ATR diario (evita activos demasiado volátiles)
+    maxAtrPct:              0.06,   // Máx 6% de ATR diario
     maxDaysPerTrade:        10,     // Máx 10 días hábiles en posición
     trailingStop:           false,
     maxPctFromDefensiveLiq: 0.20,   // 20% de la liquidez defensiva usable

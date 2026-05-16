@@ -1,6 +1,7 @@
 // ============================================================
 // src/core/tactical/types.ts
 // Tipos del Motor Táctico Olympus — Oportunidades de Mercado
+// VERSIÓN SIMPLIFICADA SIN IBKR
 // ============================================================
 
 export type OpportunityType =
@@ -62,20 +63,11 @@ export interface TacticalSignal {
   condition:   string;           // La condición técnica que la activa
 }
 
-// ── Contrato IBKR normalizado ────────────────────────────────
-export interface IbkrContract {
-  symbol:   string;   // Símbolo IBKR (ej: 'SAN', 'NVDA', 'BTC')
-  secType:  string;   // 'STK' | 'CRYPTO' | 'CFD'
-  exchange: string;   // 'IBIS' | 'AEB' | 'LSE' | 'SBF' | 'NYSE' | 'NASDAQ' | 'PAXOS' | 'BM'
-  currency: string;   // 'EUR' | 'USD' | 'GBP'
-}
-
 // ── Activo del universo táctico ──────────────────────────────
 export interface TacticalAsset {
   ticker:      string;
   name:        string;
   sector:      string;
-  // BUG FIX: era 'INDEX' — el universo usa 'STOCK'. Añadido 'STOCK', eliminado 'INDEX'.
   type:        'ETF' | 'ETC' | 'CRYPTO' | 'STOCK';
   exchange:    string;
   currency:    'EUR' | 'USD' | 'GBP';
@@ -94,11 +86,6 @@ export interface TacticalAsset {
   earningsYield?: number;        // E/P = 1/PER
   per?: number;                  // Price/Earnings
   eps?: number;                  // Earnings per share
-  // ── IBKR (añadidos) ─────────────────────────────────────
-  // ibkrContract: contrato listo para la TWS API / IBKR Gateway
-  ibkrContract?: IbkrContract;
-  // ibkrSymbol: símbolo IBKR corto (acceso directo sin desestructurar ibkrContract)
-  ibkrSymbol?:   string;
 }
 
 // ── Oportunidad identificada (candidata a operar) ────────────
@@ -149,13 +136,13 @@ export interface TacticalPosition {
   realizedPnLPct:   number | null;
   // Días en posición
   daysOpen:         number;
-  maxDaysAllowed:   number;      // Calculado dinámicamente por tipo de señal (no fijo 10d)
+  maxDaysAllowed:   number;      // Calculado dinámicamente por tipo de señal
   // Tiempo probabilístico (First Passage Time)
-  expectedDaysToTP1: number;     // E[T] días esperados hasta TP1 según ATR y tipo de señal
+  expectedDaysToTP1: number;     // E[T] días esperados hasta TP1 según ATR
   expectedDaysToTP2: number;     // E[T] días esperados hasta TP2
-  daysToBreakeven:   number;     // E[T] días para que el precio vuelva a entrada (si en rojo)
+  daysToBreakeven:   number;     // E[T] días para que el precio vuelva a entrada
   timingScore:       number;     // 0-100: qué % del tiempo esperado se ha consumido
-  // Horizonte óptimo dinámico (nuevo)
+  // Horizonte óptimo dinámico
   optimalDaysTP1:    number;     // Día de máxima probabilidad para TP1
   optimalDaysTP2:    number;     // Día de máxima probabilidad para TP2
   optimalProbTP1:    number;     // Probabilidad máxima en el horizonte óptimo
@@ -199,9 +186,6 @@ export interface TacticalEngineState {
 }
 
 // ── Resultado del screener ───────────────────────────────────
-// FIX-REGIME-01: añadido marketRegime para trazabilidad en el dashboard.
-//   Antes ScreenerResult no exponía el régimen detectado, por lo que el
-//   dashboard no podía mostrar por qué ciertas señales fueron filtradas.
 import type { RegimeState } from './marketRegimeFilter';
 
 export interface ScreenerResult {
