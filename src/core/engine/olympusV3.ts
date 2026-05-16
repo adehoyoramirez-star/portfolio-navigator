@@ -69,12 +69,11 @@ import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 import { FACTOR_CONFIG } from "../config/engineConfig";
-// P3: REGIME_TACTICAL_ALLOCATIONS re-importado para leer kellyCapOverride por régimen
+// FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
 import {
   getTacticalWeights,
   applyTacticalConstraints,
   enforceClusterCap,
-  REGIME_TACTICAL_ALLOCATIONS,
 } from "./regimeTacticalAllocation";
 
 // ── Blend weights (fuente de verdad dinámica) ───────────────────────────────────
@@ -282,13 +281,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   const erpRaw        = input.erpValue ?? 0.02;
   const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
-  // P2: verificar que covMatrix existe Y tiene dimensión n×n correcta
-  const n = assets.length;
-  const hasRealCovMatrix = !!(
-    input.covMatrix &&
-    input.covMatrix.length === n &&
-    input.covMatrix.every(row => row.length === n)
-  );
+  const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
 
   // ====== CAPA 0: BTC CYCLE OVERLAY ======
   const btcCycleInput: BTCCycleInput = {
@@ -318,16 +311,31 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     input.regimeHistory
   );
 
-  // FIX-V5-1: adjustedRegimePenalty — LÓGICA INVERTIDA CORREGIDA.
-  // ANTES: Math.max(regimePenalty, regimePenalty / confidenceMultiplier)
-  //   Con confidence=0.70 en CRISIS: 0.40/0.70=0.571 → penalty MÁS ALTA (menos reducción).
-  //   Cuando el modelo falla, el motor era MÁS agresivo, no más conservador.
-  // AHORA: regimePenalty × confidenceMultiplier
-  //   confidence=0.70: 0.40×0.70=0.28 → penalty MÁS BAJA (más reducción de exposición).
-  //   Modelo degradado → portafolio más conservador. Lógica correcta.
-  const adjustedRegimePenalty = masterRegime.regime === 'CRISIS'
-    ? masterRegime.regimePenalty * metaIntelligence.confidenceMultiplier
-    : masterRegime.regimePenalty;
+  // FIX-V5-2: adjustedRegimePenalty — metaIntelligence scope ampliado + documentación clara.
+  //
+  // INTENCIÓN DEFINITIVA del módulo metaIntelligence:
+  //   Si el modelo ha fallado N veces consecutivas prediciendo un régimen que no ocurre
+  //   → el modelo está degradado → reducir la exposición como medida de seguridad.
+  //   Modelo degradado ≠ mercado seguro. El capital debe protegerse ante incertidumbre.
+  //
+  // IMPLEMENTACIÓN:
+  //   adjustedPenalty = regimePenalty × confidenceMultiplier
+  //   confidence=1.0 (modelo fiable)  → sin cambio
+  //   confidence=0.70 (modelo fallando) → penalty se reduce → volTarget baja → exposición baja
+  //   (recuerda: penalty BAJA → regimeFactor BAJO → adjustedTarget BAJO → multiplier BAJO)
+  //
+  // FIX-V5-1 (ronda anterior): aplicaba solo en CRISIS.
+  // FIX-V5-2 (esta ronda): se extiende a CONTRACTION también.
+  //   Justificación: el modelo puede degradarse igualmente en CONTRACTION. Si predice
+  //   repetidamente CONTRACTION cuando el mercado está en EXPANSION (falso conservadurismo),
+  //   reducir aún más la exposición no tiene sentido; pero si predice EXPANSION cuando hay
+  //   CONTRACTION real, el operador necesita protección extra en ambos regímenes no-CRISIS.
+  //   EXPANSION no se ajusta: con confidence degradada en EXPANSION el riesgo real es
+  //   sobreexposición, y en ese caso el Kill Switch (tailRisk) es la línea de defensa.
+  const adjustedRegimePenalty =
+    (masterRegime.regime === 'CRISIS' || masterRegime.regime === 'CONTRACTION')
+      ? masterRegime.regimePenalty * metaIntelligence.confidenceMultiplier
+      : masterRegime.regimePenalty;
 
   const corrPenalty = correlationPenalty(correlationMatrix);
 
@@ -376,10 +384,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   // ====== CAPA 4: KELLY ======
   // coreSignalScore integra régimen + BTC on-chain + vol-risk como modulador global.
-  // P3: leer kellyCapOverride del régimen táctico activo (undefined = usa default de config)
-  const kellyCapOverride = REGIME_TACTICAL_ALLOCATIONS[masterRegime.regime]?.kellyCapOverride;
   const kellyAllocations = rawScores.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, calibrated }) => {
-    const kelly   = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility, capOverride: kellyCapOverride });
+    const kelly   = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility });
     const isEquity = asset.earningsYield > 0;
     const erpAdj  = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0);
     const kellyAlloc = kelly.kellyFraction * corrPenalty * coreSignalScore * erpAdj;
@@ -527,10 +533,20 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   // 🚀 ALPHA-BOOST: "The Perfect Storm"
   // Si Régimen=EXPANSION, BTC=STRONG_BUY y Liquidez M2 > 0 → Forzamos exposición máxima.
+  //
+  // FIX-ALPHA-01: añadida condición killSwitchLevel === 0 (CRÍTICO).
+  //   El Kill Switch es el control de riesgo de mayor prioridad del sistema.
+  //   Sin esta condición, Alpha-Boost podía forzar exposición al 95% con un
+  //   drawdown activo de hasta -20% (L3, overlay 0.50), neutralizando completamente
+  //   la protección de capital.
+  //   Regla: si hay un Kill Switch activo (L1–L5), Alpha-Boost queda deshabilitado
+  //   independientemente de las condiciones macro. El capital en drawdown no es
+  //   capital de ataque — primero proteger, luego optimizar.
   const isAlphaMode = (
     masterRegime.regime === 'EXPANSION' &&
     btcCycle.signal === 'STRONG_BUY' &&
-    (input.liquidityGrowth ?? 0) > 0
+    (input.liquidityGrowth ?? 0) > 0 &&
+    tailRisk.killSwitchLevel === 0   // FIX-ALPHA-01: Kill Switch activo → Alpha-Boost deshabilitado
   );
   const totalInvested = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
 

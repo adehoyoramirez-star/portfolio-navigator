@@ -2,6 +2,12 @@
 // ARCHIVO: src/core/alerts/regimeAlerts.ts
 // NIVEL 4 — Sistema de alertas de cambio de régimen
 // ===============================================
+// FIX-ALERT-01: el mensaje de Vol Target tenía hardcodeado "18%".
+//   Ahora lee VOLATILITY_CONFIG.DEFAULT_TARGET_VOL para que el mensaje
+//   refleje siempre el target real del motor (actualmente 20%).
+// ===============================================
+
+import { VOLATILITY_CONFIG } from "../config/engineConfig";
 
 export type AlertSeverity = "INFO" | "WARNING" | "CRITICAL";
 
@@ -116,7 +122,7 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
       timestamp: now,
       severity: "WARNING",
       title: `Vol Target: exposición reducida al ${(input.volTargetMultiplier * 100).toFixed(0)}%`,
-      message: `La volatilidad realizada del portfolio supera el objetivo del 18%. El motor escala exposición a ×${input.volTargetMultiplier.toFixed(2)}.`,
+      message: `La volatilidad realizada del portfolio supera el objetivo del ${(VOLATILITY_CONFIG.DEFAULT_TARGET_VOL * 100).toFixed(0)}%. El motor escala exposición a ×${input.volTargetMultiplier.toFixed(2)}.`,
       action: "No incrementar posiciones hasta que la volatilidad se normalice.",
       dismissible: true,
       regime: input.currentRegime,

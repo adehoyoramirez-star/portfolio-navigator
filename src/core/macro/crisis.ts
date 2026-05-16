@@ -20,7 +20,9 @@ export function detectCrisis(
   creditSpread: number
 ): CrisisResult {
   const vixComponent = vix;
-  // creditSpread y yieldSpread llegan en tanto por uno (0.04 = 4%)
+  // creditSpread y yieldSpread llegan en PORCENTAJE (ej: 2.82 = 2.82%, no 0.0282).
+  // Confirmado: los umbrales de globalStress usan >3, >5 — consistente con porcentaje.
+  // ADVERTENCIA: nunca normalizar a decimal antes de pasar a esta función.
   const creditComponent = creditSpread * 3;
   const curveComponent = Math.max(0, -yieldSpread) * 100;
 

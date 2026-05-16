@@ -33,6 +33,12 @@ import {
   type UniverseAsset,
 } from './tacticalUniverse';
 import { getFundamentals } from './fundamentalsConfig';
+import {
+  detectMarketRegime,
+  isSignalAllowed,
+  adjustScoreByRegime,
+  type RegimeState,
+} from './marketRegimeFilter';
 
 export { CORE_TACTICAL_UNIVERSE, FULL_TACTICAL_UNIVERSE, VOLATILE_UNIVERSE };
 
@@ -270,9 +276,15 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
 // SCREENER PRINCIPAL
 // ════════════════════════════════════════════════════════════
 export async function runTacticalScreener(
-  supabase:  any,
-  config:    TacticalConfig,
-  scanMode:  ScanMode = 'core',
+  supabase:      any,
+  config:        TacticalConfig,
+  scanMode:      ScanMode = 'core',
+  // FIX-REGIME-01: índice de referencia para detectar régimen de mercado.
+  //   Antes este parámetro no existía y marketRegimeFilter.ts quedaba totalmente
+  //   desconectado. Se pasa como opcional para no romper llamadas existentes.
+  //   Si no se proporciona → régimen por defecto RANGING (conservador).
+  indexCloses?:  number[],   // Historial del índice (SPY proxy o EXW1.DE)
+  vixLevel?:     number,     // VIX actual — sincronizado con el Motor Olympus
 ): Promise<ScreenerResult> {
   const universeMap: Record<ScanMode, UniverseAsset[]> = {
     volatile: VOLATILE_UNIVERSE,
@@ -296,15 +308,41 @@ export async function runTacticalScreener(
     });
   }
 
+  // FIX-REGIME-01: detectar régimen de mercado y aplicarlo al pipeline.
+  //   ANTES: marketRegimeFilter.ts existía pero nunca se llamaba.
+  //   AHORA: el régimen filtra señales no permitidas y escala el score.
+  //   Si no se pasan indexCloses → RANGING por defecto (modo conservador).
+  const marketRegime: RegimeState = (indexCloses && indexCloses.length >= 50)
+    ? detectMarketRegime(indexCloses, vixLevel ?? 20)
+    : {
+        regime:       'RANGING',
+        confidence:   30,
+        description:  'Sin datos de índice — régimen conservador por defecto',
+        allowedTypes: ['MEAN_REVERSION', 'OVERSOLD_BOUNCE', 'BLOOD_IN_STREETS'],
+        positionSizeMultiplier: 0.8,
+        spyAboveMA200: false, spyADX: 20, spyRSI: 50,
+        vixLevel: vixLevel ?? 20, spyMom4w: 0,
+      };
+
+  console.debug(
+    `[Screener] Régimen detectado: ${marketRegime.regime} (conf=${marketRegime.confidence}%) ` +
+    `· Tipos permitidos: [${marketRegime.allowedTypes.join(', ')}] ` +
+    `· SizeMult: ×${marketRegime.positionSizeMultiplier}`
+  );
+
   const rawOpps = assets
     .filter(a => a.totalScore >= config.minScore)
     .filter(a => !config.requireAboveMA200 || a.indicators?.aboveMA200)
     .map(buildOpportunity)
     .filter((o): o is TacticalOpportunity => o !== null)
+    // FIX-REGIME-01: filtrar señales no permitidas por el régimen actual
+    .filter(o => isSignalAllowed(o.type, marketRegime))
+    // FIX-REGIME-01: ajustar score según alineación con el régimen (bonus señal primaria)
+    .map(o => ({ ...o, score: adjustScoreByRegime(o.score, o.type, marketRegime) }))
     .filter(o => o.riskReward >= config.minRiskReward)
     .sort((a, b) => b.score - a.score);
 
-  console.debug(`[Screener] ${assets.length} analizados → ${rawOpps.length} oportunidades · ${errors.length} errores`);
+  console.debug(`[Screener] ${assets.length} analizados → ${rawOpps.length} oportunidades · ${marketRegime.regime} · ${errors.length} errores`);
 
   return {
     assets,
@@ -312,6 +350,7 @@ export async function runTacticalScreener(
     topPicks:      rawOpps.slice(0, 5),
     screennedAt:   new Date().toISOString(),
     errors,
+    marketRegime,   // FIX-REGIME-01: expuesto para que el dashboard lo muestre
   };
 }
 

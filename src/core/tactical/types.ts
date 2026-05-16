@@ -199,10 +199,16 @@ export interface TacticalEngineState {
 }
 
 // ── Resultado del screener ───────────────────────────────────
+// FIX-REGIME-01: añadido marketRegime para trazabilidad en el dashboard.
+//   Antes ScreenerResult no exponía el régimen detectado, por lo que el
+//   dashboard no podía mostrar por qué ciertas señales fueron filtradas.
+import type { RegimeState } from './marketRegimeFilter';
+
 export interface ScreenerResult {
   assets:        TacticalAsset[];
   opportunities: TacticalOpportunity[];
   topPicks:      TacticalOpportunity[];   // Top 5 por score
   screennedAt:   string;
   errors:        string[];
+  marketRegime?: RegimeState;             // Régimen detectado durante el scan
 }

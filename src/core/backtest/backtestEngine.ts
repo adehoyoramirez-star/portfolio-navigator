@@ -12,19 +12,19 @@
 //   - Efectivo implícito (la suma de pesos puede ser < 1)
 // ===============================================
 
-import { ASSETS } from "../../lib/constants.ts";
-import { calculateMomentum } from "../factors/momentum.ts";
-import { calculateValue, computeUniverseStats } from "../factors/value.ts";
-import { calculateQuality, computeQualityUniverseStats } from "../factors/quality.ts";
-import { calculateLowVol, computeLowVolUniverseStats } from "../factors/lowVolatility.ts";
-import { calibrateExpectedReturn } from "../factors/factorCalibration.ts";
-import { calculateKelly } from "../portfolio/kelly.ts";
-import { correlationPenalty } from "../portfolio/correlation.ts";
-import { computeHRP } from "../risk/hrp.ts";
-import { runBlackLitterman } from "../portfolio/blackLitterman.ts";
-import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from "../engine/regimeTacticalAllocation.ts";
-import { computeTailRiskOverlay } from "../risk/tailRisk.ts";
-import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget.ts";
+import { ASSETS } from "../../lib/constants";
+import { calculateMomentum } from "../factors/momentum";
+import { calculateValue, computeUniverseStats } from "../factors/value";
+import { calculateQuality, computeQualityUniverseStats } from "../factors/quality";
+import { calculateLowVol, computeLowVolUniverseStats } from "../factors/lowVolatility";
+import { calibrateExpectedReturn } from "../factors/factorCalibration";
+import { calculateKelly } from "../portfolio/kelly";
+import { correlationPenalty } from "../portfolio/correlation";
+import { computeHRP } from "../risk/hrp";
+import { runBlackLitterman } from "../portfolio/blackLitterman";
+import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from "../engine/regimeTacticalAllocation";
+import { computeTailRiskOverlay } from "../risk/tailRisk";
+import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',

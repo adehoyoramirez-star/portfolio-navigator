@@ -209,19 +209,25 @@ function signalMomentumBreakout(ind: TechnicalIndicators): TacticalSignal {
 
 function signalOversoldBounce(ind: TechnicalIndicators): TacticalSignal {
   const { rsi14, aboveMA200, ma50, price, zScore50 } = ind;
-  const active = rsi14 < 45 && (aboveMA200 || price > ma50 * 0.95);
+  // FIX-OVERSOLD-01: umbral bajado de 45 → 35.
+  //   RSI(14) < 45 activaba la señal en >50% del universo en cualquier momento
+  //   (cualquier activo lateral cumplía). RSI(14) < 35 corresponde a sobreventa
+  //   estadísticamente significativa (~percentil 15 histórico en ETFs UCITS).
+  //   Score base sube de 38 → 42: la señal es más rara y merece mayor peso.
+  //   Bonus recalibrado: +(35−RSI)×1.8 (antes +(45−RSI)×1.2 — proporcional al nuevo rango).
+  const active = rsi14 < 35 && (aboveMA200 || price > ma50 * 0.95);
   const score  = active
     ? Math.min(100,
-        38
-        + (45 - Math.min(45, rsi14)) * 1.2
+        42
+        + (35 - Math.min(35, rsi14)) * 1.8
         + (aboveMA200 ? 18 : 6)
         + (zScore50 < -1 ? 8 : 0))
     : 0;
   return mkSig('OVERSOLD_BOUNCE', active, score,
     active
-      ? `RSI(14)=${rsi14.toFixed(1)} · Sobre soporte — Rebote técnico probable`
-      : `RSI(14)=${rsi14.toFixed(1)} — Sin condición`,
-    'RSI(14) < 45 AND sobre MA200 o MA50-5%');
+      ? `RSI(14)=${rsi14.toFixed(1)} · Sobre soporte — Sobreventa real confirmada`
+      : `RSI(14)=${rsi14.toFixed(1)} — Sin condición (umbral: <35)`,
+    'RSI(14) < 35 AND sobre MA200 o MA50-5%');
 }
 
 function signalSectorRotation(ind: TechnicalIndicators): TacticalSignal {
