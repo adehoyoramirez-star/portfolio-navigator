@@ -378,3 +378,14 @@ export function defaultTacticalConfig(
     maxPctFromDefensiveLiq: 0.20,   // 20% de la liquidez defensiva usable
   };
 }
+
+// ── Wrapper para compatibilidad con dashboard ────────────────
+// Algunos componentes llaman runTacticalScreener, otros scanTacticalUniverse
+// Mantener ambas para compatibilidad
+export async function runTacticalScreener(
+  mode:     ScanMode,
+  config:   TacticalConfig,
+  supabase: any,
+): Promise<ScreenerResult> {
+  return scanTacticalUniverse(mode, config, supabase);
+}
