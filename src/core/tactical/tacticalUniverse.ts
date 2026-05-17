@@ -1,10 +1,15 @@
 // ============================================================
-// src/core/tactical/tacticalUniverse.ts — v2
+// src/core/tactical/tacticalUniverse.ts — v3
 // CORRECCIONES:
 //   - ✅ ADR/US fallbacks para TODOS los valores europeos
 //   - ✅ 9 fallbacks rotos arreglados (DAX, STOXX, IUSA, ZINC, IBCX, IGVT, EDOC)
 //   - ✅ RSX eliminado (VanEck Russia suspendido desde mar-2022)
 //   - ✅ BAS.DE eliminado (duplicado exacto de BASF.DE)
+//   - ✅ v3: Fallbacks añadidos a TODOS los activos sin fallbackYahooSymbol
+//     (CABK, AENA, ENG, RED, MAP, ACS, CLNX, COL, MRL, SAB, BKT, ACX, VIS,
+//      DHER.DE, NXT.L) usando ETF sectorial US líquido como proxy
+//   - ✅ v3: Fallbacks OTC thin sustituidos por ETFs sectoriales más líquidos
+//     (THLEF→ITA, BOUYE→XLI, NTGYY→XLU, IDEXY→XLY, ICAGY→JETS)
 // Universo táctico ~189 activos | XETRA · Euronext · LSE · NYSE · NASDAQ
 // Compatible con Interactive Brokers (ibkrExchange · ibkrSymbol · ibkrSecType)
 // ============================================================
@@ -112,23 +117,23 @@ export const IBEX35_STOCKS: UniverseAsset[] = [
   { ticker:'IBE.MC',   name:'Iberdrola',              sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'IBE.MC',   fallbackYahooSymbol:'IBDRY', ibkrExchange:'BM',  ibkrSymbol:'IBE',   ibkrSecType:'STK' },  // OTC ADR
   { ticker:'REP.MC',   name:'Repsol',                 sector:'Energy',        type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'REP.MC',   fallbackYahooSymbol:'REPYY', ibkrExchange:'BM',  ibkrSymbol:'REP',   ibkrSecType:'STK' },  // OTC ADR
   { ticker:'AMS.MC',   name:'Amadeus IT',             sector:'Technology',    type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'AMS.MC',   fallbackYahooSymbol:'AMADY', ibkrExchange:'BM',  ibkrSymbol:'AMS',   ibkrSecType:'STK' },  // OTC ADR
-  { ticker:'IAG.MC',   name:'IAG (Iberia)',            sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'IAG.MC',   fallbackYahooSymbol:'ICAGY', ibkrExchange:'BM',  ibkrSymbol:'IAG',   ibkrSecType:'STK' },  // OTC ADR
-  { ticker:'NTGY.MC',  name:'Naturgy',                sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'NTGY.MC',  fallbackYahooSymbol:'NTGYY', ibkrExchange:'BM',  ibkrSymbol:'NTGY',  ibkrSecType:'STK' },  // OTC ADR
-  { ticker:'ITX.MC',   name:'Inditex',                sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ITX.MC',   fallbackYahooSymbol:'IDEXY', ibkrExchange:'BM',  ibkrSymbol:'ITX',   ibkrSecType:'STK' },  // OTC ADR
-  // Sin ADR líquido — solo primario
-  { ticker:'CABK.MC',  name:'CaixaBank',              sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CABK.MC',                               ibkrExchange:'BM',  ibkrSymbol:'CABK',  ibkrSecType:'STK' },
-  { ticker:'AENA.MC',  name:'AENA',                   sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'AENA.MC',                               ibkrExchange:'BM',  ibkrSymbol:'AENA',  ibkrSecType:'STK' },
-  { ticker:'ENG.MC',   name:'Enagás',                 sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ENG.MC',                                ibkrExchange:'BM',  ibkrSymbol:'ENG',   ibkrSecType:'STK' },
-  { ticker:'RED.MC',   name:'Red Eléctrica',          sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'RED.MC',                                ibkrExchange:'BM',  ibkrSymbol:'RED',   ibkrSecType:'STK' },
-  { ticker:'MAP.MC',   name:'MAPFRE',                 sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'MAP.MC',                                ibkrExchange:'BM',  ibkrSymbol:'MAP',   ibkrSecType:'STK' },
-  { ticker:'ACS.MC',   name:'ACS',                    sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ACS.MC',                                ibkrExchange:'BM',  ibkrSymbol:'ACS',   ibkrSecType:'STK' },
-  { ticker:'CLNX.MC',  name:'Cellnex Telecom',        sector:'Technology',    type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CLNX.MC',                               ibkrExchange:'BM',  ibkrSymbol:'CLNX',  ibkrSecType:'STK' },
-  { ticker:'COL.MC',   name:'Inmobiliaria Colonial',  sector:'Real Estate',   type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'COL.MC',                                ibkrExchange:'BM',  ibkrSymbol:'COL',   ibkrSecType:'STK' },
-  { ticker:'MRL.MC',   name:'Merlin Properties',      sector:'Real Estate',   type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'MRL.MC',                                ibkrExchange:'BM',  ibkrSymbol:'MRL',   ibkrSecType:'STK' },
-  { ticker:'SAB.MC',   name:'Banco Sabadell',         sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'SAB.MC',                                ibkrExchange:'BM',  ibkrSymbol:'SAB',   ibkrSecType:'STK' },
-  { ticker:'BKT.MC',   name:'Bankinter',              sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'BKT.MC',                                ibkrExchange:'BM',  ibkrSymbol:'BKT',   ibkrSecType:'STK' },
-  { ticker:'ACX.MC',   name:'Acerinox',               sector:'Materials',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ACX.MC',                                ibkrExchange:'BM',  ibkrSymbol:'ACX',   ibkrSecType:'STK' },
-  { ticker:'VIS.MC',   name:'Viscofan',               sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'VIS.MC',                                ibkrExchange:'BM',  ibkrSymbol:'VIS',   ibkrSecType:'STK' },
+  { ticker:'IAG.MC',   name:'IAG (Iberia)',            sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'IAG.MC',   fallbackYahooSymbol:'JETS',  ibkrExchange:'BM',  ibkrSymbol:'IAG',   ibkrSecType:'STK' },  // ICAGY thin → proxy: JETS Airlines ETF
+  { ticker:'NTGY.MC',  name:'Naturgy',                sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'NTGY.MC',  fallbackYahooSymbol:'XLU',   ibkrExchange:'BM',  ibkrSymbol:'NTGY',  ibkrSecType:'STK' },  // NTGYY muy thin → proxy: Utilities ETF
+  { ticker:'ITX.MC',   name:'Inditex',                sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ITX.MC',   fallbackYahooSymbol:'XLY',   ibkrExchange:'BM',  ibkrSymbol:'ITX',   ibkrSecType:'STK' },  // IDEXY → XLY más líquido
+  // Sin ADR líquido — fallback a proxy sectorial US líquido
+  { ticker:'CABK.MC',  name:'CaixaBank',              sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CABK.MC',  fallbackYahooSymbol:'XLF',   ibkrExchange:'BM',  ibkrSymbol:'CABK',  ibkrSecType:'STK' },  // proxy: Financial ETF
+  { ticker:'AENA.MC',  name:'AENA',                   sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'AENA.MC',  fallbackYahooSymbol:'IFNNY', ibkrExchange:'BM',  ibkrSymbol:'AENA',  ibkrSecType:'STK' },  // proxy: infra/industrials
+  { ticker:'ENG.MC',   name:'Enagás',                 sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ENG.MC',   fallbackYahooSymbol:'XLU',   ibkrExchange:'BM',  ibkrSymbol:'ENG',   ibkrSecType:'STK' },  // proxy: Utilities ETF
+  { ticker:'RED.MC',   name:'Red Eléctrica',          sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'RED.MC',   fallbackYahooSymbol:'XLU',   ibkrExchange:'BM',  ibkrSymbol:'RED',   ibkrSecType:'STK' },  // proxy: Utilities ETF
+  { ticker:'MAP.MC',   name:'MAPFRE',                 sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'MAP.MC',   fallbackYahooSymbol:'XLF',   ibkrExchange:'BM',  ibkrSymbol:'MAP',   ibkrSecType:'STK' },  // proxy: Financial ETF
+  { ticker:'ACS.MC',   name:'ACS',                    sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ACS.MC',   fallbackYahooSymbol:'XLI',   ibkrExchange:'BM',  ibkrSymbol:'ACS',   ibkrSecType:'STK' },  // proxy: Industrials ETF
+  { ticker:'CLNX.MC',  name:'Cellnex Telecom',        sector:'Technology',    type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CLNX.MC',  fallbackYahooSymbol:'XLK',   ibkrExchange:'BM',  ibkrSymbol:'CLNX',  ibkrSecType:'STK' },  // proxy: Tech ETF
+  { ticker:'COL.MC',   name:'Inmobiliaria Colonial',  sector:'Real Estate',   type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'COL.MC',   fallbackYahooSymbol:'XLRE',  ibkrExchange:'BM',  ibkrSymbol:'COL',   ibkrSecType:'STK' },  // proxy: Real Estate ETF
+  { ticker:'MRL.MC',   name:'Merlin Properties',      sector:'Real Estate',   type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'MRL.MC',   fallbackYahooSymbol:'XLRE',  ibkrExchange:'BM',  ibkrSymbol:'MRL',   ibkrSecType:'STK' },  // proxy: Real Estate ETF
+  { ticker:'SAB.MC',   name:'Banco Sabadell',         sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'SAB.MC',   fallbackYahooSymbol:'XLF',   ibkrExchange:'BM',  ibkrSymbol:'SAB',   ibkrSecType:'STK' },  // proxy: Financial ETF
+  { ticker:'BKT.MC',   name:'Bankinter',              sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'BKT.MC',   fallbackYahooSymbol:'XLF',   ibkrExchange:'BM',  ibkrSymbol:'BKT',   ibkrSecType:'STK' },  // proxy: Financial ETF
+  { ticker:'ACX.MC',   name:'Acerinox',               sector:'Materials',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ACX.MC',   fallbackYahooSymbol:'XLB',   ibkrExchange:'BM',  ibkrSymbol:'ACX',   ibkrSecType:'STK' },  // proxy: Materials ETF
+  { ticker:'VIS.MC',   name:'Viscofan',               sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'VIS.MC',   fallbackYahooSymbol:'XLP',   ibkrExchange:'BM',  ibkrSymbol:'VIS',   ibkrSecType:'STK' },  // proxy: Consumer Staples ETF
 ];
 
 // ── DAX 40 — 19 acciones (BAS.DE eliminado: duplicado de BASF.DE)
@@ -151,7 +156,7 @@ export const DAX40_STOCKS: UniverseAsset[] = [
   { ticker:'HEN3.DE',  name:'Henkel AG',              sector:'Consumer',    type:'STOCK', exchange:'XETRA', currency:'EUR', yahooSymbol:'HEN3.DE',  fallbackYahooSymbol:'HENKY',  ibkrExchange:'IBIS', ibkrSymbol:'HEN3',  ibkrSecType:'STK' },  // OTC ADR
   { ticker:'MERCK.DE', name:'Merck KGaA',             sector:'Healthcare',  type:'STOCK', exchange:'XETRA', currency:'EUR', yahooSymbol:'MERCK.DE', fallbackYahooSymbol:'MKKGY',  ibkrExchange:'IBIS', ibkrSymbol:'MERCK', ibkrSecType:'STK' },  // OTC ADR
   { ticker:'IFX.DE',   name:'Infineon Technologies',  sector:'Technology',  type:'STOCK', exchange:'XETRA', currency:'EUR', yahooSymbol:'IFX.DE',   fallbackYahooSymbol:'IFNNY',  ibkrExchange:'IBIS', ibkrSymbol:'IFX',   ibkrSecType:'STK' },  // OTC ADR
-  { ticker:'DHER.DE',  name:'Delivery Hero',          sector:'Consumer',    type:'STOCK', exchange:'XETRA', currency:'EUR', yahooSymbol:'DHER.DE',                                ibkrExchange:'IBIS', ibkrSymbol:'DHER',  ibkrSecType:'STK' },  // Sin ADR US
+  { ticker:'DHER.DE',  name:'Delivery Hero',          sector:'Consumer',    type:'STOCK', exchange:'XETRA', currency:'EUR', yahooSymbol:'DHER.DE',  fallbackYahooSymbol:'XLY',   ibkrExchange:'IBIS', ibkrSymbol:'DHER',  ibkrSecType:'STK' },  // proxy: Consumer Discr ETF
 ];
 
 // ── CAC 40 — 15 acciones ──────────────────────────────────────
@@ -169,8 +174,8 @@ export const CAC40_STOCKS: UniverseAsset[] = [
   { ticker:'DSY.PA',   name:'Dassault Systèmes',      sector:'Technology',  type:'STOCK', exchange:'EURONEXT', currency:'EUR', yahooSymbol:'DSY.PA',   fallbackYahooSymbol:'DASTY',  ibkrExchange:'SBF',  ibkrSymbol:'DSY',   ibkrSecType:'STK' },  // OTC ADR
   { ticker:'VIE.PA',   name:'Veolia Environnement',   sector:'Utilities',   type:'STOCK', exchange:'EURONEXT', currency:'EUR', yahooSymbol:'VIE.PA',   fallbackYahooSymbol:'VEOEY',  ibkrExchange:'SBF',  ibkrSymbol:'VIE',   ibkrSecType:'STK' },  // OTC ADR
   { ticker:'CAP.PA',   name:'Capgemini SE',           sector:'Technology',  type:'STOCK', exchange:'EURONEXT', currency:'EUR', yahooSymbol:'CAP.PA',   fallbackYahooSymbol:'CGEMY',  ibkrExchange:'SBF',  ibkrSymbol:'CAP',   ibkrSecType:'STK' },  // OTC ADR
-  { ticker:'HO.PA',    name:'Thales SA',              sector:'Defense',     type:'STOCK', exchange:'EURONEXT', currency:'EUR', yahooSymbol:'HO.PA',    fallbackYahooSymbol:'THLEF',  ibkrExchange:'SBF',  ibkrSymbol:'HO',    ibkrSecType:'STK' },  // OTC (thin — aceptable)
-  { ticker:'EN.PA',    name:'Bouygues SA',            sector:'Infrastructure',type:'STOCK',exchange:'EURONEXT',currency:'EUR', yahooSymbol:'EN.PA',    fallbackYahooSymbol:'BOUYE',  ibkrExchange:'SBF',  ibkrSymbol:'EN',    ibkrSecType:'STK' },  // OTC (thin — aceptable)
+  { ticker:'HO.PA',    name:'Thales SA',              sector:'Defense',     type:'STOCK', exchange:'EURONEXT', currency:'EUR', yahooSymbol:'HO.PA',    fallbackYahooSymbol:'ITA',   ibkrExchange:'SBF',  ibkrSymbol:'HO',    ibkrSecType:'STK' },  // proxy: iShares Aerospace & Defense ETF (THLEF demasiado thin)
+  { ticker:'EN.PA',    name:'Bouygues SA',            sector:'Infrastructure',type:'STOCK',exchange:'EURONEXT',currency:'EUR', yahooSymbol:'EN.PA',    fallbackYahooSymbol:'XLI',   ibkrExchange:'SBF',  ibkrSymbol:'EN',    ibkrSecType:'STK' },  // proxy: Industrials ETF (BOUYE demasiado thin)
 ];
 
 // ── FTSE 100 — 15 acciones (todas con US listing/ADR) ────────
@@ -189,7 +194,7 @@ export const FTSE100_STOCKS: UniverseAsset[] = [
   { ticker:'RR.L',     name:'Rolls-Royce Holdings',  sector:'Defense',     type:'STOCK', exchange:'LSE',  currency:'GBP', yahooSymbol:'RR.L',     fallbackYahooSymbol:'RYCEY', ibkrExchange:'LSE',  ibkrSymbol:'RR',    ibkrSecType:'STK' },  // OTC ADR
   { ticker:'BT-A.L',   name:'BT Group',               sector:'Technology',  type:'STOCK', exchange:'LSE',  currency:'GBP', yahooSymbol:'BT-A.L',   fallbackYahooSymbol:'BT',    ibkrExchange:'LSE',  ibkrSymbol:'BT.A',  ibkrSecType:'STK' },  // NYSE ADR
   { ticker:'GLEN.L',   name:'Glencore PLC',           sector:'Materials',   type:'STOCK', exchange:'LSE',  currency:'GBP', yahooSymbol:'GLEN.L',   fallbackYahooSymbol:'GLNCY', ibkrExchange:'LSE',  ibkrSymbol:'GLEN',  ibkrSecType:'STK' },  // OTC ADR
-  { ticker:'NXT.L',    name:'Next PLC',               sector:'Consumer',    type:'STOCK', exchange:'LSE',  currency:'GBP', yahooSymbol:'NXT.L',                                 ibkrExchange:'LSE',  ibkrSymbol:'NXT',   ibkrSecType:'STK' },  // Sin US listing
+  { ticker:'NXT.L',    name:'Next PLC',               sector:'Consumer',    type:'STOCK', exchange:'LSE',  currency:'GBP', yahooSymbol:'NXT.L',    fallbackYahooSymbol:'XLY',   ibkrExchange:'LSE',  ibkrSymbol:'NXT',   ibkrSecType:'STK' },  // proxy: Consumer Discr ETF
 ];
 
 // ── ETFs Sectoriales US (iShares SPDR) — sin fallback necesario
