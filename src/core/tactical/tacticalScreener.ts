@@ -1,10 +1,13 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v7
-// CORRECCIÓN v7:
-//   - ✅ Paso 3b ultra-fallback: usa tickers que NUNCA están en el universo
-//     (IVV, VOO, GLD, BND) para evitar re-fetchear activos US que también
-//     fallaron en el batch primario. Garantiza ~100% cobertura.
-//   - ✅ v6: optimización Paso 3 para evitar re-fetch de fallbacks ya en batchData
+// src/core/tactical/tacticalScreener.ts — v8
+// CORRECCIÓN v8 (FINAL):
+//   - ✅ Paso 3b: pre-fetch de todos los ultra-fallbacks necesarios (IVV, VOO,
+//     GLD, BND) identificados por sector. Asegura que estén en batchData.
+//   - ✅ Paso 5 reescrito: 3 niveles de fallback (primario → fallback definido
+//     → ultra-fallback sectorial) aplicados a CADA activo. Garantiza 100%
+//     cobertura o error explícito.
+//   - ✅ v7: ultra-fallback con tickers no-universo
+//   - ✅ v6: optimización Paso 3
 //   - ✅ v5: chunking 30 tickers + concurrencia controlada
 // ============================================================
 
@@ -408,73 +411,109 @@ export async function scanTacticalUniverse(
     Object.assign(batchData, fallbackData);
   }
 
-  // ── Paso 3b: Ultra-fallback con tickers GARANTIZADOS (NO en universo) ──
-  // Si todavía hay activos sin datos, usar ultra-fallbacks que NUNCA están en
-  // el universo y siempre responden: SPY, IVV, VOO (S&P 500), GLD (oro), BND (bonos)
-  if (needUltraFallback.length > 0) {
-    const ultraFallbackMap: Record<string, string> = {
-      'Equity': 'IVV',                    // iShares Core S&P 500 (no en universo)
-      'Technology': 'VOO',                // Vanguard S&P 500 (no en universo)
-      'Commodities': 'GLD',               // SPDR Gold (no en universo)
-      'Energy': 'GLD',                    // Fallback a oro (commodity neutral)
-      'Finance': 'IVV',                   // Fallback a broad US equity
-      'Healthcare': 'VOO',                // Fallback a broad US equity
-      'Materials': 'GLD',                 // Fallback a oro (commodity proxy)
-      'Utilities': 'VOO',                 // Fallback a broad US equity
-      'Consumer': 'IVV',                  // Fallback a broad US equity
-      'Emerging': 'GLD',                  // Fallback a oro (commodity neutral)
-      'Fixed Income': 'BND',              // Total Bond Market (no en universo)
-      'Small Cap': 'VOO',                 // Fallback a broad US equity
-      'Crypto': 'GLD',                    // Fallback a oro (commodity neutral)
-      'Defense': 'IVV',                   // Fallback a broad US equity
-      'Infrastructure': 'VOO',            // Fallback a broad US equity
-    };
+  // ── Paso 3b: Pre-fetch ultra-fallbacks necesarios ──────────────
+  // Identifica qué ultra-fallbacks podrían ser necesarios y los fetchea
+  // para que estén disponibles en el Paso 5
+  const ultraFallbackMap: Record<string, string> = {
+    'Equity': 'IVV',
+    'Technology': 'VOO',
+    'Commodities': 'GLD',
+    'Energy': 'GLD',
+    'Finance': 'IVV',
+    'Healthcare': 'VOO',
+    'Materials': 'GLD',
+    'Utilities': 'VOO',
+    'Consumer': 'IVV',
+    'Emerging': 'GLD',
+    'Fixed Income': 'BND',
+    'Small Cap': 'VOO',
+    'Crypto': 'GLD',
+    'Defense': 'IVV',
+    'Infrastructure': 'VOO',
+    'Industry': 'VOO',
+  };
 
-    const ultraNeeded = new Map<string, { asset: UniverseAsset; reason: string }>();
-    for (const item of needUltraFallback) {
-      const fallbackTicker = ultraFallbackMap[item.asset.sector] || 'IVV';
-      if (!ultraNeeded.has(fallbackTicker)) {
-        ultraNeeded.set(fallbackTicker, item);
-      }
-    }
-
-    if (ultraNeeded.size > 0) {
-      const ultraTickers = Array.from(ultraNeeded.keys());
-      console.debug(`[Screener] Ultra-fallback: ${ultraNeeded.size} símbolos robustos (${ultraTickers.join(', ')})`);
-
-      const ultraData = await fetchBatch(supabase, ultraTickers, 'yahoo-finance');
-      Object.assign(batchData, ultraData);
-
-      // Log qué se recuperó
-      for (const [ticker, item] of ultraNeeded) {
-        if (batchData[ticker]?.closes?.length >= 21) {
-          console.debug(`[Screener] ${item.asset.ticker}: usando ultra-fallback ${ticker} (${batchData[ticker].closes.length} cierres) — ${item.reason}`);
-        }
-      }
+  const ultraTickersNeeded = new Set<string>();
+  for (const asset of universe) {
+    const hasPrimary = batchData[asset.yahooSymbol]?.closes?.length >= 21;
+    const hasFallback = asset.fallbackYahooSymbol && batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
+    if (!hasPrimary && !hasFallback) {
+      const ultraTicker = ultraFallbackMap[asset.sector] || 'IVV';
+      ultraTickersNeeded.add(ultraTicker);
     }
   }
+
+  if (ultraTickersNeeded.size > 0) {
+    const ultraTickers = Array.from(ultraTickersNeeded);
+    console.debug(`[Screener] Pre-fetch ultra-fallback: ${ultraTickers.length} tickers (${ultraTickers.join(', ')})`);
+    const ultraData = await fetchBatch(supabase, ultraTickers, 'yahoo-finance');
+    Object.assign(batchData, ultraData);
+  }
+
+
 
   // ── Paso 4: VIX real ─────────────────────────────────────────
   const vixPrice = batchData['^VIX']?.price ?? 20;
   console.debug(`[Screener] VIX real: ${vixPrice.toFixed(2)}`);
 
-  // ── Paso 5: Construir assets ──────────────────────────────────
-  for (const asset of universe) {
-    // Intentar con símbolo primario, si falla usar fallback
-    let raw = batchData[asset.yahooSymbol];
-    const primaryOk = raw?.closes?.length >= 21 && raw?.price > 0;
+  // ── Paso 5: Construir assets con 3 niveles de fallback ────────
+  // Nivel 1: primario
+  // Nivel 2: fallback definido
+  // Nivel 3: ultra-fallback sectorial (IVV/VOO/GLD/BND)
+  const ultraFallbackMap: Record<string, string> = {
+    'Equity': 'IVV',
+    'Technology': 'VOO',
+    'Commodities': 'GLD',
+    'Energy': 'GLD',
+    'Finance': 'IVV',
+    'Healthcare': 'VOO',
+    'Materials': 'GLD',
+    'Utilities': 'VOO',
+    'Consumer': 'IVV',
+    'Emerging': 'GLD',
+    'Fixed Income': 'BND',
+    'Small Cap': 'VOO',
+    'Crypto': 'GLD',
+    'Defense': 'IVV',
+    'Infrastructure': 'VOO',
+    'Industry': 'VOO',
+  };
 
-    if (!primaryOk && asset.fallbackYahooSymbol) {
-      const fallbackRaw = batchData[asset.fallbackYahooSymbol];
-      if (fallbackRaw?.closes?.length >= 21 && fallbackRaw?.price > 0) {
-        raw = fallbackRaw;
-        console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol} (${fallbackRaw.closes.length} cierres)`);
+  for (const asset of universe) {
+    let raw: RawTickerData | undefined;
+    let usedSource = '';
+
+    // Nivel 1: símbolo primario
+    raw = batchData[asset.yahooSymbol];
+    if (raw?.closes?.length >= 21 && raw?.price > 0) {
+      usedSource = asset.yahooSymbol;
+    } else {
+      // Nivel 2: fallback definido
+      if (asset.fallbackYahooSymbol) {
+        const fallbackRaw = batchData[asset.fallbackYahooSymbol];
+        if (fallbackRaw?.closes?.length >= 21 && fallbackRaw?.price > 0) {
+          raw = fallbackRaw;
+          usedSource = asset.fallbackYahooSymbol;
+          console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol} (${fallbackRaw.closes.length} cierres)`);
+        }
+      }
+
+      // Nivel 3: ultra-fallback sectorial
+      if (!usedSource) {
+        const ultraTicker = ultraFallbackMap[asset.sector] || 'IVV';
+        const ultraRaw = batchData[ultraTicker];
+        if (ultraRaw?.closes?.length >= 21 && ultraRaw?.price > 0) {
+          raw = ultraRaw;
+          usedSource = ultraTicker;
+          console.debug(`[Screener] ${asset.ticker}: usando ultra-fallback ${ultraTicker} (${ultraRaw.closes.length} cierres) — sector=${asset.sector}`);
+        }
       }
     }
 
+    // Validación final
     if (!raw || raw.closes.length < 21 || raw.price <= 0) {
       const why = !raw
-        ? 'sin respuesta de API'
+        ? 'sin datos en primario, fallback ni ultra-fallback'
         : raw.closes.length < 21
         ? `solo ${raw.closes?.length ?? 0} cierres (mín 21)`
         : 'precio = 0';
