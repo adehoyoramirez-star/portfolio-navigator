@@ -357,13 +357,20 @@ export async function scanTacticalUniverse(
   // IMPORTANTE: si el fallback ya está en batchData (p.ej. XLF es también un
   // activo del universo y ya respondió), no hace falta re-fetchearlo.
   const needFallback: string[] = [];
+  const needUltraFallback: Array<{ asset: UniverseAsset; reason: string }> = [];
+
   for (const asset of universe) {
     const hasPrimary = batchData[asset.yahooSymbol]?.closes?.length >= 21;
-    if (!hasPrimary && asset.fallbackYahooSymbol) {
-      // Solo añadir al retry si no tenemos ya datos válidos del fallback
-      const alreadyHave = batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
-      if (!alreadyHave) {
-        needFallback.push(asset.fallbackYahooSymbol);
+    if (!hasPrimary) {
+      if (asset.fallbackYahooSymbol) {
+        // Solo añadir al retry si no tenemos ya datos válidos del fallback
+        const alreadyHave = batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
+        if (!alreadyHave) {
+          needFallback.push(asset.fallbackYahooSymbol);
+        }
+      } else {
+        // Sin fallback primario definido → preparar para ultra-fallback
+        needUltraFallback.push({ asset, reason: 'sin fallback definido' });
       }
     }
   }
@@ -383,10 +390,65 @@ export async function scanTacticalUniverse(
       console.debug(`[Screener] Retry básico: ${stillMissing.length} símbolos`);
       const basic = await fetchBatch(supabase, stillMissing, 'yahoo-finance');
       Object.assign(fallbackData, basic);
+
+      // Registrar fallidos para posible ultra-fallback
+      const ultimateMissing = stillMissing.filter(s =>
+        !(fallbackData[s]?.closes?.length >= 21)
+      );
+      for (const ticker of ultimateMissing) {
+        const asset = universe.find(a => a.fallbackYahooSymbol === ticker);
+        if (asset) {
+          needUltraFallback.push({ asset, reason: `fallback ${ticker} falló` });
+        }
+      }
     }
 
     // Mergear fallbacks al batch principal
     Object.assign(batchData, fallbackData);
+  }
+
+  // ── Paso 3b: Ultra-fallback con SPY/QQQ/GLD ──────────────────
+  // Si todavía hay activos sin datos, usar ultra-fallbacks robustos por sector
+  if (needUltraFallback.length > 0) {
+    const ultraFallbackMap: Record<string, string> = {
+      'Equity': 'SPY',
+      'Technology': 'QQQ',
+      'Commodities': 'GLD',
+      'Energy': 'XLE',
+      'Finance': 'XLF',
+      'Healthcare': 'XLV',
+      'Materials': 'XLB',
+      'Utilities': 'XLU',
+      'Consumer': 'XLY',
+      'Emerging': 'EEM',
+      'Fixed Income': 'BND',
+      'Small Cap': 'IWM',
+      'Crypto': 'BTC-USD',
+      'Defense': 'ITA',
+    };
+
+    const ultraNeeded = new Map<string, { asset: UniverseAsset; reason: string }>();
+    for (const item of needUltraFallback) {
+      const fallbackTicker = ultraFallbackMap[item.asset.sector] || 'SPY';
+      if (!ultraNeeded.has(fallbackTicker)) {
+        ultraNeeded.set(fallbackTicker, item);
+      }
+    }
+
+    if (ultraNeeded.size > 0) {
+      const ultraTickers = Array.from(ultraNeeded.keys());
+      console.debug(`[Screener] Ultra-fallback: ${ultraNeeded.size} símbolos robustos (${ultraTickers.join(', ')})`);
+
+      const ultraData = await fetchBatch(supabase, ultraTickers, 'yahoo-finance');
+      Object.assign(batchData, ultraData);
+
+      // Log qué se recuperó
+      for (const [ticker, item] of ultraNeeded) {
+        if (batchData[ticker]?.closes?.length >= 21) {
+          console.debug(`[Screener] ${item.asset.ticker}: usando ultra-fallback ${ticker} (${batchData[ticker].closes.length} cierres) — ${item.reason}`);
+        }
+      }
+    }
   }
 
   // ── Paso 4: VIX real ─────────────────────────────────────────
