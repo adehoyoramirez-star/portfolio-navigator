@@ -1,15 +1,14 @@
 // ============================================================
-// src/core/tactical/tacticalUniverse.ts — v3
+// src/core/tactical/tacticalUniverse.ts — v4
 // CORRECCIONES:
-//   - ✅ ADR/US fallbacks para TODOS los valores europeos
-//   - ✅ 9 fallbacks rotos arreglados (DAX, STOXX, IUSA, ZINC, IBCX, IGVT, EDOC)
-//   - ✅ RSX eliminado (VanEck Russia suspendido desde mar-2022)
-//   - ✅ BAS.DE eliminado (duplicado exacto de BASF.DE)
-//   - ✅ v3: Fallbacks añadidos a TODOS los activos sin fallbackYahooSymbol
-//     (CABK, AENA, ENG, RED, MAP, ACS, CLNX, COL, MRL, SAB, BKT, ACX, VIS,
-//      DHER.DE, NXT.L) usando ETF sectorial US líquido como proxy
-//   - ✅ v3: Fallbacks OTC thin sustituidos por ETFs sectoriales más líquidos
-//     (THLEF→ITA, BOUYE→XLI, NTGYY→XLU, IDEXY→XLY, ICAGY→JETS)
+//   - ✅ v2: ADR/US fallbacks para todos los valores europeos, 9 fallbacks rotos arreglados
+//   - ✅ v2: RSX eliminado, BAS.DE eliminado (duplicado)
+//   - ✅ v3: Fallbacks añadidos a todos los activos sin fallbackYahooSymbol
+//   - ✅ v3: Fallbacks OTC thin sustituidos (THLEF→ITA, BOUYE→XLI, etc.)
+//   - ✅ v4: Fallbacks que coincidían con activos del propio universo (XLF, XLU,
+//     XLI, XLK, JETS) sustituidos por tickers líquidos fuera del universo
+//     (C, NEE, CAT, AMT, DAL, TGT, UAL) — evita el bug de "alreadyHave=false
+//     porque el propio activo US también falló en el batch primario"
 // Universo táctico ~189 activos | XETRA · Euronext · LSE · NYSE · NASDAQ
 // Compatible con Interactive Brokers (ibkrExchange · ibkrSymbol · ibkrSecType)
 // ============================================================
@@ -117,17 +116,17 @@ export const IBEX35_STOCKS: UniverseAsset[] = [
   { ticker:'IBE.MC',   name:'Iberdrola',              sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'IBE.MC',   fallbackYahooSymbol:'IBDRY', ibkrExchange:'BM',  ibkrSymbol:'IBE',   ibkrSecType:'STK' },  // OTC ADR
   { ticker:'REP.MC',   name:'Repsol',                 sector:'Energy',        type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'REP.MC',   fallbackYahooSymbol:'REPYY', ibkrExchange:'BM',  ibkrSymbol:'REP',   ibkrSecType:'STK' },  // OTC ADR
   { ticker:'AMS.MC',   name:'Amadeus IT',             sector:'Technology',    type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'AMS.MC',   fallbackYahooSymbol:'AMADY', ibkrExchange:'BM',  ibkrSymbol:'AMS',   ibkrSecType:'STK' },  // OTC ADR
-  { ticker:'IAG.MC',   name:'IAG (Iberia)',            sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'IAG.MC',   fallbackYahooSymbol:'JETS',  ibkrExchange:'BM',  ibkrSymbol:'IAG',   ibkrSecType:'STK' },  // ICAGY thin → proxy: JETS Airlines ETF
-  { ticker:'NTGY.MC',  name:'Naturgy',                sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'NTGY.MC',  fallbackYahooSymbol:'XLU',   ibkrExchange:'BM',  ibkrSymbol:'NTGY',  ibkrSecType:'STK' },  // NTGYY muy thin → proxy: Utilities ETF
-  { ticker:'ITX.MC',   name:'Inditex',                sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ITX.MC',   fallbackYahooSymbol:'XLY',   ibkrExchange:'BM',  ibkrSymbol:'ITX',   ibkrSecType:'STK' },  // IDEXY → XLY más líquido
-  // Sin ADR líquido — fallback a proxy sectorial US líquido
-  { ticker:'CABK.MC',  name:'CaixaBank',              sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CABK.MC',  fallbackYahooSymbol:'XLF',   ibkrExchange:'BM',  ibkrSymbol:'CABK',  ibkrSecType:'STK' },  // proxy: Financial ETF
-  { ticker:'AENA.MC',  name:'AENA',                   sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'AENA.MC',  fallbackYahooSymbol:'IFNNY', ibkrExchange:'BM',  ibkrSymbol:'AENA',  ibkrSecType:'STK' },  // proxy: infra/industrials
-  { ticker:'ENG.MC',   name:'Enagás',                 sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ENG.MC',   fallbackYahooSymbol:'XLU',   ibkrExchange:'BM',  ibkrSymbol:'ENG',   ibkrSecType:'STK' },  // proxy: Utilities ETF
-  { ticker:'RED.MC',   name:'Red Eléctrica',          sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'RED.MC',   fallbackYahooSymbol:'XLU',   ibkrExchange:'BM',  ibkrSymbol:'RED',   ibkrSecType:'STK' },  // proxy: Utilities ETF
-  { ticker:'MAP.MC',   name:'MAPFRE',                 sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'MAP.MC',   fallbackYahooSymbol:'XLF',   ibkrExchange:'BM',  ibkrSymbol:'MAP',   ibkrSecType:'STK' },  // proxy: Financial ETF
-  { ticker:'ACS.MC',   name:'ACS',                    sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ACS.MC',   fallbackYahooSymbol:'XLI',   ibkrExchange:'BM',  ibkrSymbol:'ACS',   ibkrSecType:'STK' },  // proxy: Industrials ETF
-  { ticker:'CLNX.MC',  name:'Cellnex Telecom',        sector:'Technology',    type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CLNX.MC',  fallbackYahooSymbol:'XLK',   ibkrExchange:'BM',  ibkrSymbol:'CLNX',  ibkrSecType:'STK' },  // proxy: Tech ETF
+  { ticker:'IAG.MC',   name:'IAG (Iberia)',            sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'IAG.MC',   fallbackYahooSymbol:'DAL',   ibkrExchange:'BM',  ibkrSymbol:'IAG',   ibkrSecType:'STK' },  // DAL (Delta Air Lines) — líquido, no en universo
+  { ticker:'NTGY.MC',  name:'Naturgy',                sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'NTGY.MC',  fallbackYahooSymbol:'NEE',   ibkrExchange:'BM',  ibkrSymbol:'NTGY',  ibkrSecType:'STK' },  // NEE (NextEra Energy) — líquido, no en universo
+  { ticker:'ITX.MC',   name:'Inditex',                sector:'Consumer',      type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ITX.MC',   fallbackYahooSymbol:'TGT',   ibkrExchange:'BM',  ibkrSymbol:'ITX',   ibkrSecType:'STK' },  // TGT (Target) — retail proxy, no en universo
+  // Sin ADR líquido — fallback a acciones US líquidas fuera del universo
+  { ticker:'CABK.MC',  name:'CaixaBank',              sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CABK.MC',  fallbackYahooSymbol:'C',     ibkrExchange:'BM',  ibkrSymbol:'CABK',  ibkrSecType:'STK' },  // Citigroup — finance proxy, no en universo
+  { ticker:'AENA.MC',  name:'AENA',                   sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'AENA.MC',  fallbackYahooSymbol:'UAL',   ibkrExchange:'BM',  ibkrSymbol:'AENA',  ibkrSecType:'STK' },  // United Airlines — infra/transport proxy, no en universo
+  { ticker:'ENG.MC',   name:'Enagás',                 sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ENG.MC',   fallbackYahooSymbol:'NEE',   ibkrExchange:'BM',  ibkrSymbol:'ENG',   ibkrSecType:'STK' },  // NEE — utilities proxy, no en universo
+  { ticker:'RED.MC',   name:'Red Eléctrica',          sector:'Utilities',     type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'RED.MC',   fallbackYahooSymbol:'NEE',   ibkrExchange:'BM',  ibkrSymbol:'RED',   ibkrSecType:'STK' },  // NEE — utilities proxy, no en universo
+  { ticker:'MAP.MC',   name:'MAPFRE',                 sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'MAP.MC',   fallbackYahooSymbol:'C',     ibkrExchange:'BM',  ibkrSymbol:'MAP',   ibkrSecType:'STK' },  // Citigroup — finance proxy, no en universo
+  { ticker:'ACS.MC',   name:'ACS',                    sector:'Infrastructure', type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'ACS.MC',   fallbackYahooSymbol:'CAT',   ibkrExchange:'BM',  ibkrSymbol:'ACS',   ibkrSecType:'STK' },  // Caterpillar — industrials proxy, no en universo
+  { ticker:'CLNX.MC',  name:'Cellnex Telecom',        sector:'Technology',    type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'CLNX.MC',  fallbackYahooSymbol:'AMT',   ibkrExchange:'BM',  ibkrSymbol:'CLNX',  ibkrSecType:'STK' },  // American Tower — cell tower proxy, no en universo
   { ticker:'COL.MC',   name:'Inmobiliaria Colonial',  sector:'Real Estate',   type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'COL.MC',   fallbackYahooSymbol:'XLRE',  ibkrExchange:'BM',  ibkrSymbol:'COL',   ibkrSecType:'STK' },  // proxy: Real Estate ETF
   { ticker:'MRL.MC',   name:'Merlin Properties',      sector:'Real Estate',   type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'MRL.MC',   fallbackYahooSymbol:'XLRE',  ibkrExchange:'BM',  ibkrSymbol:'MRL',   ibkrSecType:'STK' },  // proxy: Real Estate ETF
   { ticker:'SAB.MC',   name:'Banco Sabadell',         sector:'Finance',       type:'STOCK', exchange:'BME', currency:'EUR', yahooSymbol:'SAB.MC',   fallbackYahooSymbol:'XLF',   ibkrExchange:'BM',  ibkrSymbol:'SAB',   ibkrSecType:'STK' },  // proxy: Financial ETF

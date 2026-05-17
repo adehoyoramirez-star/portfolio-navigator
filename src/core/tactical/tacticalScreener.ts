@@ -1,16 +1,10 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v5
-// CORRECCIÓN CRÍTICA:
-//   - ✅ CHUNK BATCH FETCH: máx 30 tickers por llamada (evita timeout/reject)
-//   - ✅ CONCURRENCIA CONTROLADA: max 3 chunks simultáneos
-//   - ✅ RETRY PER-TICKER: fallback símbolo a símbolo si el chunk falla
-//   - ✅ DIAGNÓSTICO DETALLADO: log de qué falla y por qué
-//   - ✅ Resto de lógica intacta vs v4
-//
-// ROOT CAUSE del bug "171 sin datos":
-//   fetchBatch enviaba 194 tickers en UNA sola invocación a la edge function.
-//   Supabase edge functions tienen límite de ~60s y el payload >100 tickers
-//   devuelve 503/timeout silencioso → solo los ~20 US populares responden.
+// src/core/tactical/tacticalScreener.ts — v6
+// CORRECCIÓN v6:
+//   - ✅ Paso 3 optimizado: antes de añadir un fallback al retry, comprueba
+//     si ya existe en batchData con datos válidos (evita re-fetchear tickers
+//     US que son activos del universo y ya respondieron en el batch primario)
+//   - ✅ Resto de lógica intacta vs v5
 // ============================================================
 
 import type {
@@ -359,12 +353,18 @@ export async function scanTacticalUniverse(
   let batchData = await fetchBatch(supabase, allPrimaryAndVix, 'yahoo-finance-tactical');
 
   // ── Paso 3: Identificar fallidos y recuperar con fallback ───
-  // Para cada activo sin datos primarios, intentar con fallbackYahooSymbol
+  // Para cada activo sin datos primarios, intentar con fallbackYahooSymbol.
+  // IMPORTANTE: si el fallback ya está en batchData (p.ej. XLF es también un
+  // activo del universo y ya respondió), no hace falta re-fetchearlo.
   const needFallback: string[] = [];
   for (const asset of universe) {
     const hasPrimary = batchData[asset.yahooSymbol]?.closes?.length >= 21;
     if (!hasPrimary && asset.fallbackYahooSymbol) {
-      needFallback.push(asset.fallbackYahooSymbol);
+      // Solo añadir al retry si no tenemos ya datos válidos del fallback
+      const alreadyHave = batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
+      if (!alreadyHave) {
+        needFallback.push(asset.fallbackYahooSymbol);
+      }
     }
   }
 
