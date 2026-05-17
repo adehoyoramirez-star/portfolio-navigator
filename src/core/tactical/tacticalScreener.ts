@@ -1,10 +1,11 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v6
-// CORRECCIÓN v6:
-//   - ✅ Paso 3 optimizado: antes de añadir un fallback al retry, comprueba
-//     si ya existe en batchData con datos válidos (evita re-fetchear tickers
-//     US que son activos del universo y ya respondieron en el batch primario)
-//   - ✅ Resto de lógica intacta vs v5
+// src/core/tactical/tacticalScreener.ts — v7
+// CORRECCIÓN v7:
+//   - ✅ Paso 3b ultra-fallback: usa tickers que NUNCA están en el universo
+//     (IVV, VOO, GLD, BND) para evitar re-fetchear activos US que también
+//     fallaron en el batch primario. Garantiza ~100% cobertura.
+//   - ✅ v6: optimización Paso 3 para evitar re-fetch de fallbacks ya en batchData
+//   - ✅ v5: chunking 30 tickers + concurrencia controlada
 // ============================================================
 
 import type {
@@ -407,29 +408,31 @@ export async function scanTacticalUniverse(
     Object.assign(batchData, fallbackData);
   }
 
-  // ── Paso 3b: Ultra-fallback con SPY/QQQ/GLD ──────────────────
-  // Si todavía hay activos sin datos, usar ultra-fallbacks robustos por sector
+  // ── Paso 3b: Ultra-fallback con tickers GARANTIZADOS (NO en universo) ──
+  // Si todavía hay activos sin datos, usar ultra-fallbacks que NUNCA están en
+  // el universo y siempre responden: SPY, IVV, VOO (S&P 500), GLD (oro), BND (bonos)
   if (needUltraFallback.length > 0) {
     const ultraFallbackMap: Record<string, string> = {
-      'Equity': 'SPY',
-      'Technology': 'QQQ',
-      'Commodities': 'GLD',
-      'Energy': 'XLE',
-      'Finance': 'XLF',
-      'Healthcare': 'XLV',
-      'Materials': 'XLB',
-      'Utilities': 'XLU',
-      'Consumer': 'XLY',
-      'Emerging': 'EEM',
-      'Fixed Income': 'BND',
-      'Small Cap': 'IWM',
-      'Crypto': 'BTC-USD',
-      'Defense': 'ITA',
+      'Equity': 'IVV',                    // iShares Core S&P 500 (no en universo)
+      'Technology': 'VOO',                // Vanguard S&P 500 (no en universo)
+      'Commodities': 'GLD',               // SPDR Gold (no en universo)
+      'Energy': 'GLD',                    // Fallback a oro (commodity neutral)
+      'Finance': 'IVV',                   // Fallback a broad US equity
+      'Healthcare': 'VOO',                // Fallback a broad US equity
+      'Materials': 'GLD',                 // Fallback a oro (commodity proxy)
+      'Utilities': 'VOO',                 // Fallback a broad US equity
+      'Consumer': 'IVV',                  // Fallback a broad US equity
+      'Emerging': 'GLD',                  // Fallback a oro (commodity neutral)
+      'Fixed Income': 'BND',              // Total Bond Market (no en universo)
+      'Small Cap': 'VOO',                 // Fallback a broad US equity
+      'Crypto': 'GLD',                    // Fallback a oro (commodity neutral)
+      'Defense': 'IVV',                   // Fallback a broad US equity
+      'Infrastructure': 'VOO',            // Fallback a broad US equity
     };
 
     const ultraNeeded = new Map<string, { asset: UniverseAsset; reason: string }>();
     for (const item of needUltraFallback) {
-      const fallbackTicker = ultraFallbackMap[item.asset.sector] || 'SPY';
+      const fallbackTicker = ultraFallbackMap[item.asset.sector] || 'IVV';
       if (!ultraNeeded.has(fallbackTicker)) {
         ultraNeeded.set(fallbackTicker, item);
       }
