@@ -145,12 +145,12 @@ async function processAsset(
 
   let raw = await fetchTickerData(asset.yahooSymbol, supabase);
 
-  if ((!raw || raw.closes.length < 21 || raw.price === 0) && asset.fallbackYahooSymbol) {
+  if ((!raw || !raw.closes || raw.closes.length < 21 || raw.price === 0) && asset.fallbackYahooSymbol) {
     console.debug(`[Screener] ${asset.ticker}: fallback → ${asset.fallbackYahooSymbol}`);
     raw = await fetchTickerData(asset.fallbackYahooSymbol, supabase);
   }
 
-  if (!raw || raw.closes.length < 21 || raw.price === 0) {
+  if (!raw || !raw.closes || raw.closes.length < 21 || raw.price === 0) {
     const fb =
       await fetchFromExistingYahoo(supabase, asset.yahooSymbol)
       ?? (asset.fallbackYahooSymbol
@@ -159,7 +159,7 @@ async function processAsset(
     if (fb) raw = { ...fb };
   }
 
-  if (!raw || raw.closes.length < 21 || raw.price === 0) {
+  if (!raw || !raw.closes || raw.closes.length < 21 || raw.price === 0) {
     console.debug(`[Screener] Sin datos suficientes: ${asset.yahooSymbol}`);
     return null;
   }
@@ -170,11 +170,18 @@ async function processAsset(
       ? { highs: raw.highs, lows: raw.lows }
       : approximateHighsLows(raw.closes, asset.type);
 
-  const indicators = calcIndicators(raw.closes, raw.volumes, highs, lows);
-  const signals    = generateSignals(indicators);
-  const totalScore = calcTotalScore(signals);
-  const high52w    = Math.max(...raw.closes.slice(-252));
-  const low52w     = Math.min(...raw.closes.slice(-252));
+  let indicators, signals, totalScore;
+  try {
+    indicators = calcIndicators(raw.closes, raw.volumes ?? [], highs, lows);
+    signals    = generateSignals(indicators);
+    totalScore = calcTotalScore(signals);
+  } catch (err) {
+    console.warn(`[Screener] calcIndicators falló para ${asset.ticker}:`, err);
+    return null;
+  }
+
+  const high52w = raw.closes.length > 0 ? Math.max(...raw.closes.slice(-252)) : raw.price;
+  const low52w  = raw.closes.length > 0 ? Math.min(...raw.closes.slice(-252)) : raw.price;
 
   const manual               = getFundamentals(asset.yahooSymbol);
   const hasYahooFundamentals = raw.per !== undefined && raw.per > 0;
@@ -210,14 +217,20 @@ async function processAsset(
 // ── Construir oportunidad ────────────────────────────────────
 function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   if (!asset.indicators) return null;
+  if (!asset.closes || asset.closes.length < 5) return null;
+
   const { price, indicators } = asset;
   const activeSignals = asset.signals.filter(s => s.active);
   if (activeSignals.length === 0) return null;
 
   const signalType = activeSignals[0].type;
-  const stopLoss   = calcStopLoss(signalType, price, indicators);
-  const { tp1, tp2 } = calcTakeProfits(signalType, price, indicators);
-  const riskReward = (tp1 - price) / (price - stopLoss);
+
+  // FIX: firmas correctas:
+  //   calcStopLoss(entryPrice, atr, type, closes)
+  //   calcTakeProfits(entryPrice, stopLoss, type, ind)
+  const stopLoss      = calcStopLoss(price, indicators.atr14, signalType, asset.closes);
+  const { tp1, tp2 } = calcTakeProfits(price, stopLoss, signalType, indicators);
+  const riskReward    = stopLoss < price ? (tp1 - price) / (price - stopLoss) : 0;
 
   if (stopLoss >= price || tp1 <= price || riskReward < 1.2) {
     return null;
