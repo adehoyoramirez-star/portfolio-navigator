@@ -303,15 +303,25 @@ export default function TacticalDashboard() {
   const runScreener = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const result = await runTacticalScreener(supabase, state.config, scanMode);
+      // FIX: orden correcto (mode, config, supabase)
+      const result = await runTacticalScreener(scanMode, state.config, supabase);
+      // FIX: validar que result no sea undefined antes de acceder a sus propiedades
+      if (!result) {
+        setError('El screener no devolvió resultados');
+        return;
+      }
+      const opportunities = result.opportunities ?? [];
+      const errors        = result.errors        ?? [];
+      const screennedAt   = result.screennedAt   ?? new Date().toISOString();
       setState((prev: TacticalEngineState) => ({
         ...prev,
-        opportunities: result.opportunities,
-        lastScreened:  result.screennedAt,
+        opportunities,
+        lastScreened: screennedAt,
       }));
-      setLastRun(result.screennedAt);
-      if (result.errors.length > 0) setError(`Datos parciales (${result.errors.length} activos sin datos)`);
+      setLastRun(screennedAt);
+      if (errors.length > 0) setError(`Datos parciales (${errors.length} activos sin datos)`);
     } catch (e: any) {
+      console.error('[Screener Error]', e);
       setError(e?.message ?? 'Error en el screener');
     } finally {
       setLoading(false);
@@ -680,8 +690,8 @@ export default function TacticalDashboard() {
               <div style={{ width:`${Math.min(100,probTP1)}%`, height:'100%', background: probColor(probTP1), borderRadius:4 }} />
             </div>
             {(() => {
-              const showDays = Math.min(optTP1.probs.length, Math.max(15, optTP1.days + 5));
-              const displayProbs = optTP1.probs.slice(0, showDays);
+              const showDays = Math.min((optTP1.probs ?? []).length, Math.max(15, optTP1.days + 5));
+              const displayProbs = (optTP1.probs ?? []).slice(0, showDays);
               const maxProb = Math.max(...displayProbs, 0.1);
               return (
                 <div style={{ display:'flex', gap:1, marginTop:4, alignItems:'flex-end', height:22 }}>
@@ -703,7 +713,7 @@ export default function TacticalDashboard() {
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem', color:'#334155', marginTop:1 }}>
               <span>d1</span>
               {optTP1.days > 3 && <span style={{ color:'#22c55e' }}>d{optTP1.days}★</span>}
-              <span>d{Math.min(optTP1.probs.length, Math.max(15, optTP1.days + 5))}</span>
+              <span>d{Math.min((optTP1.probs ?? []).length, Math.max(15, optTP1.days + 5))}</span>
             </div>
           </div>
 
@@ -718,8 +728,8 @@ export default function TacticalDashboard() {
               <div style={{ width:`${Math.min(100,probTP2)}%`, height:'100%', background: probColor(probTP2), borderRadius:4 }} />
             </div>
             {(() => {
-              const showDays = Math.min(optTP2.probs.length, Math.max(15, optTP2.days + 5));
-              const displayProbs = optTP2.probs.slice(0, showDays);
+              const showDays = Math.min((optTP2.probs ?? []).length, Math.max(15, optTP2.days + 5));
+              const displayProbs = (optTP2.probs ?? []).slice(0, showDays);
               const maxProb = Math.max(...displayProbs, 0.1);
               return (
                 <div style={{ display:'flex', gap:1, marginTop:4, alignItems:'flex-end', height:18 }}>
@@ -741,7 +751,7 @@ export default function TacticalDashboard() {
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem', color:'#334155', marginTop:1 }}>
               <span>d1</span>
               {optTP2.days > 3 && <span style={{ color:'#4ade80' }}>d{optTP2.days}★</span>}
-              <span>d{Math.min(optTP2.probs.length, Math.max(15, optTP2.days + 5))}</span>
+              <span>d{Math.min((optTP2.probs ?? []).length, Math.max(15, optTP2.days + 5))}</span>
             </div>
           </div>
 
