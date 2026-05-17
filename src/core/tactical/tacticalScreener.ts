@@ -1,11 +1,12 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v8
-// CORRECCIÓN v8 (FINAL):
-//   - ✅ Paso 3b: pre-fetch de todos los ultra-fallbacks necesarios (IVV, VOO,
-//     GLD, BND) identificados por sector. Asegura que estén en batchData.
-//   - ✅ Paso 5 reescrito: 3 niveles de fallback (primario → fallback definido
-//     → ultra-fallback sectorial) aplicados a CADA activo. Garantiza 100%
-//     cobertura o error explícito.
+// src/core/tactical/tacticalScreener.ts — v9
+// CORRECCIONES v9:
+//   - ✅ ULTRA_FALLBACK_MAP extraído a nivel de módulo (elimina duplicado const)
+//   - ✅ Sectores 'Real Estate', 'Emerging Bonds', 'Factor' añadidos al mapa
+//   - ✅ Step 3b: filtra tickers ya cacheados antes de pre-fetch (evita re-fetch)
+//   - ✅ Step 3b: usa yahoo-finance-tactical primero (VOO/IVV fallan en basic)
+//   - ✅ Step 3b: retry con yahoo-finance básico para los que aún fallen
+//   - ✅ v8: Paso 3b pre-fetch ultra-fallbacks
 //   - ✅ v7: ultra-fallback con tickers no-universo
 //   - ✅ v6: optimización Paso 3
 //   - ✅ v5: chunking 30 tickers + concurrencia controlada
@@ -324,6 +325,31 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   };
 }
 
+// ── Ultra-fallback sectorial (módulo-nivel, compartido entre Paso 3b y 5) ──
+// Tickers elegidos: líquidos, fuera del universo propio, robustos en Yahoo.
+// IMPORTANTE: usar yahoo-finance-tactical en el pre-fetch para mayor cobertura.
+const ULTRA_FALLBACK_MAP: Record<string, string> = {
+  'Equity':         'IVV',   // iShares Core S&P 500 — benchmark de renta variable
+  'Technology':     'VOO',   // Vanguard S&P 500 — proxy tech/growth
+  'Commodities':    'GLD',   // SPDR Gold — benchmark materias primas
+  'Energy':         'GLD',   // proxy energía cuando no hay VDE disponible
+  'Finance':        'IVV',
+  'Healthcare':     'VOO',
+  'Materials':      'GLD',
+  'Utilities':      'VOO',
+  'Consumer':       'IVV',
+  'Emerging':       'GLD',   // proxy conservador cuando EEM también falla
+  'Emerging Bonds': 'BND',   // Vanguard Total Bond — proxy renta fija emergente
+  'Fixed Income':   'BND',
+  'Small Cap':      'VOO',
+  'Crypto':         'GLD',
+  'Defense':        'IVV',
+  'Infrastructure': 'VOO',
+  'Industry':       'VOO',
+  'Real Estate':    'VNQ',   // ← AÑADIDO: Vanguard Real Estate ETF (fuera del universo)
+  'Factor':         'IVV',   // ← AÑADIDO: proxy genérico para factor ETFs
+};
+
 // ── SCAN PRINCIPAL ────────────────────────────────────────────
 export async function scanTacticalUniverse(
   mode:     ScanMode,
@@ -412,41 +438,41 @@ export async function scanTacticalUniverse(
   }
 
   // ── Paso 3b: Pre-fetch ultra-fallbacks necesarios ──────────────
-  // Identifica qué ultra-fallbacks podrían ser necesarios y los fetchea
-  // para que estén disponibles en el Paso 5
-  const ultraFallbackMap: Record<string, string> = {
-    'Equity': 'IVV',
-    'Technology': 'VOO',
-    'Commodities': 'GLD',
-    'Energy': 'GLD',
-    'Finance': 'IVV',
-    'Healthcare': 'VOO',
-    'Materials': 'GLD',
-    'Utilities': 'VOO',
-    'Consumer': 'IVV',
-    'Emerging': 'GLD',
-    'Fixed Income': 'BND',
-    'Small Cap': 'VOO',
-    'Crypto': 'GLD',
-    'Defense': 'IVV',
-    'Infrastructure': 'VOO',
-    'Industry': 'VOO',
-  };
-
+  // Identifica qué ultra-fallbacks podrían ser necesarios (activos sin
+  // primario ni fallback definido) y los fetchea para el Paso 5.
+  // CORRECCIONES v9:
+  //   - Usa ULTRA_FALLBACK_MAP (módulo-nivel, sin duplicados).
+  //   - Filtra tickers ya cacheados antes de fetchear (evita re-fetch de GLD).
+  //   - Intenta yahoo-finance-tactical primero (VOO/IVV fallan en basic).
+  //   - Retry con yahoo-finance básico solo para los que sigan fallando.
   const ultraTickersNeeded = new Set<string>();
   for (const asset of universe) {
     const hasPrimary = batchData[asset.yahooSymbol]?.closes?.length >= 21;
     const hasFallback = asset.fallbackYahooSymbol && batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
     if (!hasPrimary && !hasFallback) {
-      const ultraTicker = ultraFallbackMap[asset.sector] || 'IVV';
+      const ultraTicker = ULTRA_FALLBACK_MAP[asset.sector] || 'IVV';
       ultraTickersNeeded.add(ultraTicker);
     }
   }
 
-  if (ultraTickersNeeded.size > 0) {
-    const ultraTickers = Array.from(ultraTickersNeeded);
-    console.debug(`[Screener] Pre-fetch ultra-fallback: ${ultraTickers.length} tickers (${ultraTickers.join(', ')})`);
-    const ultraData = await fetchBatch(supabase, ultraTickers, 'yahoo-finance');
+  // Solo fetchear los que NO están ya en batchData con datos válidos
+  const ultraTickersToFetch = Array.from(ultraTickersNeeded).filter(
+    t => !(batchData[t]?.closes?.length >= 21)
+  );
+
+  if (ultraTickersToFetch.length > 0) {
+    console.debug(`[Screener] Pre-fetch ultra-fallbacks (${ultraTickersToFetch.length}): ${ultraTickersToFetch.join(', ')}`);
+    // Paso 1: tactical function (más completa — soporta VOO/IVV/BND)
+    const ultraData = await fetchBatch(supabase, ultraTickersToFetch, 'yahoo-finance-tactical');
+    // Paso 2: retry con básica para los que aún fallen
+    const stillMissingUltra = ultraTickersToFetch.filter(
+      t => !(ultraData[t]?.closes?.length >= 21)
+    );
+    if (stillMissingUltra.length > 0) {
+      console.debug(`[Screener] Ultra-fallback retry básico: ${stillMissingUltra.join(', ')}`);
+      const basicUltra = await fetchBatch(supabase, stillMissingUltra, 'yahoo-finance');
+      Object.assign(ultraData, basicUltra);
+    }
     Object.assign(batchData, ultraData);
   }
 
@@ -459,25 +485,7 @@ export async function scanTacticalUniverse(
   // ── Paso 5: Construir assets con 3 niveles de fallback ────────
   // Nivel 1: primario
   // Nivel 2: fallback definido
-  // Nivel 3: ultra-fallback sectorial (IVV/VOO/GLD/BND)
-  const ultraFallbackMap: Record<string, string> = {
-    'Equity': 'IVV',
-    'Technology': 'VOO',
-    'Commodities': 'GLD',
-    'Energy': 'GLD',
-    'Finance': 'IVV',
-    'Healthcare': 'VOO',
-    'Materials': 'GLD',
-    'Utilities': 'VOO',
-    'Consumer': 'IVV',
-    'Emerging': 'GLD',
-    'Fixed Income': 'BND',
-    'Small Cap': 'VOO',
-    'Crypto': 'GLD',
-    'Defense': 'IVV',
-    'Infrastructure': 'VOO',
-    'Industry': 'VOO',
-  };
+  // Nivel 3: ultra-fallback sectorial — usa ULTRA_FALLBACK_MAP (módulo-nivel)
 
   for (const asset of universe) {
     let raw: RawTickerData | undefined;
@@ -500,7 +508,7 @@ export async function scanTacticalUniverse(
 
       // Nivel 3: ultra-fallback sectorial
       if (!usedSource) {
-        const ultraTicker = ultraFallbackMap[asset.sector] || 'IVV';
+        const ultraTicker = ULTRA_FALLBACK_MAP[asset.sector] || 'IVV';
         const ultraRaw = batchData[ultraTicker];
         if (ultraRaw?.closes?.length >= 21 && ultraRaw?.price > 0) {
           raw = ultraRaw;

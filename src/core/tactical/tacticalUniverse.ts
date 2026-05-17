@@ -1,5 +1,5 @@
 // ============================================================
-// src/core/tactical/tacticalUniverse.ts — v4
+// src/core/tactical/tacticalUniverse.ts — v5
 // CORRECCIONES:
 //   - ✅ v2: ADR/US fallbacks para todos los valores europeos, 9 fallbacks rotos arreglados
 //   - ✅ v2: RSX eliminado, BAS.DE eliminado (duplicado)
@@ -9,6 +9,8 @@
 //     XLI, XLK, JETS) sustituidos por tickers líquidos fuera del universo
 //     (C, NEE, CAT, AMT, DAL, TGT, UAL) — evita el bug de "alreadyHave=false
 //     porque el propio activo US también falló en el batch primario"
+//   - ✅ v5: XLE → fallback VDE (Vanguard Energy); XOM → fallback CVX (Chevron)
+//     Ambos confirmados fallando en log real sin fallback, usando GLD (incorrecto)
 // Universo táctico ~189 activos | XETRA · Euronext · LSE · NYSE · NASDAQ
 // Compatible con Interactive Brokers (ibkrExchange · ibkrSymbol · ibkrSecType)
 // ============================================================
@@ -199,7 +201,7 @@ export const FTSE100_STOCKS: UniverseAsset[] = [
 // ── ETFs Sectoriales US (iShares SPDR) — sin fallback necesario
 export const US_SECTOR_ETFS: UniverseAsset[] = [
   { ticker:'XLK',    name:'Technology Select Sector SPDR',    sector:'Technology',  type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'XLK',   ibkrExchange:'NYSE',   ibkrSymbol:'XLK',  ibkrSecType:'STK' },
-  { ticker:'XLE',    name:'Energy Select Sector SPDR',        sector:'Energy',      type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'XLE',   ibkrExchange:'NYSE',   ibkrSymbol:'XLE',  ibkrSecType:'STK' },
+  { ticker:'XLE',    name:'Energy Select Sector SPDR',        sector:'Energy',      type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'XLE',   fallbackYahooSymbol:'VDE',  ibkrExchange:'NYSE',   ibkrSymbol:'XLE',  ibkrSecType:'STK' },  // FIX v5: VDE (Vanguard Energy, fuera del universo)
   { ticker:'XLF',    name:'Financial Select Sector SPDR',     sector:'Finance',     type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'XLF',   ibkrExchange:'NYSE',   ibkrSymbol:'XLF',  ibkrSecType:'STK' },
   { ticker:'XLV',    name:'Health Care Select Sector SPDR',   sector:'Healthcare',  type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'XLV',   ibkrExchange:'NYSE',   ibkrSymbol:'XLV',  ibkrSecType:'STK' },
   { ticker:'XLI',    name:'Industrial Select Sector SPDR',    sector:'Industry',    type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'XLI',   ibkrExchange:'NYSE',   ibkrSymbol:'XLI',  ibkrSecType:'STK' },
@@ -257,7 +259,7 @@ export const US_STOCKS: UniverseAsset[] = [
   { ticker:'TSLA',     name:'Tesla Inc.',             sector:'Consumer',    type:'STOCK', exchange:'NASDAQ', currency:'USD', yahooSymbol:'TSLA',  ibkrExchange:'NASDAQ', ibkrSymbol:'TSLA',  ibkrSecType:'STK' },
   { ticker:'JPM',      name:'JPMorgan Chase',         sector:'Finance',     type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'JPM',   ibkrExchange:'NYSE',   ibkrSymbol:'JPM',   ibkrSecType:'STK' },
   { ticker:'V',        name:'Visa Inc.',              sector:'Finance',     type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'V',     ibkrExchange:'NYSE',   ibkrSymbol:'V',     ibkrSecType:'STK' },
-  { ticker:'XOM',      name:'ExxonMobil Corp.',       sector:'Energy',      type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'XOM',   ibkrExchange:'NYSE',   ibkrSymbol:'XOM',   ibkrSecType:'STK' },
+  { ticker:'XOM',      name:'ExxonMobil Corp.',       sector:'Energy',      type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'XOM',   fallbackYahooSymbol:'CVX',  ibkrExchange:'NYSE',   ibkrSymbol:'XOM',   ibkrSecType:'STK' },  // FIX v5: CVX (Chevron, fuera del universo)
   { ticker:'JNJ',      name:'Johnson & Johnson',      sector:'Healthcare',  type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'JNJ',   ibkrExchange:'NYSE',   ibkrSymbol:'JNJ',   ibkrSecType:'STK' },
   { ticker:'WMT',      name:'Walmart Inc.',           sector:'Consumer',    type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'WMT',   ibkrExchange:'NYSE',   ibkrSymbol:'WMT',   ibkrSecType:'STK' },
   { ticker:'MA',       name:'Mastercard Inc.',        sector:'Finance',     type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'MA',    ibkrExchange:'NYSE',   ibkrSymbol:'MA',    ibkrSecType:'STK' },
