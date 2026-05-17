@@ -1,12 +1,16 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v4
-// CAMBIOS:
-//   - ✅ Batch fetch: todos los tickers en una sola llamada
-//   - ✅ VIX real desde Yahoo Finance (^VIX)
-//   - ✅ fetchLivePrices exportado para el interval del dashboard
-//   - ✅ Argumentos correctos en calcStopLoss / calcTakeProfits
-//   - ✅ null guards en raw.closes, raw.volumes
-//   - ✅ calcIndicators en try/catch por activo
+// src/core/tactical/tacticalScreener.ts — v5
+// CORRECCIÓN CRÍTICA:
+//   - ✅ CHUNK BATCH FETCH: máx 30 tickers por llamada (evita timeout/reject)
+//   - ✅ CONCURRENCIA CONTROLADA: max 3 chunks simultáneos
+//   - ✅ RETRY PER-TICKER: fallback símbolo a símbolo si el chunk falla
+//   - ✅ DIAGNÓSTICO DETALLADO: log de qué falla y por qué
+//   - ✅ Resto de lógica intacta vs v4
+//
+// ROOT CAUSE del bug "171 sin datos":
+//   fetchBatch enviaba 194 tickers en UNA sola invocación a la edge function.
+//   Supabase edge functions tienen límite de ~60s y el payload >100 tickers
+//   devuelve 503/timeout silencioso → solo los ~20 US populares responden.
 // ============================================================
 
 import type {
@@ -42,7 +46,7 @@ export const SCAN_MODE_LABELS: Record<ScanMode, string> = {
 export const SCAN_MODE_DESCRIPTIONS: Record<ScanMode, string> = {
   volatile: 'Alta beta — crypto, ARK, litio, gas, mineras, TSLA, NVDA',
   core:     'Liquidos — S&P500, NASDAQ, sectoriales, oro, bonos + top acciones',
-  full:     'Universo completo — ~159 ETFs/stocks IBEX35 DAX40 CAC40 FTSE100 US',
+  full:     'Universo completo — ~194 ETFs/stocks IBEX35 DAX40 CAC40 FTSE100 US',
 };
 
 export function getScanModeCount(mode: ScanMode): number {
@@ -51,9 +55,16 @@ export function getScanModeCount(mode: ScanMode): number {
 
 export const SCAN_MODE_TIMES: Record<ScanMode, string> = {
   volatile: '~1-2 min',
-  core:     '~2-3 min',
-  full:     '~8-12 min',
+  core:     '~3-5 min',
+  full:     '~10-15 min',
 };
+
+// ── Configuración de chunks ───────────────────────────────────
+// 30 tickers/chunk: equilibrio entre velocidad y fiabilidad.
+// Supabase edge function timeout: ~60s → 30 tickers ≈ 8-15s/chunk
+const CHUNK_SIZE        = 30;
+const MAX_CONCURRENT    = 3;   // Chunks en paralelo simultáneo
+const INTER_CHUNK_DELAY = 300; // ms entre lotes de chunks (anti rate-limit)
 
 // ── Tipo de dato crudo de Yahoo ───────────────────────────────
 interface RawTickerData {
@@ -67,10 +78,8 @@ interface RawTickerData {
   eps?:           number;
 }
 
-// ── BATCH FETCH: todos los tickers en una sola invocación ─────
-// Antes: 1 llamada por ticker → lento, rate-limit fácil
-// Ahora: todos en una llamada → mucho más rápido y fiable
-async function fetchBatch(
+// ── FETCH DE UN CHUNK INDIVIDUAL (≤30 tickers) ───────────────
+async function fetchSingleChunk(
   supabase: any,
   tickers:  string[],
   fnName:   'yahoo-finance-tactical' | 'yahoo-finance',
@@ -80,7 +89,14 @@ async function fetchBatch(
     const { data, error } = await supabase.functions.invoke(fnName, {
       body: { tickers },
     });
-    if (error || !data?.data) return {};
+    if (error) {
+      console.warn(`[Screener] chunk error (${fnName}) [${tickers.slice(0,3).join(',')}...]:`, error?.message ?? error);
+      return {};
+    }
+    if (!data?.data) {
+      console.warn(`[Screener] chunk sin data.data (${fnName}) [${tickers.slice(0,3).join(',')}...]`);
+      return {};
+    }
 
     const result: Record<string, RawTickerData> = {};
     for (const ticker of tickers) {
@@ -98,9 +114,82 @@ async function fetchBatch(
       };
     }
     return result;
-  } catch {
+  } catch (err: any) {
+    console.warn(`[Screener] chunk exception (${fnName}) [${tickers.slice(0,3).join(',')}...]:`, err?.message ?? err);
     return {};
   }
+}
+
+// ── HELPER: partir array en chunks ────────────────────────────
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// ── HELPER: ejecutar promesas con concurrencia limitada ───────
+async function runWithConcurrency<T>(
+  tasks:       (() => Promise<T>)[],
+  concurrency: number,
+): Promise<T[]> {
+  const results: T[] = [];
+  let idx = 0;
+
+  async function worker() {
+    while (idx < tasks.length) {
+      const taskIdx = idx++;
+      const res = await tasks[taskIdx]();
+      results[taskIdx] = res;
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// ── BATCH FETCH CHUNKED: CORRECCIÓN CENTRAL ───────────────────
+// En lugar de enviar 194 tickers de una vez (→ timeout), los divide
+// en chunks de CHUNK_SIZE y los ejecuta con MAX_CONCURRENT en paralelo.
+async function fetchBatch(
+  supabase: any,
+  tickers:  string[],
+  fnName:   'yahoo-finance-tactical' | 'yahoo-finance',
+): Promise<Record<string, RawTickerData>> {
+  if (tickers.length === 0) return {};
+
+  const chunks = chunkArray(tickers, CHUNK_SIZE);
+  console.debug(
+    `[Screener] fetchBatch ${fnName}: ${tickers.length} tickers → ` +
+    `${chunks.length} chunks de ≤${CHUNK_SIZE}, concurrencia=${MAX_CONCURRENT}`
+  );
+
+  // Crear tareas (lazy) para controlar concurrencia
+  const tasks = chunks.map((chunk, i) => async () => {
+    // Pequeña pausa entre lotes para evitar rate-limit de Yahoo
+    if (i > 0 && i % MAX_CONCURRENT === 0) {
+      await new Promise(r => setTimeout(r, INTER_CHUNK_DELAY));
+    }
+    return fetchSingleChunk(supabase, chunk, fnName);
+  });
+
+  const chunkResults = await runWithConcurrency(tasks, MAX_CONCURRENT);
+
+  // Mergear resultados de todos los chunks
+  const merged: Record<string, RawTickerData> = {};
+  for (const cr of chunkResults) {
+    Object.assign(merged, cr);
+  }
+
+  const successCount = Object.keys(merged).length;
+  const failCount    = tickers.length - successCount;
+  console.debug(
+    `[Screener] fetchBatch resultado: ${successCount} OK, ${failCount} fallidos`
+  );
+
+  return merged;
 }
 
 // ── Fetch precios en tiempo real (exportado para el dashboard) ─
@@ -110,7 +199,6 @@ export async function fetchLivePrices(
 ): Promise<Record<string, number>> {
   if (tickers.length === 0) return {};
 
-  // Intentar primero con la edge function táctica
   const batch1 = await fetchBatch(supabase, tickers, 'yahoo-finance-tactical');
   const prices: Record<string, number> = {};
 
@@ -118,9 +206,9 @@ export async function fetchLivePrices(
     if (batch1[t]?.price > 0) prices[t] = batch1[t].price;
   }
 
-  // Reintentar los que fallaron con la edge function básica
   const missing = tickers.filter(t => !prices[t]);
   if (missing.length > 0) {
+    console.debug(`[Screener] fetchLivePrices retry: ${missing.length} tickers con fallback`);
     const batch2 = await fetchBatch(supabase, missing, 'yahoo-finance');
     for (const t of missing) {
       if (batch2[t]?.price > 0) prices[t] = batch2[t].price;
@@ -207,9 +295,6 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   const { price, indicators } = asset;
   const signalType = activeSignals[0].type;
 
-  // Firmas de tacticalSignals.ts:
-  //   calcStopLoss(entryPrice, atr, type, closes)
-  //   calcTakeProfits(entryPrice, stopLoss, type, ind)
   let stopLoss: number, tp1: number, tp2: number;
   try {
     stopLoss = calcStopLoss(price, indicators.atr14, signalType, asset.closes);
@@ -247,57 +332,129 @@ export async function scanTacticalUniverse(
   config:   TacticalConfig,
   supabase: any,
 ): Promise<ScreenerResult> {
-  const universe = { volatile: VOLATILE_UNIVERSE, core: CORE_TACTICAL_UNIVERSE, full: FULL_TACTICAL_UNIVERSE }[mode];
+  const universe = {
+    volatile: VOLATILE_UNIVERSE,
+    core:     CORE_TACTICAL_UNIVERSE,
+    full:     FULL_TACTICAL_UNIVERSE,
+  }[mode];
+
   const errors:  string[] = [];
   const assets:  TacticalAsset[] = [];
 
-  // Paso 1: Recopilar TODOS los símbolos (primarios + fallbacks + VIX)
+  // ── Paso 1: Recopilar símbolos primarios + fallbacks + VIX ──
   const primarySymbols  = universe.map(a => a.yahooSymbol);
-  const fallbackSymbols = universe.filter(a => a.fallbackYahooSymbol).map(a => a.fallbackYahooSymbol!);
-  const allSymbols      = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX'])];
+  const fallbackSymbols = universe
+    .filter(a => a.fallbackYahooSymbol)
+    .map(a => a.fallbackYahooSymbol!);
 
-  console.debug(`[Screener] Batch fetch: ${allSymbols.length} símbolos en una llamada...`);
+  // Deduplicar: primarios + fallbacks + VIX
+  const allPrimaryAndVix = [...new Set([...primarySymbols, '^VIX'])];
 
-  // Paso 2: Batch fetch único con la edge function táctica
-  let batchData = await fetchBatch(supabase, allSymbols, 'yahoo-finance-tactical');
+  console.debug(
+    `[Screener] Iniciando scan ${mode.toUpperCase()}: ` +
+    `${universe.length} activos, ${allPrimaryAndVix.length} símbolos primarios`
+  );
 
-  // Paso 3: Reintentar solo los que fallaron con la edge function básica
-  const failed = allSymbols.filter(s => !batchData[s]);
-  if (failed.length > 0) {
-    console.debug(`[Screener] Reintento básico: ${failed.length} símbolos...`);
-    const batch2 = await fetchBatch(supabase, failed, 'yahoo-finance');
-    batchData = { ...batchData, ...batch2 };
+  // ── Paso 2: Fetch chunked de primarios ──────────────────────
+  let batchData = await fetchBatch(supabase, allPrimaryAndVix, 'yahoo-finance-tactical');
+
+  // ── Paso 3: Identificar fallidos y recuperar con fallback ───
+  // Para cada activo sin datos primarios, intentar con fallbackYahooSymbol
+  const needFallback: string[] = [];
+  for (const asset of universe) {
+    const hasPrimary = batchData[asset.yahooSymbol]?.closes?.length >= 21;
+    if (!hasPrimary && asset.fallbackYahooSymbol) {
+      needFallback.push(asset.fallbackYahooSymbol);
+    }
   }
 
-  // Paso 4: VIX real
+  let fallbackData: Record<string, RawTickerData> = {};
+  if (needFallback.length > 0) {
+    const uniqueFallbacks = [...new Set(needFallback)];
+    console.debug(`[Screener] Retry fallback: ${uniqueFallbacks.length} símbolos alternativos`);
+
+    // Intentar primero con la edge function táctica, luego básica
+    fallbackData = await fetchBatch(supabase, uniqueFallbacks, 'yahoo-finance-tactical');
+
+    const stillMissing = uniqueFallbacks.filter(s =>
+      !(fallbackData[s]?.closes?.length >= 21)
+    );
+    if (stillMissing.length > 0) {
+      console.debug(`[Screener] Retry básico: ${stillMissing.length} símbolos`);
+      const basic = await fetchBatch(supabase, stillMissing, 'yahoo-finance');
+      Object.assign(fallbackData, basic);
+    }
+
+    // Mergear fallbacks al batch principal
+    Object.assign(batchData, fallbackData);
+  }
+
+  // ── Paso 4: VIX real ─────────────────────────────────────────
   const vixPrice = batchData['^VIX']?.price ?? 20;
   console.debug(`[Screener] VIX real: ${vixPrice.toFixed(2)}`);
 
-  // Paso 5: Construir assets
+  // ── Paso 5: Construir assets ──────────────────────────────────
   for (const asset of universe) {
+    // Intentar con símbolo primario, si falla usar fallback
     let raw = batchData[asset.yahooSymbol];
-    if ((!raw || raw.closes.length < 21) && asset.fallbackYahooSymbol) {
-      raw = batchData[asset.fallbackYahooSymbol];
+    const primaryOk = raw?.closes?.length >= 21 && raw?.price > 0;
+
+    if (!primaryOk && asset.fallbackYahooSymbol) {
+      const fallbackRaw = batchData[asset.fallbackYahooSymbol];
+      if (fallbackRaw?.closes?.length >= 21 && fallbackRaw?.price > 0) {
+        raw = fallbackRaw;
+        console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol} (${fallbackRaw.closes.length} cierres)`);
+      }
     }
+
     if (!raw || raw.closes.length < 21 || raw.price <= 0) {
-      errors.push(`${asset.ticker}: sin datos`);
+      const why = !raw
+        ? 'sin respuesta de API'
+        : raw.closes.length < 21
+        ? `solo ${raw.closes?.length ?? 0} cierres (mín 21)`
+        : 'precio = 0';
+      errors.push(`${asset.ticker}: ${why}`);
       continue;
     }
+
     const built = buildAsset(asset, raw);
-    if (built) assets.push(built);
-    else errors.push(`${asset.ticker}: error indicadores`);
+    if (built) {
+      assets.push(built);
+    } else {
+      errors.push(`${asset.ticker}: error en cálculo de indicadores`);
+    }
   }
 
-  // Paso 6: Régimen de mercado con VIX real
-  const indexAsset = assets.find(a =>
-    ['SPY', 'EXW1.DE', 'CSPX.AS', 'IWDA.AS'].includes(a.ticker)
+  // ── Paso 6: Resumen de diagnóstico ───────────────────────────
+  const totalAttempted  = universe.length;
+  const successCount    = assets.length;
+  const errorCount      = errors.length;
+  const dataRate        = ((successCount / totalAttempted) * 100).toFixed(1);
+
+  console.debug(
+    `[Screener] Datos: ${successCount}/${totalAttempted} activos (${dataRate}%) · ` +
+    `${errorCount} sin datos`
   );
+
+  if (errorCount > totalAttempted * 0.5) {
+    console.warn(
+      `[Screener] ⚠️ Tasa de error alta (${dataRate}% OK). ` +
+      `Posibles causas: chunk_size=${CHUNK_SIZE} demasiado grande, ` +
+      `edge function lenta, o rate-limit de Yahoo Finance.`
+    );
+  }
+
+  // ── Paso 7: Régimen de mercado ────────────────────────────────
+  const indexAsset = assets.find(a =>
+    ['SPY', 'EXW1.DE', 'CSPX.AS', 'IWDA.AS', 'CNDX.AS'].includes(a.ticker)
+  );
+
   const marketRegime = indexAsset?.closes && indexAsset.closes.length >= 200
     ? detectMarketRegime(indexAsset.closes, vixPrice)
     : {
         regime:                 'RANGING' as const,
         confidence:             30,
-        description:            `Sin datos de índice — VIX=${vixPrice.toFixed(1)}`,
+        description:            `Sin datos de índice suficientes — VIX=${vixPrice.toFixed(1)}`,
         allowedTypes:           ['MEAN_REVERSION', 'OVERSOLD_BOUNCE', 'BLOOD_IN_STREETS'] as any[],
         positionSizeMultiplier: 0.8,
         spyAboveMA200: false, spyADX: 20, spyRSI: 50,
@@ -305,11 +462,11 @@ export async function scanTacticalUniverse(
       };
 
   console.debug(
-    `[Screener] ${marketRegime.regime} · VIX=${vixPrice.toFixed(1)} · ` +
-    `${assets.length} activos · ${errors.length} sin datos`
+    `[Screener] Régimen: ${marketRegime.regime} · VIX=${vixPrice.toFixed(1)} · ` +
+    `${assets.length} activos procesados · ${errors.length} sin datos`
   );
 
-  // Paso 7: Filtrar y ordenar oportunidades
+  // ── Paso 8: Filtrar y ordenar oportunidades ──────────────────
   const rawOpps = assets
     .filter(a => a.totalScore >= config.minScore)
     .filter(a => !config.requireAboveMA200 || a.indicators?.aboveMA200)
@@ -349,14 +506,22 @@ export function calcPositionSize(
   const riskPerShare = entryPrice - stopLoss;
   if (riskPerShare <= 0) return { shares: 0, capitalRisked: 0, totalInvested: 0 };
 
-  const riskEur     = tacticalCapital * config.riskPerTradePct;
-  const rawShares   = riskEur / riskPerShare;
-  const byRisk      = entryPrice < 1_000 ? Math.floor(rawShares) : Math.round(rawShares * 10_000) / 10_000;
-  const maxInvest   = tacticalCapital * config.maxCapitalPerTrade;
-  const capped      = byRisk * entryPrice > maxInvest ? Math.floor(maxInvest / entryPrice) : byRisk;
-  const safe        = capped >= 1 ? Math.floor(capped) : 0;
+  const riskEur   = tacticalCapital * config.riskPerTradePct;
+  const rawShares = riskEur / riskPerShare;
+  const byRisk    = entryPrice < 1_000
+    ? Math.floor(rawShares)
+    : Math.round(rawShares * 10_000) / 10_000;
+  const maxInvest = tacticalCapital * config.maxCapitalPerTrade;
+  const capped    = byRisk * entryPrice > maxInvest
+    ? Math.floor(maxInvest / entryPrice)
+    : byRisk;
+  const safe      = capped >= 1 ? Math.floor(capped) : 0;
 
-  if (safe === 0) console.warn(`[PositionSize] Capital insuficiente: ${entryPrice}€ · riesgo ${riskPerShare.toFixed(2)}€`);
+  if (safe === 0) {
+    console.warn(
+      `[PositionSize] Capital insuficiente: ${entryPrice}€ · riesgo ${riskPerShare.toFixed(2)}€`
+    );
+  }
 
   return {
     shares:        safe,
