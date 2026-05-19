@@ -1,7 +1,7 @@
 // ============================================================
 // src/core/tactical/tacticalPortfolio.ts — v4 ELITE
 //
-// CORRECCIONES CRÍTICAS v4:2
+// CORRECCIONES CRÍTICAS v4:
 //
 //   1. FX AWARENESS: todo el capital se opera en EUR.
 //      openPosition convierte entryPrice y stopLoss a EUR usando
