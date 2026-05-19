@@ -48,13 +48,15 @@ export interface TechnicalIndicators {
   macdLine:    number;
   macdSignal:  number;
   macdHist:    number;
-  adx:         number;   // Efficiency Ratio ×100 (0-100). Reemplaza el proxy incorrecto de volatilidad.
+  adx:         number;
+  efficiencyRatio: number;
+  atr14:       number;
+  atr:         number;     // ← AÑADE ESTA LÍNEA (alias de atr14)
+  atrPct:      number;
   bbUpper:     number;
   bbMiddle:    number;
   bbLower:     number;
   bbWidth:     number;
-  atr14:       number;
-  atrPct:      number;
   zScore20:    number;
   zScore50:    number;
   volumeRatio: number;
@@ -63,8 +65,6 @@ export interface TechnicalIndicators {
   aboveMA50:   boolean;
   aboveMA20:   boolean;
   drawdownFrom52wHigh: number;
-  // Efficiency Ratio crudo (0-1) — para uso interno
-  efficiencyRatio: number;
 }
 
 // ── Señal individual de oportunidad ─────────────────────────

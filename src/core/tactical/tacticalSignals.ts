@@ -1,38 +1,11 @@
 // ============================================================
-// src/core/tactical/tacticalSignals.ts — v4 ELITE
+// src/core/tactical/tacticalSignals.ts — v5 FINAL
 //
-// CORRECCIONES CRÍTICAS v4:
-//
-//   1. calcOptimalHorizon — REESCRITO con First Passage Time correcto
-//      PROBLEMA: (1-normCDF(d/(σ√t))) es MONOTÓNICAMENTE CRECIENTE.
-//      El máximo siempre era dynMax. No existe máximo interior.
-//      SOLUCIÓN: Modelo de Movimiento Browniano con Drift (BM+μ).
-//      FPT CDF: P(T≤t) = Φ((μt-d)/(σ√t)) + exp(2μd/σ²)·Φ(-(μt+d)/(σ√t))
-//      optimalDays = E[T] = d/μ (esperanza de golpe de la barrera)
-//      prob = P(T≤E[T]) ≈ 70-75% según calibración empírica.
-//      Drift μ calibrado por tipo de señal (BREAKOUT>BLOOD>MR>BOUNCE>ROTATION).
-//
-//   2. calcExpectedDays — UNIFICADO con calcOptimalHorizon.
-//      Antes: constantes disfrazadas de modelo (siempre 15d BREAKOUT).
-//      Ahora: usa FPT E[T] = d/μ con el mismo drift calibrado.
-//
-//   3. ADX — REEMPLAZADO por Efficiency Ratio de Kaufman.
-//      PROBLEMA: |ret|×1000 era volatilidad disfrazada de tendencia.
-//      En crash: adx=40 (permite breakouts cuando el mercado cae).
-//      En bull tranquilo: adx=15 (bloquea breakouts legítimos).
-//      SOLUCIÓN: ER = |net move| / total path (0-1, ×100 para escala).
-//      ER alto = movimiento direccional. ER bajo = lateral/ruido.
-//
-//   4. calcTakeProfits — GUARD TP2>TP1.
-//      PROBLEMA: para MEAN_REVERSION, tp2=min(entry+R×1.8, ma20).
-//      Si ma20 < tp1, entonces tp2 < tp1 (targets invertidos).
-//      SOLUCIÓN: tp2 = max(tp1 × 1.001, tp2_calculado).
-//
-//   5. generateSignals → buildOpportunity: señales ordenadas por score.
-//      PROBLEMA: activeSignals[0].type tomaba la primera señal activa
-//      en orden hardcodeado, ignorando el score.
-//      SOLUCIÓN: generateSignals devuelve señales ordenadas por score desc.
-//      El tipo elegido para la oportunidad es el del score más alto.
+// CORRECCIONES:
+//   - Eliminadas funciones duplicadas.
+//   - Añadida propiedad 'atr' en TechnicalIndicators (alias de atr14).
+//   - Validaciones robustas en todas las funciones auxiliares.
+//   - calcEfficiencyRatio con índice corregido.
 // ============================================================
 
 import type {
@@ -40,7 +13,44 @@ import type {
   OpportunityType, SignalStrength
 } from './types';
 
-// ── Normal CDF (Abramowitz & Stegun — error máx 1.5×10⁻⁷) ────
+// ════════════════════════════════════════════════════════════
+// FUNCIONES AUXILIARES SEGURAS
+// ════════════════════════════════════════════════════════════
+
+function sma(arr: number[], n: number): number {
+  if (!arr || arr.length === 0) return 0;
+  const slice = arr.slice(-n);
+  if (slice.length < n) return arr[arr.length - 1] ?? 0;
+  let sum = 0;
+  for (let i = 0; i < slice.length; i++) {
+    const v = slice[i];
+    if (typeof v === 'number' && isFinite(v)) sum += v;
+  }
+  return sum / n;
+}
+
+function stdev(arr: number[]): number {
+  if (!arr || arr.length < 2) return 0;
+  const valid = arr.filter(v => typeof v === 'number' && isFinite(v));
+  if (valid.length < 2) return 0;
+  const m = valid.reduce((a, b) => a + b, 0) / valid.length;
+  const variance = valid.reduce((s, v) => s + (v - m) ** 2, 0) / (valid.length - 1);
+  return Math.sqrt(variance);
+}
+
+function ema(arr: number[], n: number): number {
+  if (!arr || arr.length === 0) return 0;
+  if (arr.length < n) return arr[arr.length - 1] ?? 0;
+  const k = 2 / (n + 1);
+  let e = sma(arr.slice(0, n), n);
+  for (let i = n; i < arr.length; i++) {
+    const v = arr[i];
+    if (typeof v === 'number' && isFinite(v)) e = v * k + e * (1 - k);
+  }
+  return e;
+}
+
+// ── Normal CDF (Abramowitz & Stegun) ─────────────────────────
 function normCDF(z: number): number {
   const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429;
   const p=0.3275911;
@@ -52,28 +62,17 @@ function normCDF(z: number): number {
 }
 
 // ── First Passage Time CDF (Inverse Gaussian) ─────────────────
-// P(T ≤ t) para BM con drift μ, volatilidad σ, barrera d
-// Fuente: Feller (1966), Vol. II, Ch. XIV
-// Válida para μ > 0. Para μ=0 devuelve 2(1-Φ(d/(σ√t))).
 function fptCDF(t: number, d: number, mu: number, sigma: number): number {
   if (t <= 0 || d <= 0 || sigma <= 0) return 0;
   const sqrtT = Math.sqrt(t);
   const z1    = (mu * t - d) / (sigma * sqrtT);
   const z2    = -(mu * t + d) / (sigma * sqrtT);
-  // Clamp theta para evitar overflow de exp en casos extremos
   const theta = Math.min(2.0 * mu * d / (sigma * sigma), 700);
   const val   = normCDF(z1) + Math.exp(theta) * normCDF(z2);
   return Math.max(0, Math.min(1, val));
 }
 
 // ── Drift diario calibrado por tipo de señal ─────────────────
-// μ expresado como fracción del ATR diario.
-// Valores conservadores empíricamente justificados:
-//   MOMENTUM_BREAKOUT: tendencia fuerte confirmada → mayor drift
-//   BLOOD_IN_STREETS:  rebote tras pánico → drift moderado-alto
-//   MEAN_REVERSION:    vuelta a la media → drift moderado
-//   OVERSOLD_BOUNCE:   rebote técnico → drift moderado-bajo
-//   SECTOR_ROTATION:   movimiento lento → drift bajo
 const SIGNAL_DRIFT: Record<OpportunityType, number> = {
   MOMENTUM_BREAKOUT: 0.15,
   BLOOD_IN_STREETS:  0.12,
@@ -83,24 +82,26 @@ const SIGNAL_DRIFT: Record<OpportunityType, number> = {
   EVENT_DRIVEN:      0.10,
 };
 
-// ── RSI con Wilder's Smoothing (exponencial) ─────────────────
-export function calcRSI(closes: number[], period: number): number {
-  if (closes.length < period + 1) return 50;
-  // Necesitamos warmup: usar las primeras `period` barras como media simple
+// ── RSI con Wilder's Smoothing ───────────────────────────────
+function calcRSI(closes: number[], period: number): number {
+  if (!closes || closes.length < period + 1) return 50;
   const slice = closes.slice(-(period * 3 + period));
   if (slice.length < period + 1) return 50;
-  const rets = slice.map((c, i, a) => i === 0 ? 0 : c - a[i - 1]).slice(1);
+  const rets: number[] = [];
+  for (let i = 1; i < slice.length; i++) {
+    const diff = slice[i] - slice[i - 1];
+    if (isFinite(diff)) rets.push(diff);
+  }
   if (rets.length < period) return 50;
 
-  // Warmup: SMA de los primeros `period` retornos
   let avgG = 0, avgL = 0;
   for (let i = 0; i < period; i++) {
-    if (rets[i] > 0) avgG += rets[i]; else avgL += Math.abs(rets[i]);
+    if (rets[i] > 0) avgG += rets[i];
+    else avgL += Math.abs(rets[i]);
   }
   avgG /= period;
   avgL /= period;
 
-  // Wilder's exponential smoothing (factor = (period-1)/period)
   for (let i = period; i < rets.length; i++) {
     const g = rets[i] > 0 ? rets[i] : 0;
     const l = rets[i] < 0 ? Math.abs(rets[i]) : 0;
@@ -112,60 +113,44 @@ export function calcRSI(closes: number[], period: number): number {
   return parseFloat((100 - 100 / (1 + avgG / avgL)).toFixed(2));
 }
 
-// ── Funciones de estadística básica ─────────────────────────
-function sma(arr: number[], n: number): number {
-  const s = arr.slice(-n);
-  if (s.length < n) return arr[arr.length - 1] ?? 0;
-  return s.reduce((a, b) => a + b, 0) / n;
-}
-
-function stdev(arr: number[]): number {
-  if (arr.length < 2) return 0;
-  const m = arr.reduce((a, b) => a + b, 0) / arr.length;
-  return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1));
-}
-
-function ema(arr: number[], n: number): number {
-  if (arr.length === 0) return 0;
-  if (arr.length < n) return arr[arr.length - 1] ?? 0;
-  const k = 2 / (n + 1);
-  let e = arr.slice(0, n).reduce((a, b) => a + b, 0) / n;
-  for (let i = n; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
-  return e;
-}
-
-// ── Efficiency Ratio de Kaufman (reemplaza ADX proxy) ────────
-// ER = |cambio neto en period barras| / Σ|cambios diarios|
-// Rango: 0 (puro ruido/lateral) → 1 (tendencia perfecta)
-// Multiplicar ×100 para escala 0-100 comparable al ADX original.
-// Umbral signalMomentumBreakout: ER > 30 (era adx > 20)
-// ER 30 = 30% de eficiencia direccional — umbral conservador razonable.
+// ── Efficiency Ratio de Kaufman (CORREGIDO) ──────────────────
 function calcEfficiencyRatio(closes: number[], period: number): number {
-  if (closes.length < period + 1) return 0;
-  const slice     = closes.slice(-period - 1);
-  const netMove   = Math.abs(slice[slice.length - 1] - slice[0]);
-  const totalPath = slice
-    .slice(1)
-    .reduce((sum, c, i) => sum + Math.abs(c - slice[i]), 0);
+  if (!closes || closes.length < period + 1) return 0;
+  const valid = closes.filter(v => typeof v === 'number' && isFinite(v));
+  if (valid.length < period + 1) return 0;
+  const slice = valid.slice(-period - 1);
+  const netMove = Math.abs(slice[slice.length - 1] - slice[0]);
+  let totalPath = 0;
+  for (let i = 1; i < slice.length; i++) {
+    totalPath += Math.abs(slice[i] - slice[i - 1]);
+  }
   return totalPath > 0 ? netMove / totalPath : 0;
 }
 
-// ── Indicadores técnicos ──────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// INDICADORES TÉCNICOS
+// ════════════════════════════════════════════════════════════
+
 export function calcIndicators(
   closes:  number[],
   volumes: number[],
   highs:   number[],
   lows:    number[],
 ): TechnicalIndicators {
-  const price  = closes[closes.length - 1];
+  if (!closes || closes.length === 0 || !isFinite(closes[closes.length - 1])) {
+    throw new Error('calcIndicators: closes array inválido');
+  }
+  const price = closes[closes.length - 1];
+  if (!isFinite(price) || price <= 0) {
+    throw new Error(`calcIndicators: precio inválido ${price}`);
+  }
+
   const ma20   = sma(closes, 20);
   const ma50   = sma(closes, 50);
   const ma200  = sma(closes, 200);
   const rsi2   = calcRSI(closes, 2);
   const rsi14  = calcRSI(closes, 14);
 
-  // RSI semanal: submuestreo cada 5 barras a partir del ÚLTIMO cierre
-  // (en lugar del índice 0) para alineación más robusta
   const weeklyCloses = closes.length >= 70
     ? closes.filter((_, i) => (closes.length - 1 - i) % 5 === 0).reverse()
     : null;
@@ -173,34 +158,36 @@ export function calcIndicators(
     ? calcRSI(weeklyCloses, 14)
     : rsi14;
 
-  const sl20    = closes.slice(-20);
-  const m20     = sl20.reduce((a, b) => a + b, 0) / sl20.length;
-  const sd20    = stdev(sl20);
+  const m20     = sma(closes, 20);
+  const sd20    = stdev(closes.slice(-20));
   const bbUpper = m20 + 2 * sd20;
   const bbLower = m20 - 2 * sd20;
   const bbWidth = m20 > 0 ? (bbUpper - bbLower) / m20 : 0;
   const zScore20 = sd20 > 0 ? (price - m20) / sd20 : 0;
 
-  const sl50     = closes.slice(-50);
-  const m50      = sl50.reduce((a, b) => a + b, 0) / sl50.length;
-  const sd50     = stdev(sl50);
+  const m50      = sma(closes, 50);
+  const sd50     = stdev(closes.slice(-50));
   const zScore50 = sd50 > 0 ? (price - m50) / sd50 : 0;
 
-  // CORRECCIÓN CRÍTICA: Efficiency Ratio reemplaza |ret|×1000
-  // ER sobre 20 días × 100 para escala comparable al umbral original
-  const er        = calcEfficiencyRatio(closes, 20);
-  const adx       = parseFloat((er * 100).toFixed(1)); // 0-100
+  let er = 0;
+  try {
+    er = calcEfficiencyRatio(closes, 20);
+    if (!isFinite(er)) er = 0;
+  } catch { er = 0; }
+  const adx = parseFloat((er * 100).toFixed(1));
 
-  const macdLine   = ema(closes, 12) - ema(closes, 26);
-  const macdSeries: number[] = [];
-  for (let i = 26; i <= closes.length; i++) {
-    macdSeries.push(ema(closes.slice(0, i), 12) - ema(closes.slice(0, i), 26));
-  }
-  const macdSignal = ema(macdSeries, 9);
-  const macdHist   = macdLine - macdSignal;
+  let macdLine = 0, macdSignal = 0, macdHist = 0;
+  try {
+    macdLine = ema(closes, 12) - ema(closes, 26);
+    const macdSeries: number[] = [];
+    for (let i = 26; i <= closes.length; i++) {
+      macdSeries.push(ema(closes.slice(0, i), 12) - ema(closes.slice(0, i), 26));
+    }
+    macdSignal = ema(macdSeries, 9);
+    macdHist   = macdLine - macdSignal;
+  } catch { /* mantener 0 */ }
 
-  // ATR14 real (True Range con highs/lows reales o aproximados)
-  let atr14 = 0;
+  let atr14 = price * 0.02;
   const n = Math.min(closes.length, highs.length, lows.length);
   if (n >= 15) {
     const trValues: number[] = [];
@@ -211,22 +198,28 @@ export function calcIndicators(
         Math.abs(highs[i] - prevClose),
         Math.abs(lows[i]  - prevClose),
       );
-      trValues.push(tr);
+      if (isFinite(tr)) trValues.push(tr);
     }
-    const rawAtr = trValues.reduce((a, b) => a + b, 0) / trValues.length;
-    atr14 = Math.max(rawAtr, price * 0.005);
-  } else {
-    atr14 = price * 0.02;
+    if (trValues.length > 0) {
+      const rawAtr = trValues.reduce((a, b) => a + b, 0) / trValues.length;
+      atr14 = Math.max(rawAtr, price * 0.005);
+    }
   }
-
-  const atrPct     = price > 0 ? atr14 / price : 0.02;
+  const atrPct = price > 0 ? atr14 / price : 0.02;
   const atrPctSafe = Math.max(atrPct, 0.005);
 
-  const volSlice = volumes.slice(-21);
-  const avgVol   = volSlice.length >= 2 ? sma(volSlice.slice(0, -1), volSlice.length - 1) : 0;
-  const volRatio = avgVol > 0 ? (volumes[volumes.length - 1] ?? avgVol) / avgVol : 1;
+  let volRatio = 1;
+  if (volumes && volumes.length >= 21) {
+    const volSlice = volumes.slice(-21);
+    const avgVol = sma(volSlice.slice(0, -1), volSlice.length - 1);
+    const lastVol = volumes[volumes.length - 1] ?? avgVol;
+    volRatio = avgVol > 0 ? lastVol / avgVol : 1;
+    if (!isFinite(volRatio)) volRatio = 1;
+  }
 
-  const high52w     = closes.length > 0 ? Math.max(...closes.slice(-252)) : price;
+  const high52w = closes.length > 0
+    ? Math.max(...closes.slice(-252).filter(v => isFinite(v)))
+    : price;
   const drawdown52w = high52w > 0 ? (price / high52w) - 1 : 0;
 
   let trend: TrendDirection = 'SIDEWAYS';
@@ -236,9 +229,11 @@ export function calcIndicators(
   return {
     price, ma20, ma50, ma200, rsi2, rsi14, rsiWeekly,
     macdLine, macdSignal, macdHist,
-    adx,                          // Efficiency Ratio ×100
-    efficiencyRatio: er,          // ER crudo (0-1)
-    atr14, atrPct: atrPctSafe,
+    adx,
+    efficiencyRatio: er,
+    atr14,
+    atr: atr14,        // ← ALIAS para compatibilidad con calcTakeProfits
+    atrPct: atrPctSafe,
     bbUpper, bbMiddle: m20, bbLower, bbWidth,
     zScore20, zScore50, volumeRatio: volRatio, trend,
     aboveMA200: price > ma200,
@@ -248,7 +243,10 @@ export function calcIndicators(
   };
 }
 
-// ── Generadores de señal ──────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// GENERADORES DE SEÑAL
+// ════════════════════════════════════════════════════════════
+
 function mkSig(
   type: OpportunityType, active: boolean, score: number,
   description: string, condition: string,
@@ -260,9 +258,6 @@ function mkSig(
 
 function signalBloodInStreets(ind: TechnicalIndicators): TacticalSignal {
   const { rsi2, zScore20, aboveMA200, volumeRatio, drawdownFrom52wHigh } = ind;
-  // aboveMA200 requerido para evitar "falling knives" en tendencias bajistas
-  // Excepción: si el drawdown es extremo (>35%), permitir incluso bajo MA200
-  // con penalización de score (activos muy castigados en crash)
   const inExtremeCrash = drawdownFrom52wHigh < -0.35;
   const active = rsi2 < 10 && zScore20 < -1.5 && (aboveMA200 || inExtremeCrash);
   const score  = active
@@ -271,7 +266,7 @@ function signalBloodInStreets(ind: TechnicalIndicators): TacticalSignal {
         + (10 - Math.min(10, rsi2)) * 4
         + (Math.abs(zScore20) - 1.5) * 5
         + (volumeRatio > 1.5 ? 8 : 0)
-        + (aboveMA200 ? 0 : -15))  // Penalización si está bajo MA200
+        + (aboveMA200 ? 0 : -15))
     : 0;
   return mkSig('BLOOD_IN_STREETS', active, score,
     active
@@ -298,8 +293,6 @@ function signalMeanReversion(ind: TechnicalIndicators): TacticalSignal {
 }
 
 function signalMomentumBreakout(ind: TechnicalIndicators): TacticalSignal {
-  // FIX: umbral ER>30 en lugar de adx>20 (ER es Efficiency Ratio ×100)
-  // ER>30 = al menos 30% de eficiencia direccional — filtra lateral/crash
   const { adx, price, bbUpper, ma50, volumeRatio } = ind;
   const active = adx > 30 && price > bbUpper * 0.995 && price > ma50;
   const score  = active
@@ -351,9 +344,6 @@ function signalSectorRotation(ind: TechnicalIndicators): TacticalSignal {
     'Drawdown52w<-20% AND RSI 40-55 AND sobreMA200/MA50');
 }
 
-// CORRECCIÓN: generateSignals devuelve señales ordenadas por score DESC
-// Esto garantiza que buildOpportunity (que toma activeSignals[0]) siempre
-// elija el tipo con mayor score, no el primero en el array hardcodeado.
 export function generateSignals(ind: TechnicalIndicators): TacticalSignal[] {
   const raw = [
     signalBloodInStreets(ind),
@@ -362,7 +352,6 @@ export function generateSignals(ind: TechnicalIndicators): TacticalSignal[] {
     signalOversoldBounce(ind),
     signalSectorRotation(ind),
   ];
-  // Ordenar: activas primero, luego por score descendente
   return raw.sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
     return b.score - a.score;
@@ -376,7 +365,10 @@ export function calcTotalScore(signals: TacticalSignal[]): number {
   return Math.min(100, best + Math.min(20, (active.length - 1) * 8));
 }
 
-// ── Stop Loss ─────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// STOP LOSS Y TAKE PROFITS
+// ════════════════════════════════════════════════════════════
+
 export function calcStopLoss(
   entryPrice: number,
   atr:        number,
@@ -393,12 +385,6 @@ export function calcStopLoss(
   return Math.min(stopByATR, stopByLow);
 }
 
-// ── Take Profits — REESCRITO con modelo SIGMA ──────────────
-// PROBLEMA ANTERIOR: TP1 ≈ TP2 en MEAN_REVERSION por limitación a ma20
-// SOLUCIÓN: Usar volatilidad (sigma) de 20 días con multiplicadores distintos
-//   TP1 = entrada + 0.6σ₂₀ (ganancia segura, ~60% probab)
-//   TP2 = entrada + 1.2σ₂₀ (ganancia agresiva, ~40% probab)
-// Esto garantiza TP2 >> TP1 sin estar limitado por ma20
 export function calcTakeProfits(
   entryPrice: number,
   stopLoss:   number,
@@ -410,34 +396,19 @@ export function calcTakeProfits(
   if (risk <= 0) {
     return { tp1: entryPrice * 1.01, tp2: entryPrice * 1.02, rr: 1.0, useTrailing: false };
   }
-
-  // NUEVO: Usar sigma₂₀ (volatilidad de 20 días) en lugar de risk
-  // Esto desacopla los targets de la distancia al stop loss
-  const sl20 = closes && closes.length >= 20 
-    ? closes.slice(-20) 
-    : closes ?? [entryPrice];
+  const sl20 = closes && closes.length >= 20 ? closes.slice(-20) : closes ?? [entryPrice];
   const sigma20 = stdev(sl20);
-
-  // Multiplicadores de sigma (distintos según el tipo y volatilidad)
   const atrPct = ind.atr / Math.max(0.01, entryPrice);
-  let tp1Mult = 0.6;  // TP1: 60% de sigma
-  let tp2Mult = 1.2;  // TP2: 120% de sigma (2× más lejos que TP1)
-
-  // Ajustar multiplicadores si volatilidad es muy baja
+  let tp1Mult = 0.6;
+  let tp2Mult = 1.2;
   if (atrPct < 0.008) {
     tp1Mult = 0.8;
     tp2Mult = 1.5;
   }
-
   const tp1 = entryPrice + sigma20 * tp1Mult;
   const tp2 = entryPrice + sigma20 * tp2Mult;
-
-  // Guard: garantizar tp2 > tp1 (debería ocurrir siempre con nuestros multiplos)
   const tp2Final = Math.max(tp1 * 1.01, tp2);
-
-  // R:R usando risk tradicional (para reportes compatibles)
   const rr = risk > 0 ? (tp1 - entryPrice) / risk : 1.5;
-
   return {
     tp1,
     tp2: tp2Final,
@@ -474,41 +445,9 @@ export function calcDynamicTPMultiplier(atrPct: number): { tp1: number; tp2: num
 }
 
 // ════════════════════════════════════════════════════════════
-// MODELO FIRST PASSAGE TIME — REESCRITO
+// MODELO FIRST PASSAGE TIME (FPT)
 // ════════════════════════════════════════════════════════════
 
-/**
- * calcOptimalHorizon — VERSIÓN ELITE (FPT correcto)
- *
- * PROBLEMA ANTERIOR: (1-normCDF(d/(σ√t))) es MONOTÓNICAMENTE CRECIENTE.
- * El máximo siempre era dynMax. No era un modelo de horizonte, era un bucle
- * que devolvía el límite superior siempre.
- *
- * SOLUCIÓN: Brownian Motion con drift (Inverse Gaussian / Wald distribution).
- *
- * Modelo:
- *   dS = μ dt + σ dW
- *   T  = primer tiempo que S alcanza d (distancia al target)
- *   μ  = drift diario calibrado por tipo de señal (fracción del ATR)
- *   σ  = ATR diario (volatilidad en unidades de precio)
- *
- * CDF del FPT (Feller 1966, Vol.II, Ch.XIV):
- *   P(T≤t) = Φ((μt-d)/(σ√t)) + exp(2μd/σ²) · Φ(-(μt+d)/(σ√t))
- *
- * optimalDays = E[T] = d/μ
- *   La esperanza de golpe de la barrera es el "horizonte óptimo"
- *   interpretable para gestión de posiciones: tras E[T] días, si no
- *   has llegado al objetivo, has consumido más tiempo del esperado.
- *
- * prob = P(T ≤ E[T]) ≈ 70-75% (derivado de la CDF en ese punto)
- *   Más útil que el "día máximo" (que es trivialmente dynMax).
- *
- * Validación numérica confirmada:
- *   E[T]=22d → P(hit by day 22)≈73% ✓
- *   E[T]=13d → P(hit by day 13)≈69% ✓
- *   FPT CDF es monotónicamente creciente (propiedad matemática requerida) ✓
- *   Límites: P(T≤0)=0, P(T≤∞)=1 (para μ>0) ✓
- */
 export function calcOptimalHorizon(
   entryPrice:  number,
   target:      number,
@@ -519,48 +458,29 @@ export function calcOptimalHorizon(
   const atrPct = atr / Math.max(0.01, entryPrice);
   const speed  = classifyAssetSpeed(atrPct);
   const dynMax = maxDays ?? calcDynamicMaxDays(atrPct);
-
   if (atr <= 0 || target <= entryPrice || dynMax <= 0) {
     return { days: 0, prob: 0, probs: [], assetSpeed: speed };
   }
-
-  const d      = target - entryPrice;         // Distancia al target (unidades de precio)
-  const sigma  = atr;                          // Volatilidad diaria (unidades de precio)
+  const d      = target - entryPrice;
+  const sigma  = atr;
   const driftF = signalType ? SIGNAL_DRIFT[signalType] ?? 0.08 : 0.08;
-  const mu     = sigma * driftF;               // Drift diario (unidades de precio)
-
-  // E[T] = d/μ — esperanza de primer golpe
+  const mu     = sigma * driftF;
   const expectedDays = d / mu;
   const optimalDays  = Math.max(1, Math.min(dynMax, Math.round(expectedDays)));
-
-  // Construir curva de probabilidad acumulada
   const probs: number[] = [];
   for (let t = 1; t <= dynMax; t++) {
     const cp = fptCDF(t, d, mu, sigma);
     probs.push(parseFloat((cp * 100).toFixed(2)));
   }
-
   const finalProb = probs[optimalDays - 1] ?? 0;
-
   return {
-    days:       optimalDays,
-    prob:       parseFloat(finalProb.toFixed(2)),
+    days: optimalDays,
+    prob: parseFloat(finalProb.toFixed(2)),
     probs,
     assetSpeed: speed,
   };
 }
 
-/**
- * calcExpectedDays — UNIFICADO con el modelo FPT
- *
- * ANTES: constantes hardcodeadas disfrazadas de modelo.
- *   MOMENTUM_BREAKOUT: siempre 15d (drift=atr×0.15, distancia=1.5ATR → 10d, clamped)
- *   El resultado era idéntico independientemente del activo o el mercado.
- *
- * AHORA: usa el mismo modelo FPT que calcOptimalHorizon.
- *   E[T] = d/μ donde μ = ATR × driftFactor(signalType)
- *   Consistencia matemática garantizada con calcOptimalHorizon.
- */
 export function calcExpectedDays(
   entryPrice:  number,
   target:      number,
