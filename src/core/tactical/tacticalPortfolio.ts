@@ -453,15 +453,18 @@ export type PositionAction       = 'HOLD'   | 'SCALE_UP' | 'REDUCE_50' | 'EXIT_N
 export type PositionUrgency      = 'LOW'    | 'MEDIUM'   | 'HIGH'      | 'CRITICAL';
 
 export interface PositionHealth {
-  status:   PositionHealthStatus;
-  action:   PositionAction;
-  urgency:  PositionUrgency;
-  detail:   string;
+  status:          PositionHealthStatus;
+  action:          PositionAction;
+  urgency:         PositionUrgency;
+  detail:          string;
+  reason:          string;   // Alias corto de detail para el dashboard
+  confidence:      number;   // 0-100: certeza de la recomendación
   scaleUp?: {
     suggestedAddEur: number;
     triggerPrice:    number;
   };
-  suggestedExit?: number;
+  scaleUpAmount?:  number;   // Alias de scaleUp.suggestedAddEur para el dashboard
+  suggestedExit?:  number;
 }
 
 export function analyzePositionHealth(
@@ -488,13 +491,17 @@ export function analyzePositionHealth(
     (timeRatio > 2.0 && progress <= 0)   ||
     distToSL < 0.5
   ) {
+    const detail = distToSL < 0.5
+      ? `SL a ${distToSL.toFixed(1)}×ATR — muy cerca. Salir inmediatamente.`
+      : `${timeRatio.toFixed(1)}× tiempo óptimo, progreso ${(progress*100).toFixed(0)}%.`;
+    const confidence = distToSL < 0.5 ? 95 : Math.min(95, 60 + timeRatio * 15);
     return {
       status:       'ABANDON',
       action:       'EXIT_NOW',
       urgency:      distToSL < 0.5 ? 'CRITICAL' : 'HIGH',
-      detail:       distToSL < 0.5
-        ? `SL a ${distToSL.toFixed(1)}×ATR — muy cerca. Salir inmediatamente.`
-        : `${timeRatio.toFixed(1)}× tiempo óptimo, progreso ${(progress*100).toFixed(0)}%.`,
+      detail,
+      reason:       detail,
+      confidence:   Math.round(confidence),
       suggestedExit: Math.max(pos.stopLoss * 1.005, priceEur - atr * 0.2),
     };
   }
@@ -502,53 +509,69 @@ export function analyzePositionHealth(
   // STRONG: en tendencia con tiempo suficiente
   if (progress > 0.5 && timeRatio < 1.2 && distToSL > 2) {
     const suggestedAddEur = pos.totalInvested * 0.5;
+    const detail = `${(progress*100).toFixed(0)}% del camino a TP1, SL a ${distToSL.toFixed(1)}×ATR. Posición sólida.`;
+    const confidence = Math.min(90, 55 + progress * 50 + distToSL * 3);
     return {
-      status:  'STRONG',
-      action:  'SCALE_UP',
-      urgency: 'LOW',
-      detail:  `${(progress*100).toFixed(0)}% del camino a TP1, SL a ${distToSL.toFixed(1)}×ATR. Posición sólida.`,
+      status:        'STRONG',
+      action:        'SCALE_UP',
+      urgency:       'LOW',
+      detail,
+      reason:        detail,
+      confidence:    Math.round(confidence),
       scaleUp: {
         suggestedAddEur,
         triggerPrice: pos.takeProfit1 * 0.5 + pos.entryPriceEur * 0.5,
       },
+      scaleUpAmount: suggestedAddEur,
     };
   }
 
   // WEAKENING: dentro del horizonte pero sin progresar
   if (timeRatio > 0.8 && progress < 0.1) {
+    const detail = `${(timeRatio*100).toFixed(0)}% del tiempo óptimo consumido con solo ${(progress*100).toFixed(0)}% de progreso.`;
+    const confidence = Math.min(85, 45 + timeRatio * 20);
     return {
-      status:  'WEAKENING',
-      action:  'REDUCE_50',
-      urgency: 'MEDIUM',
-      detail:  `${(timeRatio*100).toFixed(0)}% del tiempo óptimo consumido con solo ${(progress*100).toFixed(0)}% de progreso.`,
+      status:     'WEAKENING',
+      action:     'REDUCE_50',
+      urgency:    'MEDIUM',
+      detail,
+      reason:     detail,
+      confidence: Math.round(confidence),
     };
   }
 
+  const detail = `En plazo (${timeRatio.toFixed(1)}× horizonte), progreso ${(progress*100).toFixed(0)}%. Mantener.`;
   return {
-    status:  'HOLDING',
-    action:  'HOLD',
-    urgency: 'LOW',
-    detail:  `En plazo (${timeRatio.toFixed(1)}× horizonte), progreso ${(progress*100).toFixed(0)}%. Mantener.`,
+    status:     'HOLDING',
+    action:     'HOLD',
+    urgency:    'LOW',
+    detail,
+    reason:     detail,
+    confidence: Math.round(Math.max(40, 70 - timeRatio * 15)),
   };
 }
 
 // ── Resumen ejecutivo del estado táctico ─────────────────────
 export interface TacticalSummary {
-  capitalTotal:     number;
-  capitalUsed:      number;
-  capitalAvailable: number;
-  utilizationPct:   number;
-  openCount:        number;
-  closedCount:      number;
-  totalRealizedPnL: number;
+  capitalTotal:       number;
+  capitalUsed:        number;
+  capitalAvailable:   number;
+  utilizationPct:     number;
+  openCount:          number;
+  closedCount:        number;
+  totalRealizedPnL:   number;
   totalUnrealizedPnL: number;
-  totalPnL:         number;
-  winRate:          number;
-  profitFactor:     number;
-  maxDrawdown:      number;
-  avgRiskReward:    number;
-  bestClosed:       TacticalPosition | null;
-  worstClosed:      TacticalPosition | null;
+  totalPnL:           number;
+  winRate:            number;
+  profitFactor:       number;
+  maxDrawdown:        number;
+  avgRiskReward:      number;
+  bestClosed:         TacticalPosition | null;
+  worstClosed:        TacticalPosition | null;
+  // ── Aliases cortos para TacticalDashboard ──────────────────
+  unrealizedPnL:      number;   // = totalUnrealizedPnL
+  realizedPnL:        number;   // = totalRealizedPnL
+  alertsToAction:     string[]; // posiciones que requieren acción urgente
 }
 
 export function getTacticalSummary(state: TacticalEngineState): TacticalSummary {
@@ -561,6 +584,16 @@ export function getTacticalSummary(state: TacticalEngineState): TacticalSummary 
   const byPnLAsc = [...state.closedPositions].sort(
     (a, b) => (a.realizedPnLPct ?? 0) - (b.realizedPnLPct ?? 0),
   );
+
+  // Generar alertas de acción desde el análisis de salud de posiciones abiertas
+  const alertsToAction: string[] = state.openPositions
+    .map(pos => {
+      const health = analyzePositionHealth(pos);
+      if (health.urgency === 'CRITICAL') return `\u{1F534} ${pos.ticker}: ${health.detail}`;
+      if (health.urgency === 'HIGH')     return `\u{1F7E0} ${pos.ticker}: ${health.detail}`;
+      return null;
+    })
+    .filter((a): a is string => a !== null);
 
   return {
     capitalTotal:       totalCapital,
@@ -578,5 +611,27 @@ export function getTacticalSummary(state: TacticalEngineState): TacticalSummary 
     avgRiskReward:      state.avgRiskReward,
     bestClosed:         byPnLDesc[0] ?? null,
     worstClosed:        byPnLAsc[0]  ?? null,
+    // Aliases cortos para TacticalDashboard
+    unrealizedPnL:      state.totalUnrealizedPnL,
+    realizedPnL:        state.totalRealizedPnL,
+    alertsToAction,
   };
 }
+
+// ── Compat aliases para TacticalDashboard ────────────────────
+// calcExpectedDays: wrapper sobre calcOptimalHorizon que devuelve solo días.
+// Firma: (entry, target, atr, type) → number
+export function calcExpectedDays(
+  entry:  number,
+  target: number,
+  atr:    number,
+  type:   TacticalPosition['type'],
+): number {
+  return calcOptimalHorizon(entry, target, atr, type).days;
+}
+
+// calcTimingScore: re-exportado desde tacticalSignals para el dashboard
+export { calcTimingScore };
+
+// evaluatePositionHealth: alias de analyzePositionHealth (renombrado en v4)
+export const evaluatePositionHealth = analyzePositionHealth;

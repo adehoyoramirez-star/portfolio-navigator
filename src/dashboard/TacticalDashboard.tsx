@@ -115,14 +115,18 @@ function buildDemoPositions(): TacticalPosition[] {
     id: 'demo-intc-1',
     ticker: 'INTC', name: 'Intel Corporation',
     type: 'OVERSOLD_BOUNCE',
+    currency:     'USD',
+    sectorGroup:  'TECH',
     entryDate: daysAgo(3),
     entryPrice: intcEntry,
+    entryPriceEur: intcEntry,   // Demo: sin conversión FX (USD ≈ EUR a efectos de demo)
     shares: 1,
     capitalRisked: intcEntry - 57,
     totalInvested: intcEntry,
     stopLoss: 57,
     takeProfit1: 95,
     takeProfit2: 138,
+    atrAtEntry: intcAtr,
     status: 'OPEN',
     currentPrice: 68.40,
     exitDate: null, exitPrice: null, exitReason: null,
@@ -151,14 +155,18 @@ function buildDemoPositions(): TacticalPosition[] {
     id: 'demo-bayn-1',
     ticker: 'BAYN', name: 'Bayer AG',
     type: 'MEAN_REVERSION',
+    currency:     'EUR',
+    sectorGroup:  'HEALTHCARE',
     entryDate: daysAgo(1),
     entryPrice: baynEntry,
+    entryPriceEur: baynEntry,   // EUR nativo — sin conversión FX
     shares: 2,
     capitalRisked: (baynEntry - baynSL) * 2,
     totalInvested: baynEntry * 2,
     stopLoss: parseFloat(baynSL.toFixed(2)),
     takeProfit1: parseFloat(baynTP1.toFixed(2)),
     takeProfit2: parseFloat(baynTP2.toFixed(2)),
+    atrAtEntry: baynAtr,
     status: 'OPEN',
     currentPrice: 35.10,
     exitDate: null, exitPrice: null, exitReason: null,
@@ -184,7 +192,7 @@ function buildDemoPositions(): TacticalPosition[] {
 // ════════════════════════════════════════════════════════════
 export default function TacticalDashboard() {
   const [state, setState] = useState<TacticalEngineState>(() => {
-    const saved = loadTacticalState();
+    const saved = loadTacticalState(defaultTacticalConfig(300, 600));
     const demos = buildDemoPositions();
 
     if (saved) {
@@ -312,7 +320,7 @@ export default function TacticalDashboard() {
       }
       const opportunities = result.opportunities ?? [];
       const errors        = result.errors        ?? [];
-      const screennedAt   = result.screennedAt   ?? new Date().toISOString();
+      const screennedAt   = result.screenedAt    ?? new Date().toISOString();
       setState((prev: TacticalEngineState) => ({
         ...prev,
         opportunities,
@@ -369,14 +377,18 @@ export default function TacticalDashboard() {
       ticker:           openModal.asset.ticker,
       name:             openModal.asset.name,
       type:             openModal.type,
+      currency:         openModal.asset.currency ?? 'EUR',
+      sectorGroup:      openModal.asset.sector   ?? 'OTHER',
       entryDate:        new Date().toISOString(),
       entryPrice:       entry,
+      entryPriceEur:    entry,   // FX ya aplicado por el screener (precios en EUR)
       shares,
       capitalRisked,
       totalInvested,
       stopLoss:         stop,
       takeProfit1:      tp1,
       takeProfit2:      tp2,
+      atrAtEntry:       atr,
       status:           'OPEN',
       currentPrice:     entry,
       exitDate:         null,
@@ -489,14 +501,18 @@ export default function TacticalDashboard() {
       ticker:           manualTicker.trim().toUpperCase(),
       name:             manualName.trim(),
       type:             manualType as TacticalPosition['type'],
+      currency:         'EUR',    // Posiciones manuales se asumen en EUR
+      sectorGroup:      'OTHER',  // Sin sector conocido en entrada manual
       entryDate:        new Date().toISOString(),
       entryPrice:       entry,
+      entryPriceEur:    entry,    // EUR por definición en modo manual
       shares,
       capitalRisked:    +((entry - stop) * shares).toFixed(2),
       totalInvested:    +(entry * shares).toFixed(2),
       stopLoss:         stop,
       takeProfit1:      tp1,
       takeProfit2:      tp2,
+      atrAtEntry:       atr,
       status:           'OPEN',
       currentPrice:     curr,
       exitDate:         null, exitPrice: null, exitReason: null,
