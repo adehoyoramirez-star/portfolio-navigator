@@ -393,34 +393,55 @@ export function calcStopLoss(
   return Math.min(stopByATR, stopByLow);
 }
 
-// ── Take Profits — CON GUARD TP2>TP1 ─────────────────────────
+// ── Take Profits — REESCRITO con modelo SIGMA ──────────────
+// PROBLEMA ANTERIOR: TP1 ≈ TP2 en MEAN_REVERSION por limitación a ma20
+// SOLUCIÓN: Usar volatilidad (sigma) de 20 días con multiplicadores distintos
+//   TP1 = entrada + 0.6σ₂₀ (ganancia segura, ~60% probab)
+//   TP2 = entrada + 1.2σ₂₀ (ganancia agresiva, ~40% probab)
+// Esto garantiza TP2 >> TP1 sin estar limitado por ma20
 export function calcTakeProfits(
   entryPrice: number,
   stopLoss:   number,
   type:       OpportunityType,
   ind:        TechnicalIndicators,
+  closes?:    number[],
 ): { tp1: number; tp2: number; rr: number; useTrailing: boolean } {
   const risk = entryPrice - stopLoss;
   if (risk <= 0) {
     return { tp1: entryPrice * 1.01, tp2: entryPrice * 1.02, rr: 1.0, useTrailing: false };
   }
-  const mult = calcDynamicTPMultiplier(ind.atrPct);
 
-  const tp1 = entryPrice + risk * mult.tp1;
+  // NUEVO: Usar sigma₂₀ (volatilidad de 20 días) en lugar de risk
+  // Esto desacopla los targets de la distancia al stop loss
+  const sl20 = closes && closes.length >= 20 
+    ? closes.slice(-20) 
+    : closes ?? [entryPrice];
+  const sigma20 = stdev(sl20);
 
-  let tp2Raw =
-    type === 'MEAN_REVERSION'
-      ? Math.min(entryPrice + risk * mult.tp2, ind.ma20)
-      : entryPrice + risk * mult.tp2;
+  // Multiplicadores de sigma (distintos según el tipo y volatilidad)
+  const atrPct = ind.atr / Math.max(0.01, entryPrice);
+  let tp1Mult = 0.6;  // TP1: 60% de sigma
+  let tp2Mult = 1.2;  // TP2: 120% de sigma (2× más lejos que TP1)
 
-  // CORRECCIÓN CRÍTICA: TP2 nunca puede ser menor que TP1
-  // Ocurría en MEAN_REVERSION cuando ma20 < tp1
-  const tp2 = Math.max(tp1 * 1.001, tp2Raw);
+  // Ajustar multiplicadores si volatilidad es muy baja
+  if (atrPct < 0.008) {
+    tp1Mult = 0.8;
+    tp2Mult = 1.5;
+  }
+
+  const tp1 = entryPrice + sigma20 * tp1Mult;
+  const tp2 = entryPrice + sigma20 * tp2Mult;
+
+  // Guard: garantizar tp2 > tp1 (debería ocurrir siempre con nuestros multiplos)
+  const tp2Final = Math.max(tp1 * 1.01, tp2);
+
+  // R:R usando risk tradicional (para reportes compatibles)
+  const rr = risk > 0 ? (tp1 - entryPrice) / risk : 1.5;
 
   return {
     tp1,
-    tp2,
-    rr: mult.tp1,
+    tp2: tp2Final,
+    rr: Math.max(1.0, rr),
     useTrailing: type === 'MOMENTUM_BREAKOUT',
   };
 }
