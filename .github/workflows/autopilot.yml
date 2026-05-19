@@ -1,11 +1,1 @@
-name: Olympus Auto-Pilot
-on:
-  schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
-jobs:
-  run:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger
-        run:´curl -s -o /dev/null -X POST https://yrirandgftnuvdzatwgc.supabase.co/functions/v1/auto-pilot -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlyaXJhbmRnZnRudXZkemF0d2djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5NTk3MDgsImV4cCI6MjA4NDUzNTcwOH0.sBqkJvkBuirvVt1fa3UpZBBradaYn_68ZZ3nmoiJXeM" -H "Content-Type: application/json" -d "{}"
+run: 'curl -s -o /dev/null -X POST https://yrirandgftnuvdzatwgc.supabase.co/functions/v1/auto-pilot -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlyaXJhbmRnZnRudXZkemF0d2djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5NTk3MDgsImV4cCI6MjA4NDUzNTcwOH0.sBqkJvkBuirvVt1fa3UpZBBradaYn_68ZZ3nmoiJXeM" -H "Content-Type: application/json" -d "{}"'
