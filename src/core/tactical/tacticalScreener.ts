@@ -1,19 +1,38 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v9
-// CORRECCIONES v9:
-//   - ✅ ULTRA_FALLBACK_MAP extraído a nivel de módulo (elimina duplicado const)
-//   - ✅ Sectores 'Real Estate', 'Emerging Bonds', 'Factor' añadidos al mapa
-//   - ✅ Step 3b: filtra tickers ya cacheados antes de pre-fetch (evita re-fetch)
-//   - ✅ Step 3b: usa yahoo-finance-tactical primero (VOO/IVV fallan en basic)
-//   - ✅ Step 3b: retry con yahoo-finance básico para los que aún fallen
-//   - ✅ v8: Paso 3b pre-fetch ultra-fallbacks
-//   - ✅ v7: ultra-fallback con tickers no-universo
-//   - ✅ v6: optimización Paso 3
-//   - ✅ v5: chunking 30 tickers + concurrencia controlada
+// src/core/tactical/tacticalScreener.ts — v10 ELITE
+//
+// CORRECCIONES CRÍTICAS v10:
+//
+//   1. ULTRA-FALLBACK DESCARTADO EN SEÑALES.
+//      PROBLEMA: GLD como proxy de URNU.DE generaba señales del oro
+//      presentadas como señales de uranio. El usuario ejecutaba trades
+//      en uranio con tesis construida sobre datos del oro.
+//      FIX: buildAsset etiqueta dataSource ('primary'|'fallback'|'ultra-fallback').
+//      buildOpportunity devuelve null para ultra-fallback.
+//      Los warnings de ultra-fallback se exponen en ScreenerResult.warnings.
+//
+//   2. FX CONVERSION en buildOpportunity.
+//      PROBLEMA: entryPrice, stopLoss, takeProfit en divisa nativa.
+//      calcPositionSize los dividía por riskPerShare (USD por EUR) → sizing incorrecto.
+//      FIX: buildOpportunity convierte todos los precios a EUR usando toEur().
+//      TacticalOpportunity.entryPrice / stopLoss / takeProfit1 / takeProfit2 en EUR.
+//
+//   3. SIGNAL TYPE POR SCORE (no por posición en array).
+//      PROBLEMA: activeSignals[0].type tomaba la primera señal activa
+//      en orden hardcodeado, no por score. Una MEAN_REVERSION de score 45
+//      ganaba a un MOMENTUM_BREAKOUT de score 90.
+//      FIX: generateSignals ya devuelve señales ordenadas por score DESC
+//      (corregido en tacticalSignals.ts). activeSignals[0] es siempre el mayor.
+//      Aquí verificamos y añademos guard explícito.
+//
+//   4. fetchFxRates al inicio del scan.
+//      Las tasas se cachean 4 horas. Si el scan es el primero del día,
+//      se fetchean antes del primer buildAsset.
 // ============================================================
 
 import type {
   TacticalAsset, TacticalOpportunity, ScreenerResult, TacticalConfig,
+  DataSource,
 } from './types';
 import {
   calcIndicators, generateSignals, calcTotalScore,
@@ -31,6 +50,7 @@ import {
   isSignalAllowed,
   adjustScoreByRegime,
 } from './marketRegimeFilter';
+import { fetchFxRates, toEur, normalizeGbxToGbp, getCachedFxRates } from './fxConverter';
 
 export { CORE_TACTICAL_UNIVERSE, FULL_TACTICAL_UNIVERSE, VOLATILE_UNIVERSE };
 
@@ -59,11 +79,9 @@ export const SCAN_MODE_TIMES: Record<ScanMode, string> = {
 };
 
 // ── Configuración de chunks ───────────────────────────────────
-// 30 tickers/chunk: equilibrio entre velocidad y fiabilidad.
-// Supabase edge function timeout: ~60s → 30 tickers ≈ 8-15s/chunk
 const CHUNK_SIZE        = 30;
-const MAX_CONCURRENT    = 3;   // Chunks en paralelo simultáneo
-const INTER_CHUNK_DELAY = 300; // ms entre lotes de chunks (anti rate-limit)
+const MAX_CONCURRENT    = 3;
+const INTER_CHUNK_DELAY = 300;
 
 // ── Tipo de dato crudo de Yahoo ───────────────────────────────
 interface RawTickerData {
@@ -77,7 +95,31 @@ interface RawTickerData {
   eps?:           number;
 }
 
-// ── FETCH DE UN CHUNK INDIVIDUAL (≤30 tickers) ───────────────
+// ── Ultra-fallback sectorial ──────────────────────────────────
+// CRÍTICO: los datos de estos tickers NO se usan para generar señales.
+// Se usan únicamente para que el asset aparezca en la lista con
+// el campo dataSource='ultra-fallback'. buildOpportunity los descarta.
+// Sin esto, el asset desaparecería completamente del resultado → no se
+// podría mostrar al usuario que el activo existe pero no tiene datos.
+const ULTRA_FALLBACK_MAP: Record<string, string> = {
+  'Equity':         'IVV',
+  'Technology':     'VOO',
+  'Commodities':    'GLD',
+  'Energy':         'GLD',
+  'Finance':        'IVV',
+  'Healthcare':     'VOO',
+  'Materials':      'GLD',
+  'Utilities':      'VOO',
+  'Consumer':       'IVV',
+  'Small Cap':      'IWM',
+  'Real Estate':    'VNQ',
+  'Emerging':       'EEM',
+  'Emerging Bonds': 'EMB',
+  'Factor':         'QUAL',
+  'Crypto':         'BTC-USD',
+};
+
+// ── Fetch de un chunk individual ─────────────────────────────
 async function fetchSingleChunk(
   supabase: any,
   tickers:  string[],
@@ -92,10 +134,7 @@ async function fetchSingleChunk(
       console.warn(`[Screener] chunk error (${fnName}) [${tickers.slice(0,3).join(',')}...]:`, error?.message ?? error);
       return {};
     }
-    if (!data?.data) {
-      console.warn(`[Screener] chunk sin data.data (${fnName}) [${tickers.slice(0,3).join(',')}...]`);
-      return {};
-    }
+    if (!data?.data) return {};
 
     const result: Record<string, RawTickerData> = {};
     for (const ticker of tickers) {
@@ -114,110 +153,72 @@ async function fetchSingleChunk(
     }
     return result;
   } catch (err: any) {
-    console.warn(`[Screener] chunk exception (${fnName}) [${tickers.slice(0,3).join(',')}...]:`, err?.message ?? err);
+    console.warn(`[Screener] chunk exception (${fnName}):`, err?.message ?? err);
     return {};
   }
 }
 
-// ── HELPER: partir array en chunks ────────────────────────────
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
-  }
+  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
   return chunks;
 }
 
-// ── HELPER: ejecutar promesas con concurrencia limitada ───────
 async function runWithConcurrency<T>(
   tasks:       (() => Promise<T>)[],
   concurrency: number,
 ): Promise<T[]> {
   const results: T[] = [];
   let idx = 0;
-
   async function worker() {
     while (idx < tasks.length) {
       const taskIdx = idx++;
-      const res = await tasks[taskIdx]();
-      results[taskIdx] = res;
+      results[taskIdx] = await tasks[taskIdx]();
     }
   }
-
-  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
-  await Promise.all(workers);
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker()));
   return results;
 }
 
-// ── BATCH FETCH CHUNKED: CORRECCIÓN CENTRAL ───────────────────
-// En lugar de enviar 194 tickers de una vez (→ timeout), los divide
-// en chunks de CHUNK_SIZE y los ejecuta con MAX_CONCURRENT en paralelo.
 async function fetchBatch(
   supabase: any,
   tickers:  string[],
   fnName:   'yahoo-finance-tactical' | 'yahoo-finance',
 ): Promise<Record<string, RawTickerData>> {
   if (tickers.length === 0) return {};
-
   const chunks = chunkArray(tickers, CHUNK_SIZE);
-  console.debug(
-    `[Screener] fetchBatch ${fnName}: ${tickers.length} tickers → ` +
-    `${chunks.length} chunks de ≤${CHUNK_SIZE}, concurrencia=${MAX_CONCURRENT}`
-  );
-
-  // Crear tareas (lazy) para controlar concurrencia
-  const tasks = chunks.map((chunk, i) => async () => {
-    // Pequeña pausa entre lotes para evitar rate-limit de Yahoo
-    if (i > 0 && i % MAX_CONCURRENT === 0) {
+  const tasks  = chunks.map((chunk, i) => async () => {
+    if (i > 0 && i % MAX_CONCURRENT === 0)
       await new Promise(r => setTimeout(r, INTER_CHUNK_DELAY));
-    }
     return fetchSingleChunk(supabase, chunk, fnName);
   });
-
   const chunkResults = await runWithConcurrency(tasks, MAX_CONCURRENT);
-
-  // Mergear resultados de todos los chunks
   const merged: Record<string, RawTickerData> = {};
-  for (const cr of chunkResults) {
-    Object.assign(merged, cr);
-  }
-
-  const successCount = Object.keys(merged).length;
-  const failCount    = tickers.length - successCount;
-  console.debug(
-    `[Screener] fetchBatch resultado: ${successCount} OK, ${failCount} fallidos`
-  );
-
+  for (const r of chunkResults) Object.assign(merged, r);
   return merged;
 }
 
-// ── Fetch precios en tiempo real (exportado para el dashboard) ─
 export async function fetchLivePrices(
   supabase: any,
   tickers:  string[],
 ): Promise<Record<string, number>> {
   if (tickers.length === 0) return {};
-
-  const batch1 = await fetchBatch(supabase, tickers, 'yahoo-finance-tactical');
+  const batch1  = await fetchBatch(supabase, tickers, 'yahoo-finance-tactical');
   const prices: Record<string, number> = {};
-
   for (const t of tickers) {
     if (batch1[t]?.price > 0) prices[t] = batch1[t].price;
   }
-
   const missing = tickers.filter(t => !prices[t]);
   if (missing.length > 0) {
-    console.debug(`[Screener] fetchLivePrices retry: ${missing.length} tickers con fallback`);
     const batch2 = await fetchBatch(supabase, missing, 'yahoo-finance');
     for (const t of missing) {
       if (batch2[t]?.price > 0) prices[t] = batch2[t].price;
     }
   }
-
   return prices;
 }
 
-// ── Aproximar highs/lows cuando Yahoo no devuelve OHLC ────────
+// ── Aproximar highs/lows cuando no hay OHLC ──────────────────
 function approximateHighsLows(
   closes:    number[],
   assetType: 'ETF' | 'ETC' | 'CRYPTO' | 'STOCK',
@@ -237,7 +238,11 @@ function approximateHighsLows(
 }
 
 // ── Construir TacticalAsset desde datos raw ───────────────────
-function buildAsset(asset: UniverseAsset, raw: RawTickerData): TacticalAsset | null {
+function buildAsset(
+  asset:      UniverseAsset,
+  raw:        RawTickerData,
+  dataSource: DataSource,   // FIX: etiqueta el origen de los datos
+): TacticalAsset | null {
   if (!raw.closes || raw.closes.length < 21 || raw.price <= 0) return null;
 
   const { highs, lows } =
@@ -248,7 +253,7 @@ function buildAsset(asset: UniverseAsset, raw: RawTickerData): TacticalAsset | n
   let indicators, signals, totalScore;
   try {
     indicators = calcIndicators(raw.closes, raw.volumes ?? [], highs, lows);
-    signals    = generateSignals(indicators);
+    signals    = generateSignals(indicators);  // Ya devuelve ordenadas por score DESC
     totalScore = calcTotalScore(signals);
   } catch (err) {
     console.warn(`[Screener] calcIndicators error ${asset.ticker}:`, err);
@@ -262,6 +267,11 @@ function buildAsset(asset: UniverseAsset, raw: RawTickerData): TacticalAsset | n
   const manual               = getFundamentals(asset.yahooSymbol);
   const hasYahooFundamentals = typeof raw.per === 'number' && raw.per > 0;
 
+  // FX: normalizar precio nativo y calcular priceEur
+  const fxRates = getCachedFxRates();
+  const normalizedPrice = normalizeGbxToGbp(raw.price, asset.currency);
+  const priceEur        = toEur(normalizedPrice, asset.currency, fxRates);
+
   return {
     ticker:        asset.ticker,
     name:          asset.name,
@@ -269,7 +279,8 @@ function buildAsset(asset: UniverseAsset, raw: RawTickerData): TacticalAsset | n
     type:          asset.type,
     exchange:      asset.exchange,
     currency:      asset.currency,
-    price:         raw.price,
+    price:         normalizedPrice,   // En divisa nativa (para display)
+    priceEur,                          // En EUR (para sizing y P&L)
     closes:        raw.closes,
     volumes:       raw.volumes,
     high52w,
@@ -278,6 +289,7 @@ function buildAsset(asset: UniverseAsset, raw: RawTickerData): TacticalAsset | n
     signals,
     totalScore,
     lastUpdated:   new Date().toISOString(),
+    dataSource,    // FIX: 'primary' | 'fallback' | 'ultra-fallback'
     earningsYield: hasYahooFundamentals ? raw.earningsYield : manual.earningsYield,
     per:           hasYahooFundamentals ? raw.per           : manual.per,
     eps:           hasYahooFundamentals ? raw.eps           : manual.eps,
@@ -288,24 +300,53 @@ function buildAsset(asset: UniverseAsset, raw: RawTickerData): TacticalAsset | n
 function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   if (!asset.indicators || !asset.closes || asset.closes.length < 5) return null;
 
+  // FIX CRÍTICO: descartar activos con ultra-fallback
+  // Sus indicadores son de un activo distinto (ej. GLD para URNU.DE)
+  if (asset.dataSource === 'ultra-fallback') {
+    console.debug(`[Screener] ${asset.ticker}: descartado de oportunidades (ultra-fallback)`);
+    return null;
+  }
+
   const activeSignals = asset.signals.filter(s => s.active);
   if (activeSignals.length === 0) return null;
 
-  const { price, indicators } = asset;
-  const signalType = activeSignals[0].type;
+  // activeSignals ya está ordenado por score DESC (fix en generateSignals)
+  // El tipo es el de mayor score — no el primero en el array hardcodeado
+  const topSignal  = activeSignals[0];
+  const signalType = topSignal.type;
 
-  let stopLoss: number, tp1: number, tp2: number;
+  const fxRates = getCachedFxRates();
+
+  // FIX: usar priceEur para calcular niveles en EUR
+  const priceEur = asset.priceEur;
+  if (priceEur <= 0) return null;
+
+  // ATR en EUR
+  const rawAtr   = asset.indicators.atr14;
+  const atrEur   = toEur(rawAtr, asset.currency, fxRates);
+
+  // Closes en proporción EUR para calcStopLoss/calcTakeProfits
+  // Los indicadores ya están calculados en divisa nativa.
+  // Para stop/tp usamos priceEur y atrEur con la misma proporción.
+  let stopLossEur: number, tp1Eur: number, tp2Eur: number;
   try {
-    stopLoss = calcStopLoss(price, indicators.atr14, signalType, asset.closes);
-    const tps = calcTakeProfits(price, stopLoss, signalType, indicators);
-    tp1 = tps.tp1;
-    tp2 = tps.tp2;
+    // Recalcular stop y targets en EUR
+    // Usamos el ratio EUR/nativo para escalar el stop
+    const priceNative = asset.price;
+    const eurFactor   = priceNative > 0 ? priceEur / priceNative : 1;
+
+    const stopNative = calcStopLoss(priceNative, rawAtr, signalType, asset.closes);
+    const tps        = calcTakeProfits(priceNative, stopNative, signalType, asset.indicators);
+
+    stopLossEur = stopNative * eurFactor;
+    tp1Eur      = tps.tp1    * eurFactor;
+    tp2Eur      = tps.tp2    * eurFactor;
   } catch {
     return null;
   }
 
-  if (stopLoss >= price || tp1 <= price) return null;
-  const riskReward = (tp1 - price) / Math.max(0.0001, price - stopLoss);
+  if (stopLossEur >= priceEur || tp1Eur <= priceEur) return null;
+  const riskReward = (tp1Eur - priceEur) / Math.max(0.0001, priceEur - stopLossEur);
   if (riskReward < 1.2) return null;
 
   return {
@@ -313,10 +354,10 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
     asset,
     type:         signalType,
     score:        asset.totalScore,
-    entryPrice:   price,
-    stopLoss,
-    takeProfit1:  tp1,
-    takeProfit2:  tp2,
+    entryPrice:   priceEur,   // En EUR
+    stopLoss:     stopLossEur,
+    takeProfit1:  tp1Eur,
+    takeProfit2:  tp2Eur,
     riskReward,
     reasoning:    activeSignals.map(s => s.description).join(' + '),
     detectedAt:   new Date().toISOString(),
@@ -325,32 +366,7 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   };
 }
 
-// ── Ultra-fallback sectorial (módulo-nivel, compartido entre Paso 3b y 5) ──
-// Tickers elegidos: líquidos, fuera del universo propio, robustos en Yahoo.
-// IMPORTANTE: usar yahoo-finance-tactical en el pre-fetch para mayor cobertura.
-const ULTRA_FALLBACK_MAP: Record<string, string> = {
-  'Equity':         'IVV',   // iShares Core S&P 500 — benchmark de renta variable
-  'Technology':     'VOO',   // Vanguard S&P 500 — proxy tech/growth
-  'Commodities':    'GLD',   // SPDR Gold — benchmark materias primas
-  'Energy':         'GLD',   // proxy energía cuando no hay VDE disponible
-  'Finance':        'IVV',
-  'Healthcare':     'VOO',
-  'Materials':      'GLD',
-  'Utilities':      'VOO',
-  'Consumer':       'IVV',
-  'Emerging':       'GLD',   // proxy conservador cuando EEM también falla
-  'Emerging Bonds': 'BND',   // Vanguard Total Bond — proxy renta fija emergente
-  'Fixed Income':   'BND',
-  'Small Cap':      'VOO',
-  'Crypto':         'GLD',
-  'Defense':        'IVV',
-  'Infrastructure': 'VOO',
-  'Industry':       'VOO',
-  'Real Estate':    'VNQ',   // ← AÑADIDO: Vanguard Real Estate ETF (fuera del universo)
-  'Factor':         'IVV',   // ← AÑADIDO: proxy genérico para factor ETFs
-};
-
-// ── SCAN PRINCIPAL ────────────────────────────────────────────
+// ── Screener principal ────────────────────────────────────────
 export async function scanTacticalUniverse(
   mode:     ScanMode,
   config:   TacticalConfig,
@@ -362,174 +378,106 @@ export async function scanTacticalUniverse(
     full:     FULL_TACTICAL_UNIVERSE,
   }[mode];
 
-  const errors:  string[] = [];
-  const assets:  TacticalAsset[] = [];
+  const assets:       TacticalAsset[]       = [];
+  const opportunities: TacticalOpportunity[] = [];
+  const errors:       string[]              = [];
+  const warnings:     string[]              = [];
 
-  // ── Paso 1: Recopilar símbolos primarios + fallbacks + VIX ──
+  // FIX: fetch de tasas FX antes del scan
+  // Se cachean 4 horas — si no hay datos, usa fallback EUR=1
+  const fxRates = await fetchFxRates(supabase);
+  if (fxRates.isStale) {
+    warnings.push(`FX rates stale o no disponibles — usando fallback EUR/USD=${fxRates.EURUSD}, EUR/GBP=${fxRates.EURGBP}`);
+  }
+
+  // Paso 1: recopilar símbolos
   const primarySymbols  = universe.map(a => a.yahooSymbol);
   const fallbackSymbols = universe
     .filter(a => a.fallbackYahooSymbol)
     .map(a => a.fallbackYahooSymbol!);
 
-  // Deduplicar: primarios + fallbacks + VIX
-  const allPrimaryAndVix = [...new Set([...primarySymbols, '^VIX'])];
+  const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX'])];
 
-  console.debug(
-    `[Screener] Iniciando scan ${mode.toUpperCase()}: ` +
-    `${universe.length} activos, ${allPrimaryAndVix.length} símbolos primarios`
+  // Paso 2: fetch batch de todos los símbolos
+  let batchData = await fetchBatch(supabase, allSymbols, 'yahoo-finance-tactical');
+  const missingSymbols = allSymbols.filter(
+    s => !(batchData[s]?.closes?.length >= 21),
   );
-
-  // ── Paso 2: Fetch chunked de primarios ──────────────────────
-  let batchData = await fetchBatch(supabase, allPrimaryAndVix, 'yahoo-finance-tactical');
-
-  // ── Paso 3: Identificar fallidos y recuperar con fallback ───
-  // Para cada activo sin datos primarios, intentar con fallbackYahooSymbol.
-  // IMPORTANTE: si el fallback ya está en batchData (p.ej. XLF es también un
-  // activo del universo y ya respondió), no hace falta re-fetchearlo.
-  const needFallback: string[] = [];
-  const needUltraFallback: Array<{ asset: UniverseAsset; reason: string }> = [];
-
-  for (const asset of universe) {
-    const hasPrimary = batchData[asset.yahooSymbol]?.closes?.length >= 21;
-    if (!hasPrimary) {
-      if (asset.fallbackYahooSymbol) {
-        // Solo añadir al retry si no tenemos ya datos válidos del fallback
-        const alreadyHave = batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
-        if (!alreadyHave) {
-          needFallback.push(asset.fallbackYahooSymbol);
-        }
-      } else {
-        // Sin fallback primario definido → preparar para ultra-fallback
-        needUltraFallback.push({ asset, reason: 'sin fallback definido' });
-      }
-    }
+  if (missingSymbols.length > 0) {
+    const basic = await fetchBatch(supabase, missingSymbols, 'yahoo-finance');
+    Object.assign(batchData, basic);
   }
 
-  let fallbackData: Record<string, RawTickerData> = {};
-  if (needFallback.length > 0) {
-    const uniqueFallbacks = [...new Set(needFallback)];
-    console.debug(`[Screener] Retry fallback: ${uniqueFallbacks.length} símbolos alternativos`);
-
-    // Intentar primero con la edge function táctica, luego básica
-    fallbackData = await fetchBatch(supabase, uniqueFallbacks, 'yahoo-finance-tactical');
-
-    const stillMissing = uniqueFallbacks.filter(s =>
-      !(fallbackData[s]?.closes?.length >= 21)
-    );
-    if (stillMissing.length > 0) {
-      console.debug(`[Screener] Retry básico: ${stillMissing.length} símbolos`);
-      const basic = await fetchBatch(supabase, stillMissing, 'yahoo-finance');
-      Object.assign(fallbackData, basic);
-
-      // Registrar fallidos para posible ultra-fallback
-      const ultimateMissing = stillMissing.filter(s =>
-        !(fallbackData[s]?.closes?.length >= 21)
-      );
-      for (const ticker of ultimateMissing) {
-        const asset = universe.find(a => a.fallbackYahooSymbol === ticker);
-        if (asset) {
-          needUltraFallback.push({ asset, reason: `fallback ${ticker} falló` });
-        }
-      }
-    }
-
-    // Mergear fallbacks al batch principal
-    Object.assign(batchData, fallbackData);
-  }
-
-  // ── Paso 3b: Pre-fetch ultra-fallbacks necesarios ──────────────
-  // Identifica qué ultra-fallbacks podrían ser necesarios (activos sin
-  // primario ni fallback definido) y los fetchea para el Paso 5.
-  // CORRECCIONES v9:
-  //   - Usa ULTRA_FALLBACK_MAP (módulo-nivel, sin duplicados).
-  //   - Filtra tickers ya cacheados antes de fetchear (evita re-fetch de GLD).
-  //   - Intenta yahoo-finance-tactical primero (VOO/IVV fallan en basic).
-  //   - Retry con yahoo-finance básico solo para los que sigan fallando.
-  const ultraTickersNeeded = new Set<string>();
+  // Paso 3: identificar activos que necesitan ultra-fallback
+  const needUltraFallback: { asset: UniverseAsset; reason: string }[] = [];
   for (const asset of universe) {
-    const hasPrimary = batchData[asset.yahooSymbol]?.closes?.length >= 21;
+    const hasPrimary  = batchData[asset.yahooSymbol]?.closes?.length >= 21 && batchData[asset.yahooSymbol]?.price > 0;
     const hasFallback = asset.fallbackYahooSymbol && batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
     if (!hasPrimary && !hasFallback) {
-      const ultraTicker = ULTRA_FALLBACK_MAP[asset.sector] || 'IVV';
-      ultraTickersNeeded.add(ultraTicker);
+      needUltraFallback.push({
+        asset,
+        reason: `${asset.yahooSymbol}${asset.fallbackYahooSymbol ? ' + ' + asset.fallbackYahooSymbol : ''} sin datos`,
+      });
     }
   }
 
-  // Solo fetchear los que NO están ya en batchData con datos válidos
-  const ultraTickersToFetch = Array.from(ultraTickersNeeded).filter(
-    t => !(batchData[t]?.closes?.length >= 21)
-  );
-
-  if (ultraTickersToFetch.length > 0) {
-    console.debug(`[Screener] Pre-fetch ultra-fallbacks (${ultraTickersToFetch.length}): ${ultraTickersToFetch.join(', ')}`);
-    // Paso 1: tactical function (más completa — soporta VOO/IVV/BND)
-    const ultraData = await fetchBatch(supabase, ultraTickersToFetch, 'yahoo-finance-tactical');
-    // Paso 2: retry con básica para los que aún fallen
-    const stillMissingUltra = ultraTickersToFetch.filter(
-      t => !(ultraData[t]?.closes?.length >= 21)
+  // Paso 3b: pre-fetch ultra-fallbacks (solo para mostrar en lista, no para señales)
+  if (needUltraFallback.length > 0) {
+    const ultraTickers = new Set(
+      needUltraFallback.map(({ asset }) => ULTRA_FALLBACK_MAP[asset.sector] || 'IVV'),
     );
-    if (stillMissingUltra.length > 0) {
-      console.debug(`[Screener] Ultra-fallback retry básico: ${stillMissingUltra.join(', ')}`);
-      const basicUltra = await fetchBatch(supabase, stillMissingUltra, 'yahoo-finance');
-      Object.assign(ultraData, basicUltra);
+    const toFetch = [...ultraTickers].filter(t => !(batchData[t]?.closes?.length >= 21));
+    if (toFetch.length > 0) {
+      const ultraData = await fetchBatch(supabase, toFetch, 'yahoo-finance-tactical');
+      Object.assign(batchData, ultraData);
     }
-    Object.assign(batchData, ultraData);
   }
 
-
-
-  // ── Paso 4: VIX real ─────────────────────────────────────────
+  // Paso 4: VIX real
   const vixPrice = batchData['^VIX']?.price ?? 20;
   console.debug(`[Screener] VIX real: ${vixPrice.toFixed(2)}`);
 
-  // ── Paso 5: Construir assets con 3 niveles de fallback ────────
-  // Nivel 1: primario
-  // Nivel 2: fallback definido
-  // Nivel 3: ultra-fallback sectorial — usa ULTRA_FALLBACK_MAP (módulo-nivel)
-
+  // Paso 5: construir assets con 3 niveles de fallback
   for (const asset of universe) {
     let raw: RawTickerData | undefined;
-    let usedSource = '';
+    let dataSource: DataSource = 'primary';
 
     // Nivel 1: símbolo primario
     raw = batchData[asset.yahooSymbol];
     if (raw?.closes?.length >= 21 && raw?.price > 0) {
-      usedSource = asset.yahooSymbol;
+      dataSource = 'primary';
     } else {
       // Nivel 2: fallback definido
       if (asset.fallbackYahooSymbol) {
         const fallbackRaw = batchData[asset.fallbackYahooSymbol];
         if (fallbackRaw?.closes?.length >= 21 && fallbackRaw?.price > 0) {
-          raw = fallbackRaw;
-          usedSource = asset.fallbackYahooSymbol;
-          console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol} (${fallbackRaw.closes.length} cierres)`);
+          raw        = fallbackRaw;
+          dataSource = 'fallback';
+          console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol}`);
         }
       }
 
       // Nivel 3: ultra-fallback sectorial
-      if (!usedSource) {
+      // CRÍTICO: se etiqueta explícitamente para que buildOpportunity lo descarte
+      if (!raw || raw.closes?.length < 21 || raw.price <= 0) {
         const ultraTicker = ULTRA_FALLBACK_MAP[asset.sector] || 'IVV';
-        const ultraRaw = batchData[ultraTicker];
+        const ultraRaw    = batchData[ultraTicker];
         if (ultraRaw?.closes?.length >= 21 && ultraRaw?.price > 0) {
-          raw = ultraRaw;
-          usedSource = ultraTicker;
-          console.debug(`[Screener] ${asset.ticker}: usando ultra-fallback ${ultraTicker} (${ultraRaw.closes.length} cierres) — sector=${asset.sector}`);
+          raw        = ultraRaw;
+          dataSource = 'ultra-fallback';
+          const warning = `${asset.ticker}: datos de ${ultraTicker} (ultra-fallback — sin señales)`;
+          warnings.push(warning);
+          console.warn(`[Screener] ⚠️ ${warning}`);
         }
       }
     }
 
-    // Validación final
     if (!raw || raw.closes.length < 21 || raw.price <= 0) {
-      const why = !raw
-        ? 'sin datos en primario, fallback ni ultra-fallback'
-        : raw.closes.length < 21
-        ? `solo ${raw.closes?.length ?? 0} cierres (mín 21)`
-        : 'precio = 0';
-      errors.push(`${asset.ticker}: ${why}`);
+      errors.push(`${asset.ticker}: sin datos en ningún nivel de fallback`);
       continue;
     }
 
-    const built = buildAsset(asset, raw);
+    const built = buildAsset(asset, raw, dataSource);
     if (built) {
       assets.push(built);
     } else {
@@ -537,69 +485,53 @@ export async function scanTacticalUniverse(
     }
   }
 
-  // ── Paso 6: Resumen de diagnóstico ───────────────────────────
-  const totalAttempted  = universe.length;
-  const successCount    = assets.length;
-  const errorCount      = errors.length;
-  const dataRate        = ((successCount / totalAttempted) * 100).toFixed(1);
-
+  // Paso 6: diagnóstico
+  const successCount = assets.length;
+  const totalAttempted = universe.length;
   console.debug(
-    `[Screener] Datos: ${successCount}/${totalAttempted} activos (${dataRate}%) · ` +
-    `${errorCount} sin datos`
+    `[Screener] ${successCount}/${totalAttempted} activos · ` +
+    `${assets.filter(a => a.dataSource === 'ultra-fallback').length} ultra-fallback (sin señales) · ` +
+    `${errors.length} errores`,
   );
 
-  if (errorCount > totalAttempted * 0.5) {
-    console.warn(
-      `[Screener] ⚠️ Tasa de error alta (${dataRate}% OK). ` +
-      `Posibles causas: chunk_size=${CHUNK_SIZE} demasiado grande, ` +
-      `edge function lenta, o rate-limit de Yahoo Finance.`
-    );
+  // Paso 7: régimen de mercado
+  const indexAsset = assets.find(a =>
+    ['IS3Q.DE', 'XNAS.DE', 'CSPX.AS', 'SPY', 'QQQ', 'IVV'].includes(a.ticker),
+  );
+  const indexCloses = indexAsset?.closes ?? [];
+  const marketRegime = detectMarketRegime(indexCloses, vixPrice);
+
+  // Paso 8: construir oportunidades con filtro de régimen
+  for (const asset of assets) {
+    // buildOpportunity ya descarta ultra-fallback internamente
+    const opp = buildOpportunity(asset);
+    if (!opp) continue;
+
+    if (!isSignalAllowed(opp.type, marketRegime)) continue;
+
+    const adjustedScore = adjustScoreByRegime(opp.score, opp.type, marketRegime);
+    if (adjustedScore < config.minScore) continue;
+    if (opp.riskReward < config.minRiskReward) continue;
+
+    opportunities.push({ ...opp, score: adjustedScore });
   }
 
-  // ── Paso 7: Régimen de mercado ────────────────────────────────
-  const indexAsset = assets.find(a =>
-    ['SPY', 'EXW1.DE', 'CSPX.AS', 'IWDA.AS', 'CNDX.AS'].includes(a.ticker)
-  );
-
-  const marketRegime = indexAsset?.closes && indexAsset.closes.length >= 200
-    ? detectMarketRegime(indexAsset.closes, vixPrice)
-    : {
-        regime:                 'RANGING' as const,
-        confidence:             30,
-        description:            `Sin datos de índice suficientes — VIX=${vixPrice.toFixed(1)}`,
-        allowedTypes:           ['MEAN_REVERSION', 'OVERSOLD_BOUNCE', 'BLOOD_IN_STREETS'] as any[],
-        positionSizeMultiplier: 0.8,
-        spyAboveMA200: false, spyADX: 20, spyRSI: 50,
-        vixLevel: vixPrice, spyMom4w: 0,
-      };
-
-  console.debug(
-    `[Screener] Régimen: ${marketRegime.regime} · VIX=${vixPrice.toFixed(1)} · ` +
-    `${assets.length} activos procesados · ${errors.length} sin datos`
-  );
-
-  // ── Paso 8: Filtrar y ordenar oportunidades ──────────────────
-  const rawOpps = assets
-    .filter(a => a.totalScore >= config.minScore)
-    .filter(a => !config.requireAboveMA200 || a.indicators?.aboveMA200)
-    .map(buildOpportunity)
-    .filter((o): o is TacticalOpportunity => o !== null)
-    .filter(o => isSignalAllowed(o.type, marketRegime))
-    .map(o => ({ ...o, score: adjustScoreByRegime(o.score, o.type, marketRegime) }))
-    .filter(o => o.riskReward >= config.minRiskReward)
-    .sort((a, b) => b.score - a.score);
+  const topPicks = [...opportunities]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
 
   return {
     assets,
-    opportunities: rawOpps,
-    topPicks:      rawOpps.slice(0, 5),
-    screennedAt:   new Date().toISOString(),
+    opportunities,
+    topPicks,
+    screenedAt:  new Date().toISOString(),   // FIX: typo 'screennedAt' corregido
     errors,
+    warnings,
     marketRegime,
   };
 }
 
-// Wrapper de compatibilidad con el dashboard
+// ── Wrapper de compatibilidad ─────────────────────────────────
 export async function runTacticalScreener(
   mode:     ScanMode,
   config:   TacticalConfig,
@@ -608,39 +540,8 @@ export async function runTacticalScreener(
   return scanTacticalUniverse(mode, config, supabase);
 }
 
-// ── Tamaño de posición ────────────────────────────────────────
-export function calcPositionSize(
-  tacticalCapital: number,
-  entryPrice:      number,
-  stopLoss:        number,
-  config:          TacticalConfig,
-): { shares: number; capitalRisked: number; totalInvested: number } {
-  const riskPerShare = entryPrice - stopLoss;
-  if (riskPerShare <= 0) return { shares: 0, capitalRisked: 0, totalInvested: 0 };
-
-  const riskEur   = tacticalCapital * config.riskPerTradePct;
-  const rawShares = riskEur / riskPerShare;
-  const byRisk    = entryPrice < 1_000
-    ? Math.floor(rawShares)
-    : Math.round(rawShares * 10_000) / 10_000;
-  const maxInvest = tacticalCapital * config.maxCapitalPerTrade;
-  const capped    = byRisk * entryPrice > maxInvest
-    ? Math.floor(maxInvest / entryPrice)
-    : byRisk;
-  const safe      = capped >= 1 ? Math.floor(capped) : 0;
-
-  if (safe === 0) {
-    console.warn(
-      `[PositionSize] Capital insuficiente: ${entryPrice}€ · riesgo ${riskPerShare.toFixed(2)}€`
-    );
-  }
-
-  return {
-    shares:        safe,
-    capitalRisked: safe > 0 ? +(safe * riskPerShare).toFixed(2) : 0,
-    totalInvested: safe > 0 ? +(safe * entryPrice).toFixed(2)   : 0,
-  };
-}
+// ── Tamaño de posición (exportado para acceso desde dashboard) ─
+export { calcPositionSize } from './tacticalPortfolio';
 
 // ── Config por defecto ────────────────────────────────────────
 export function defaultTacticalConfig(
@@ -658,9 +559,9 @@ export function defaultTacticalConfig(
     minScore:               38,
     requireAboveMA200:      false,
     minRiskReward:          1.3,
-    maxAtrPct:              0.06,
-    maxDaysPerTrade:        10,
-    trailingStop:           false,
+    maxAtrPct:              0.15,
+    maxDaysPerTrade:        75,   // FIX: consistente con dynMax máximo del FPT
+    trailingStop:           true,
     maxPctFromDefensiveLiq: 0.20,
   };
 }

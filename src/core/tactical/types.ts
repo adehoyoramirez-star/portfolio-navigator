@@ -1,66 +1,80 @@
 // ============================================================
 // src/core/tactical/types.ts
-// Tipos del Motor Táctico Olympus — Oportunidades de Mercado
-// VERSIÓN SIMPLIFICADA SIN IBKR
+// Tipos del Motor Táctico Olympus
+// CAMBIOS v2:
+//   + TacticalPosition.atrAtEntry: ATR en EUR en el momento de
+//     apertura — necesario para trailing stop y horizonte correcto
+//     sin depender del fallback 2% hardcodeado.
+//   + TacticalPosition.sectorGroup: grupo sectorial asignado al
+//     abrir la posición — necesario para que correlationManager
+//     use el sector real (p.type era OpportunityType, nunca
+//     coincidía con las claves de SECTOR_GROUPS).
+//   + TacticalPosition.currency: divisa nativa del activo.
+//   + TacticalAsset.dataSource: indica si los datos provienen del
+//     símbolo primario, fallback definido, o ultra-fallback
+//     sectorial. Las oportunidades generadas con ultra-fallback
+//     se descartan automáticamente en buildOpportunity.
+//   + TacticalAsset.priceEur: precio convertido a EUR para sizing.
 // ============================================================
 
 export type OpportunityType =
-  | 'BLOOD_IN_STREETS'   // Caída brutal por pánico — mean reversion
-  | 'MOMENTUM_BREAKOUT'  // Ruptura de resistencia con volumen
-  | 'MEAN_REVERSION'     // Desviación extrema de la media
-  | 'OVERSOLD_BOUNCE'    // RSI muy bajo + soporte técnico
-  | 'SECTOR_ROTATION'    // Dinero rotando hacia sector infraponderado
-  | 'EVENT_DRIVEN';      // Reacción exagerada a evento puntual
+  | 'BLOOD_IN_STREETS'
+  | 'MOMENTUM_BREAKOUT'
+  | 'MEAN_REVERSION'
+  | 'OVERSOLD_BOUNCE'
+  | 'SECTOR_ROTATION'
+  | 'EVENT_DRIVEN';
 
-export type SignalStrength = 'WEAK' | 'MODERATE' | 'STRONG' | 'EXTREME';
-export type TrendDirection = 'UPTREND' | 'DOWNTREND' | 'SIDEWAYS';
+export type SignalStrength    = 'WEAK' | 'MODERATE' | 'STRONG' | 'EXTREME';
+export type TrendDirection    = 'UPTREND' | 'DOWNTREND' | 'SIDEWAYS';
 export type OpportunityStatus = 'OPEN' | 'CLOSED_TP' | 'CLOSED_SL' | 'CLOSED_TIME' | 'CLOSED_MANUAL';
+
+// ── Origen de los datos de mercado ───────────────────────────
+// CRITICAL: las oportunidades generadas con 'ultra-fallback' usan
+// datos de un activo distinto (p.ej. GLD para URNU.DE). Deben
+// excluirse del motor de señales para evitar trades en el activo
+// equivocado con tesis del activo de fallback.
+export type DataSource = 'primary' | 'fallback' | 'ultra-fallback';
 
 // ── Indicadores técnicos calculados ─────────────────────────
 export interface TechnicalIndicators {
-  // Precios
   price:       number;
   ma20:        number;
   ma50:        number;
   ma200:       number;
-  // RSI
-  rsi2:        number;   // Para mean reversion (< 5 = extremo)
-  rsi14:       number;   // Estándar
-  rsiWeekly:   number;   // Confirmación en timeframe superior
-  // Momentum
+  rsi2:        number;
+  rsi14:       number;
+  rsiWeekly:   number;
   macdLine:    number;
   macdSignal:  number;
   macdHist:    number;
-  adx:         number;   // > 25 = tendencia fuerte
-  // Volatilidad / Bandas
-  bbUpper:     number;   // Bollinger Band superior (2σ, 20d)
+  adx:         number;   // Efficiency Ratio ×100 (0-100). Reemplaza el proxy incorrecto de volatilidad.
+  bbUpper:     number;
   bbMiddle:    number;
   bbLower:     number;
-  bbWidth:     number;   // (Upper-Lower)/Middle — compresión < 0.05
-  atr14:       number;   // Average True Range 14 periodos (requiere highs/lows)
-  atrPct:      number;   // ATR como % del precio
-  // Z-Score
-  zScore20:    number;   // Desviaciones desde MA20
-  zScore50:    number;   // Desviaciones desde MA50
-  // Volumen
-  volumeRatio: number;   // Volumen hoy / media 20 días (> 3 = capitulación)
-  // Tendencia
+  bbWidth:     number;
+  atr14:       number;
+  atrPct:      number;
+  zScore20:    number;
+  zScore50:    number;
+  volumeRatio: number;
   trend:       TrendDirection;
   aboveMA200:  boolean;
   aboveMA50:   boolean;
   aboveMA20:   boolean;
-  // Drawdown desde máximo 52 semanas
-  drawdownFrom52wHigh: number;  // Negativo, ej: -0.35 = -35% desde máximo
+  drawdownFrom52wHigh: number;
+  // Efficiency Ratio crudo (0-1) — para uso interno
+  efficiencyRatio: number;
 }
 
 // ── Señal individual de oportunidad ─────────────────────────
 export interface TacticalSignal {
   type:        OpportunityType;
   strength:    SignalStrength;
-  score:       number;           // 0-100
+  score:       number;
   active:      boolean;
   description: string;
-  condition:   string;           // La condición técnica que la activa
+  condition:   string;
 }
 
 // ── Activo del universo táctico ──────────────────────────────
@@ -71,38 +85,36 @@ export interface TacticalAsset {
   type:        'ETF' | 'ETC' | 'CRYPTO' | 'STOCK';
   exchange:    string;
   currency:    'EUR' | 'USD' | 'GBP';
-  // Datos de mercado (actualizados al cargar)
-  price:       number;
-  closes:      number[];         // Histórico de cierres
-  volumes:     number[];         // Histórico de volúmenes
+  price:       number;    // En divisa nativa del activo
+  priceEur:    number;    // NUEVO: precio convertido a EUR para sizing
+  closes:      number[];
+  volumes:     number[];
   high52w:     number;
   low52w:      number;
-  // Indicadores calculados
   indicators:  TechnicalIndicators | null;
   signals:     TacticalSignal[];
-  totalScore:  number;           // 0-100, agregado de todas las señales
+  totalScore:  number;
   lastUpdated: string | null;
-  // Fundamentales (Value factor)
-  earningsYield?: number;        // E/P = 1/PER
-  per?: number;                  // Price/Earnings
-  eps?: number;                  // Earnings per share
+  dataSource:  DataSource;  // NUEVO: origen de los datos
+  earningsYield?: number;
+  per?: number;
+  eps?: number;
 }
 
-// ── Oportunidad identificada (candidata a operar) ────────────
+// ── Oportunidad identificada ─────────────────────────────────
 export interface TacticalOpportunity {
   id:          string;
   asset:       TacticalAsset;
   type:        OpportunityType;
-  score:       number;           // 0-100
-  entryPrice:  number;
-  stopLoss:    number;           // Precio de stop
-  takeProfit1: number;           // Primer objetivo (R:R 1.5:1)
-  takeProfit2: number;           // Segundo objetivo (R:R 2.5:1)
-  riskReward:  number;           // Ratio riesgo/recompensa
-  reasoning:   string;           // Por qué es oportunidad
-  detectedAt:  string;           // Timestamp
-  expiresAt:   string;           // Pierde validez si no se ejecuta
-  // Señales activas que la justifican
+  score:       number;
+  entryPrice:  number;    // En EUR (convertido para sizing uniforme)
+  stopLoss:    number;    // En EUR
+  takeProfit1: number;    // En EUR
+  takeProfit2: number;    // En EUR
+  riskReward:  number;
+  reasoning:   string;
+  detectedAt:  string;
+  expiresAt:   string;
   activeSignals: TacticalSignal[];
 }
 
@@ -112,59 +124,53 @@ export interface TacticalPosition {
   ticker:       string;
   name:         string;
   type:         OpportunityType;
-  // Entrada
+  currency:     'EUR' | 'USD' | 'GBP';   // NUEVO: divisa nativa del activo
+  sectorGroup:  string;                   // NUEVO: grupo sectorial real (de asset.sector)
   entryDate:    string;
-  entryPrice:   number;
-  shares:       number;          // Entero para ETFs, decimal para crypto/ETC
-  capitalRisked: number;         // € en riesgo (entrada - stopLoss) * shares
-  totalInvested: number;         // entryPrice * shares
-  // Niveles
-  stopLoss:     number;
-  takeProfit1:  number;
-  takeProfit2:  number;
-  // Estado
+  entryPrice:   number;    // En divisa nativa
+  entryPriceEur: number;   // NUEVO: precio de entrada en EUR
+  shares:       number;
+  capitalRisked: number;   // En EUR
+  totalInvested: number;   // En EUR (normalizado)
+  stopLoss:     number;    // En divisa nativa
+  takeProfit1:  number;    // En divisa nativa
+  takeProfit2:  number;    // En divisa nativa
+  // NUEVO: ATR en EUR en el momento de apertura
+  // Crítico para trailing stop y horizonte — reemplaza el 2% hardcodeado
+  atrAtEntry:   number;    // En EUR
   status:       OpportunityStatus;
-  currentPrice: number;
-  // Salida (si está cerrada)
+  currentPrice: number;    // En divisa nativa
   exitDate:     string | null;
-  exitPrice:    number | null;
+  exitPrice:    number | null;   // En divisa nativa
   exitReason:   string | null;
-  // P&L
-  unrealizedPnL:    number;      // Si sigue abierta
+  unrealizedPnL:    number;      // En EUR
   unrealizedPnLPct: number;
-  realizedPnL:      number | null; // Si está cerrada
+  realizedPnL:      number | null; // En EUR
   realizedPnLPct:   number | null;
-  // Días en posición
   daysOpen:         number;
-  maxDaysAllowed:   number;      // Calculado dinámicamente por tipo de señal
-  // Tiempo probabilístico (First Passage Time)
-  expectedDaysToTP1: number;     // E[T] días esperados hasta TP1 según ATR
-  expectedDaysToTP2: number;     // E[T] días esperados hasta TP2
-  daysToBreakeven:   number;     // E[T] días para que el precio vuelva a entrada
-  timingScore:       number;     // 0-100: qué % del tiempo esperado se ha consumido
-  // Horizonte óptimo dinámico
-  optimalDaysTP1:    number;     // Día de máxima probabilidad para TP1
-  optimalDaysTP2:    number;     // Día de máxima probabilidad para TP2
-  optimalProbTP1:    number;     // Probabilidad máxima en el horizonte óptimo
+  maxDaysAllowed:   number;
+  expectedDaysToTP1: number;
+  expectedDaysToTP2: number;
+  daysToBreakeven:   number;
+  timingScore:       number;
+  optimalDaysTP1:    number;
+  optimalDaysTP2:    number;
+  optimalProbTP1:    number;
 }
 
 // ── Configuración del motor táctico ─────────────────────────
 export interface TacticalConfig {
-  // Capital
-  tacticalCapitalEur:    number;  // € dedicados al motor táctico
-  maxCapitalPerTrade:    number;  // % máx por operación (0.30 = 30%)
-  riskPerTradePct:       number;  // % del capital en riesgo por trade (0.01 = 1%)
-  maxOpenPositions:      number;  // Máx posiciones simultáneas (default: 4)
-  // Filtros de entrada
-  minScore:              number;  // Score mínimo para considerar (0-100)
-  requireAboveMA200:     boolean; // Solo comprar activos sobre MA200
-  minRiskReward:         number;  // R:R mínimo (1.5 recomendado)
-  maxAtrPct:             number;  // ATR máximo como % (evitar activos demasiado volátiles)
-  // Gestión
-  maxDaysPerTrade:       number;  // Días máximos en una posición
-  trailingStop:          boolean; // Usar trailing stop
-  // Integración Olympus
-  maxPctFromDefensiveLiq: number; // % máx de la liquidez defensiva usable (0.20 = 20%)
+  tacticalCapitalEur:    number;
+  maxCapitalPerTrade:    number;
+  riskPerTradePct:       number;
+  maxOpenPositions:      number;
+  minScore:              number;
+  requireAboveMA200:     boolean;
+  minRiskReward:         number;
+  maxAtrPct:             number;
+  maxDaysPerTrade:       number;
+  trailingStop:          boolean;
+  maxPctFromDefensiveLiq: number;
 }
 
 // ── Estado del motor táctico ─────────────────────────────────
@@ -173,15 +179,14 @@ export interface TacticalEngineState {
   opportunities:       TacticalOpportunity[];
   openPositions:       TacticalPosition[];
   closedPositions:     TacticalPosition[];
-  // Métricas
   totalRealizedPnL:    number;
   totalUnrealizedPnL:  number;
-  winRate:             number;    // % operaciones ganadoras
-  avgRiskReward:       number;    // R:R promedio realizado
-  profitFactor:        number;    // Sum(ganancias) / Sum(pérdidas)
-  maxDrawdown:         number;    // Drawdown máximo del motor táctico
-  capitalUsed:         number;    // Capital actual en posiciones abiertas
-  capitalAvailable:    number;    // Capital disponible para nuevas posiciones
+  winRate:             number;
+  avgRiskReward:       number;
+  profitFactor:        number;
+  maxDrawdown:         number;   // Incluye posiciones abiertas y cerradas
+  capitalUsed:         number;   // En EUR
+  capitalAvailable:    number;   // En EUR
   lastScreened:        string | null;
 }
 
@@ -191,8 +196,9 @@ import type { RegimeState } from './marketRegimeFilter';
 export interface ScreenerResult {
   assets:        TacticalAsset[];
   opportunities: TacticalOpportunity[];
-  topPicks:      TacticalOpportunity[];   // Top 5 por score
-  screennedAt:   string;
+  topPicks:      TacticalOpportunity[];
+  screenedAt:    string;   // FIX: typo 'screennedAt' corregido
   errors:        string[];
-  marketRegime?: RegimeState;             // Régimen detectado durante el scan
+  warnings:      string[]; // NUEVO: warnings de ultra-fallbacks usados
+  marketRegime?: RegimeState;
 }

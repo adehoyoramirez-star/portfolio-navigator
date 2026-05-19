@@ -1,147 +1,154 @@
 // ============================================================
-// src/core/tactical/tacticalPortfolio.ts — v3 ELITE
-// CORRECCIONES:
-//   1. openPosition: eliminado Math.min(30, ...) que limitaba
-//      maxDaysAllowed a 30 días, ignorando calcDynamicMaxDays.
-//      Ahora maxDaysAllowed = optimalTP2.days × 1.2 SIN cap duro,
-//      con clamp entre 5 y dynMax calculado desde ATR.
-//   2. openPosition: calcula optimalDaysTP1/2 y optimalProbTP1
-//      pasando `undefined` como maxDays → deja que calcOptimalHorizon
-//      use su propio dynMax interno.
-//   3. handleConfirmOpen (en Dashboard): los campos opcionales del
-//      tipo TacticalPosition (optimalDaysTP1/2, optimalProbTP1)
-//      ahora se calculan al confirmar la apertura manual.
-//   4. updatePositionPrices: recalcula horizonte sin cap duro.
-//      + ATR real desde entryPrice (fallback 2%).
-//      + Trailing stop dinámico cuando config.trailingStop = true.
-//      + TP2 dinámico que se ensancha si el SL trailing ha subido.
-//   5. evaluatePositionHealth: sin cambios — ya era correcto.
+// src/core/tactical/tacticalPortfolio.ts — v4 ELITE
+//
+// CORRECCIONES CRÍTICAS v4:
+//
+//   1. FX AWARENESS: todo el capital se opera en EUR.
+//      openPosition convierte entryPrice y stopLoss a EUR usando
+//      priceEur del asset (calculado por el screener con FX rates).
+//      closePosition convierte exitPrice a EUR antes de P&L.
+//      capitalUsed / capitalAvailable siempre en EUR.
+//
+//   2. atrAtEntry: almacenado en EUR en TacticalPosition al abrir.
+//      updatePositionPrices ya no usa el fallback 2% hardcodeado.
+//
+//   3. sectorGroup: almacenado en TacticalPosition al abrir desde
+//      asset.sector. correlationManager usa p.sectorGroup directamente.
+//
+//   4. calcExpectedDays ELIMINADO: unificado en calcOptimalHorizon
+//      (tacticalSignals.ts). El modelo FPT E[T]=d/μ es la única
+//      fuente de verdad para horizonte esperado.
+//
+//   5. maxDrawdown en recalcMetrics INCLUYE posiciones abiertas.
+//      Antes: ignoraba el unrealizedPnL → drawdown subestimado al 100%
+//      durante posiciones activas perdedoras.
+//
+//   6. closePosition P&L en EUR:
+//      realizedPnL = (exitPriceEur - entryPriceEur) * shares
+//      Consistente con totalInvested en EUR.
 // ============================================================
 
 import type {
-  TacticalPosition, TacticalOpportunity,
-  TacticalEngineState, TacticalConfig, OpportunityStatus,
+  TacticalEngineState, TacticalConfig, TacticalOpportunity,
+  TacticalPosition, OpportunityStatus,
 } from './types';
-import { calcPositionSize } from './tacticalScreener';
 import {
-  calcOptimalHorizon, calcDynamicMaxDays, classifyAssetSpeed,
+  calcOptimalHorizon, calcTimingScore, calcDaysToBreakeven,
+  calcStopLoss, calcTakeProfits, calcDynamicMaxDays,
+  classifyAssetSpeed,
 } from './tacticalSignals';
+import { checkCorrelation, getSectorGroup } from './correlationManager';
+import { toEur, getCachedFxRates } from './fxConverter';
 
-const STORAGE_KEY = 'olympus_tactical_state';
+// ── Estado inicial ────────────────────────────────────────────
+export function initTacticalState(config: TacticalConfig): TacticalEngineState {
+  return {
+    config,
+    opportunities:       [],
+    openPositions:       [],
+    closedPositions:     [],
+    totalRealizedPnL:    0,
+    totalUnrealizedPnL:  0,
+    winRate:             0,
+    avgRiskReward:       0,
+    profitFactor:        1,
+    maxDrawdown:         0,
+    capitalUsed:         0,
+    capitalAvailable:    config.tacticalCapitalEur,
+    lastScreened:        null,
+  };
+}
 
-// ── Persistencia ─────────────────────────────────────────────
+// ── Sanear estado (capital drift) ────────────────────────────
+export function sanitizeState(state: TacticalEngineState): TacticalEngineState {
+  // capitalUsed se recalcula desde posiciones abiertas para evitar drift
+  // acumulado por errores de redondeo o recargas de estado stale
+  const capitalUsed = state.openPositions.reduce(
+    (sum, p) => sum + (p.totalInvested ?? 0), 0,
+  );
+  const capitalAvailable = Math.max(
+    0, state.config.tacticalCapitalEur - capitalUsed,
+  );
+
+  if (
+    Math.abs(state.capitalAvailable - capitalAvailable) > 0.01 ||
+    Math.abs(state.capitalUsed      - capitalUsed)      > 0.01
+  ) {
+    console.warn(
+      `[Tactical] Capital saneado: disponible ${state.capitalAvailable.toFixed(2)} → ${capitalAvailable.toFixed(2)}, ` +
+      `usado ${state.capitalUsed.toFixed(2)} → ${capitalUsed.toFixed(2)}`,
+    );
+    return { ...state, capitalAvailable, capitalUsed };
+  }
+  return state;
+}
+
+// ── Cargar / guardar estado en localStorage ──────────────────
+const STORAGE_KEY = 'olympus_tactical_state_v4';
+
+export function loadTacticalState(config: TacticalConfig): TacticalEngineState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return initTacticalState(config);
+    const parsed = JSON.parse(raw) as TacticalEngineState;
+    // Sanear en carga para corregir cualquier drift acumulado
+    return sanitizeState({ ...parsed, config });
+  } catch {
+    console.warn('[Tactical] Error al cargar estado — reiniciando');
+    return initTacticalState(config);
+  }
+}
+
 export function saveTacticalState(state: TacticalEngineState): void {
   try {
     const toSave = {
       ...state,
-      opportunities: state.opportunities.map(o => ({
-        ...o, asset: { ...o.asset, closes: [], volumes: [] },
-      })),
+      // No serializar oportunidades (se recalculan en cada scan)
+      opportunities: [],
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-  } catch {}
-}
-
-export function loadTacticalState(): TacticalEngineState | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const state = JSON.parse(raw) as TacticalEngineState;
-
-    const capitalUsed = state.openPositions.reduce(
-      (sum, p) => sum + (p.totalInvested ?? 0), 0,
-    );
-    const capitalAvailable = Math.max(
-      0, state.config.tacticalCapitalEur - capitalUsed,
-    );
-
-    if (
-      Math.abs(state.capitalAvailable - capitalAvailable) > 0.01 ||
-      Math.abs(state.capitalUsed      - capitalUsed)      > 0.01
-    ) {
-      console.warn(
-        `[Tactical] Estado saneado: capitalAvailable ${state.capitalAvailable} → ${capitalAvailable}, ` +
-        `capitalUsed ${state.capitalUsed} → ${capitalUsed}`,
-      );
-      return { ...state, capitalAvailable, capitalUsed };
-    }
-
-    return state;
-  } catch {
-    return null;
+  } catch (err) {
+    console.error('[Tactical] Error al guardar estado:', err);
   }
 }
 
-export function initTacticalState(config: TacticalConfig): TacticalEngineState {
+// ── Tamaño de posición (en EUR, FX-aware) ────────────────────
+// entryPriceEur y stopLossEur ya están en EUR (convertidos por screener)
+export function calcPositionSize(
+  capitalAvailableEur: number,
+  entryPriceEur:       number,
+  stopLossEur:         number,
+  config:              TacticalConfig,
+): { shares: number; capitalRisked: number; totalInvested: number } {
+  const riskPerShareEur = entryPriceEur - stopLossEur;
+  if (riskPerShareEur <= 0) return { shares: 0, capitalRisked: 0, totalInvested: 0 };
+
+  const riskEur   = capitalAvailableEur * config.riskPerTradePct;
+  const rawShares = riskEur / riskPerShareEur;
+
+  // Para activos <€1000: shares enteros. Para crypto/ETC de precio alto: decimales
+  const byRisk = entryPriceEur < 1_000
+    ? Math.floor(rawShares)
+    : Math.round(rawShares * 10_000) / 10_000;
+
+  const maxInvestEur = capitalAvailableEur * config.maxCapitalPerTrade;
+  const capped = byRisk * entryPriceEur > maxInvestEur
+    ? Math.floor(maxInvestEur / entryPriceEur)
+    : byRisk;
+  const safe = capped >= 1 ? Math.floor(capped) : 0;
+
+  if (safe === 0) {
+    console.warn(
+      `[PositionSize] Capital insuficiente: €${entryPriceEur.toFixed(2)} · ` +
+      `riesgo €${riskPerShareEur.toFixed(2)}/share`,
+    );
+  }
+
   return {
-    config,
-    opportunities:      [],
-    openPositions:      [],
-    closedPositions:    [],
-    totalRealizedPnL:   0,
-    totalUnrealizedPnL: 0,
-    winRate:            0,
-    avgRiskReward:      0,
-    profitFactor:       0,
-    maxDrawdown:        0,
-    capitalUsed:        0,
-    capitalAvailable:   config.tacticalCapitalEur,
-    lastScreened:       null,
+    shares:        safe,
+    capitalRisked: safe > 0 ? +(safe * riskPerShareEur).toFixed(2) : 0,
+    totalInvested: safe > 0 ? +(safe * entryPriceEur).toFixed(2)   : 0,
   };
-}
-
-// ── First Passage Time ────────────────────────────────────────
-export function calcExpectedDays(
-  entryPrice:  number,
-  target:      number,
-  atr:         number,
-  signalType:  import('./types').OpportunityType,
-): number {
-  const dist = Math.abs(target - entryPrice);
-  if (atr <= 0 || dist <= 0) return 10;
-  let raw: number;
-
-  if (signalType === 'MOMENTUM_BREAKOUT') {
-    const drift = atr * 0.15;
-    raw = (dist / drift) * 1.5;
-    return Math.round(Math.min(25, Math.max(8, raw)));
-  }
-  if (signalType === 'SECTOR_ROTATION') {
-    const drift = atr * 0.08;
-    raw = (dist / drift) * 2.0;
-    return Math.round(Math.min(30, Math.max(10, raw)));
-  }
-
-  const sigma2 = atr * atr;
-  const factor =
-    signalType === 'BLOOD_IN_STREETS' ? 1.5
-    : signalType === 'MEAN_REVERSION'  ? 2.0
-    : 2.0;
-  raw = (dist * dist / (2 * sigma2)) * factor;
-
-  const limits: Record<string, [number, number]> = {
-    BLOOD_IN_STREETS: [3, 7],
-    MEAN_REVERSION:   [4, 10],
-    OVERSOLD_BOUNCE:  [4, 12],
-    EVENT_DRIVEN:     [3, 8],
-  };
-  const [mn, mx] = limits[signalType] ?? [4, 10];
-  return Math.round(Math.min(mx, Math.max(mn, raw)));
-}
-
-export function calcTimingScore(daysOpen: number, expectedDays: number): number {
-  if (expectedDays <= 0) return 0;
-  return Math.min(100, Math.round((daysOpen / expectedDays) * 100));
-}
-
-export function calcDaysToBreakeven(
-  entryPrice:   number,
-  currentPrice: number,
-  atr:          number,
-  signalType:   import('./types').OpportunityType,
-): number {
-  if (currentPrice >= entryPrice) return 0;
-  return calcExpectedDays(currentPrice, entryPrice, atr, signalType);
 }
 
 // ── Abrir posición ────────────────────────────────────────────
@@ -156,52 +163,65 @@ export function openPosition(
     return state;
   }
 
-  const { shares, capitalRisked, totalInvested } = calcPositionSize(
-    state.capitalAvailable,
-    opportunity.entryPrice,
-    opportunity.stopLoss,
-    config,
-  );
-
-  if (shares === 0 || totalInvested > state.capitalAvailable) {
-    console.warn('[Tactical] Insufficient capital');
+  // Verificar correlación ANTES de sizing (el fix del sectorGroup está en correlationManager)
+  const corrCheck = checkCorrelation(opportunity, state.openPositions, config.maxOpenPositions);
+  if (!corrCheck.allowed) {
+    console.warn(`[Tactical] Correlación bloqueada: ${corrCheck.reason}`);
     return state;
   }
 
-  const atr    = opportunity.asset.indicators?.atr14 ?? (opportunity.entryPrice * 0.02);
-  const atrPct = atr / Math.max(0.01, opportunity.entryPrice);
+  // Precio de entrada en EUR (ya convertido por buildOpportunity en screener)
+  // opportunity.entryPrice, stopLoss, takeProfit1, takeProfit2 están en EUR
+  const entryPriceEur = opportunity.entryPrice;
+  const stopLossEur   = opportunity.stopLoss;
 
-  const expectedDaysToTP1 = calcExpectedDays(
-    opportunity.entryPrice, opportunity.takeProfit1, atr, opportunity.type,
+  const { shares, capitalRisked, totalInvested } = calcPositionSize(
+    state.capitalAvailable, entryPriceEur, stopLossEur, config,
   );
-  const expectedDaysToTP2 = calcExpectedDays(
-    opportunity.entryPrice, opportunity.takeProfit2, atr, opportunity.type,
-  );
 
-  const optimalTP1 = calcOptimalHorizon(opportunity.entryPrice, opportunity.takeProfit1, atr);
-  const optimalTP2 = calcOptimalHorizon(opportunity.entryPrice, opportunity.takeProfit2, atr);
+  if (shares === 0 || totalInvested > state.capitalAvailable) {
+    console.warn('[Tactical] Capital insuficiente para abrir posición');
+    return state;
+  }
 
-  const dynMax        = calcDynamicMaxDays(atrPct);
+  // ATR en EUR (desde indicadores del asset, en divisa nativa → EUR)
+  const fxRates   = getCachedFxRates();
+  const currency  = opportunity.asset.currency;
+  const rawAtr    = opportunity.asset.indicators?.atr14 ?? (opportunity.asset.price * 0.02);
+  const atrEur    = toEur(rawAtr, currency, fxRates);
+
+  const atrPct    = atrEur / Math.max(0.01, entryPriceEur);
+  const speed     = classifyAssetSpeed(atrPct);
+  const dynMax    = calcDynamicMaxDays(atrPct);
+
+  // Horizonte óptimo con el modelo FPT correcto
+  const optimalTP1 = calcOptimalHorizon(entryPriceEur, opportunity.takeProfit1, atrEur, opportunity.type);
+  const optimalTP2 = calcOptimalHorizon(entryPriceEur, opportunity.takeProfit2, atrEur, opportunity.type);
+
   const maxDaysAllowed = Math.min(
     dynMax,
     Math.max(5, Math.round(optimalTP2.days * 1.2)),
   );
 
   const position: TacticalPosition = {
-    id:             `pos-${Date.now()}`,
+    id:             `pos-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     ticker:         opportunity.asset.ticker,
     name:           opportunity.asset.name,
     type:           opportunity.type,
+    currency:       currency,
+    sectorGroup:    getSectorGroup(opportunity.asset.sector),  // FIX: sector real almacenado
     entryDate:      new Date().toISOString(),
-    entryPrice:     opportunity.entryPrice,
+    entryPrice:     opportunity.asset.price,       // En divisa nativa (para display)
+    entryPriceEur,                                  // En EUR (para capital tracking)
     shares,
     capitalRisked,
-    totalInvested,
-    stopLoss:       opportunity.stopLoss,
-    takeProfit1:    opportunity.takeProfit1,
-    takeProfit2:    opportunity.takeProfit2,
+    totalInvested,  // En EUR
+    stopLoss:       opportunity.stopLoss,           // En EUR
+    takeProfit1:    opportunity.takeProfit1,        // En EUR
+    takeProfit2:    opportunity.takeProfit2,        // En EUR
+    atrAtEntry:     atrEur,                         // FIX: ATR real en EUR — reemplaza 2% hardcoded
     status:         'OPEN',
-    currentPrice:   opportunity.entryPrice,
+    currentPrice:   opportunity.asset.price,        // En divisa nativa (actualizado por updatePositionPrices)
     exitDate:       null,
     exitPrice:      null,
     exitReason:     null,
@@ -211,9 +231,9 @@ export function openPosition(
     realizedPnLPct:   null,
     daysOpen:          0,
     maxDaysAllowed,
-    expectedDaysToTP1,
-    expectedDaysToTP2,
-    daysToBreakeven:   expectedDaysToTP1,
+    expectedDaysToTP1: optimalTP1.days,
+    expectedDaysToTP2: optimalTP2.days,
+    daysToBreakeven:   optimalTP1.days,
     timingScore:       0,
     optimalDaysTP1:    optimalTP1.days,
     optimalDaysTP2:    optimalTP2.days,
@@ -234,15 +254,24 @@ export function openPosition(
 export function closePosition(
   state:      TacticalEngineState,
   positionId: string,
-  exitPrice:  number,
+  exitPrice:  number,   // En divisa nativa del activo
   reason:     OpportunityStatus,
 ): TacticalEngineState {
   const pos = state.openPositions.find(p => p.id === positionId);
   if (!pos) return state;
 
-  const realizedPnL    = (exitPrice - pos.entryPrice) * pos.shares;
-  const realizedPnLPct = (exitPrice / pos.entryPrice - 1) * 100;
-  const daysOpen       = Math.round(
+  const fxRates = getCachedFxRates();
+
+  // FIX: convertir exitPrice a EUR para P&L correcto
+  const exitPriceEur = toEur(exitPrice, pos.currency, fxRates);
+
+  // P&L en EUR: (salida EUR - entrada EUR) * shares
+  const realizedPnL    = (exitPriceEur - pos.entryPriceEur) * pos.shares;
+  const realizedPnLPct = pos.entryPriceEur > 0
+    ? (exitPriceEur / pos.entryPriceEur - 1) * 100
+    : 0;
+
+  const daysOpen = Math.round(
     (Date.now() - new Date(pos.entryDate).getTime()) / 86400000,
   );
 
@@ -260,72 +289,72 @@ export function closePosition(
     daysOpen,
   };
 
-  const recoveredCapital = exitPrice * pos.shares;
+  // FIX: recuperar capital en EUR (exitPriceEur * shares)
+  const recoveredCapital = exitPriceEur * pos.shares;
+
   const newState: TacticalEngineState = {
     ...state,
     openPositions:    state.openPositions.filter(p => p.id !== positionId),
     closedPositions:  [...state.closedPositions, closedPos],
     totalRealizedPnL: state.totalRealizedPnL + realizedPnL,
-    capitalUsed:      state.capitalUsed      - pos.totalInvested,
+    capitalUsed:      Math.max(0, state.capitalUsed - pos.totalInvested),
     capitalAvailable: state.capitalAvailable + recoveredCapital,
   };
 
   return recalcMetrics(newState);
 }
 
-// ── Actualizar precios ────────────────────────────────────────
+// ── Actualizar precios de posiciones abiertas ─────────────────
 export function updatePositionPrices(
   state:  TacticalEngineState,
-  prices: Record<string, number>,
+  prices: Record<string, number>,   // Precios en divisa nativa de cada activo
 ): TacticalEngineState {
+  const fxRates = getCachedFxRates();
   let autoClose = { ...state };
 
   const updatedOpen = state.openPositions.map(pos => {
-    const price         = prices[pos.ticker] ?? pos.currentPrice;
-    const unrealized    = (price - pos.entryPrice) * pos.shares;
-    const unrealizedPct = (price / pos.entryPrice - 1) * 100;
-    const daysOpen      = Math.round(
+    const price        = prices[pos.ticker] ?? pos.currentPrice;
+    const priceEur     = toEur(price, pos.currency, fxRates);
+
+    // FIX: usar atrAtEntry (guardado en EUR al abrir) en lugar de 2% hardcodeado
+    const atr = pos.atrAtEntry > 0
+      ? pos.atrAtEntry
+      : Math.max(0.01, pos.entryPriceEur * 0.02);
+
+    const unrealized    = (priceEur - pos.entryPriceEur) * pos.shares;
+    const unrealizedPct = pos.entryPriceEur > 0
+      ? (priceEur / pos.entryPriceEur - 1) * 100
+      : 0;
+
+    const daysOpen = Math.round(
       (Date.now() - new Date(pos.entryDate).getTime()) / 86400000,
     );
 
-    // ── ATR: 2% del precio de entrada como referencia estable ──────────
-    // No usamos pos.atrPct porque TacticalPosition no lo almacena.
-    // Si en el futuro se añade atrPct al interface, reemplazar por:
-    //   pos.atrPct > 0 ? price * (pos.atrPct / 100) : pos.entryPrice * 0.02
-    const atr = Math.max(0.01, pos.entryPrice * 0.02);
-
-    // ── Trailing stop dinámico ──────────────────────────────────────────
-    // Activo solo si config.trailingStop = true.
-    // Sube el SL cuando el precio avanza ≥ 50% hacia TP1.
-    // Colchón: 1.5×ATR por debajo del precio actual.
-    // Garantía: el SL nunca retrocede (Math.max).
+    // ── Trailing stop dinámico ────────────────────────────────
     const newStopLoss = (() => {
       if (!state.config.trailingStop) return pos.stopLoss;
-      const progressToTP1 = pos.takeProfit1 > pos.entryPrice
-        ? (price - pos.entryPrice) / (pos.takeProfit1 - pos.entryPrice)
+      const progressToTP1 = pos.takeProfit1 > pos.entryPriceEur
+        ? (priceEur - pos.entryPriceEur) / (pos.takeProfit1 - pos.entryPriceEur)
         : 0;
       if (progressToTP1 < 0.5) return pos.stopLoss;
-      const trailLevel = price - atr * 1.5;
+      const trailLevel = priceEur - atr * 1.5;
       return Math.max(pos.stopLoss, trailLevel);
     })();
 
-    // ── TP2 dinámico ────────────────────────────────────────────────────
-    // Se recalcula como 2.5× el riesgo actualizado (entrada → SL actual).
-    // Si el trailing ha subido el SL, el TP2 se ensancha manteniendo R:R.
-    // Nunca baja del TP2 original.
+    // ── TP2 dinámico ──────────────────────────────────────────
     const newTP2 = (() => {
-      const riskPerShare = pos.entryPrice - newStopLoss;
+      const riskPerShare = pos.entryPriceEur - newStopLoss;
       if (riskPerShare <= 0) return pos.takeProfit2;
-      return Math.max(pos.takeProfit2, pos.entryPrice + riskPerShare * 2.5);
+      return Math.max(pos.takeProfit2, pos.entryPriceEur + riskPerShare * 2.5);
     })();
 
-    // ── Cierre automático ───────────────────────────────────────────────
-    // Usamos newStopLoss (ya actualizado) para el check de SL
-    if (price <= newStopLoss) {
+    // ── Cierre automático ─────────────────────────────────────
+    // Todos los niveles están en EUR — comparación homogénea
+    if (priceEur <= newStopLoss) {
       autoClose = closePosition(autoClose, pos.id, price, 'CLOSED_SL');
       return null;
     }
-    if (price >= pos.takeProfit1) {
+    if (priceEur >= pos.takeProfit1) {
       autoClose = closePosition(autoClose, pos.id, price, 'CLOSED_TP');
       return null;
     }
@@ -334,11 +363,12 @@ export function updatePositionPrices(
       return null;
     }
 
-    const daysToBreakeven = calcDaysToBreakeven(pos.entryPrice, price, atr, pos.type);
+    const daysToBreakeven = calcDaysToBreakeven(pos.entryPriceEur, priceEur, atr, pos.type);
     const timingScore     = calcTimingScore(daysOpen, pos.expectedDaysToTP1 ?? 10);
 
-    const optTP1 = calcOptimalHorizon(pos.entryPrice, pos.takeProfit1, atr);
-    const optTP2 = calcOptimalHorizon(pos.entryPrice, newTP2, atr);
+    // Recalcular horizonte óptimo con el ATR real almacenado
+    const optTP1 = calcOptimalHorizon(pos.entryPriceEur, pos.takeProfit1, atr, pos.type);
+    const optTP2 = calcOptimalHorizon(pos.entryPriceEur, newTP2,          atr, pos.type);
 
     return {
       ...pos,
@@ -365,11 +395,11 @@ export function updatePositionPrices(
   });
 }
 
-// ── Métricas ──────────────────────────────────────────────────
+// ── Recalcular métricas ───────────────────────────────────────
 function recalcMetrics(state: TacticalEngineState): TacticalEngineState {
   const closed = state.closedPositions;
-  if (closed.length === 0) return state;
 
+  // Métricas básicas de trading
   const wins       = closed.filter(p => (p.realizedPnL ?? 0) > 0);
   const losses     = closed.filter(p => (p.realizedPnL ?? 0) <= 0);
   const winRate    = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
@@ -377,9 +407,14 @@ function recalcMetrics(state: TacticalEngineState): TacticalEngineState {
   const sumLosses  = Math.abs(losses.reduce((s, p) => s + (p.realizedPnL ?? 0), 0));
   const profitFactor = sumLosses > 0 ? sumWins / sumLosses : sumWins > 0 ? 99 : 1;
 
+  // FIX CRÍTICO: maxDrawdown incluye posiciones abiertas
+  // Antes: solo recorría closedPositions → drawdown = 0 durante posiciones activas
+  // Ahora: construye curva de equity completa incluyendo el unrealizedPnL actual
   let peak    = state.config.tacticalCapitalEur;
   let maxDD   = 0;
   let running = peak;
+
+  // 1. Recorrer operaciones cerradas en orden cronológico
   [...closed]
     .sort((a, b) =>
       new Date(a.exitDate ?? 0).getTime() - new Date(b.exitDate ?? 0).getTime(),
@@ -391,197 +426,157 @@ function recalcMetrics(state: TacticalEngineState): TacticalEngineState {
       if (dd < maxDD) maxDD = dd;
     });
 
+  // 2. Añadir el unrealizedPnL actual para drawdown en tiempo real
+  const runningWithOpen = running + state.totalUnrealizedPnL;
+  const ddWithOpen = peak > 0 ? (runningWithOpen - peak) / peak : 0;
+  if (ddWithOpen < maxDD) maxDD = ddWithOpen;
+
+  const avgRR = closed.length > 0
+    ? closed.reduce((s, p) => {
+        const rr = p.capitalRisked > 0 ? (p.realizedPnL ?? 0) / p.capitalRisked : 0;
+        return s + rr;
+      }, 0) / closed.length
+    : 0;
+
   return {
     ...state,
     winRate,
     profitFactor,
     maxDrawdown: maxDD,
-    avgRiskReward: closed.length > 0
-      ? closed.reduce((s, p) => {
-          const rr = p.capitalRisked > 0
-            ? (p.realizedPnL ?? 0) / p.capitalRisked : 0;
-          return s + rr;
-        }, 0) / closed.length
-      : 0,
+    avgRiskReward: avgRR,
   };
 }
 
-// ════════════════════════════════════════════════════════════
-// MOTOR DE SALUD DE POSICIÓN — NIVEL INSTITUCIONAL
-// ════════════════════════════════════════════════════════════
-
+// ── Tipos de análisis de posición ────────────────────────────
 export type PositionHealthStatus = 'STRONG' | 'HOLDING' | 'WEAKENING' | 'ABANDON';
 export type PositionAction       = 'HOLD'   | 'SCALE_UP' | 'REDUCE_50' | 'EXIT_NOW';
 export type PositionUrgency      = 'LOW'    | 'MEDIUM'   | 'HIGH'      | 'CRITICAL';
 
 export interface PositionHealth {
-  status:        PositionHealthStatus;
-  action:        PositionAction;
-  reason:        string;
-  detail:        string;
-  confidence:    number;
-  urgency:       PositionUrgency;
+  status:   PositionHealthStatus;
+  action:   PositionAction;
+  urgency:  PositionUrgency;
+  detail:   string;
+  scaleUp?: {
+    suggestedAddEur: number;
+    triggerPrice:    number;
+  };
   suggestedExit?: number;
-  scaleUpAmount?: number;
 }
 
-export function evaluatePositionHealth(
+export function analyzePositionHealth(
   pos:     TacticalPosition,
   atrEst?: number,
 ): PositionHealth {
-  const atr      = atrEst ?? pos.entryPrice * 0.02;
-  const range    = pos.takeProfit1 - pos.entryPrice;
-  const progress = range > 0 ? (pos.currentPrice - pos.entryPrice) / range : 0;
-  const distToSL = (pos.currentPrice - pos.stopLoss) / Math.max(0.01, atr);
-  const distToTP1pct = pos.takeProfit1 > 0
-    ? ((pos.takeProfit1 - pos.currentPrice) / pos.currentPrice) * 100 : 0;
+  // FIX: usar atrAtEntry en lugar del fallback 2%
+  const atr      = atrEst ?? pos.atrAtEntry ?? (pos.entryPriceEur * 0.02);
+  const price    = pos.currentPrice;
+  const priceEur = pos.entryPriceEur > 0 ? price * (pos.entryPriceEur / pos.entryPrice) : price;
 
-  const optDays       = pos.optimalDaysTP1 > 0 ? pos.optimalDaysTP1 : (pos.expectedDaysToTP1 ?? 10);
-  const timeRatio     = optDays > 0 ? pos.daysOpen / optDays : 0;
-  const timeEfficiency = timeRatio > 0.05 ? progress / timeRatio : null;
+  const distToSL = (priceEur - pos.stopLoss) / Math.max(0.01, atr);
+  const distToTP = (pos.takeProfit1 - priceEur) / Math.max(0.01, atr);
 
-  if (progress >= 0.85) {
-    return {
-      status:     'STRONG',
-      action:     'REDUCE_50',
-      reason:     `TP1 al ${((1 - progress) * 100).toFixed(0)}% — cerrar 50% y subir stop a entrada`,
-      detail:     `Precio ${pos.currentPrice.toFixed(2)} está al ${(progress * 100).toFixed(0)}% del camino a TP1 (${pos.takeProfit1.toFixed(2)})`,
-      confidence: 92,
-      urgency:    'HIGH',
-      suggestedExit: pos.takeProfit1,
-    };
-  }
+  const timeRatio = pos.daysOpen / Math.max(pos.optimalDaysTP1, 1);
+  const progress  = pos.takeProfit1 > pos.entryPriceEur
+    ? (priceEur - pos.entryPriceEur) / (pos.takeProfit1 - pos.entryPriceEur)
+    : 0;
 
-  if (timeRatio > 1.8 && progress < 0.25 && pos.daysOpen > 4) {
-    return {
-      status:     'ABANDON',
-      action:     'EXIT_NOW',
-      reason:     `Tiempo agotado: día ${pos.daysOpen} (${(timeRatio * 100).toFixed(0)}% del horizonte óptimo) con solo ${(progress * 100).toFixed(0)}% de progreso`,
-      detail:     `La tesis no se materializa en plazo. Capital mejor asignado a otra oportunidad.`,
-      confidence: 84,
-      urgency:    'HIGH',
-      suggestedExit: pos.currentPrice,
-    };
-  }
-
-  if (distToSL < 0.5 && timeRatio > 0.4) {
-    const urgency: PositionUrgency = distToSL < 0.25 ? 'CRITICAL' : 'HIGH';
-    return {
-      status:     'ABANDON',
-      action:     'EXIT_NOW',
-      reason:     `A ${distToSL.toFixed(1)} ATRs del stop loss con ${pos.daysOpen} días abierta`,
-      detail:     `SL en €${pos.stopLoss.toFixed(2)} — precio actual €${pos.currentPrice.toFixed(2)}. Salir antes de que el stop salte para ahorrar spread.`,
-      confidence: 88,
-      urgency,
-      suggestedExit: Math.max(pos.stopLoss * 1.005, pos.currentPrice - atr * 0.2),
-    };
-  }
-
+  // ABANDON: varios criterios de abandono basados en horizonte FPT real
   if (
-    timeEfficiency !== null &&
-    timeEfficiency > 1.4 &&
-    timeRatio < 0.50 &&
-    progress > 0.15
+    pos.daysOpen >= pos.maxDaysAllowed ||
+    (timeRatio > 1.5 && progress < 0.25) ||
+    (timeRatio > 2.0 && progress <= 0)   ||
+    distToSL < 0.5
   ) {
     return {
-      status:     'STRONG',
-      action:     'SCALE_UP',
-      reason:     `Operación ${(timeEfficiency * 100).toFixed(0)}% más rápida de lo esperado — ampliar posición`,
-      detail:     `Progreso ${(progress * 100).toFixed(0)}% en solo ${(timeRatio * 100).toFixed(0)}% del tiempo. La tesis se confirma.`,
-      confidence: Math.min(90, 60 + progress * 50),
-      urgency:    'MEDIUM',
-      scaleUpAmount: pos.totalInvested * 0.5,
+      status:       'ABANDON',
+      action:       'EXIT_NOW',
+      urgency:      distToSL < 0.5 ? 'CRITICAL' : 'HIGH',
+      detail:       distToSL < 0.5
+        ? `SL a ${distToSL.toFixed(1)}×ATR — muy cerca. Salir inmediatamente.`
+        : `${timeRatio.toFixed(1)}× tiempo óptimo, progreso ${(progress*100).toFixed(0)}%.`,
+      suggestedExit: Math.max(pos.stopLoss * 1.005, priceEur - atr * 0.2),
     };
   }
 
-  if (
-    timeEfficiency !== null &&
-    timeEfficiency < 0.35 &&
-    timeRatio > 0.50
-  ) {
+  // STRONG: en tendencia con tiempo suficiente
+  if (progress > 0.5 && timeRatio < 1.2 && distToSL > 2) {
+    const suggestedAddEur = pos.totalInvested * 0.5;
     return {
-      status:     'WEAKENING',
-      action:     'HOLD',
-      reason:     `Progreso lento: ${(progress * 100).toFixed(0)}% del objetivo en ${(timeRatio * 100).toFixed(0)}% del tiempo`,
-      detail:     `Eficiencia temporal: ${(timeEfficiency * 100).toFixed(0)}% de lo esperado. Si no acelera en 2 días, considerar salida.`,
-      confidence: 65,
-      urgency:    'MEDIUM',
+      status:  'STRONG',
+      action:  'SCALE_UP',
+      urgency: 'LOW',
+      detail:  `${(progress*100).toFixed(0)}% del camino a TP1, SL a ${distToSL.toFixed(1)}×ATR. Posición sólida.`,
+      scaleUp: {
+        suggestedAddEur,
+        triggerPrice: pos.takeProfit1 * 0.5 + pos.entryPriceEur * 0.5,
+      },
     };
   }
 
-  if (progress < -0.15 && timeRatio > 0.30) {
-    const shouldExit = pos.daysOpen > optDays * 0.7;
+  // WEAKENING: dentro del horizonte pero sin progresar
+  if (timeRatio > 0.8 && progress < 0.1) {
     return {
-      status:     'WEAKENING',
-      action:     shouldExit ? 'EXIT_NOW' : 'HOLD',
-      reason:     `Posición en rojo (${(progress * 100).toFixed(0)}%) con ${(timeRatio * 100).toFixed(0)}% del tiempo consumido`,
-      detail:     `El activo se mueve en contra. SL a €${pos.stopLoss.toFixed(2)} es la protección final.`,
-      confidence: 70,
-      urgency:    timeRatio > 0.7 ? 'HIGH' : 'MEDIUM',
-      suggestedExit: shouldExit ? pos.currentPrice : undefined,
+      status:  'WEAKENING',
+      action:  'REDUCE_50',
+      urgency: 'MEDIUM',
+      detail:  `${(timeRatio*100).toFixed(0)}% del tiempo óptimo consumido con solo ${(progress*100).toFixed(0)}% de progreso.`,
     };
   }
 
-  const isAhead = progress > 0.4 && timeRatio < 0.5;
   return {
-    status:     isAhead ? 'STRONG' : 'HOLDING',
-    action:     'HOLD',
-    reason:     isAhead
-      ? `Bien encaminada: ${(progress * 100).toFixed(0)}% del objetivo en plazo`
-      : `Día ${pos.daysOpen} de ${optDays} esperados — progreso normal`,
-    detail:     `Progreso ${(progress * 100).toFixed(0)}% · Dist. stop ${distToSL.toFixed(1)}×ATR · TP1 a ${distToTP1pct.toFixed(1)}% del precio`,
-    confidence: 55,
-    urgency:    'LOW',
+    status:  'HOLDING',
+    action:  'HOLD',
+    urgency: 'LOW',
+    detail:  `En plazo (${timeRatio.toFixed(1)}× horizonte), progreso ${(progress*100).toFixed(0)}%. Mantener.`,
   };
 }
 
-// ── Resumen para el dashboard ─────────────────────────────────
+// ── Resumen ejecutivo del estado táctico ─────────────────────
 export interface TacticalSummary {
-  openCount:        number;
+  capitalTotal:     number;
   capitalUsed:      number;
   capitalAvailable: number;
-  unrealizedPnL:    number;
-  realizedPnL:      number;
+  utilizationPct:   number;
+  openCount:        number;
+  closedCount:      number;
+  totalRealizedPnL: number;
+  totalUnrealizedPnL: number;
   totalPnL:         number;
   winRate:          number;
   profitFactor:     number;
-  bestPosition:     TacticalPosition | null;
-  worstPosition:    TacticalPosition | null;
-  alertsToAction:   string[];
+  maxDrawdown:      number;
+  avgRiskReward:    number;
+  bestClosed:       TacticalPosition | null;
+  worstClosed:      TacticalPosition | null;
 }
 
 export function getTacticalSummary(state: TacticalEngineState): TacticalSummary {
-  const alerts: string[] = [];
+  const totalCapital = state.config.tacticalCapitalEur;
 
-  state.openPositions.forEach(p => {
-    if (p.currentPrice <= p.stopLoss * 1.02) {
-      alerts.push(`⚠️ ${p.ticker} cerca del stop loss (€${p.stopLoss.toFixed(2)})`);
-    }
-    if (p.daysOpen >= p.maxDaysAllowed - 1) {
-      alerts.push(`⏰ ${p.ticker} expira mañana — revisar y cerrar`);
-    }
-    if (p.currentPrice >= p.takeProfit1 * 0.98) {
-      alerts.push(`🎯 ${p.ticker} cerca del TP1 — considerar venta parcial`);
-    }
-  });
-
-  const allClosed   = [...state.closedPositions];
-  const bestClosed  = allClosed.sort((a, b) =>
-    (b.realizedPnLPct ?? 0) - (a.realizedPnLPct ?? 0))[0] ?? null;
-  const worstClosed = allClosed.sort((a, b) =>
-    (a.realizedPnLPct ?? 0) - (b.realizedPnLPct ?? 0))[0] ?? null;
+  // FIX: crear dos copias separadas para sort ascendente y descendente
+  const byPnLDesc = [...state.closedPositions].sort(
+    (a, b) => (b.realizedPnLPct ?? 0) - (a.realizedPnLPct ?? 0),
+  );
+  const byPnLAsc = [...state.closedPositions].sort(
+    (a, b) => (a.realizedPnLPct ?? 0) - (b.realizedPnLPct ?? 0),
+  );
 
   return {
-    openCount:        state.openPositions.length,
-    capitalUsed:      state.capitalUsed,
-    capitalAvailable: state.capitalAvailable,
-    unrealizedPnL:    state.totalUnrealizedPnL,
-    realizedPnL:      state.totalRealizedPnL,
-    totalPnL:         state.totalRealizedPnL + state.totalUnrealizedPnL,
-    winRate:          state.winRate,
-    profitFactor:     state.profitFactor,
-    bestPosition:     bestClosed,
-    worstPosition:    worstClosed,
-    alertsToAction:   alerts,
+    capitalTotal:       totalCapital,
+    capitalUsed:        state.capitalUsed,
+    capitalAvailable:   state.capitalAvailable,
+    utilizationPct:     totalCapital > 0 ? (state.capitalUsed / totalCapital) * 100 : 0,
+    openCount:          state.openPositions.length,
+    closedCount:        state.closedPositions.length,
+    totalRealizedPnL:   state.totalRealizedPnL,
+    totalUnrealizedPnL: state.totalUnrealizedPnL,
+    totalPnL:           state.totalRealizedPnL + state.totalUnrealizedPnL,
+    winRate:            state.winRate,
+    profitFactor:       state.profitFactor,
+    maxDrawdown:        state.maxDrawdown,
+    avgRiskReward:      state.avgRiskReward,
+    bestClosed:         byPnLDesc[0] ?? null,
+    worstClosed:        byPnLAsc[0]  ?? null,
   };
 }
