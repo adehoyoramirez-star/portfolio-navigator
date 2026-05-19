@@ -1,6 +1,6 @@
 ---
-🚨 TESIS CENTRAL DE FRAGILIDAD
 ---
+🚨 TESIS CENTRAL DE FRAGILIDAD
 The central thesis of fragility for the Olympus V3 trading system is that **its apparent sophistication and robustness mask a dangerous reliance on fragile assumptions and single points of failure that could lead to catastrophic failure precisely when the system is needed most**.
 
 **Why this is the central thesis:**
