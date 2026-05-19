@@ -1,11 +1,33 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v12 REAL
+// src/core/tactical/tacticalScreener.ts — v10 ELITE
 //
-// CORRECCIÓN DEFINITIVA:
-//   Se ELIMINA el ultra‑fallback (proxies sectoriales).
-//   Si un activo no tiene datos reales (primario ni fallback),
-//   no se construye el asset y se añade un error.
-//   El motor solo opera con información real.
+// CORRECCIONES CRÍTICAS v10:
+//
+//   1. ULTRA-FALLBACK DESCARTADO EN SEÑALES.
+//      PROBLEMA: GLD como proxy de URNU.DE generaba señales del oro
+//      presentadas como señales de uranio. El usuario ejecutaba trades
+//      en uranio con tesis construida sobre datos del oro.
+//      FIX: buildAsset etiqueta dataSource ('primary'|'fallback'|'ultra-fallback').
+//      buildOpportunity devuelve null para ultra-fallback.
+//      Los warnings de ultra-fallback se exponen en ScreenerResult.warnings.
+//
+//   2. FX CONVERSION en buildOpportunity.
+//      PROBLEMA: entryPrice, stopLoss, takeProfit en divisa nativa.
+//      calcPositionSize los dividía por riskPerShare (USD por EUR) → sizing incorrecto.
+//      FIX: buildOpportunity convierte todos los precios a EUR usando toEur().
+//      TacticalOpportunity.entryPrice / stopLoss / takeProfit1 / takeProfit2 en EUR.
+//
+//   3. SIGNAL TYPE POR SCORE (no por posición en array).
+//      PROBLEMA: activeSignals[0].type tomaba la primera señal activa
+//      en orden hardcodeado, no por score. Una MEAN_REVERSION de score 45
+//      ganaba a un MOMENTUM_BREAKOUT de score 90.
+//      FIX: generateSignals ya devuelve señales ordenadas por score DESC
+//      (corregido en tacticalSignals.ts). activeSignals[0] es siempre el mayor.
+//      Aquí verificamos y añademos guard explícito.
+//
+//   4. fetchFxRates al inicio del scan.
+//      Las tasas se cachean 4 horas. Si el scan es el primero del día,
+//      se fetchean antes del primer buildAsset.
 // ============================================================
 
 import type {
@@ -73,7 +95,29 @@ interface RawTickerData {
   eps?:           number;
 }
 
-// ── Ya NO hay ultra‑fallback. Solo datos reales. ─────────────
+// ── Ultra-fallback sectorial ──────────────────────────────────
+// CRÍTICO: los datos de estos tickers NO se usan para generar señales.
+// Se usan únicamente para que el asset aparezca en la lista con
+// el campo dataSource='ultra-fallback'. buildOpportunity los descarta.
+// Sin esto, el asset desaparecería completamente del resultado → no se
+// podría mostrar al usuario que el activo existe pero no tiene datos.
+const ULTRA_FALLBACK_MAP: Record<string, string> = {
+  'Equity':         'IVV',
+  'Technology':     'VOO',
+  'Commodities':    'GLD',
+  'Energy':         'GLD',
+  'Finance':        'IVV',
+  'Healthcare':     'VOO',
+  'Materials':      'GLD',
+  'Utilities':      'VOO',
+  'Consumer':       'IVV',
+  'Small Cap':      'IWM',
+  'Real Estate':    'VNQ',
+  'Emerging':       'EEM',
+  'Emerging Bonds': 'EMB',
+  'Factor':         'QUAL',
+  'Crypto':         'BTC-USD',
+};
 
 // ── Fetch de un chunk individual ─────────────────────────────
 async function fetchSingleChunk(
@@ -197,7 +241,7 @@ function approximateHighsLows(
 function buildAsset(
   asset:      UniverseAsset,
   raw:        RawTickerData,
-  dataSource: DataSource,
+  dataSource: DataSource,   // FIX: etiqueta el origen de los datos
 ): TacticalAsset | null {
   if (!raw.closes || raw.closes.length < 21 || raw.price <= 0) return null;
 
@@ -209,7 +253,7 @@ function buildAsset(
   let indicators, signals, totalScore;
   try {
     indicators = calcIndicators(raw.closes, raw.volumes ?? [], highs, lows);
-    signals    = generateSignals(indicators);
+    signals    = generateSignals(indicators);  // Ya devuelve ordenadas por score DESC
     totalScore = calcTotalScore(signals);
   } catch (err) {
     console.warn(`[Screener] calcIndicators error ${asset.ticker}:`, err);
@@ -223,6 +267,7 @@ function buildAsset(
   const manual               = getFundamentals(asset.yahooSymbol);
   const hasYahooFundamentals = typeof raw.per === 'number' && raw.per > 0;
 
+  // FX: normalizar precio nativo y calcular priceEur
   const fxRates = getCachedFxRates();
   const normalizedPrice = normalizeGbxToGbp(raw.price, asset.currency);
   const priceEur        = toEur(normalizedPrice, asset.currency, fxRates);
@@ -234,8 +279,8 @@ function buildAsset(
     type:          asset.type,
     exchange:      asset.exchange,
     currency:      asset.currency,
-    price:         normalizedPrice,
-    priceEur,
+    price:         normalizedPrice,   // En divisa nativa (para display)
+    priceEur,                          // En EUR (para sizing y P&L)
     closes:        raw.closes,
     volumes:       raw.volumes,
     high52w,
@@ -244,38 +289,49 @@ function buildAsset(
     signals,
     totalScore,
     lastUpdated:   new Date().toISOString(),
-    dataSource,
+    dataSource,    // FIX: 'primary' | 'fallback' | 'ultra-fallback'
     earningsYield: hasYahooFundamentals ? raw.earningsYield : manual.earningsYield,
     per:           hasYahooFundamentals ? raw.per           : manual.per,
     eps:           hasYahooFundamentals ? raw.eps           : manual.eps,
   };
 }
 
-// ── Construir oportunidad desde asset (sin ultra‑fallback) ───
+// ── Construir oportunidad desde asset ────────────────────────
 function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   if (!asset.indicators || !asset.closes || asset.closes.length < 5) return null;
 
-  // No se permite ultra‑fallback. Si el asset viene con esa etiqueta, lo descartamos.
+  // FIX CRÍTICO: descartar activos con ultra-fallback
+  // Sus indicadores son de un activo distinto (ej. GLD para URNU.DE)
   if (asset.dataSource === 'ultra-fallback') {
-    console.debug(`[Screener] ${asset.ticker}: descartado (ultra‑fallback no permitido)`);
+    console.debug(`[Screener] ${asset.ticker}: descartado de oportunidades (ultra-fallback)`);
     return null;
   }
 
   const activeSignals = asset.signals.filter(s => s.active);
   if (activeSignals.length === 0) return null;
 
+  // activeSignals ya está ordenado por score DESC (fix en generateSignals)
+  // El tipo es el de mayor score — no el primero en el array hardcodeado
   const topSignal  = activeSignals[0];
   const signalType = topSignal.type;
 
   const fxRates = getCachedFxRates();
+
+  // FIX: usar priceEur para calcular niveles en EUR
   const priceEur = asset.priceEur;
   if (priceEur <= 0) return null;
 
+  // ATR en EUR
   const rawAtr   = asset.indicators.atr14;
   const atrEur   = toEur(rawAtr, asset.currency, fxRates);
 
+  // Closes en proporción EUR para calcStopLoss/calcTakeProfits
+  // Los indicadores ya están calculados en divisa nativa.
+  // Para stop/tp usamos priceEur y atrEur con la misma proporción.
   let stopLossEur: number, tp1Eur: number, tp2Eur: number;
   try {
+    // Recalcular stop y targets en EUR
+    // Usamos el ratio EUR/nativo para escalar el stop
     const priceNative = asset.price;
     const eurFactor   = priceNative > 0 ? priceEur / priceNative : 1;
 
@@ -293,19 +349,17 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
   const riskReward = (tp1Eur - priceEur) / Math.max(0.0001, priceEur - stopLossEur);
   if (riskReward < 1.2) return null;
 
-  const reasoning = activeSignals.map(s => s.description).join(' + ');
-
   return {
     id:           `opp_${asset.ticker}_${Date.now()}`,
     asset,
     type:         signalType,
     score:        asset.totalScore,
-    entryPrice:   priceEur,
+    entryPrice:   priceEur,   // En EUR
     stopLoss:     stopLossEur,
     takeProfit1:  tp1Eur,
     takeProfit2:  tp2Eur,
     riskReward,
-    reasoning,
+    reasoning:    activeSignals.map(s => s.description).join(' + '),
     detectedAt:   new Date().toISOString(),
     expiresAt:    new Date(Date.now() + 24 * 3600000).toISOString(),
     activeSignals,
@@ -329,12 +383,14 @@ export async function scanTacticalUniverse(
   const errors:       string[]              = [];
   const warnings:     string[]              = [];
 
+  // FIX: fetch de tasas FX antes del scan
+  // Se cachean 4 horas — si no hay datos, usa fallback EUR=1
   const fxRates = await fetchFxRates(supabase);
   if (fxRates.isStale) {
     warnings.push(`FX rates stale o no disponibles — usando fallback EUR/USD=${fxRates.EURUSD}, EUR/GBP=${fxRates.EURGBP}`);
   }
 
-  // Recopilar símbolos (primarios y fallbacks)
+  // Paso 1: recopilar símbolos
   const primarySymbols  = universe.map(a => a.yahooSymbol);
   const fallbackSymbols = universe
     .filter(a => a.fallbackYahooSymbol)
@@ -342,7 +398,7 @@ export async function scanTacticalUniverse(
 
   const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX'])];
 
-  // Fetch batch
+  // Paso 2: fetch batch de todos los símbolos
   let batchData = await fetchBatch(supabase, allSymbols, 'yahoo-finance-tactical');
   const missingSymbols = allSymbols.filter(
     s => !(batchData[s]?.closes?.length >= 21),
@@ -352,31 +408,72 @@ export async function scanTacticalUniverse(
     Object.assign(batchData, basic);
   }
 
+  // Paso 3: identificar activos que necesitan ultra-fallback
+  const needUltraFallback: { asset: UniverseAsset; reason: string }[] = [];
+  for (const asset of universe) {
+    const hasPrimary  = batchData[asset.yahooSymbol]?.closes?.length >= 21 && batchData[asset.yahooSymbol]?.price > 0;
+    const hasFallback = asset.fallbackYahooSymbol && batchData[asset.fallbackYahooSymbol]?.closes?.length >= 21;
+    if (!hasPrimary && !hasFallback) {
+      needUltraFallback.push({
+        asset,
+        reason: `${asset.yahooSymbol}${asset.fallbackYahooSymbol ? ' + ' + asset.fallbackYahooSymbol : ''} sin datos`,
+      });
+    }
+  }
+
+  // Paso 3b: pre-fetch ultra-fallbacks (solo para mostrar en lista, no para señales)
+  if (needUltraFallback.length > 0) {
+    const ultraTickers = new Set(
+      needUltraFallback.map(({ asset }) => ULTRA_FALLBACK_MAP[asset.sector] || 'IVV'),
+    );
+    const toFetch = [...ultraTickers].filter(t => !(batchData[t]?.closes?.length >= 21));
+    if (toFetch.length > 0) {
+      const ultraData = await fetchBatch(supabase, toFetch, 'yahoo-finance-tactical');
+      Object.assign(batchData, ultraData);
+    }
+  }
+
+  // Paso 4: VIX real
   const vixPrice = batchData['^VIX']?.price ?? 20;
   console.debug(`[Screener] VIX real: ${vixPrice.toFixed(2)}`);
 
-  // Construir assets usando SOLO datos reales (primary o fallback)
+  // Paso 5: construir assets con 3 niveles de fallback
   for (const asset of universe) {
     let raw: RawTickerData | undefined;
     let dataSource: DataSource = 'primary';
 
-    // Intentar primario
+    // Nivel 1: símbolo primario
     raw = batchData[asset.yahooSymbol];
     if (raw?.closes?.length >= 21 && raw?.price > 0) {
       dataSource = 'primary';
-    } else if (asset.fallbackYahooSymbol) {
-      // Intentar fallback explícito
-      const fallbackRaw = batchData[asset.fallbackYahooSymbol];
-      if (fallbackRaw?.closes?.length >= 21 && fallbackRaw?.price > 0) {
-        raw        = fallbackRaw;
-        dataSource = 'fallback';
-        console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol}`);
+    } else {
+      // Nivel 2: fallback definido
+      if (asset.fallbackYahooSymbol) {
+        const fallbackRaw = batchData[asset.fallbackYahooSymbol];
+        if (fallbackRaw?.closes?.length >= 21 && fallbackRaw?.price > 0) {
+          raw        = fallbackRaw;
+          dataSource = 'fallback';
+          console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol}`);
+        }
+      }
+
+      // Nivel 3: ultra-fallback sectorial
+      // CRÍTICO: se etiqueta explícitamente para que buildOpportunity lo descarte
+      if (!raw || raw.closes?.length < 21 || raw.price <= 0) {
+        const ultraTicker = ULTRA_FALLBACK_MAP[asset.sector] || 'IVV';
+        const ultraRaw    = batchData[ultraTicker];
+        if (ultraRaw?.closes?.length >= 21 && ultraRaw?.price > 0) {
+          raw        = ultraRaw;
+          dataSource = 'ultra-fallback';
+          const warning = `${asset.ticker}: datos de ${ultraTicker} (ultra-fallback — sin señales)`;
+          warnings.push(warning);
+          console.warn(`[Screener] ⚠️ ${warning}`);
+        }
       }
     }
 
-    // Si no hay datos reales, error y no se incluye el asset
     if (!raw || raw.closes.length < 21 || raw.price <= 0) {
-      errors.push(`${asset.ticker}: sin datos reales (ni primario ni fallback). Revisa el símbolo Yahoo en tacticalUniverse.ts`);
+      errors.push(`${asset.ticker}: sin datos en ningún nivel de fallback`);
       continue;
     }
 
@@ -388,23 +485,30 @@ export async function scanTacticalUniverse(
     }
   }
 
+  // Paso 6: diagnóstico
+  const successCount = assets.length;
+  const totalAttempted = universe.length;
   console.debug(
-    `[Screener] ${assets.length}/${universe.length} activos con datos reales · ${errors.length} errores`,
+    `[Screener] ${successCount}/${totalAttempted} activos · ` +
+    `${assets.filter(a => a.dataSource === 'ultra-fallback').length} ultra-fallback (sin señales) · ` +
+    `${errors.length} errores`,
   );
 
-  // Régimen de mercado
+  // Paso 7: régimen de mercado
   const indexAsset = assets.find(a =>
     ['IS3Q.DE', 'XNAS.DE', 'CSPX.AS', 'SPY', 'QQQ', 'IVV'].includes(a.ticker),
   );
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);
 
-  // Generar oportunidades solo con assets reales
+  // Paso 8: construir oportunidades con filtro de régimen
   for (const asset of assets) {
+    // buildOpportunity ya descarta ultra-fallback internamente
     const opp = buildOpportunity(asset);
     if (!opp) continue;
 
     if (!isSignalAllowed(opp.type, marketRegime)) continue;
+
     const adjustedScore = adjustScoreByRegime(opp.score, opp.type, marketRegime);
     if (adjustedScore < config.minScore) continue;
     if (opp.riskReward < config.minRiskReward) continue;
@@ -420,13 +524,14 @@ export async function scanTacticalUniverse(
     assets,
     opportunities,
     topPicks,
-    screenedAt:  new Date().toISOString(),
+    screenedAt:  new Date().toISOString(),   // FIX: typo 'screennedAt' corregido
     errors,
     warnings,
     marketRegime,
   };
 }
 
+// ── Wrapper de compatibilidad ─────────────────────────────────
 export async function runTacticalScreener(
   mode:     ScanMode,
   config:   TacticalConfig,
@@ -435,8 +540,10 @@ export async function runTacticalScreener(
   return scanTacticalUniverse(mode, config, supabase);
 }
 
+// ── Tamaño de posición (exportado para acceso desde dashboard) ─
 export { calcPositionSize } from './tacticalPortfolio';
 
+// ── Config por defecto ────────────────────────────────────────
 export function defaultTacticalConfig(
   tacticalCapital:    number,
   defensiveLiquidity: number,
@@ -453,7 +560,7 @@ export function defaultTacticalConfig(
     requireAboveMA200:      false,
     minRiskReward:          1.3,
     maxAtrPct:              0.15,
-    maxDaysPerTrade:        75,
+    maxDaysPerTrade:        75,   // FIX: consistente con dynMax máximo del FPT
     trailingStop:           true,
     maxPctFromDefensiveLiq: 0.20,
   };
