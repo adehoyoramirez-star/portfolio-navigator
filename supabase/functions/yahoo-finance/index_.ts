@@ -20,11 +20,27 @@ const MACRO_TICKERS: string[] = [
   'BZ=F',     // Brent Crude
 ];
 
+// FIX BUG-PROXY: Proxies americanos necesarios para backtestEngine y stressScenarios
+// backtestEngine PROXY_MAP: EMXC.DE→EEM, IS3Q.DE→QUAL, PPFB.DE→GLD, URNU.DE→URA, VVSM.DE→SMH, XNAS.DE→QQQ
+// stressScenarios PROXY_MAP: IS3Q.DE→EEM (también necesita EEM)
+const PROXY_TICKERS: string[] = [
+  'EEM',   // Emerging Markets proxy (EMXC.DE + IS3Q.DE en stress)
+  'QUAL',  // MSCI USA Quality proxy (IS3Q.DE en backtest)
+  'GLD',   // Gold proxy (PPFB.DE)
+  'URA',   // Uranium proxy (URNU.DE)
+  'SMH',   // Semiconductors proxy (VVSM.DE)
+  'QQQ',   // NASDAQ 100 proxy (XNAS.DE)
+  'SPY',   // S&P 500 benchmark alternativo para backtest
+];
+
+// FIX BUG-HIGSHLOWS: ChartResult ahora incluye highs y lows para ATR del Motor Táctico
 interface ChartResult {
   ticker: string;
   currentPrice: number;
   timestamps: number[];
   closes: number[];
+  highs: number[];    // FIX: necesario para ATR
+  lows: number[];     // FIX: necesario para ATR
 }
 
 async function fetchTicker(ticker: string): Promise<ChartResult | null> {
@@ -42,11 +58,25 @@ async function fetchTicker(ticker: string): Promise<ChartResult | null> {
     if (!result) return null;
 
     const timestamps: number[] = result.timestamp || [];
-    const closes: number[] = result.indicators?.quote?.[0]?.close || [];
-    const currentPrice = result.meta?.regularMarketPrice ?? closes[closes.length - 1] ?? 0;
+    const quote = result.indicators?.quote?.[0] ?? {};
+    const closes: number[] = quote.close  || [];
+    const highs:  number[] = quote.high   || [];  // FIX: extraer highs
+    const lows:   number[] = quote.low    || [];  // FIX: extraer lows
 
+    // Limpiar nulls que Yahoo a veces devuelve en medio del array
+    const clean = (arr: number[]) => arr.map(v => (v == null || !isFinite(v)) ? 0 : v);
+
+    const currentPrice = result.meta?.regularMarketPrice ?? closes[closes.length - 1] ?? 0;
     const cleanTicker = ticker.replace('%5E', '^');
-    return { ticker: cleanTicker, currentPrice, timestamps, closes };
+
+    return {
+      ticker: cleanTicker,
+      currentPrice,
+      timestamps,
+      closes: clean(closes),
+      highs:  clean(highs),
+      lows:   clean(lows),
+    };
   } catch (e) {
     console.error(`Error fetching ${ticker}:`, e);
     return null;
@@ -59,7 +89,6 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
-
       const res = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         // @ts-ignore - Deno específico para forzar HTTP/1.1
@@ -67,7 +96,6 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-
       if (res.ok) return res;
       console.warn(`Attempt ${attempt} for ${url} failed with status ${res.status}`);
     } catch (e) {
@@ -83,22 +111,9 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise
 }
 
 // ── FRED M2 ──────────────────────────────────────────────────
-interface M2DataPoint {
-  date: string;
-  value: number;
-}
-interface M2Result {
-  current: number;
-  growthYoY: number;
-  history: M2DataPoint[];
-}
-interface CentralBankData {
-  fedCurrent: number;
-  fedPrev: number;
-  ecbCurrent: number;
-  ecbPrev: number;
-  source: string;
-}
+interface M2DataPoint { date: string; value: number; }
+interface M2Result { current: number; growthYoY: number; history: M2DataPoint[]; }
+interface CentralBankData { fedCurrent: number; fedPrev: number; ecbCurrent: number; ecbPrev: number; source: string; }
 
 async function fetchM2FRED(): Promise<M2Result | null> {
   try {
@@ -112,9 +127,7 @@ async function fetchM2FRED(): Promise<M2Result | null> {
       if (!line.trim()) continue;
       const [date, val] = line.split(',');
       const value = parseFloat(val);
-      if (date && !isNaN(value) && value > 0) {
-        allPoints.push({ date: date.trim(), value });
-      }
+      if (date && !isNaN(value) && value > 0) allPoints.push({ date: date.trim(), value });
     }
     if (allPoints.length < 13) return null;
     const history = allPoints.slice(-60);
@@ -231,7 +244,6 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // Leer tickers del body (si los hay)
     let userTickers: string[] = [];
     try {
       const body = await req.json() as { tickers?: string[] };
@@ -242,11 +254,10 @@ Deno.serve(async (req: Request) => {
       console.warn('Error parsing body or no tickers provided, using only macro tickers');
     }
 
-    // Combinar tickers sin duplicados
-    const allTickers: string[] = [...new Set([...userTickers, ...MACRO_TICKERS])];
-    console.log(`[Edge] Fetching ${allTickers.length} tickers (${userTickers.length} user + ${MACRO_TICKERS.length} macro)`);
+    // FIX BUG-PROXY: combinar user tickers + MACRO + PROXY (sin duplicados)
+    const allTickers: string[] = [...new Set([...userTickers, ...MACRO_TICKERS, ...PROXY_TICKERS])];
+    console.log(`[Edge] Fetching ${allTickers.length} tickers (${userTickers.length} user + ${MACRO_TICKERS.length} macro + ${PROXY_TICKERS.length} proxy)`);
 
-    // Ejecutar peticiones en paralelo
     const [yahooResults, m2Data, capeData, centralBanks, creditSpreadData, breakevenData] = await Promise.all([
       Promise.allSettled(allTickers.map((ticker: string) => fetchTicker(ticker))),
       fetchM2FRED(),
@@ -268,6 +279,14 @@ Deno.serve(async (req: Request) => {
         errors.push(cleanTicker);
       }
     });
+
+    // Log de diagnóstico — visible en Supabase Edge Function logs
+    const proxyLengths = ['EEM','QUAL','GLD','URA','SMH','QQQ'].map(t =>
+      `${t}:${data[t]?.closes?.length ?? 0}`
+    ).join(' ');
+    console.log(`[Edge] Proxy closes lengths: ${proxyLengths}`);
+    console.log(`[Edge] BTC-EUR closes length: ${data['BTC-EUR']?.closes?.length ?? 0}`);
+    console.log(`[Edge] Errors: ${errors.join(', ') || 'none'}`);
 
     return new Response(JSON.stringify({
       data,
