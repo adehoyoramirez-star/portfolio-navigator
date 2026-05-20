@@ -4,10 +4,15 @@
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, ' +
+    'x-supabase-client-platform, x-supabase-client-platform-version, ' +
+    'x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-// Tickers macroeconómicos que SIEMPRE se piden
+// ═══════════════════════════════════════════════════════════════════
+// TICKERS MACROECONÓMICOS — siempre incluidos
+// ═══════════════════════════════════════════════════════════════════
 const MACRO_TICKERS: string[] = [
   '%5EVIX',   // VIX
   '%5ETNX',   // 10Y Treasury
@@ -20,84 +25,125 @@ const MACRO_TICKERS: string[] = [
   'BZ=F',     // Brent Crude
 ];
 
-// FIX BUG-PROXY: Proxies americanos necesarios para backtestEngine y stressScenarios
-// backtestEngine PROXY_MAP: EMXC.DE→EEM, IS3Q.DE→QUAL, PPFB.DE→GLD, URNU.DE→URA, VVSM.DE→SMH, XNAS.DE→QQQ
-// stressScenarios PROXY_MAP: IS3Q.DE→EEM (también necesita EEM)
+// ═══════════════════════════════════════════════════════════════════
+// PROXIES AMERICANOS — necesarios para backtestEngine y stressScenarios
+// PROXY_MAP (backtestEngine): EMXC.DE→EEM, IS3Q.DE→QUAL, PPFB.DE→GLD,
+//                              URNU.DE→URA, VVSM.DE→SMH, XNAS.DE→QQQ
+// PROXY_MAP (stressScenarios): IS3Q.DE→EEM
+// ═══════════════════════════════════════════════════════════════════
 const PROXY_TICKERS: string[] = [
-  'EEM',   // Emerging Markets proxy (EMXC.DE + IS3Q.DE en stress)
-  'QUAL',  // MSCI USA Quality proxy (IS3Q.DE en backtest)
-  'GLD',   // Gold proxy (PPFB.DE)
-  'URA',   // Uranium proxy (URNU.DE)
-  'SMH',   // Semiconductors proxy (VVSM.DE)
-  'QQQ',   // NASDAQ 100 proxy (XNAS.DE)
-  'SPY',   // S&P 500 benchmark alternativo para backtest
+  'EEM',  // Emerging Markets proxy (EMXC.DE + IS3Q.DE en stress)
+  'QUAL', // MSCI USA Quality proxy (IS3Q.DE en backtest)
+  'GLD',  // Gold proxy (PPFB.DE)
+  'URA',  // Uranium proxy (URNU.DE)
+  'SMH',  // Semiconductors proxy (VVSM.DE)
+  'QQQ',  // NASDAQ 100 proxy (XNAS.DE)
+  'SPY',  // S&P 500 benchmark alternativo para backtest
 ];
 
-// FIX BUG-HIGSHLOWS: ChartResult ahora incluye highs y lows para ATR del Motor Táctico
+// ═══════════════════════════════════════════════════════════════════
+// INTERFAZ ChartResult — MEJORADA con dataPoints e isSufficient
+// dataPoints  → número real de barras descargadas
+// isSufficient → true si ≥60 barras (DCC-GARCH dinámico); false → covarianza estática
+// ═══════════════════════════════════════════════════════════════════
 interface ChartResult {
   ticker: string;
   currentPrice: number;
   timestamps: number[];
   closes: number[];
-  highs: number[];    // FIX: necesario para ATR
-  lows: number[];     // FIX: necesario para ATR
+  highs: number[];      // Necesario para ATR del Motor Táctico
+  lows: number[];       // Necesario para ATR del Motor Táctico
+  dataPoints: number;   // Barras reales sincronizadas
+  isSufficient: boolean; // ≥60 → DCC-GARCH dinámico; <60 → covarianza estática
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// FIX CRÍTICO #1: fetchTicker con rango 6y, sincronización minLen
+//                 y población de dataPoints / isSufficient
+// ═══════════════════════════════════════════════════════════════════
 async function fetchTicker(ticker: string): Promise<ChartResult | null> {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5y&interval=1d`;
+    // CAMBIO CLAVE: range=6y para cubrir COVID 2020, Taper 2022, rally 2023-24
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=6y&interval=1d`;
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
     });
+
     if (!res.ok) {
-      console.error(`Failed to fetch ${ticker}: ${res.status}`);
+      console.error(`[fetchTicker] ❌ ${ticker} HTTP ${res.status}`);
       return null;
     }
+
     const json: any = await res.json();
     const result = json.chart?.result?.[0];
-    if (!result) return null;
+    if (!result) {
+      console.error(`[fetchTicker] ❌ ${ticker} — sin result en chart`);
+      return null;
+    }
 
     const timestamps: number[] = result.timestamp || [];
     const quote = result.indicators?.quote?.[0] ?? {};
-    const closes: number[] = quote.close  || [];
-    const highs:  number[] = quote.high   || [];  // FIX: extraer highs
-    const lows:   number[] = quote.low    || [];  // FIX: extraer lows
+    const closes: number[] = quote.close || [];
+    const highs:  number[] = quote.high  || [];
+    const lows:   number[] = quote.low   || [];
 
-    // Limpiar nulls que Yahoo a veces devuelve en medio del array
-    const clean = (arr: number[]) => arr.map(v => (v == null || !isFinite(v)) ? 0 : v);
+    // ═══════════════════════════════════════════════════════════════
+    // FIX CRÍTICO #2: Limpiar nulls y valores inválidos
+    // Yahoo devuelve null en medio del array para sesiones sin datos
+    // ═══════════════════════════════════════════════════════════════
+    const clean = (arr: number[]): number[] =>
+      arr.map(v => (v == null || !isFinite(v)) ? 0 : v);
 
-    // FIX: Sincronizar longitudes — usar la longitud mínima válida para evitar mismatch dimensional
+    // ═══════════════════════════════════════════════════════════════
+    // FIX CRÍTICO #3: Sincronización de arrays con minLen
+    // Previene "dimensión n no coincide con covMatrix → fallback" en Olympus
+    // ═══════════════════════════════════════════════════════════════
     const minLen = Math.min(
       timestamps.length,
       closes.length,
       highs.length,
-      lows.length
+      lows.length,
     );
-    
-    // Si hay desalineación significativa, loguear warning
+
     if (minLen < timestamps.length) {
-      console.warn(`⚠️ ${ticker} data misalignment: timestamps=${timestamps.length}, closes=${closes.length}, highs=${highs.length}, lows=${lows.length} → usando ${minLen}`);
+      console.warn(
+        `⚠️ ${ticker} misalignment: timestamps=${timestamps.length}, ` +
+        `closes=${closes.length}, highs=${highs.length}, lows=${lows.length} ` +
+        `→ usando minLen=${minLen}`
+      );
     }
 
-    const currentPrice = result.meta?.regularMarketPrice ?? closes[closes.length - 1] ?? 0;
+    const currentPrice =
+      result.meta?.regularMarketPrice ??
+      clean(closes)[closes.length - 1] ??
+      0;
+
     const cleanTicker = ticker.replace('%5E', '^');
 
     return {
-      ticker: cleanTicker,
+      ticker:       cleanTicker,
       currentPrice,
-      timestamps: timestamps.slice(0, minLen),
-      closes: clean(closes).slice(0, minLen),
-      highs:  clean(highs).slice(0, minLen),
-      lows:   clean(lows).slice(0, minLen),
+      timestamps:   timestamps.slice(0, minLen),
+      closes:       clean(closes).slice(0, minLen),
+      highs:        clean(highs).slice(0, minLen),
+      lows:         clean(lows).slice(0, minLen),
+      dataPoints:   minLen,
+      isSufficient: minLen >= 60,
     };
   } catch (e) {
-    console.error(`Error fetching ${ticker}:`, e);
+    console.error(`[fetchTicker] ❌ ${ticker} exception:`, e);
     return null;
   }
 }
 
-// ── HELPER: fetch con reintentos ──────────────────────────────
-async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise<Response | null> {
+// ═══════════════════════════════════════════════════════════════════
+// HELPER: fetch con reintentos y timeout de 15s
+// ═══════════════════════════════════════════════════════════════════
+async function fetchWithRetry(
+  url: string,
+  retries = 3,
+  delayMs = 1000,
+): Promise<Response | null> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const controller = new AbortController();
@@ -110,7 +156,7 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise
       });
       clearTimeout(timeoutId);
       if (res.ok) return res;
-      console.warn(`Attempt ${attempt} for ${url} failed with status ${res.status}`);
+      console.warn(`Attempt ${attempt} for ${url} → HTTP ${res.status}`);
     } catch (e) {
       console.error(`Attempt ${attempt} for ${url} error:`, e);
     }
@@ -123,10 +169,16 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise
   return null;
 }
 
-// ── FRED M2 ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// FRED — M2 Supply
+// ═══════════════════════════════════════════════════════════════════
 interface M2DataPoint { date: string; value: number; }
 interface M2Result { current: number; growthYoY: number; history: M2DataPoint[]; }
-interface CentralBankData { fedCurrent: number; fedPrev: number; ecbCurrent: number; ecbPrev: number; source: string; }
+interface CentralBankData {
+  fedCurrent: number; fedPrev: number;
+  ecbCurrent: number; ecbPrev: number;
+  source: string;
+}
 
 async function fetchM2FRED(): Promise<M2Result | null> {
   try {
@@ -143,9 +195,9 @@ async function fetchM2FRED(): Promise<M2Result | null> {
       if (date && !isNaN(value) && value > 0) allPoints.push({ date: date.trim(), value });
     }
     if (allPoints.length < 13) return null;
-    const history = allPoints.slice(-60);
-    const current = history[history.length - 1].value;
-    const yearAgo = history[history.length - 13]?.value ?? current;
+    const history  = allPoints.slice(-60);
+    const current  = history[history.length - 1].value;
+    const yearAgo  = history[history.length - 13]?.value ?? current;
     const growthYoY = yearAgo > 0 ? ((current - yearAgo) / yearAgo) * 100 : 0;
     return { current, growthYoY, history };
   } catch (e) {
@@ -154,6 +206,9 @@ async function fetchM2FRED(): Promise<M2Result | null> {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// FRED — CAPE (Shiller P/E)
+// ═══════════════════════════════════════════════════════════════════
 async function fetchCAPEFRED(): Promise<{ cape: number; source: string } | null> {
   try {
     const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=CAPE';
@@ -175,6 +230,9 @@ async function fetchCAPEFRED(): Promise<{ cape: number; source: string } | null>
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// FRED — Balance sheets Fed + ECB
+// ═══════════════════════════════════════════════════════════════════
 async function fetchCentralBanksFRED(): Promise<CentralBankData | null> {
   try {
     const [fedRes, ecbRes] = await Promise.all([
@@ -183,7 +241,7 @@ async function fetchCentralBanksFRED(): Promise<CentralBankData | null> {
     ]);
     const parseFREDcsv = async (res: Response | null): Promise<number[]> => {
       if (!res) return [];
-      const text = await res.text();
+      const text  = await res.text();
       const lines = text.trim().split('\n').slice(1);
       const values: number[] = [];
       for (const line of lines) {
@@ -197,30 +255,36 @@ async function fetchCentralBanksFRED(): Promise<CentralBankData | null> {
     const fedVals = await parseFREDcsv(fedRes);
     const ecbVals = await parseFREDcsv(ecbRes);
     if (fedVals.length < 52 || ecbVals.length < 52) return null;
-    const fedCurrent = fedVals[fedVals.length - 1] / 1000;
-    const fedPrev    = fedVals[fedVals.length - 53] / 1000;
-    const ecbCurrent = ecbVals[ecbVals.length - 1] / 1000;
-    const ecbPrev    = ecbVals[ecbVals.length - 53] / 1000;
-    return { fedCurrent, fedPrev, ecbCurrent, ecbPrev, source: 'FRED WALCL+ECBASSETSW' };
+    return {
+      fedCurrent: fedVals[fedVals.length - 1]  / 1000,
+      fedPrev:    fedVals[fedVals.length - 53] / 1000,
+      ecbCurrent: ecbVals[ecbVals.length - 1]  / 1000,
+      ecbPrev:    ecbVals[ecbVals.length - 53] / 1000,
+      source:     'FRED WALCL+ECBASSETSW',
+    };
   } catch (e) {
     console.error('Central banks FRED error:', e);
     return null;
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// FRED — Credit spread OAS (BAMLH0A0HYM2)
+// ═══════════════════════════════════════════════════════════════════
 async function fetchCreditSpreadFRED(): Promise<{ spread: number; source: string } | null> {
   try {
     const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2';
     const res = await fetchWithRetry(url, 3, 1500);
     if (!res) return null;
-    const text = await res.text();
+    const text  = await res.text();
     const lines = text.trim().split('\n').slice(1);
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
       if (!line.trim()) continue;
       const [, val] = line.split(',');
       const spread = parseFloat(val);
-      if (!isNaN(spread) && spread > 0) return { spread: parseFloat(spread.toFixed(2)), source: 'FRED BAMLH0A0HYM2' };
+      if (!isNaN(spread) && spread > 0)
+        return { spread: parseFloat(spread.toFixed(2)), source: 'FRED BAMLH0A0HYM2' };
     }
     return null;
   } catch (e) {
@@ -229,19 +293,23 @@ async function fetchCreditSpreadFRED(): Promise<{ spread: number; source: string
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// FRED — Breakeven inflation 5Y5Y forward (T5YIFR)
+// ═══════════════════════════════════════════════════════════════════
 async function fetchBreakevenFRED(): Promise<{ value: number; source: string } | null> {
   try {
     const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=T5YIFR';
     const res = await fetchWithRetry(url, 3, 1500);
     if (!res) return null;
-    const text = await res.text();
+    const text  = await res.text();
     const lines = text.trim().split('\n').slice(1);
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
       if (!line.trim()) continue;
       const [, val] = line.split(',');
       const v = parseFloat(val);
-      if (!isNaN(v) && v > 0) return { value: parseFloat(v.toFixed(2)), source: 'FRED T5YIFR' };
+      if (!isNaN(v) && v > 0)
+        return { value: parseFloat(v.toFixed(2)), source: 'FRED T5YIFR' };
     }
     return null;
   } catch (e) {
@@ -250,28 +318,47 @@ async function fetchBreakevenFRED(): Promise<{ value: number; source: string } |
   }
 }
 
-// ── MANEJADOR PRINCIPAL ───────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// MANEJADOR PRINCIPAL
+// ═══════════════════════════════════════════════════════════════════
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // ── Parsear tickers del body ──────────────────────────────────
     let userTickers: string[] = [];
     try {
       const body = await req.json() as { tickers?: string[] };
       if (body && Array.isArray(body.tickers)) {
-        userTickers = body.tickers.map((t: string) => t.trim()).filter((t: string) => t.length > 0);
+        userTickers = body.tickers
+          .map((t: string) => t.trim())
+          .filter((t: string) => t.length > 0);
       }
-    } catch (e) {
-      console.warn('Error parsing body or no tickers provided, using only macro tickers');
+    } catch (_e) {
+      console.warn('[Edge] No body / sin tickers — usando sólo macro+proxy');
     }
 
-    // FIX BUG-PROXY: combinar user tickers + MACRO + PROXY (sin duplicados)
-    const allTickers: string[] = [...new Set([...userTickers, ...MACRO_TICKERS, ...PROXY_TICKERS])];
-    console.log(`[Edge] Fetching ${allTickers.length} tickers (${userTickers.length} user + ${MACRO_TICKERS.length} macro + ${PROXY_TICKERS.length} proxy)`);
+    // ── Combinar sin duplicados ───────────────────────────────────
+    const allTickers: string[] = [
+      ...new Set([...userTickers, ...MACRO_TICKERS, ...PROXY_TICKERS]),
+    ];
 
-    const [yahooResults, m2Data, capeData, centralBanks, creditSpreadData, breakevenData] = await Promise.all([
+    console.log(
+      `[Edge] 🚀 Fetching ${allTickers.length} tickers ` +
+      `(${userTickers.length} user + ${MACRO_TICKERS.length} macro + ${PROXY_TICKERS.length} proxy)`
+    );
+
+    // ── Fetch paralelo Yahoo + FRED ───────────────────────────────
+    const [
+      yahooResults,
+      m2Data,
+      capeData,
+      centralBanks,
+      creditSpreadData,
+      breakevenData,
+    ] = await Promise.all([
       Promise.allSettled(allTickers.map((ticker: string) => fetchTicker(ticker))),
       fetchM2FRED(),
       fetchCAPEFRED(),
@@ -280,80 +367,141 @@ Deno.serve(async (req: Request) => {
       fetchBreakevenFRED(),
     ]);
 
+    // ── Procesar resultados ───────────────────────────────────────
     const data: Record<string, ChartResult> = {};
     const errors: string[] = [];
+    let sufficiencyCount = 0;
 
-    yahooResults.forEach((result: PromiseSettledResult<ChartResult | null>, idx: number) => {
-      const ticker = allTickers[idx];
-      const cleanTicker = ticker.replace('%5E', '^');
-      if (result.status === 'fulfilled' && result.value) {
-        const chart = result.value;
-        
-        // ✅ VALIDACIÓN CRÍTICA: todas las series deben tener la misma longitud
-        // Si no, Olympus fallará en minimumVarianceWeights
-        const lengths = {
-          timestamps: chart.timestamps.length,
-          closes: chart.closes.length,
-          highs: chart.highs.length,
-          lows: chart.lows.length,
-        };
-        
-        const allEqual = Object.values(lengths).every(len => len === lengths.timestamps);
-        if (!allEqual) {
-          console.error(`❌ ${cleanTicker} array mismatch (CRITICAL): ${JSON.stringify(lengths)} → SKIPPING`);
+    yahooResults.forEach(
+      (result: PromiseSettledResult<ChartResult | null>, idx: number) => {
+        const ticker      = allTickers[idx];
+        const cleanTicker = ticker.replace('%5E', '^');
+
+        if (result.status === 'fulfilled' && result.value) {
+          const chart = result.value;
+
+          // ═══════════════════════════════════════════════════════
+          // FIX CRÍTICO #4: Validación de integridad de arrays
+          // Si pasan arrays desalineados, Olympus falla en
+          // minimumVarianceWeights con "dimensión n no coincide"
+          // ═══════════════════════════════════════════════════════
+          const lengths = {
+            timestamps: chart.timestamps.length,
+            closes:     chart.closes.length,
+            highs:      chart.highs.length,
+            lows:       chart.lows.length,
+          };
+
+          const allEqual = Object.values(lengths).every(
+            len => len === lengths.timestamps,
+          );
+
+          if (!allEqual) {
+            console.error(
+              `❌ ${cleanTicker} array mismatch (CRITICAL): ` +
+              `${JSON.stringify(lengths)} → SKIPPING`
+            );
+            errors.push(cleanTicker);
+            return;
+          }
+
+          // ═══════════════════════════════════════════════════════
+          // Registrar suficiencia para DCC-GARCH
+          // ═══════════════════════════════════════════════════════
+          if (chart.isSufficient) {
+            sufficiencyCount++;
+          } else {
+            console.warn(
+              `⚠️ ${cleanTicker} insuficiente (${chart.dataPoints} < 60) ` +
+              `→ DCC-GARCH usará covarianza estática`
+            );
+          }
+
+          data[cleanTicker] = chart;
+        } else {
           errors.push(cleanTicker);
-          return;
         }
-        
-        // ✅ WARNING: Si menos de 60 datos, DCC-GARCH usará fallback
-        if (chart.closes.length < 60) {
-          console.warn(`⚠️ ${cleanTicker} insufficient data (${chart.closes.length} < 60) → DCC-GARCH will use static covariance`);
-        }
-        
-        data[cleanTicker] = chart;
-      } else {
-        errors.push(cleanTicker);
       }
-    });
+    );
 
-    // Log de diagnóstico — visible en Supabase Edge Function logs
-    const proxyLengths = ['EEM','QUAL','GLD','URA','SMH','QQQ'].map(t =>
-      `${t}:${data[t]?.closes?.length ?? '❌'}`
-    ).join(' | ');
-    console.log(`[Edge] ✅ Proxy closes lengths: ${proxyLengths}`);
-    
-    const macroLengths = ['VIX','TNX','GSPC','HYG','LQD'].map(t =>
-      `${t}:${data[t]?.closes?.length ?? '❌'}`
-    ).join(' | ');
-    console.log(`[Edge] ✅ Macro closes lengths: ${macroLengths}`);
-    
-    console.log(`[Edge] 📊 Data points: ${Object.keys(data).length} successfully fetched, ${errors.length} errors`);
-    if (errors.length > 0) {
+    // ── Logging detallado para diagnóstico en Supabase logs ───────
+    const proxyLog = ['EEM', 'QUAL', 'GLD', 'URA', 'SMH', 'QQQ', 'SPY']
+      .map(t => `${t}:${data[t]?.dataPoints ?? '❌'}`)
+      .join(' | ');
+    console.log(`[Edge] 📊 Proxy data points: ${proxyLog}`);
+
+    const macroLog = ['^VIX', '^TNX', '^GSPC', 'HYG', 'LQD']
+      .map(t => `${t.replace('^','')}:${data[t]?.dataPoints ?? '❌'}`)
+      .join(' | ');
+    console.log(`[Edge] 📈 Macro data points: ${macroLog}`);
+
+    const totalOk  = Object.keys(data).length;
+    const totalErr = errors.length;
+    console.log(
+      `[Edge] ✅ Data integrity: ${totalOk} tickers loaded${totalErr > 0 ? `, ${totalErr} failed` : ' successfully'}`
+    );
+    if (totalErr > 0) {
       console.error(`[Edge] ❌ Failed tickers: ${errors.join(', ')}`);
     }
-    
-    // Log de suficiencia para DCC-GARCH
-    const tickers60plus = Object.values(data).filter(d => d.closes.length >= 60).length;
-    const tickersLess60 = Object.values(data).filter(d => d.closes.length < 60).length;
-    console.log(`[Edge] 📈 DCC-GARCH ready: ${tickers60plus} tickers ≥60 datos, ${tickersLess60} tickers <60 (fallback a static)`)
 
-    return new Response(JSON.stringify({
-      data,
-      errors,
-      m2: m2Data,
-      cape: capeData,
-      centralBanks,
-      creditSpread: creditSpreadData,
-      breakeven: breakevenData,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    const staticCount = totalOk - sufficiencyCount;
+    console.log(
+      `[Edge] 📈 DCC-GARCH readiness: ${sufficiencyCount} tickers ≥60 datos (dynamic), ` +
+      `${staticCount} ticker${staticCount !== 1 ? 's' : ''} <60 (static covariance)`
+    );
+
+    // ── Estadísticas de cobertura ─────────────────────────────────
+    const allPoints = Object.values(data).map(d => d.dataPoints);
+    const minDP  = allPoints.length ? Math.min(...allPoints) : 0;
+    const maxDP  = allPoints.length ? Math.max(...allPoints) : 0;
+    const avgDP  = allPoints.length
+      ? Math.round(allPoints.reduce((a, b) => a + b, 0) / allPoints.length)
+      : 0;
+    console.log(
+      `[Edge] 📊 Data coverage: min=${minDP}, avg=${avgDP}, max=${maxDP}`
+    );
+
+    // ── Construir metadata para el frontend ───────────────────────
+    const metadata = {
+      timestamp:         new Date().toISOString(),
+      range:             '6y',
+      tickersRequested:  allTickers.length,
+      tickersSuccessful: totalOk,
+      tickersFailed:     totalErr,
+      sufficiencyStats: {
+        dccReady:        sufficiencyCount,
+        staticCovariance: staticCount,
+      },
+      minDataPoints:  minDP,
+      avgDataPoints:  avgDP,
+      maxDataPoints:  maxDP,
+    };
+
+    // ── Respuesta final ───────────────────────────────────────────
+    return new Response(
+      JSON.stringify({
+        data,
+        errors,
+        m2:           m2Data,
+        cape:         capeData,
+        centralBanks,
+        creditSpread: creditSpreadData,
+        breakeven:    breakevenData,
+        metadata,
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('Unhandled error:', errorMessage);
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    console.error('[Edge] ❌ Unhandled error:', errorMessage);
+    return new Response(
+      JSON.stringify({ error: errorMessage }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
   }
 });
