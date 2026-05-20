@@ -1,7 +1,16 @@
 // ============================================================
-// src/core/tactical/tacticalScreener.ts — v10 ELITE
+// src/core/tactical/tacticalScreener.ts — v11
 //
-// CORRECCIONES CRÍTICAS v10:
+// CORRECCIONES v11:
+//
+//   5. BACKTEST TÁCTICO metrics undefined.
+//      El dashboard leía result.backtest.metrics que no existe
+//      en ScreenerResult → error en consola + posible crash de render.
+//      FIX: scanTacticalUniverse incluye backtest stub vacío en el
+//      return para que result.backtest nunca sea undefined.
+//      El dashboard debe leer result.backtest?.metrics ?? [].
+//
+// CORRECCIONES v10 (previas):
 //
 //   1. ULTRA-FALLBACK DESCARTADO EN SEÑALES.
 //      PROBLEMA: GLD como proxy de URNU.DE generaba señales del oro
@@ -528,6 +537,9 @@ export async function scanTacticalUniverse(
     errors,
     warnings,
     marketRegime,
+    // FIX v11: stub vacío para evitar "BACKTEST metrics undefined" en el dashboard.
+    // El dashboard debe leer result.backtest?.metrics ?? [] (optional chaining).
+    backtest: { metrics: [], ran: false },
   };
 }
 

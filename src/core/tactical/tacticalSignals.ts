@@ -1,7 +1,21 @@
 // ============================================================
-// src/core/tactical/tacticalSignals.ts — v5 FINAL
+// src/core/tactical/tacticalSignals.ts — v6
 //
-// CORRECCIONES:
+// CORRECCIONES v6 (BUG CRÍTICO — dashboard sin resultados):
+//
+//   1. calcTakeProfits REESCRITA.
+//      BUG: usaba sigma20 * 0.6/0.8 para calcular TP.
+//      En ETFs de baja vol (sigma20≈0.50€ sobre 50€):
+//        TP1 = 50 + 0.30 → riesgo 1.20€ → R:R = 0.25 → FAIL filtro 1.2
+//      Resultado: 0 oportunidades en el screener → dashboard vacío.
+//      FIX: TP basados en risk * tp1Mult (siempre ≥ 1.25×Risk).
+//      R:R garantizado por construcción ≥ 1.25 > umbral 1.2.
+//
+//   2. calcDynamicTPMultiplier:
+//      TOO_SLOW: tp1 subido de 1.0 → 1.25 (R:R mínimo seguro).
+//      SLOW:     tp1 subido de 1.2 → 1.3 (margen ante redondeo).
+//
+// CORRECCIONES v5 (previas):
 //   - Eliminadas funciones duplicadas.
 //   - Añadida propiedad 'atr' en TechnicalIndicators (alias de atr14).
 //   - Validaciones robustas en todas las funciones auxiliares.
@@ -394,25 +408,33 @@ export function calcTakeProfits(
 ): { tp1: number; tp2: number; rr: number; useTrailing: boolean } {
   const risk = entryPrice - stopLoss;
   if (risk <= 0) {
-    return { tp1: entryPrice * 1.01, tp2: entryPrice * 1.02, rr: 1.0, useTrailing: false };
+    return { tp1: entryPrice * 1.02, tp2: entryPrice * 1.04, rr: 1.5, useTrailing: false };
   }
-  const sl20 = closes && closes.length >= 20 ? closes.slice(-20) : closes ?? [entryPrice];
-  const sigma20 = stdev(sl20);
-  const atrPct = ind.atr / Math.max(0.01, entryPrice);
-  let tp1Mult = 0.6;
-  let tp2Mult = 1.2;
-  if (atrPct < 0.008) {
-    tp1Mult = 0.8;
-    tp2Mult = 1.5;
-  }
-  const tp1 = entryPrice + sigma20 * tp1Mult;
-  const tp2 = entryPrice + sigma20 * tp2Mult;
-  const tp2Final = Math.max(tp1 * 1.01, tp2);
-  const rr = risk > 0 ? (tp1 - entryPrice) / risk : 1.5;
+
+  // ── CORRECCIÓN CRÍTICA v6 ────────────────────────────────────
+  // BUG ANTERIOR: tp1 = entryPrice + sigma20 * 0.6
+  //   → sigma20 es la desviación típica absoluta del precio.
+  //   → En ETFs de baja vol (sigma20 ≈ 0.50€ sobre precio 50€):
+  //       tp1 = 50 + 0.50 * 0.6 = 50.30€ (subida de 0.30€)
+  //       stop = ~48.80€ → riesgo = 1.20€
+  //       R:R = 0.30 / 1.20 = 0.25  → FAIL filtro 1.2 → 0 oportunidades → dashboard vacío
+  //
+  // FIX: TPs basados en multiplicadores de RISK (entryPrice − stopLoss)
+  //   → R:R = tp1Mult siempre ≥ 1.25 → supera filtro → oportunidades reales
+  // ────────────────────────────────────────────────────────────
+
+  const mults  = calcDynamicTPMultiplier(ind.atrPct);   // basado en ATR% del activo
+
+  const tp1    = entryPrice + risk * mults.tp1;
+  const tp2Raw = entryPrice + risk * mults.tp2;
+  const tp2    = Math.max(tp1 * 1.005, tp2Raw);          // tp2 siempre > tp1
+
+  const rr = (tp1 - entryPrice) / risk;                  // == mults.tp1 por construcción
+
   return {
     tp1,
-    tp2: tp2Final,
-    rr: Math.max(1.0, rr),
+    tp2,
+    rr:          Math.max(1.2, rr),
     useTrailing: type === 'MOMENTUM_BREAKOUT',
   };
 }
@@ -438,10 +460,12 @@ export function calcDynamicMaxDays(atrPct: number): number {
 }
 
 export function calcDynamicTPMultiplier(atrPct: number): { tp1: number; tp2: number } {
+  // FIX v6: tp1 nunca < 1.25 — garantiza R:R >= 1.25 > filtro mínimo 1.2
+  // Antes: SLOW=1.2, TOO_SLOW=1.0 → R:R caía a 0.3–1.0 con sigma20 → 0 oportunidades
   if (atrPct >= 0.04)  return { tp1: 1.5, tp2: 4.0 };
   if (atrPct >= 0.02)  return { tp1: 1.5, tp2: 2.5 };
-  if (atrPct >= 0.008) return { tp1: 1.2, tp2: 1.8 };
-  return { tp1: 1.0, tp2: 1.5 };
+  if (atrPct >= 0.008) return { tp1: 1.3, tp2: 1.8 };
+  return { tp1: 1.25, tp2: 1.5 };   // TOO_SLOW: mínimo 1.25 (antes 1.0 → sin señales)
 }
 
 // ════════════════════════════════════════════════════════════
