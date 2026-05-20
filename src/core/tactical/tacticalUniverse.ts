@@ -62,7 +62,7 @@ export const UCITS_ETFS: UniverseAsset[] = [
   { ticker:'CS51.DE',  name:'iShares MSCI USA UCITS',              sector:'Equity',         type:'ETF', exchange:'XETRA',    currency:'EUR', yahooSymbol:'CS51.DE',  fallbackYahooSymbol:'SPY',   ibkrExchange:'IBIS', ibkrSymbol:'CS51',  ibkrSecType:'STK' },  // FIX: IUSA→SPY
   { ticker:'XD9U.DE',  name:'Xtrackers MSCI USA UCITS',            sector:'Equity',         type:'ETF', exchange:'XETRA',    currency:'EUR', yahooSymbol:'XD9U.DE',  fallbackYahooSymbol:'SPY',   ibkrExchange:'IBIS', ibkrSymbol:'XD9U',  ibkrSecType:'STK' },  // FIX: IUSA→SPY
   // Asia / Emergentes
-  { ticker:'IAPDM.XD',  name:'iShares MSCI Pacific ex-Japan UCITS', sector:'Equity',         type:'ETF', exchange:'EURONEXT', currency:'USD', yahooSymbol:'IAPD.AS',  fallbackYahooSymbol:'EPP',   ibkrExchange:'AEB',  ibkrSymbol:'IAPD',  ibkrSecType:'STK' },
+  { ticker:'IAPDM.XD',  name:'iShares MSCI Pacific ex-Japan UCITS', sector:'Equity',         type:'ETF', exchange:'EURONEXT', currency:'USD', yahooSymbol:'IAPDM.XD',  fallbackYahooSymbol:'EPP',   ibkrExchange:'AEB',  ibkrSymbol:'IAPDM',  ibkrSecType:'STK' },
   { ticker:'EMIN.AS',  name:'iShares MSCI India UCITS',            sector:'Emerging',       type:'ETF', exchange:'EURONEXT', currency:'USD', yahooSymbol:'EMIN.AS',  fallbackYahooSymbol:'INDA',  ibkrExchange:'AEB',  ibkrSymbol:'EMIN',  ibkrSecType:'STK' },
   { ticker:'CNYA.AS',  name:'iShares MSCI China A UCITS',          sector:'Emerging',       type:'ETF', exchange:'EURONEXT', currency:'USD', yahooSymbol:'CNYA.AS',  fallbackYahooSymbol:'MCHI',  ibkrExchange:'AEB',  ibkrSymbol:'CNYA',  ibkrSecType:'STK' },  // FIX: CNYA→MCHI
   // Sectoriales STOXX 600
