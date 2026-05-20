@@ -66,16 +66,29 @@ async function fetchTicker(ticker: string): Promise<ChartResult | null> {
     // Limpiar nulls que Yahoo a veces devuelve en medio del array
     const clean = (arr: number[]) => arr.map(v => (v == null || !isFinite(v)) ? 0 : v);
 
+    // FIX: Sincronizar longitudes — usar la longitud mínima válida para evitar mismatch dimensional
+    const minLen = Math.min(
+      timestamps.length,
+      closes.length,
+      highs.length,
+      lows.length
+    );
+    
+    // Si hay desalineación significativa, loguear warning
+    if (minLen < timestamps.length) {
+      console.warn(`⚠️ ${ticker} data misalignment: timestamps=${timestamps.length}, closes=${closes.length}, highs=${highs.length}, lows=${lows.length} → usando ${minLen}`);
+    }
+
     const currentPrice = result.meta?.regularMarketPrice ?? closes[closes.length - 1] ?? 0;
     const cleanTicker = ticker.replace('%5E', '^');
 
     return {
       ticker: cleanTicker,
       currentPrice,
-      timestamps,
-      closes: clean(closes),
-      highs:  clean(highs),
-      lows:   clean(lows),
+      timestamps: timestamps.slice(0, minLen),
+      closes: clean(closes).slice(0, minLen),
+      highs:  clean(highs).slice(0, minLen),
+      lows:   clean(lows).slice(0, minLen),
     };
   } catch (e) {
     console.error(`Error fetching ${ticker}:`, e);
@@ -274,7 +287,30 @@ Deno.serve(async (req: Request) => {
       const ticker = allTickers[idx];
       const cleanTicker = ticker.replace('%5E', '^');
       if (result.status === 'fulfilled' && result.value) {
-        data[cleanTicker] = result.value;
+        const chart = result.value;
+        
+        // ✅ VALIDACIÓN CRÍTICA: todas las series deben tener la misma longitud
+        // Si no, Olympus fallará en minimumVarianceWeights
+        const lengths = {
+          timestamps: chart.timestamps.length,
+          closes: chart.closes.length,
+          highs: chart.highs.length,
+          lows: chart.lows.length,
+        };
+        
+        const allEqual = Object.values(lengths).every(len => len === lengths.timestamps);
+        if (!allEqual) {
+          console.error(`❌ ${cleanTicker} array mismatch (CRITICAL): ${JSON.stringify(lengths)} → SKIPPING`);
+          errors.push(cleanTicker);
+          return;
+        }
+        
+        // ✅ WARNING: Si menos de 60 datos, DCC-GARCH usará fallback
+        if (chart.closes.length < 60) {
+          console.warn(`⚠️ ${cleanTicker} insufficient data (${chart.closes.length} < 60) → DCC-GARCH will use static covariance`);
+        }
+        
+        data[cleanTicker] = chart;
       } else {
         errors.push(cleanTicker);
       }
@@ -282,11 +318,24 @@ Deno.serve(async (req: Request) => {
 
     // Log de diagnóstico — visible en Supabase Edge Function logs
     const proxyLengths = ['EEM','QUAL','GLD','URA','SMH','QQQ'].map(t =>
-      `${t}:${data[t]?.closes?.length ?? 0}`
-    ).join(' ');
-    console.log(`[Edge] Proxy closes lengths: ${proxyLengths}`);
-    console.log(`[Edge] BTC-EUR closes length: ${data['BTC-EUR']?.closes?.length ?? 0}`);
-    console.log(`[Edge] Errors: ${errors.join(', ') || 'none'}`);
+      `${t}:${data[t]?.closes?.length ?? '❌'}`
+    ).join(' | ');
+    console.log(`[Edge] ✅ Proxy closes lengths: ${proxyLengths}`);
+    
+    const macroLengths = ['VIX','TNX','GSPC','HYG','LQD'].map(t =>
+      `${t}:${data[t]?.closes?.length ?? '❌'}`
+    ).join(' | ');
+    console.log(`[Edge] ✅ Macro closes lengths: ${macroLengths}`);
+    
+    console.log(`[Edge] 📊 Data points: ${Object.keys(data).length} successfully fetched, ${errors.length} errors`);
+    if (errors.length > 0) {
+      console.error(`[Edge] ❌ Failed tickers: ${errors.join(', ')}`);
+    }
+    
+    // Log de suficiencia para DCC-GARCH
+    const tickers60plus = Object.values(data).filter(d => d.closes.length >= 60).length;
+    const tickersLess60 = Object.values(data).filter(d => d.closes.length < 60).length;
+    console.log(`[Edge] 📈 DCC-GARCH ready: ${tickers60plus} tickers ≥60 datos, ${tickersLess60} tickers <60 (fallback a static)`)
 
     return new Response(JSON.stringify({
       data,
