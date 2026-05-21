@@ -1,5 +1,5 @@
 // supabase/functions/yahoo-finance/index.ts
-// VERSIÓN FINAL — Solo Yahoo Finance, sin FRED
+// CORRECCIÓN: highs/lows null → fallback al cierre (no a 0) para ATR correcto
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,7 +26,7 @@ async function fetchTicker(ticker: string): Promise<ChartResult | null> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-    
+
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=6y&interval=1d`;
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -41,23 +41,43 @@ async function fetchTicker(ticker: string): Promise<ChartResult | null> {
 
     const timestamps: number[] = result.timestamp || [];
     const quote = result.indicators?.quote?.[0] ?? {};
-    const closes: number[] = quote.close || [];
-    const highs: number[]  = quote.high  || [];
-    const lows: number[]   = quote.low   || [];
+    const rawCloses: (number | null)[] = quote.close || [];
+    const rawHighs:  (number | null)[] = quote.high  || [];
+    const rawLows:   (number | null)[] = quote.low   || [];
 
-    const clean = (arr: number[]) => arr.map((v: any) => (v == null || !isFinite(v)) ? 0 : v);
-    const minLen = Math.min(timestamps.length, closes.length, highs.length, lows.length);
-    
+    const minLen = Math.min(timestamps.length, rawCloses.length, rawHighs.length, rawLows.length);
     if (minLen < 60) return null;
-    const currentPrice = result.meta?.regularMarketPrice ?? clean(closes)[closes.length - 1] ?? 0;
+
+    // CORRECCIÓN CRÍTICA: limpiar closes primero, luego usar como fallback para highs/lows.
+    // Antes: clean() reemplazaba null con 0 → high=0 y low=0 → ATR=0 → sin oportunidades
+    // tácticas porque R:R=0 rechaza todas las señales.
+    const closes = rawCloses.slice(0, minLen).map((v: any, i: number) => {
+      if (v != null && isFinite(v) && v > 0) return v;
+      // Buscar valor cercano válido (interpolación lineal simple)
+      const prev = rawCloses.slice(0, i).reverse().find((x: any) => x != null && isFinite(x) && x > 0) ?? 0;
+      return prev;
+    });
+
+    // Highs y lows: fallback al cierre del mismo día (no a 0)
+    const highs = rawHighs.slice(0, minLen).map((v: any, i: number) => {
+      if (v != null && isFinite(v) && v > 0) return v;
+      return closes[i]; // fallback al cierre → ATR válido aunque subestimado
+    });
+    const lows = rawLows.slice(0, minLen).map((v: any, i: number) => {
+      if (v != null && isFinite(v) && v > 0) return v;
+      return closes[i]; // fallback al cierre → ATR válido aunque subestimado
+    });
+
+    const currentPrice = result.meta?.regularMarketPrice ?? closes[closes.length - 1] ?? 0;
+    if (currentPrice <= 0) return null;
 
     return {
       ticker: ticker.replace('%5E', '^'),
       currentPrice,
       timestamps: timestamps.slice(0, minLen),
-      closes:     clean(closes).slice(0, minLen),
-      highs:      clean(highs).slice(0, minLen),
-      lows:       clean(lows).slice(0, minLen),
+      closes,
+      highs,
+      lows,
       dataPoints: minLen,
     };
   } catch {
@@ -82,13 +102,11 @@ Deno.serve(async (req: Request) => {
     const allTickers = [...new Set([...userTickers, ...MACRO_TICKERS])];
     console.log(`[YahooFinance] 🚀 Fetching ${allTickers.length} tickers`);
 
-    // Yahoo con timeout global de 18s
     let yahooResults = [] as PromiseSettledResult<ChartResult | null>[];
-
     try {
       yahooResults = await Promise.race([
         Promise.allSettled(allTickers.map(t => fetchTicker(t))),
-        new Promise<PromiseSettledResult<ChartResult | null>[]>(resolve => 
+        new Promise<PromiseSettledResult<ChartResult | null>[]>(resolve =>
           setTimeout(() => resolve(allTickers.map(() => ({ status: 'rejected' as const, reason: 'timeout' }))), 18000)
         ),
       ]);
@@ -115,18 +133,19 @@ Deno.serve(async (req: Request) => {
     });
 
     const pts = Object.values(data).map(d => d.dataPoints);
-    console.log(`[YahooFinance] ✅ ${Object.keys(data).length} OK`);
+    const minPts = pts.length ? Math.min(...pts) : 0;
+    const maxPts = pts.length ? Math.max(...pts) : 0;
+    console.log(`[YahooFinance] ✅ ${Object.keys(data).length} OK · ${errors.length} errores · dataPoints: ${minPts}–${maxPts}`);
 
-    // FRED devuelve null — tú lo metes manual en el frontend
     return new Response(
-      JSON.stringify({ 
-        data, 
-        errors, 
-        m2: null, 
-        cape: null, 
-        centralBanks: null, 
-        creditSpread: null, 
-        breakeven: null 
+      JSON.stringify({
+        data,
+        errors,
+        m2: null,
+        cape: null,
+        centralBanks: null,
+        creditSpread: null,
+        breakeven: null,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -135,15 +154,15 @@ Deno.serve(async (req: Request) => {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[YahooFinance] ❌', msg);
     return new Response(
-      JSON.stringify({ 
-        error: msg, 
-        data: {}, 
+      JSON.stringify({
+        error: msg,
+        data: {},
         errors: [],
-        m2: null, 
-        cape: null, 
-        centralBanks: null, 
-        creditSpread: null, 
-        breakeven: null 
+        m2: null,
+        cape: null,
+        centralBanks: null,
+        creditSpread: null,
+        breakeven: null,
       }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
