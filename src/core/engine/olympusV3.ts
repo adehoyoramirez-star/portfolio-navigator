@@ -281,7 +281,11 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   const erpRaw        = input.erpValue ?? 0.02;
   const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
-  const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length > 0);
+  // CORRECCIÓN: verificar también que las dimensiones de covMatrix coinciden con assets.length.
+  // Antes solo se comprobaba length > 0, lo que provocaba que minimumVarianceWeights,
+  // HRP y BL recibieran una matriz de dimensión distinta → warning en cada ejecución
+  // y fallback a equal weight silencioso.
+  const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length === assets.length && input.covMatrix.every(row => row.length === assets.length));
 
   // ====== CAPA 0: BTC CYCLE OVERLAY ======
   const btcCycleInput: BTCCycleInput = {

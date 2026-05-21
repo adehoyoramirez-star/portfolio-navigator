@@ -44,14 +44,17 @@ export default function BacktestPanel({
     return Math.max(...lengths);
   }, [marketData]);
 
-  // Cálculo del backtest SIN useMemo, ejecutado en cada render
-  const result: BacktestOutput | null = (() => {
+  // Cálculo del backtest en useMemo — solo recalcula cuando cambian los inputs relevantes.
+  // CORRECCIÓN: antes era una IIFE que corría en cada render, causando
+  // "metrics undefined" en los primeros renders antes de que marketData estuviera listo
+  // y generando carga computacional innecesaria.
+  const result: BacktestOutput | null = useMemo(() => {
     if (!marketData?.closesHistory) return null;
 
     const length = marketData.closesHistory['BTC-EUR']?.length || 0;
     const vixCloses = marketData.closesHistory['^VIX'] ?? [];
     const spxCloses = marketData.closesHistory['^GSPC'] ?? marketData.closesHistory['SPY'] ?? [];
-    
+
     const buildVixProxy = (closes: number[], targetLen: number): number[] => {
       if (closes.length < 22) return Array(targetLen).fill(currentVix);
       const vixProxy: number[] = [];
@@ -60,17 +63,17 @@ export default function BacktestPanel({
           vixProxy.push(Math.log(closes[i + 1] / closes[i]));
         }
       }
-      const result: number[] = [];
+      const computed: number[] = [];
       for (let i = 0; i < vixProxy.length; i++) {
         const window = vixProxy.slice(Math.max(0, i - 21), i + 1);
-        if (window.length < 5) { result.push(currentVix); continue; }
+        if (window.length < 5) { computed.push(currentVix); continue; }
         const mean = window.reduce((s, v) => s + v, 0) / window.length;
         const variance = window.reduce((s, v) => s + (v - mean) ** 2, 0) / window.length;
         const annualVol = Math.sqrt(variance * 252);
-        result.push(Math.max(10, Math.min(80, annualVol * 100)));
+        computed.push(Math.max(10, Math.min(80, annualVol * 100)));
       }
-      while (result.length < targetLen) result.unshift(currentVix);
-      return result.slice(-targetLen);
+      while (computed.length < targetLen) computed.unshift(currentVix);
+      return computed.slice(-targetLen);
     };
 
     const buildCreditProxy = (vixArr: number[]): number[] =>
@@ -87,13 +90,13 @@ export default function BacktestPanel({
       vixHistorical = buildVixProxy(spxCloses, length);
     }
     const creditHistorical = buildCreditProxy(vixHistorical);
-    
+
     const macroHistory = {
       vix: vixHistorical,
       yieldSpread: Array(length).fill(0),
       creditSpread: creditHistorical,
     };
-    
+
     return runBacktest({
       closesHistory: marketData.closesHistory,
       covMatrix: marketData.covMatrix,
@@ -103,8 +106,7 @@ export default function BacktestPanel({
       initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
       transactionCostBps: 10,
     });
-  })();
-    console.log('BACKTEST TÁCTICO metrics', result?.metrics);
+  }, [marketData, lookbackDays, rebalanceDays, currentVix, currentCreditSpread, portfolioInitialValue]);
 
   if (!marketData) {
     return (
