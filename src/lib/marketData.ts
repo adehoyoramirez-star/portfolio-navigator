@@ -8,6 +8,8 @@ interface YahooChartResult {
   currentPrice: number;
   timestamps: number[];
   closes: number[];
+  highs: number[];   // FIX-INTERFACE: Edge Function devuelve highs — TypeScript debe validarlo
+  lows: number[];    // FIX-INTERFACE: Edge Function devuelve lows — TypeScript debe validarlo
 }
 
 interface YahooResponse {
@@ -453,6 +455,28 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   }
 
   const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven, fundamentals: yfFundamentals } = response;
+  
+  // ====== DEBUG: Verificar estructura de datos recibidos ======
+  // FIX-DEBUG: logear la estructura del primer ticker para diagnosticar formato de Edge Function
+  const firstTicker = Object.keys(yfData)[0];
+  if (firstTicker && yfData[firstTicker]) {
+    const sample = yfData[firstTicker];
+    console.log('[Olympus] Edge Function response structure check:');
+    console.log(`  Sample ticker: ${firstTicker}`);
+    console.log(`  Has closes: ${!!sample.closes} (length: ${sample.closes?.length ?? 0})`);
+    console.log(`  Has highs: ${!!sample.highs} (length: ${(sample as any).highs?.length ?? 0})`);
+    console.log(`  Has lows: ${!!sample.lows} (length: ${(sample as any).lows?.length ?? 0})`);
+    console.log(`  Has timestamps: ${!!sample.timestamps} (length: ${sample.timestamps?.length ?? 0})`);
+    console.log(`  Current price: ${sample.currentPrice}`);
+    
+    // Si highs/lows no existen pero se esperan, avisar
+    if (!sample.highs || !sample.lows) {
+      console.warn('[Olympus] ⚠️  Edge Function NO devuelve highs/lows');
+      console.warn('  Esto es esperado si la Edge Function solo devuelve closes.');
+      console.warn('  Si necesitas highs/lows, actualiza la Edge Function.');
+    }
+  }
+  
   // M2 real de FRED
   const m2Growth = fredM2?.growthYoY ?? 5.2;
 
@@ -505,6 +529,48 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     if (!(ticker in closesHistory) && yfData[ticker]) {
       closesHistory[ticker] = cleanCloses(yfData[ticker].closes);
     }
+  }
+
+  // ====== VALIDACIÓN ROBUSTA DE DATOS ======
+  // FIX-VALIDATION: verificar que closesHistory tiene datos suficientes para backtesting
+  const minDataPoints = 60; // mínimo para backtesting (2-3 meses de trading days)
+  const dataReport: Record<string, number> = {};
+  const validTickers: string[] = [];
+  const insufficientTickers: string[] = [];
+
+  for (const ticker of ASSETS) {
+    const len = closesHistory[ticker]?.length ?? 0;
+    dataReport[ticker] = len;
+    if (len >= minDataPoints) {
+      validTickers.push(ticker);
+    } else {
+      insufficientTickers.push(ticker);
+    }
+  }
+
+  // Log detallado para debugging
+  console.log('[Olympus] closesHistory validation:');
+  console.log(`  ✅ Valid: ${validTickers.length}/${ASSETS.length} tickers con ≥${minDataPoints} días`);
+  if (validTickers.length > 0) {
+    console.log('  Data lengths:', Object.entries(dataReport)
+      .filter(([t]) => validTickers.includes(t))
+      .map(([t, l]) => `${t}: ${l}`)
+      .join(' | '));
+  }
+  if (insufficientTickers.length > 0) {
+    console.warn(`  ⚠️  Insufficient: ${insufficientTickers.join(', ')}`);
+    console.warn('  Data lengths:', Object.entries(dataReport)
+      .filter(([t]) => insufficientTickers.includes(t))
+      .map(([t, l]) => `${t}: ${l}`)
+      .join(' | '));
+  }
+
+  // Si NINGÚN ticker tiene datos suficientes, el backtesting no puede funcionar
+  if (validTickers.length === 0) {
+    console.error('[Olympus] ❌ CRITICAL: closesHistory está vacío o insuficiente para TODOS los tickers');
+    console.error('  Esto significa que la Edge Function no devolvió datos válidos.');
+    console.error('  Revisa Supabase Edge Function logs para ver errores de Yahoo Finance fetch.');
+    // NO throw — permitir que el resto del código use fallbacks
   }
 
   // ====== RETORNOS DIARIOS POR ACTIVO ======
