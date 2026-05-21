@@ -1,6 +1,5 @@
-// Silencia el error "Cannot find name 'Deno'" del editor local
-// En Supabase Edge Functions, Deno existe en tiempo de ejecución
-declare const Deno: any;
+// @ts-ignore
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -29,12 +28,8 @@ interface ChartResult {
 
 async function fetchTicker(ticker: string): Promise<ChartResult | null> {
   try {
-    // range=6y → ~1500 barras: cubre COVID 2020, Taper 2022, rally 2023-24
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=6y&interval=1d`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    });
-
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) {
       console.error(`[fetchTicker] ${ticker} HTTP ${res.status}`);
       return null;
@@ -51,8 +46,6 @@ async function fetchTicker(ticker: string): Promise<ChartResult | null> {
     const lows: number[] = quote.low || [];
 
     const clean = (arr: number[]) => arr.map((v: any) => (v == null || !isFinite(v)) ? 0 : v);
-
-    // Sincronización crítica: previene mismatch dimensional en Olympus
     const minLen = Math.min(timestamps.length, closes.length, highs.length, lows.length);
 
     if (minLen < timestamps.length) {
@@ -83,33 +76,23 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1000): Promise
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: controller.signal,
-      });
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok) return res;
-      console.warn(`Attempt ${attempt}: HTTP ${res.status}`);
     } catch (e) {
-      console.error(`Attempt ${attempt} error:`, e);
+      console.error(`Attempt ${attempt}:`, e);
     }
-    if (attempt < retries) {
-      await new Promise(r => setTimeout(r, delayMs * attempt));
-    }
+    if (attempt < retries) await new Promise(r => setTimeout(r, delayMs * attempt));
   }
   return null;
 }
 
-interface M2DataPoint { date: string; value: number }
-interface M2Result { current: number; growthYoY: number; history: M2DataPoint[] }
-
-async function fetchM2FRED(): Promise<M2Result | null> {
+async function fetchM2FRED(): Promise<any> {
   try {
     const res = await fetchWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=M2SL', 3, 1500);
     if (!res) return null;
-    const text = await res.text();
-    const lines = text.trim().split('\n').slice(1);
-    const allPoints: M2DataPoint[] = [];
+    const lines = (await res.text()).trim().split('\n').slice(1);
+    const allPoints: { date: string; value: number }[] = [];
     for (const line of lines) {
       if (!line.trim()) continue;
       const [date, val] = line.split(',');
@@ -120,85 +103,66 @@ async function fetchM2FRED(): Promise<M2Result | null> {
     const history = allPoints.slice(-60);
     const current = history[history.length - 1].value;
     const yearAgo = history[history.length - 13]?.value ?? current;
-    const growthYoY = yearAgo > 0 ? ((current - yearAgo) / yearAgo) * 100 : 0;
-    return { current, growthYoY, history };
-  } catch (e) {
-    console.error('M2 error:', e);
-    return null;
-  }
+    return { current, growthYoY: yearAgo > 0 ? ((current - yearAgo) / yearAgo) * 100 : 0, history };
+  } catch (e) { return null; }
 }
 
-async function fetchCAPEFRED(): Promise<{ cape: number; source: string } | null> {
+async function fetchCAPEFRED(): Promise<any> {
   try {
     const res = await fetchWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=CAPE', 3, 1500);
     if (!res) return null;
-    const text = await res.text();
-    const lines = text.trim().split('\n').slice(1);
+    const lines = (await res.text()).trim().split('\n').slice(1);
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i].trim()) continue;
       const cape = parseFloat(lines[i].split(',')[1]);
       if (!isNaN(cape) && cape > 0) return { cape, source: 'FRED CAPE' };
     }
     return null;
-  } catch (e) {
-    console.error('CAPE error:', e);
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
-async function fetchCentralBanksFRED(): Promise<{
-  fedCurrent: number; fedPrev: number;
-  ecbCurrent: number; ecbPrev: number; source: string
-} | null> {
+async function fetchCentralBanksFRED(): Promise<any> {
   try {
     const [fedRes, ecbRes] = await Promise.all([
       fetchWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL', 3, 1500),
       fetchWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=ECBASSETSW', 3, 1500),
     ]);
-    const parse = async (res: Response | null): Promise<number[]> => {
-      if (!res) return [];
-      const lines = (await res.text()).trim().split('\n').slice(1);
-      const values: number[] = [];
+    const parse = async (r: Response | null): Promise<number[]> => {
+      if (!r) return [];
+      const lines = (await r.text()).trim().split('\n').slice(1);
+      const vals: number[] = [];
       for (const line of lines) {
         if (!line.trim()) continue;
         const v = parseFloat(line.split(',')[1]);
-        if (!isNaN(v) && v > 0) values.push(v);
+        if (!isNaN(v) && v > 0) vals.push(v);
       }
-      return values;
+      return vals;
     };
     const [fed, ecb] = await Promise.all([parse(fedRes), parse(ecbRes)]);
     if (fed.length < 52 || ecb.length < 52) return null;
     return {
-      fedCurrent: fed[fed.length - 1] / 1000,
-      fedPrev: fed[fed.length - 53] / 1000,
-      ecbCurrent: ecb[ecb.length - 1] / 1000,
-      ecbPrev: ecb[ecb.length - 53] / 1000,
+      fedCurrent: fed[fed.length - 1] / 1000, fedPrev: fed[fed.length - 53] / 1000,
+      ecbCurrent: ecb[ecb.length - 1] / 1000, ecbPrev: ecb[ecb.length - 53] / 1000,
       source: 'FRED WALCL+ECBASSETSW',
     };
-  } catch (e) {
-    console.error('Central banks error:', e);
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
-async function fetchCreditSpreadFRED(): Promise<{ spread: number; source: string } | null> {
+async function fetchCreditSpreadFRED(): Promise<any> {
   try {
     const res = await fetchWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2', 3, 1500);
     if (!res) return null;
     const lines = (await res.text()).trim().split('\n').slice(1);
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i].trim()) continue;
-      const spread = parseFloat(lines[i].split(',')[1]);
-      if (!isNaN(spread) && spread > 0) return { spread: parseFloat(spread.toFixed(2)), source: 'FRED OAS' };
+      const s = parseFloat(lines[i].split(',')[1]);
+      if (!isNaN(s) && s > 0) return { spread: parseFloat(s.toFixed(2)), source: 'FRED OAS' };
     }
     return null;
-  } catch (e) {
-    console.error('CreditSpread error:', e);
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
-async function fetchBreakevenFRED(): Promise<{ value: number; source: string } | null> {
+async function fetchBreakevenFRED(): Promise<any> {
   try {
     const res = await fetchWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=T5YIFR', 3, 1500);
     if (!res) return null;
@@ -209,14 +173,10 @@ async function fetchBreakevenFRED(): Promise<{ value: number; source: string } |
       if (!isNaN(v) && v > 0) return { value: parseFloat(v.toFixed(2)), source: 'FRED T5YIFR' };
     }
     return null;
-  } catch (e) {
-    console.error('Breakeven error:', e);
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
-// Punto de entrada Supabase Edge Functions
-Deno.serve(async (req: Request) => {
+serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -228,20 +188,14 @@ Deno.serve(async (req: Request) => {
       if (body?.tickers) {
         userTickers = body.tickers.map((t: string) => t.trim()).filter((t: string) => t.length > 0);
       }
-    } catch {
-      console.warn('[Edge] Sin tickers en body');
-    }
+    } catch { /* sin body */ }
 
     const allTickers = [...new Set([...userTickers, ...MACRO_TICKERS, ...PROXY_TICKERS])];
-    console.log(`[Edge] 🚀 Fetching ${allTickers.length} tickers (${userTickers.length} user + ${MACRO_TICKERS.length} macro + ${PROXY_TICKERS.length} proxy)`);
+    console.log(`[Edge] 🚀 Fetching ${allTickers.length} tickers`);
 
     const [yahooResults, m2Data, capeData, centralBanks, creditSpreadData, breakevenData] = await Promise.all([
       Promise.allSettled(allTickers.map((t: string) => fetchTicker(t))),
-      fetchM2FRED(),
-      fetchCAPEFRED(),
-      fetchCentralBanksFRED(),
-      fetchCreditSpreadFRED(),
-      fetchBreakevenFRED(),
+      fetchM2FRED(), fetchCAPEFRED(), fetchCentralBanksFRED(), fetchCreditSpreadFRED(), fetchBreakevenFRED(),
     ]);
 
     const data: Record<string, ChartResult> = {};
@@ -250,18 +204,14 @@ Deno.serve(async (req: Request) => {
 
     yahooResults.forEach((result: PromiseSettledResult<ChartResult | null>, idx: number) => {
       const cleanTicker = allTickers[idx].replace('%5E', '^');
-
       if (result.status === 'fulfilled' && result.value) {
         const chart = result.value;
-        const lengths = [chart.timestamps.length, chart.closes.length, chart.highs.length, chart.lows.length];
-        const allEqual = lengths.every(l => l === lengths[0]);
-
-        if (!allEqual) {
-          console.error(`❌ ${cleanTicker} array mismatch → SKIP`);
+        const lens = [chart.timestamps.length, chart.closes.length, chart.highs.length, chart.lows.length];
+        if (!lens.every(l => l === lens[0])) {
+          console.error(`❌ ${cleanTicker} mismatch → SKIP`);
           errors.push(cleanTicker);
           return;
         }
-
         if (chart.isSufficient) sufficiencyCount++;
         data[cleanTicker] = chart;
       } else {
@@ -269,39 +219,37 @@ Deno.serve(async (req: Request) => {
       }
     });
 
-    const allPoints = Object.values(data).map(d => d.dataPoints);
-    const minDP = allPoints.length ? Math.min(...allPoints) : 0;
-    const maxDP = allPoints.length ? Math.max(...allPoints) : 0;
-    const avgDP = allPoints.length ? Math.round(allPoints.reduce((a, b) => a + b, 0) / allPoints.length) : 0;
+    const pts = Object.values(data).map(d => d.dataPoints);
+    const minDP = pts.length ? Math.min(...pts) : 0;
+    const maxDP = pts.length ? Math.max(...pts) : 0;
+    const avgDP = pts.length ? Math.round(pts.reduce((a, b) => a + b, 0) / pts.length) : 0;
     const totalOk = Object.keys(data).length;
 
-    console.log(`[Edge] ✅ ${totalOk} tickers OK | minDP=${minDP} avgDP=${avgDP} maxDP=${maxDP}`);
-    console.log(`[Edge] 📈 DCC-GARCH: ${sufficiencyCount} dynamic, ${totalOk - sufficiencyCount} static`);
-    if (errors.length > 0) console.error(`[Edge] ❌ Failed: ${errors.join(', ')}`);
-
-    const metadata = {
-      timestamp: new Date().toISOString(),
-      range: '6y',
-      tickersRequested: allTickers.length,
-      tickersSuccessful: totalOk,
-      tickersFailed: errors.length,
-      sufficiencyStats: {
-        dccReady: sufficiencyCount,
-        staticCovariance: totalOk - sufficiencyCount,
-      },
-      minDataPoints: minDP,
-      avgDataPoints: avgDP,
-      maxDataPoints: maxDP,
-    };
+    console.log(`[Edge] ✅ ${totalOk} OK | min=${minDP} avg=${avgDP} max=${maxDP}`);
+    console.log(`[Edge] 📈 DCC: ${sufficiencyCount} dynamic, ${totalOk - sufficiencyCount} static`);
+    if (errors.length) console.error(`[Edge] ❌ Failed: ${errors.join(', ')}`);
 
     return new Response(
-      JSON.stringify({ data, errors, m2: m2Data, cape: capeData, centralBanks, creditSpread: creditSpreadData, breakeven: breakevenData, metadata }),
+      JSON.stringify({
+        data, errors,
+        m2: m2Data, cape: capeData, centralBanks,
+        creditSpread: creditSpreadData, breakeven: breakevenData,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          range: '6y',
+          tickersRequested: allTickers.length,
+          tickersSuccessful: totalOk,
+          tickersFailed: errors.length,
+          sufficiencyStats: { dccReady: sufficiencyCount, staticCovariance: totalOk - sufficiencyCount },
+          minDataPoints: minDP, avgDataPoints: avgDP, maxDataPoints: maxDP,
+        },
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[Edge] ❌ Unhandled:', msg);
+    console.error('[Edge] ❌', msg);
     return new Response(JSON.stringify({ error: msg }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
