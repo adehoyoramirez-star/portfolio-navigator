@@ -1,5 +1,5 @@
-// supabase/functions/yahoo/index.ts
-// Función ligera — solo precios para el Screener
+// supabase/functions/yahoo-finance/index.ts
+// VERSIÓN FINAL — Solo Yahoo Finance, sin FRED
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -8,26 +8,58 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 };
 
-interface PriceResult {
+const MACRO_TICKERS: string[] = [
+  '%5EVIX', '%5ETNX', '%5EIRX', '%5EMOVE', 'HYG', 'LQD', '%5EGSPC', 'DX-Y.NYB', 'BZ=F',
+];
+
+interface ChartResult {
   ticker: string;
   currentPrice: number;
-  currency: string;
+  timestamps: number[];
+  closes: number[];
+  highs: number[];
+  lows: number[];
+  dataPoints: number;
 }
 
-async function fetchPrice(ticker: string): Promise<PriceResult | null> {
+async function fetchTicker(ticker: string): Promise<ChartResult | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: controller.signal });
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=6y&interval=1d`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: controller.signal,
+    });
     clearTimeout(timeoutId);
+
     if (!res.ok) return null;
     const json: any = await res.json();
     const result = json.chart?.result?.[0];
     if (!result) return null;
-    const currentPrice: number = result.meta?.regularMarketPrice ?? 0;
-    const currency: string = result.meta?.currency ?? 'USD';
-    return { ticker: ticker.replace('%5E', '^'), currentPrice, currency };
+
+    const timestamps: number[] = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0] ?? {};
+    const closes: number[] = quote.close || [];
+    const highs: number[]  = quote.high  || [];
+    const lows: number[]   = quote.low   || [];
+
+    const clean = (arr: number[]) => arr.map((v: any) => (v == null || !isFinite(v)) ? 0 : v);
+    const minLen = Math.min(timestamps.length, closes.length, highs.length, lows.length);
+    
+    if (minLen < 60) return null;
+    const currentPrice = result.meta?.regularMarketPrice ?? clean(closes)[closes.length - 1] ?? 0;
+
+    return {
+      ticker: ticker.replace('%5E', '^'),
+      currentPrice,
+      timestamps: timestamps.slice(0, minLen),
+      closes:     clean(closes).slice(0, minLen),
+      highs:      clean(highs).slice(0, minLen),
+      lows:       clean(lows).slice(0, minLen),
+      dataPoints: minLen,
+    };
   } catch {
     return null;
   }
@@ -35,62 +67,84 @@ async function fetchPrice(ticker: string): Promise<PriceResult | null> {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+
   try {
-    let tickers: string[] = [];
+    let userTickers: string[] = [];
     try {
       const body = await req.json() as { tickers?: string[] };
       if (body && Array.isArray(body.tickers)) {
-        tickers = body.tickers.map(t => t.trim()).filter(t => t.length > 0);
+        userTickers = body.tickers.map(t => t.trim()).filter(t => t.length > 0);
       }
     } catch {
       // sin body
     }
 
-    if (tickers.length === 0) {
-      return new Response(JSON.stringify({ error: 'No tickers provided', data: {}, errors: [] }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    const allTickers = [...new Set([...userTickers, ...MACRO_TICKERS])];
+    console.log(`[YahooFinance] 🚀 Fetching ${allTickers.length} tickers`);
 
-    console.log(`[Yahoo] 🚀 Fetching prices for ${tickers.length} tickers`);
-
-    let results = [] as PromiseSettledResult<PriceResult | null>[];
+    // Yahoo con timeout global de 18s
+    let yahooResults = [] as PromiseSettledResult<ChartResult | null>[];
 
     try {
-      results = await Promise.race([
-        Promise.allSettled(tickers.map(t => fetchPrice(t))),
-        new Promise<PromiseSettledResult<PriceResult | null>[]>(resolve => 
-          setTimeout(() => resolve(tickers.map(() => ({ status: 'rejected' as const, reason: 'timeout' }))), 15000)
+      yahooResults = await Promise.race([
+        Promise.allSettled(allTickers.map(t => fetchTicker(t))),
+        new Promise<PromiseSettledResult<ChartResult | null>[]>(resolve => 
+          setTimeout(() => resolve(allTickers.map(() => ({ status: 'rejected' as const, reason: 'timeout' }))), 18000)
         ),
       ]);
     } catch {
-      results = tickers.map(() => ({ status: 'rejected' as const, reason: 'error' }));
+      yahooResults = allTickers.map(() => ({ status: 'rejected' as const, reason: 'error' }));
     }
 
-    const data: Record<string, PriceResult> = {};
+    const data: Record<string, ChartResult> = {};
     const errors: string[] = [];
 
-    results.forEach((result, idx) => {
-      const cleanTicker = tickers[idx].replace('%5E', '^');
+    yahooResults.forEach((result, idx) => {
+      const cleanTicker = allTickers[idx].replace('%5E', '^');
       if (result.status === 'fulfilled' && result.value) {
-        data[cleanTicker] = result.value;
+        const chart = result.value;
+        const lens = [chart.timestamps.length, chart.closes.length, chart.highs.length, chart.lows.length];
+        if (!lens.every(l => l === lens[0])) {
+          errors.push(cleanTicker);
+          return;
+        }
+        data[cleanTicker] = chart;
       } else {
         errors.push(cleanTicker);
       }
     });
 
-    console.log(`[Yahoo] ✅ ${Object.keys(data).length} OK`);
+    const pts = Object.values(data).map(d => d.dataPoints);
+    console.log(`[YahooFinance] ✅ ${Object.keys(data).length} OK`);
 
+    // FRED devuelve null — tú lo metes manual en el frontend
     return new Response(
-      JSON.stringify({ data, errors }),
+      JSON.stringify({ 
+        data, 
+        errors, 
+        m2: null, 
+        cape: null, 
+        centralBanks: null, 
+        creditSpread: null, 
+        breakeven: null 
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
+
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[Yahoo] ❌', msg);
+    console.error('[YahooFinance] ❌', msg);
     return new Response(
-      JSON.stringify({ error: msg, data: {}, errors: [] }),
+      JSON.stringify({ 
+        error: msg, 
+        data: {}, 
+        errors: [],
+        m2: null, 
+        cape: null, 
+        centralBanks: null, 
+        creditSpread: null, 
+        breakeven: null 
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
