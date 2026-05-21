@@ -1,4 +1,5 @@
 // supabase/functions/yahoo-finance-tactical/index.ts
+declare const Deno: any;
 // CORRECCIÓN: highs/lows null → fallback al cierre (no a 0) para ATR correcto
 
 const corsHeaders = {
