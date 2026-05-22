@@ -448,7 +448,11 @@ function calibrateJumps(dailyRets: number[]): { intensity: number; mean: number;
 }
 
 export async function fetchRealMarketData(): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
-  const { data: response, error } = await supabase.functions.invoke<YahooResponse>('yahoo-finance');
+  // FIX-CRITICAL: Pasar ASSETS a la Edge Function para que sepa qué tickers fetchear
+  // Sin esto, la Edge Function devuelve tickers por defecto (^VIX) en lugar de BTC-EUR, EMXC.DE, etc.
+  const { data: response, error } = await supabase.functions.invoke<YahooResponse>('yahoo-finance', {
+    body: { tickers: ASSETS }
+  });
 
   if (error || !response) {
     throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
