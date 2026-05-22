@@ -510,15 +510,20 @@ export async function scanTacticalUniverse(
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);
 
-  // Paso 8: construir oportunidades con filtro de régimen
+  // Paso 8: construir oportunidades SIN FILTRO DE RÉGIMEN
+  // CORRECCIÓN v12: El motor táctico busca oportunidades TÉCNICAS independientes
+  // del estado macro. No respeta régimen CONTRACTION/EXPANSION de olympusV3.
+  // Solo usa filtros de score + R:R + thresholds de señal.
   for (const asset of assets) {
     // buildOpportunity ya descarta ultra-fallback internamente
     const opp = buildOpportunity(asset);
     if (!opp) continue;
 
-    if (!isSignalAllowed(opp.type, marketRegime)) continue;
+    // FIX: COMENTADO — permite todas las señales sin restricción de régimen
+    // if (!isSignalAllowed(opp.type, marketRegime)) continue;
 
-    const adjustedScore = adjustScoreByRegime(opp.score, opp.type, marketRegime);
+    // FIX: sin ajuste por régimen — score raw de señales técnicas
+    const adjustedScore = opp.score;  // Sin adjustScoreByRegime
     if (adjustedScore < config.minScore) continue;
     if (opp.riskReward < config.minRiskReward) continue;
 
