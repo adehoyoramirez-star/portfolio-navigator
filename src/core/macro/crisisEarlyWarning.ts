@@ -236,7 +236,10 @@ export function computeCEWS(history: CEWSDataPoint[]): CEWSOutput {
 // es mejor o peor que la media de las 4 anteriores?
 function computeTrend(values: number[], higherIsBad = false): "IMPROVING" | "STABLE" | "DETERIORATING" {
   if (values.length < 4) return "STABLE";
-  const half = Math.floor(values.length / 2);
+  // FIX BUG-5: usar Math.ceil evita perder el elemento central en arrays impares.
+  // Con length=9: half=5 → first=5 elements, last=5 elements (índice 4 overlap aceptable).
+  // Con length=8: half=4 → first=4 elements, last=4 elements (sin overlap).
+  const half = Math.ceil(values.length / 2);
   const first = values.slice(0, half).reduce((a, b) => a + b, 0) / half;
   const last  = values.slice(-half).reduce((a, b) => a + b, 0) / half;
   const delta = last - first;
@@ -251,19 +254,25 @@ function computeTrend(values: number[], higherIsBad = false): "IMPROVING" | "STA
 // Requiere al menos 8 puntos de historia
 function computeWeeksInWarning(history: CEWSDataPoint[]): number {
   if (history.length < 4) return 0;
-  let count = 0;
-  // Analiza cada punto histórico con ventana de 4 semanas
-  for (let i = history.length - 1; i >= Math.max(0, history.length - 12); i--) {
+  // FIX BUG-4: los datos CEWS se guardan 1/día (filtro saveCEWSDataPoint evita
+  // duplicados del mismo día). La versión anterior contaba DÍAS y los reportaba
+  // como SEMANAS — con pocos datos, reportaba 1-2 semanas inexistentes.
+  // Ahora: contamos DÍAS consecutivos y convertimos a semanas de trading (÷5).
+  // Ampliamos ventana a 60 días para cubrir ~12 semanas de datos.
+  let consecutiveDays = 0;
+  const maxPoints = Math.min(history.length, 60);
+  for (let i = history.length - 1; i >= history.length - maxPoints; i--) {
     const point = history[i];
     let redSignals = 0;
     if (point.yieldSpread < THRESHOLDS.yieldSpread.warning)    redSignals++;
     if (point.creditSpread > THRESHOLDS.creditSpread.warning)  redSignals++;
     if (point.m2Growth < THRESHOLDS.m2Growth.warning)          redSignals++;
     if (point.vix > THRESHOLDS.vixCluster.warning)             redSignals++;
-    if (redSignals >= 2) count++;
-    else break; // si hay un punto sin señales, la racha se rompe
+    if (redSignals >= 2) consecutiveDays++;
+    else break;
   }
-  return count;
+  // Convertir días consecutivos a semanas de trading (5 días/semana), redondeo a la baja
+  return Math.floor(consecutiveDays / 5);
 }
 
 function buildWarningReason(

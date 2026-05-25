@@ -6,10 +6,6 @@
   "installCommand": "npm install",
   "rewrites": [
     {
-      "source": "/api/ibkr/:path*",
-      "destination": "/api/ibkr"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

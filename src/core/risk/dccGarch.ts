@@ -124,14 +124,34 @@ const ANNUALIZATION = 252;  // días de trading por año
 
 /**
  * Inicializa el estado GARCH para un activo dado su historial de retornos diarios.
- * Usa método de momentos para estimar la varianza incondicional inicial.
+ *
+ * Si hay suficientes datos (≥ 252 días de trading) y no se pasan customParams,
+ * ejecuta automáticamente calibración MLE para encontrar los parámetros óptimos.
+ *
+ * Con menos datos, usa método de momentos + defaults como fallback.
  */
 export function initGARCH(
   ticker: string,
   dailyReturns: number[],
-  customParams?: GARCHParams
+  customParams?: GARCHParams,
+  calibrate?: boolean
 ): GARCHState {
-  const params = customParams ?? (DEFAULT_GARCH_PARAMS[ticker] ?? DEFAULT_GARCH_PARAMS['DEFAULT']);
+  // ── Auto-calibración MLE ────────────────────────────────────────────────
+  // Si hay datos suficientes (≥ 1 año de trading) y el usuario no forzó params,
+  // calibrar GARCH(1,1) vía MLE para obtener parámetros óptimos para este activo.
+  let params: GARCHParams;
+  if (customParams) {
+    params = customParams;
+  } else if (calibrate !== false && dailyReturns.length >= 252) {
+    try {
+      params = calibrateGARCH_MLE(dailyReturns, ticker);
+    } catch (e) {
+      console.warn(`[GARCH] ${ticker}: calibración MLE falló (${e}), usando defaults`);
+      params = DEFAULT_GARCH_PARAMS[ticker] ?? DEFAULT_GARCH_PARAMS['DEFAULT'];
+    }
+  } else {
+    params = DEFAULT_GARCH_PARAMS[ticker] ?? DEFAULT_GARCH_PARAMS['DEFAULT'];
+  }
 
   // Varianza incondicional = ω / (1 - α - β)
   const persistence = params.alpha + params.beta;
@@ -145,12 +165,13 @@ export function initGARCH(
   const initVar = recentReturns.reduce((s, r) => s + (r - meanR) ** 2, 0) / (recentReturns.length - 1);
 
   // Filtro GARCH sobre el historial completo
+  // SAFETY: h siempre ≥ omega (mínima varianza posible para la serie)
   let h = Math.max(initVar, unconditionalVar);
   let lastResidual = 0;
 
   for (const r of dailyReturns) {
     const eps = r; // demeaned (asumimos media ≈ 0 en retornos diarios)
-    h = params.omega + params.alpha * eps * eps + params.beta * h;
+    h = Math.max(params.omega, params.omega + params.alpha * eps * eps + params.beta * h);
     lastResidual = h > 0 ? eps / Math.sqrt(h) : 0;
   }
 
@@ -301,27 +322,41 @@ export function runDCCGARCH(
     return fallbackOutput(n, staticCovMatrix);
   }
 
-  // ── PASO 1: Filtro GARCH por activo ──────────────────────────────────────
+  // ── PASO 1: Calibrar GARCH(1,1) una sola vez por activo ─────────────────
+  // Luego reusar los mismos params calibrados para estados y residuos.
+  // Esto evita doble calibración (2×400 iter Nelder-Mead) y asegura consistencia.
+  const calibratedParams: GARCHParams[] = tickers.map((ticker, i) => {
+    const rets = returnMatrix[i];
+    if (rets.length >= 126) {
+      try { return calibrateGARCH_MLE(rets, ticker); } catch { /* fallback */ }
+    }
+    return DEFAULT_GARCH_PARAMS[ticker] ?? DEFAULT_GARCH_PARAMS['DEFAULT'];
+  });
+
+  // Inicializar estados GARCH con los params calibrados
   const garchStates: GARCHState[] = tickers.map((ticker, i) =>
-    initGARCH(ticker, returnMatrix[i])
+    initGARCH(ticker, returnMatrix[i], calibratedParams[i], false)
   );
 
   // Obtener varianzas condicionales finales (el estado de "hoy")
   const conditionalVariances = garchStates.map(s => s.lastVariance);
-  const conditionalVols = conditionalVariances.map(v => Math.sqrt(v * ANNUALIZATION));
+  const conditionalVols = conditionalVariances.map(v => {
+    const vol = Math.sqrt(v * ANNUALIZATION);
+    return isFinite(vol) ? vol : 0.20;
+  });
 
-  // Construir serie de residuos estandarizados para el DCC
-  const T = Math.min(...returnMatrix.map(r => r.length));
+  // Construir serie de residuos estandarizados para el DCC usando los MISMOS params
   const standardizedResiduals: number[][] = tickers.map((ticker, i) => {
-    const state = initGARCH(ticker, returnMatrix[i].slice(0, -1));
-    // Re-calcular residuos sobre todo el historial
+    const params = calibratedParams[i];
     const returns = returnMatrix[i];
+    const uncondVar = params.omega / (1 - params.alpha - params.beta);
     const residuals: number[] = [];
-    let h = state.unconditionalVar;
+    let h = Math.max(uncondVar, 1e-10);
     for (const r of returns) {
       const eps = r;
-      h = state.params.omega + state.params.alpha * eps * eps + state.params.beta * h;
-      residuals.push(h > 0 ? eps / Math.sqrt(h) : 0);
+      h = Math.max(params.omega, params.omega + params.alpha * eps * eps + params.beta * h);
+      const z = h > 1e-12 ? eps / Math.sqrt(h) : 0;
+      residuals.push(isFinite(z) ? z : 0);
     }
     return residuals;
   });
@@ -440,6 +475,254 @@ export function getDynamicCovMatrix(
     console.warn('DCC-GARCH: error en el cálculo, fallback a covarianza estática:', e);
     return { covMatrix: staticCovMatrix, avgCorrelation: 0.3 };
   }
+}
+
+// ── GARCH(1,1) MLE CALIBRATION ────────────────────────────────────────────────
+
+/**
+ * Negative log-likelihood for GARCH(1,1) with Gaussian innovations.
+ *
+ * Given parameters (ω, α, β) and returns r₁…r_T, the GARCH(1,1) recursion:
+ *   σ²_t = ω + α·r²_{t-1} + β·σ²_{t-1}
+ *
+ * The conditional log-likelihood (ignoring constant):
+ *   LL = -0.5 · Σ [ log(2π) + log(σ²_t) + r²_t / σ²_t ]
+ *
+ * Returns NEGATIVE log-likelihood (for minimization).
+ */
+function garchNegLogLikelihood(
+  params: number[],  // [omega, alpha, beta]
+  returns: number[]
+): number {
+  const [omega, alpha, beta] = params;
+
+  // Constraints: ω > 0, α ≥ 0, β ≥ 0, α + β < 1
+  if (omega <= 0 || alpha < 0 || beta < 0 || alpha + beta >= 1) {
+    return Infinity;
+  }
+
+  const T = returns.length;
+  const unconditionalVar = omega / (1 - alpha - beta);
+  let h = unconditionalVar;
+  let sumLogLike = 0;
+
+  for (let t = 0; t < T; t++) {
+    const eps = returns[t];  // demeaned (E[r] ≈ 0 for daily returns)
+    h = omega + alpha * eps * eps + beta * h;
+    if (h <= 1e-12) return Infinity;
+    sumLogLike += Math.log(h) + (eps * eps) / h;
+  }
+
+  // -LL = 0.5 × [T × log(2π) + sum_over_t(log(h_t) + ε²_t/h_t)]
+  // Minimizing -LL = maximizing LL
+  return 0.5 * (T * Math.log(2 * Math.PI) + sumLogLike);
+}
+
+/**
+ * Nelder-Mead simplex optimization (derivative-free).
+ *
+ * Minimizes `func: Rⁿ → R` starting from `initial` point.
+ * Standard coefficients: α=1 (reflection), γ=2 (expansion),
+ * ρ=0.5 (contraction), σ=0.5 (shrink).
+ */
+function nelderMead(
+  func: (x: number[]) => number,
+  initial: number[],
+  options?: { maxIter?: number; tol?: number }
+): { x: number[]; fx: number; iterations: number; converged: boolean } {
+  const n = initial.length;
+  const maxIter = options?.maxIter ?? 500;
+  const tol = options?.tol ?? 1e-7;
+
+  // Nelder-Mead standard coefficients
+  const ALPHA = 1;    // reflection
+  const GAMMA = 2;    // expansion
+  const RHO = 0.5;    // contraction
+  const SIGMA = 0.5;  // shrink
+
+  // ── Build initial simplex ─────────────────────────────────────────────
+  // N+1 points: the starting point plus perturbed versions along each axis
+  const simplex: Array<{ x: number[]; fx: number }> = [];
+  simplex.push({ x: [...initial], fx: func(initial) });
+
+  for (let i = 0; i < n; i++) {
+    const x = [...initial];
+    // Perturb by 5% of the value (per-dimension), or a small absolute step if zero
+    const step = Math.max(Math.abs(initial[i]) * 0.05, 1e-8);
+    x[i] += step;
+    simplex.push({ x, fx: func(x) });
+  }
+
+  // ── Iterate ───────────────────────────────────────────────────────────
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Sort by function value (ascending = best first)
+    simplex.sort((a, b) => a.fx - b.fx);
+
+    // Convergence: standard deviation of function values < tol
+    if (iter > 0) {
+      const mean = simplex.reduce((s, p) => s + p.fx, 0) / simplex.length;
+      const variance = simplex.reduce((s, p) => s + (p.fx - mean) ** 2, 0) / simplex.length;
+      if (Math.sqrt(variance) < tol * Math.max(1, Math.abs(mean))) {
+        return { x: simplex[0].x, fx: simplex[0].fx, iterations: iter, converged: true };
+      }
+    }
+
+    // Centroid of all points except the worst (last)
+    const centroid = Array.from({ length: n }, (_, i) =>
+      simplex.slice(0, -1).reduce((s, p) => s + p.x[i], 0) / n
+    );
+
+    const best = simplex[0];
+    const secondWorst = simplex[simplex.length - 2];
+    const worst = simplex[simplex.length - 1];
+
+    // ── Reflection ──
+    const xr = centroid.map((c, i) => c + ALPHA * (c - worst.x[i]));
+    const fxr = func(xr);
+
+    if (fxr < best.fx) {
+      // ── Expansion ──
+      const xe = centroid.map((c, i) => c + GAMMA * (xr[i] - c));
+      const fxe = func(xe);
+      simplex[simplex.length - 1] = fxe < fxr ? { x: xe, fx: fxe } : { x: xr, fx: fxr };
+    } else if (fxr < secondWorst.fx) {
+      // Accept reflection
+      simplex[simplex.length - 1] = { x: xr, fx: fxr };
+    } else {
+      // ── Contraction ──
+      let xc: number[];
+      let fxc: number;
+
+      if (fxr < worst.fx) {
+        // Outside contraction
+        xc = centroid.map((c, i) => c + RHO * (xr[i] - c));
+      } else {
+        // Inside contraction
+        xc = centroid.map((c, i) => c - RHO * (c - worst.x[i]));
+      }
+      fxc = func(xc);
+
+      if (fxc < worst.fx) {
+        simplex[simplex.length - 1] = { x: xc, fx: fxc };
+      } else {
+        // ── Shrink ──
+        for (let i = 1; i < simplex.length; i++) {
+          const xs = simplex[i].x.map((xi, j) => best.x[j] + SIGMA * (xi - best.x[j]));
+          simplex[i] = { x: xs, fx: func(xs) };
+        }
+      }
+    }
+  }
+
+  simplex.sort((a, b) => a.fx - b.fx);
+  return { x: simplex[0].x, fx: simplex[0].fx, iterations: maxIter, converged: false };
+}
+
+/**
+ * Calibrate GARCH(1,1) parameters via Maximum Likelihood Estimation.
+ *
+ * Uses Nelder-Mead optimization on the negative log-likelihood.
+ * Starting point is derived from method of moments using sample variance
+ * and sensible default values for α/β.
+ *
+ * @param returns - Array of daily returns (de-meaned, approximately E[r]≈0)
+ * @param ticker  - Optional ticker for logging and smarter initial guesses
+ * @returns Calibrated GARCHParams
+ *
+ * @example
+ *   const params = calibrateGARCH_MLE(dailyReturns, 'BTC-EUR');
+ *   // → { omega: 0.00008, alpha: 0.12, beta: 0.82 } (different from default!)
+ */
+export function calibrateGARCH_MLE(returns: number[], ticker?: string): GARCHParams {
+  const T = returns.length;
+
+  if (T < 60) {
+    console.warn(
+      `[GARCH-MLE] ${ticker ?? 'unknown'}: solo ${T} observaciones. ` +
+      'Mínimo recomendado: 252. Usando default params.'
+    );
+    const def = DEFAULT_GARCH_PARAMS[ticker ?? 'DEFAULT'] ?? DEFAULT_GARCH_PARAMS['DEFAULT'];
+    return { ...def };
+  }
+
+  // Demean returns (the GARCH expects zero-mean innovations)
+  const meanRet = returns.reduce((s, r) => s + r, 0) / T;
+  const demeaned = returns.map(r => r - meanRet);
+
+  // Method of moments: initial guess for unconditional variance
+  const sampleVar = demeaned.reduce((s, r) => s + r * r, 0) / T;
+  const sampleVol = Math.sqrt(sampleVar * 252);
+
+  // Get sensible defaults as starting point
+  const defaults = DEFAULT_GARCH_PARAMS[ticker ?? 'DEFAULT'] ?? DEFAULT_GARCH_PARAMS['DEFAULT'];
+
+  // Initial params from method of moments:
+  // Use default's α and β as starting α/β
+  // Derive ω from: σ²_unc = ω/(1-α-β) → ω = σ²_unc × (1-α-β)
+  const initAlpha = Math.min(0.15, Math.max(0.02, defaults.alpha));
+  // For persistent assets (equity ETFs), β should be higher; for BTC, lower
+  const isCrypto = ticker?.includes('BTC') ?? false;
+  const initBeta = isCrypto ? Math.min(0.88, Math.max(0.70, defaults.beta)) : Math.min(0.93, Math.max(0.80, defaults.beta));
+
+  // Constraint: α + β < 0.99 for stationarity
+  const sumAB = initAlpha + initBeta;
+  const clampedBeta = sumAB >= 0.99 ? Math.min(0.93, 0.97 - initAlpha) : initBeta;
+
+  const initOmega = Math.max(1e-8, sampleVar * (1 - initAlpha - clampedBeta));
+
+  const devMode = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+  if (devMode) {
+    console.log(
+      `[GARCH-MLE] ${ticker ?? 'unknown'}: iniciando calibración con ` +
+      `${T} obs, vol muestral ${(sampleVol * 100).toFixed(1)}% anual, ` +
+      `init (ω=${initOmega.toExponential(2)}, α=${initAlpha.toFixed(3)}, β=${clampedBeta.toFixed(3)})`
+    );
+  }
+
+  // Run Nelder-Mead optimization
+  const result = nelderMead(
+    (p) => garchNegLogLikelihood(p, demeaned),
+    [initOmega, initAlpha, clampedBeta],
+    { maxIter: 800, tol: 1e-6 }
+  );
+
+  // Clamp to physically meaningful bounds
+  const rawOmega = Math.max(1e-10, Math.min(1, result.x[0]));
+  const rawAlpha = Math.max(0.005, Math.min(0.35, result.x[1]));
+  const rawBeta = Math.max(0.40, Math.min(0.98, result.x[2]));
+
+  // Ensure strict stationarity: α + β ≤ 0.98 (IGARCH margin)
+  // If the optimizer pushes toward α+β ≈ 1 (flat likelihood surface),
+  // we cap aggressively to prevent infinite unconditional variance.
+  const rawPersistence = rawAlpha + rawBeta;
+  const stationarityCap = 0.98;
+
+  const finalAlpha = rawPersistence > stationarityCap ? rawAlpha * (stationarityCap / rawPersistence) : rawAlpha;
+  const finalBeta = rawPersistence > stationarityCap ? rawBeta * (stationarityCap / rawPersistence) : rawBeta;
+  const finalOmega = rawOmega; // ω doesn't affect stationarity
+
+  // Compute unconditional vol from calibrated params for validation
+  const persistence = finalAlpha + finalBeta;
+  const uncondVar = persistence >= 1 ? rawOmega / 0.02 : rawOmega / (1 - persistence);
+  const uncondVol = Math.sqrt(uncondVar * 252) * 100;
+  const sampleVolPct = sampleVol * 100;
+
+  if (devMode) {
+    console.log(
+      `[GARCH-MLE] ${ticker ?? 'unknown'}: → ω=${finalOmega.toExponential(2)} ` +
+      `α=${finalAlpha.toFixed(4)} β=${finalBeta.toFixed(4)} ` +
+      `(α+β=${(finalAlpha + finalBeta).toFixed(4)}) ` +
+      `σ_unc=${uncondVol.toFixed(1)}% anual ` +
+      `(vs muestral ${sampleVolPct.toFixed(1)}%) ` +
+      `| iter=${result.iterations} ${result.converged ? '✓' : '⚠︎ no convergió en ' + result.iterations + ' iter'}`
+    );
+  }
+
+  return {
+    omega: Math.round(finalOmega * 1e10) / 1e10,   // redondear a 10 decimales
+    alpha: Math.round(finalAlpha * 1e6) / 1e6, // redondear a 6 decimales
+    beta: Math.round(finalBeta * 1e6) / 1e6,   // redondear a 6 decimales
+  };
 }
 
 // ── UTILIDADES ────────────────────────────────────────────────────────────────

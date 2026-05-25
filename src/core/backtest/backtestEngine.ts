@@ -13,6 +13,7 @@
 // ===============================================
 
 import { ASSETS } from "../../lib/constants";
+import { dailyReturns, mean, variance } from "../../lib/stats";
 import { calculateMomentum } from "../factors/momentum";
 import { calculateValue, computeUniverseStats } from "../factors/value";
 import { calculateQuality, computeQualityUniverseStats } from "../factors/quality";
@@ -25,6 +26,7 @@ import { runBlackLitterman } from "../portfolio/blackLitterman";
 import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from "../engine/regimeTacticalAllocation";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
+import { ledoitWolfCovariance } from "../data/volatility";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
@@ -124,26 +126,7 @@ function periodReturn(closes: number[], t: number, days: number): number {
   return isFinite(r) ? r : 0;
 }
 
-function dailyReturns(closes: number[]): number[] {
-  const r: number[] = [];
-  for (let i = 1; i < closes.length; i++) {
-    if (closes[i - 1] > 0 && closes[i] > 0) {
-      const ret = closes[i] / closes[i - 1] - 1;
-      if (isFinite(ret)) r.push(ret);
-    }
-  }
-  return r;
-}
-
-function mean(arr: number[]): number {
-  return arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-}
-
-function variance(arr: number[]): number {
-  if (arr.length < 2) return 0;
-  const m = mean(arr);
-  return arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1);
-}
+// Nota: dailyReturns, mean, variance importados desde @/lib/stats.ts
 
 function equalWeightAllocations(): Record<string, number> {
   const w = 1 / ASSETS.length;
@@ -169,6 +152,10 @@ function emptyMetrics(initialCapital: number): BacktestMetrics {
 }
 
 // ── Cálculo de covarianza y correlación en una ventana ─────────────────
+// Usa Ledoit-Wolf shrinkage (2004) para la matriz de covarianza,
+// con target de correlación constante y oracle shrinkage intensity.
+// Esto reduce el error de estimación (MSE) vs la muestra cruda,
+// especialmente importante cuando T ≈ 63 (ventana de rebalanceo).
 function computeWindowCovAndCorr(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
@@ -181,34 +168,22 @@ function computeWindowCovAndCorr(
     const closes = closesHistory[bticker] ?? [];
     return dailyReturns(closes.slice(Math.max(0, t - window), t));
   });
-  const minLen = Math.min(...returns.map(r => r.length));
-  const trimmed = returns.map(r => r.slice(r.length - minLen));
-  const means = trimmed.map(mean);
 
-  const covMatrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  // Matriz de covarianza con Ledoit-Wolf shrinkage (anualizada ×252 internamente)
+  const covMatrix = ledoitWolfCovariance(returns);
+
+  // Matriz de correlación derivada de la covarianza shrunk
   const corrMatrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
-    for (let j = i; j < n; j++) {
-      let cov = 0, vi = 0, vj = 0;
-      for (let k = 0; k < minLen; k++) {
-        const di = trimmed[i][k] - means[i];
-        const dj = trimmed[j][k] - means[j];
-        cov += di * dj;
-        vi += di * di;
-        vj += dj * dj;
-      }
-      const denom = Math.max(1, minLen - 1);
-      cov = cov / denom;
-      covMatrix[i][j] = cov * 252;
-      covMatrix[j][i] = cov * 252;
-
-      const stdi = Math.sqrt(vi / denom);
-      const stdj = Math.sqrt(vj / denom);
-      const corr = (stdi > 0 && stdj > 0) ? cov / (stdi * stdj) : (i === j ? 1 : 0);
-      corrMatrix[i][j] = isFinite(corr) ? corr : 0;
-      corrMatrix[j][i] = corrMatrix[i][j];
+    for (let j = 0; j < n; j++) {
+      const std_i = Math.sqrt(Math.max(1e-16, covMatrix[i][i]));
+      const std_j = Math.sqrt(Math.max(1e-16, covMatrix[j][j]));
+      const denom = std_i * std_j;
+      const corr = denom > 0 ? covMatrix[i][j] / denom : (i === j ? 1 : 0);
+      corrMatrix[i][j] = isFinite(corr) ? corr : (i === j ? 1 : 0);
     }
   }
+
   return { covMatrix, corrMatrix };
 }
 
@@ -285,22 +260,25 @@ function computeAllocationsWithRegime(
 
   // 2. Scores de factores
   const universeStats = computeUniverseStats(assetFactors.map(a => ({ earningsYield: a.earningsYield })));
-  const qualityStats = computeQualityUniverseStats(assetFactors.map(a => ({
+  const qualityInputs = assetFactors.map(a => ({
     volatility: a.volatility,
     returns12m: a.returns12m,
     returns3m: a.returns3m,
     returns1m: a.returns1m,
-  })));
+    // FIX BUG-3: IS3Q.DE (MSCI World Quality) recibe bonus de calidad explícito
+    isQualityFactor: a.ticker === 'IS3Q.DE',
+  }));
+  const qualityStats = computeQualityUniverseStats(qualityInputs);
   const lowVolStats = computeLowVolUniverseStats(assetFactors.map(a => ({
     volatility: a.volatility,
     returns12m: a.returns12m,
     returns3m: a.returns3m,
   })));
 
-  const rawScores = assetFactors.map(af => {
+  const rawScores = assetFactors.map((af, idx) => {
     const momentum = calculateMomentum({ returns12m: af.returns12m, returns1m: af.returns1m, returns3m: af.returns3m });
     const value = calculateValue({ earningsYield: af.earningsYield }, universeStats);
-    const quality = calculateQuality(af, qualityStats);
+    const quality = calculateQuality(qualityInputs[idx], qualityStats);
     const lowVol = calculateLowVol(af, lowVolStats);
     const calibrated = calibrateExpectedReturn({
       momentumScore: momentum.momentumScore,
@@ -332,16 +310,9 @@ function computeAllocationsWithRegime(
   const minVarW = minimumVarianceWeights(covMatrix, n);
 
   // 7. Black-Litterman (sin views)
-  const marketWeights = equalWeightAllocations();
-  const blResult = runBlackLitterman({
-    assetNames: [...ASSETS],
-    covMatrix,
-    marketWeights: ASSETS.map(() => 1 / n),
-    views: [],
-    riskAversion: regime === "CRISIS" ? 4.0 : regime === "CONTRACTION" ? 3.0 : 2.5,
-    tau: 0.05,
-  });
-  const blWeights = blResult.posteriorWeights;
+  // FIX BUG-6: BL sin views con marketWeights = 1/n degenera a ejercico matemático
+  // sin significado económico. Usamos pesos uniformes directamente.
+  const blWeights = ASSETS.map(() => 1 / n);
 
   // 8. Blend Dinámico (Slicing de Blend)
   const useAggressiveBlend = regime === "EXPANSION";
@@ -515,6 +486,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         drawdown,
         currentAllocations
       );
+      // ⚠️ FIX BUG-1: guardar oldAllocations ANTES de sobreescribir currentAllocations
+      const oldAllocations = { ...currentAllocations };
       currentAllocations = result.allocations;
       currentRegime = result.regime;
       currentCash = result.cash;
@@ -523,7 +496,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       let turnover = 0;
       for (const ticker of ASSETS) {
         const newWeight = currentAllocations[ticker] ?? 0;
-        const oldWeight = result.allocations[ticker] ?? 0;
+        const oldWeight = oldAllocations[ticker] ?? 0;
         turnover += Math.abs(newWeight - oldWeight);
       }
       const costThisRebalance = portfolioValue * txCostRate * turnover;

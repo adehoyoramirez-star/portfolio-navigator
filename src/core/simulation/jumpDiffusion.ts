@@ -36,6 +36,11 @@ export function monteCarloJumpDiffusion(
   years: number = 1,
   simulations: number = 5000
 ): JumpDiffusionResult {
+  // FIX BUG-7: si simulations = 0, no iterar y evitar división por 0
+  if (simulations <= 0) {
+    return { mean: 0, worst5: 0, simulations: [] };
+  }
+
   const results: number[] = [];
 
   // FIX MATH-03: pasos mensuales para correcta discretización de Poisson

@@ -2,16 +2,10 @@
 import { Asset } from "@/core/types/portfolio";
 
 /**
- * Calcula la volatilidad realizada a partir de un array de retornos diarios.
- * Los retornos deben estar en tanto por uno (ej. 0.01 = 1%).
- * Devuelve la volatilidad anualizada.
+ * Re-export desde volatility.ts para mantener compatibilidad.
+ * La implementación canónica está en volatility.ts para evitar duplicación.
  */
-export function realizedVolatility(returns: number[]): number {
-  if (returns.length < 2) return 0;
-  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-  const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / (returns.length - 1);
-  return Math.sqrt(variance) * Math.sqrt(252);
-}
+export { realizedVolatility } from "@/core/data/volatility";
 
 /**
  * Calcula los retornos diarios de la cartera ponderados por el valor de cada activo.

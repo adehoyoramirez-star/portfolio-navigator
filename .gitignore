@@ -24,3 +24,14 @@ dist-ssr
 
 # Temporales de Vite
 *.timestamp-*
+.aider*
+
+# Windows reserved device names — causan error "short read" en Git
+nul
+CON
+PRN
+AUX
+COM1
+COM2
+LPT1
+LPT2

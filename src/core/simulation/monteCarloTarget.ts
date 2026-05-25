@@ -184,13 +184,17 @@ function calculateTargetValue(
   targetAnnualReturn: number
 ): number {
   // Fórmula de valor futuro con aportes mensuales
-  const monthlyRate = targetAnnualReturn / 12;
+  // FIX-V5-7 (audit ronda 2): monthlyRate CORREGIDA
+  //   ANTES: targetAnnualReturn / 12  (tasa lineal, incorrecta)
+  //   AHORA: (1 + targetAnnualReturn)^(1/12) - 1  (tasa geométrica, correcta)
+  //   Para target=15%: antes 1.25% mensual, ahora 1.1715% mensual
+  const monthlyRate = Math.pow(1 + targetAnnualReturn, 1 / 12) - 1;
   const months = years * 12;
 
-  // Valor futuro del capital inicial
+  // Valor futuro del capital inicial (compuesto anual)
   const fvInitial = initialCapital * Math.pow(1 + targetAnnualReturn, years);
 
-  // Valor futuro de los aportes mensuales
+  // Valor futuro de los aportes mensuales (compuesto mensual con tasa geométrica)
   const fvContributions = monthlyContribution *
     ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate);
 

@@ -88,7 +88,9 @@ export function calcSignalStats(records: SignalRecord[]): SignalStats[] {
       signalType: type, totalTrades: closed.length,
       wins, losses, winRate, avgPnLPct: avgPnL,
       profitFactor, bestRegime,
-      avgFactorScore: recs.reduce((s, r) => s + r.factorScore, 0) / recs.length,
+      // FIX BUG-8: si recs.length = 0, la división produce NaN.
+      // Usar guardia ternaria para siempre retornar número.
+      avgFactorScore: recs.length > 0 ? recs.reduce((s, r) => s + r.factorScore, 0) / recs.length : 0,
       suggestedWeightAdj,
     };
   });

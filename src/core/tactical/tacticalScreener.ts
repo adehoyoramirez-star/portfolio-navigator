@@ -259,6 +259,8 @@ function buildAsset(
       ? { highs: raw.highs, lows: raw.lows }
       : approximateHighsLows(raw.closes, asset.type);
 
+  const hasRealOHLC = !!(raw.highs && raw.lows && raw.highs.length === raw.closes.length);
+
   let indicators, signals, totalScore;
   try {
     indicators = calcIndicators(raw.closes, raw.volumes ?? [], highs, lows);
@@ -299,6 +301,7 @@ function buildAsset(
     totalScore,
     lastUpdated:   new Date().toISOString(),
     dataSource,    // FIX: 'primary' | 'fallback' | 'ultra-fallback'
+    hasRealOHLC,   // NUEVO: false si OHLC es aproximado sintético
     earningsYield: hasYahooFundamentals ? raw.earningsYield : manual.earningsYield,
     per:           hasYahooFundamentals ? raw.per           : manual.per,
     eps:           hasYahooFundamentals ? raw.eps           : manual.eps,
@@ -489,6 +492,10 @@ export async function scanTacticalUniverse(
     const built = buildAsset(asset, raw, dataSource);
     if (built) {
       assets.push(built);
+      // NUEVO: warning si OHLC es aproximado sintético (ATR menos preciso)
+      if (!built.hasRealOHLC && dataSource === 'primary') {
+        warnings.push(`${asset.ticker}: sin OHLC real — ATR aproximado de closes. Señales con precisión reducida.`);
+      }
     } else {
       errors.push(`${asset.ticker}: error en cálculo de indicadores`);
     }
@@ -510,20 +517,21 @@ export async function scanTacticalUniverse(
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);
 
-  // Paso 8: construir oportunidades SIN FILTRO DE RÉGIMEN
-  // CORRECCIÓN v12: El motor táctico busca oportunidades TÉCNICAS independientes
-  // del estado macro. No respeta régimen CONTRACTION/EXPANSION de olympusV3.
-  // Solo usa filtros de score + R:R + thresholds de señal.
+  // Paso 8: construir oportunidades CON FILTRO DE RÉGIMEN
+  // Re-auditoría: reactivado el filtro de régimen para evitar operar
+  // en contra del mercado (ej. MOMENTUM_BREAKOUT en mercado bajista).
+  // marketRegimeFilter.ts detecta TRENDING_UP | RANGING | TRENDING_DOWN | CRASH
+  // con su propio detector (independiente de olympusV3).
   for (const asset of assets) {
     // buildOpportunity ya descarta ultra-fallback internamente
     const opp = buildOpportunity(asset);
     if (!opp) continue;
 
-    // FIX: COMENTADO — permite todas las señales sin restricción de régimen
-    // if (!isSignalAllowed(opp.type, marketRegime)) continue;
+    // Filtro de régimen: solo señales compatibles con el estado actual
+    if (!isSignalAllowed(opp.type, marketRegime)) continue;
 
-    // FIX: sin ajuste por régimen — score raw de señales técnicas
-    const adjustedScore = opp.score;  // Sin adjustScoreByRegime
+    // Ajuste de score por régimen: bonificación para señales alineadas
+    const adjustedScore = adjustScoreByRegime(opp.score, opp.type, marketRegime);
     if (adjustedScore < config.minScore) continue;
     if (opp.riskReward < config.minRiskReward) continue;
 

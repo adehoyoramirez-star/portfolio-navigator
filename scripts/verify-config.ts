@@ -4,14 +4,12 @@
  * Script de verificación de configuración del motor Olympus
  *
  * Verifica:
- * - IBKR Gateway (account U25387834)
  * - Supabase conexión
  * - Variables de entorno
  * - Docker containers
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
 
 const COLORS = {
   reset: '\x1b[0m',
@@ -34,34 +32,15 @@ function checkEnvVar(env: Record<string, string>, key: string): boolean {
   return !!env[key] && env[key] !== 'REPLACE_ME' && !env[key].includes('REPLACE');
 }
 
-async function checkIBKRGateway(): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch('http://localhost:5000/v1/api/iserver/auth/status', {
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
 async function checkSupabase(url: string): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-
     const response = await fetch(`${url}/rest/v1/`, {
       signal: controller.signal,
       headers: { apikey: 'test' }
     });
-
     clearTimeout(timeout);
-    // Supabase devuelve 400/401 si la URL es válida pero falta auth
     return response.status === 400 || response.status === 401 || response.ok;
   } catch {
     return false;
@@ -96,7 +75,6 @@ async function main() {
     '.env',
     '.env.local',
     'docker-compose.yml',
-    'src/core/tactical/ibkrConnector.ts',
     'src/lib/marketData.ts',
     'src/integrations/supabase/client.ts',
   ];
@@ -121,10 +99,8 @@ async function main() {
     const env: Record<string, string> = {};
 
     envContent.split('\n').forEach(line => {
-      // Saltar comentarios y líneas vacías
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) return;
-
       const match = trimmed.match(/^([^=#]+)=(.*)$/);
       if (match) {
         const key = match[1].trim();
@@ -132,23 +108,6 @@ async function main() {
         env[key] = value;
       }
     });
-
-    // IBKR
-    if (checkEnvVar(env, 'IBKR_ACCOUNT_ID')) {
-      log(COLORS.green, `  ✓ IBKR_ACCOUNT_ID: ${env['IBKR_ACCOUNT_ID']}`);
-      successes.push('IBKR Account ID configurado');
-    } else {
-      log(COLORS.yellow, `  ⚠ IBKR_ACCOUNT_ID: No configurada o inválida`);
-      warnings.push('IBKR_ACCOUNT_ID faltante en .env');
-    }
-
-    if (checkEnvVar(env, 'IBKR_GATEWAY_URL')) {
-      log(COLORS.green, `  ✓ IBKR_GATEWAY_URL: ${env['IBKR_GATEWAY_URL']}`);
-      successes.push('IBKR Gateway URL configurada');
-    } else {
-      log(COLORS.yellow, `  ⚠ IBKR_GATEWAY_URL: No configurada`);
-      warnings.push('IBKR_GATEWAY_URL faltante en .env');
-    }
 
     // Supabase
     if (checkEnvVar(env, 'VITE_SUPABASE_URL')) {
@@ -182,37 +141,7 @@ async function main() {
   }
   console.log('');
 
-  // ── 3. Verificar IBKR Connector ────────────────────────────
-  log(COLORS.blue, '📡 Conector IBKR');
-  console.log('─'.repeat(50));
-
-  try {
-    const ibkrContent = readFileSync('src/core/tactical/ibkrConnector.ts', 'utf-8');
-
-    if (ibkrContent.includes('U25387834')) {
-      log(COLORS.green, `  ✓ Account ID: U25387834 configurado`);
-      successes.push('IBKR Account ID en ibkrConnector.ts');
-    } else if (ibkrContent.includes("accountId:  ''")) {
-      log(COLORS.yellow, `  ⚠ Account ID: Vacío (debe ser U25387834)`);
-      warnings.push('ibkrConnector.ts tiene accountId vacío');
-    } else {
-      log(COLORS.green, `  ✓ Account ID configurado`);
-    }
-
-    if (ibkrContent.includes("enabled:    true") || ibkrContent.includes('enabled: true')) {
-      log(COLORS.green, `  ✓ IBKR: Habilitado`);
-      successes.push('IBKR habilitado en connector');
-    } else {
-      log(COLORS.yellow, `  ⚠ IBKR: Puede estar deshabilitado`);
-      warnings.push('IBKR enabled puede ser false');
-    }
-  } catch (e: any) {
-    log(COLORS.red, `  Error leyendo ibkrConnector.ts: ${e.message}`);
-    errors.push(`Error leyendo ibkrConnector.ts: ${e.message}`);
-  }
-  console.log('');
-
-  // ── 4. Verificar servicios (Docker, IBKR, Supabase) ───────
+  // ── 3. Verificar servicios (Docker, Supabase) ───────
   log(COLORS.blue, '🔧 Servicios');
   console.log('─'.repeat(50));
 
@@ -224,19 +153,6 @@ async function main() {
   } else {
     log(COLORS.yellow, `  ⚠ Docker: No disponible o no instalado`);
     warnings.push('Docker no está disponible');
-  }
-
-  // IBKR Gateway
-  const ibkrOnline = await checkIBKRGateway();
-  if (ibkrOnline) {
-    log(COLORS.green, `  ✓ IBKR Gateway: ONLINE (localhost:5000)`);
-    successes.push('IBKR Gateway respondiendo');
-  } else {
-    log(COLORS.yellow, `  ⚠ IBKR Gateway: OFFLINE`);
-    warnings.push('IBKR Gateway no responde. Ejecutar: docker-compose up -d ibkr-gateway');
-    if (dockerRunning) {
-      console.log('     Para iniciar: docker-compose up -d ibkr-gateway');
-    }
   }
 
   // Supabase
@@ -259,7 +175,7 @@ async function main() {
   }
   console.log('');
 
-  // ── 5. Resumen ─────────────────────────────────────────────
+  // ── 4. Resumen ─────────────────────────────────────────────
   log(COLORS.cyan, '╔════════════════════════════════════════════════════════╗');
   log(COLORS.cyan, '║                    RESUMEN                             ║');
   log(COLORS.cyan, '╚════════════════════════════════════════════════════════╝');
@@ -289,7 +205,6 @@ async function main() {
 
   console.log('');
 
-  // Exit codes
   if (errors.length > 0) {
     process.exit(1);
   }

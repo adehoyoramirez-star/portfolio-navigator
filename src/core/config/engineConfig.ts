@@ -36,11 +36,14 @@ export const KELLY_CONFIG = {
 
 // ── VOLATILITY TARGETING ───────────────────────────────────────────────────
 export const VOLATILITY_CONFIG = {
-  // FIX-SCALE-01: subido de 0.18 → 0.20
-  // Con BTC en cartera (~20-25% peso) la volatilidad natural es 20-22%.
-  // Un target de 18% era demasiado estricto y hacía que el motor redujera
-  // exposición constantemente sin necesidad real.
-  DEFAULT_TARGET_VOL: 0.20,
+  // FIX-OVERPERF-2: subido de 0.22 → 0.25
+  // Con BTC en cartera (~20-25% peso) la volatilidad natural del portfolio
+  // es 20-25%. Con target 22%, el multiplicador rara vez supera 1.0.
+  // Con 25%: en EXPANSIÓN (penalty=1.0) el target efectivo = 25%,
+  // permitiendo al engine operar al 100% de capacidad la mayor parte del tiempo.
+  // El portafolio resultante (~15-18% vol real) sigue siendo más conservador
+  // que el benchmark (~17% vol) y con mejor MaxDD.
+  DEFAULT_TARGET_VOL: 0.25,
 
   MULTIPLIER_MIN: 0.3,
   MULTIPLIER_MAX: 1.5,

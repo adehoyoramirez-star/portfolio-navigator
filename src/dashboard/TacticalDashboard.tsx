@@ -257,14 +257,7 @@ export default function TacticalDashboard() {
   const [cfgRiskPct,  setCfgRiskPct]  = useState(state.config.riskPerTradePct * 100);
   const [cfgMA200,    setCfgMA200]    = useState(state.config.requireAboveMA200);
 
-  const [ibkrEnabled,   setIbkrEnabled]   = useState(() => localStorage.getItem('ibkr_enabled') === 'true');
-  const [ibkrAccountId, setIbkrAccountId] = useState(() => localStorage.getItem('ibkr_account_id') ?? '');
-  const [ibkrGateway,   setIbkrGateway]   = useState(() => localStorage.getItem('ibkr_gateway') ?? 'https://localhost:5000');
-  const [ibkrStatus,    setIbkrStatus]    = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
-  const [ibkrMsg,       setIbkrMsg]       = useState<string>('');
-  const [ibkrAccounts,  setIbkrAccounts]  = useState<string[]>([]);
-  const [ibkrPositions, setIbkrPositions] = useState<any[]>([]);
-  const [ibkrNLV,       setIbkrNLV]       = useState<number>(0);
+
 
   // ── [FIX-DAY-COUNTER] Ref para leer siempre el state más reciente ──
   // Sin esto, el tick del interval captura el state del primer render
@@ -556,44 +549,7 @@ export default function TacticalDashboard() {
     });
   }, [cfgCapital, cfgMinScore, cfgMinRR, cfgMaxPos, cfgRiskPct, cfgMA200]);
 
-  // ── IBKR ────────────────────────────────────────────────────
-  const verifyIBKR = useCallback(async () => {
-    setIbkrStatus('checking');
-    setIbkrMsg('Conectando con el Gateway...');
-    try {
-      const authRes = await fetch(`${ibkrGateway}/v1/api/iserver/auth/status`, { credentials: 'include' });
-      if (!authRes.ok) throw new Error(`Gateway no responde (${authRes.status}). ¿Está corriendo en ${ibkrGateway}?`);
-      const auth = await authRes.json();
-      if (!auth.authenticated) {
-        setIbkrStatus('error');
-        setIbkrMsg(`Gateway responde pero no autenticado. Ve a ${ibkrGateway} e inicia sesión.`);
-        return;
-      }
-      const accRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/accounts`, { credentials: 'include' });
-      const accData = await accRes.json();
-      const accounts: string[] = accData.accounts ?? [];
-      setIbkrAccounts(accounts);
-      const acct = ibkrAccountId || accounts[0] || '';
-      if (!acct) throw new Error('No se encontraron cuentas en el Gateway.');
-      const sumRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/summary`, { credentials: 'include' });
-      const sumData = await sumRes.json();
-      const nlv = parseFloat(sumData?.netliquidation?.amount ?? 0);
-      setIbkrNLV(nlv);
-      const posRes  = await fetch(`${ibkrGateway}/v1/api/portfolio/${acct}/positions/0`, { credentials: 'include' });
-      const posData = await posRes.json();
-      setIbkrPositions(Array.isArray(posData) ? posData : []);
-      localStorage.setItem('ibkr_enabled',    'true');
-      localStorage.setItem('ibkr_account_id', acct);
-      localStorage.setItem('ibkr_gateway',    ibkrGateway);
-      if (!ibkrAccountId) setIbkrAccountId(acct);
-      setIbkrStatus('ok');
-      setIbkrMsg(`Conectado a cuenta ${acct} — Valor neto: €${Math.round(nlv).toLocaleString('es-ES')} — ${posData?.length ?? 0} posiciones`);
-    } catch (e: any) {
-      setIbkrStatus('error');
-      setIbkrMsg(e?.message ?? 'Error desconocido');
-      localStorage.setItem('ibkr_enabled', 'false');
-    }
-  }, [ibkrGateway, ibkrAccountId]);
+
 
   // ════════════════════════════════════════════════════════════
   // SUB-COMPONENTE: OpportunityCard
@@ -1394,53 +1350,7 @@ export default function TacticalDashboard() {
             ))}
           </div>
 
-          <div style={{ marginTop:'1.5rem', background:'#0f172a', borderRadius:8, padding:'1rem', border:'1px solid #334155' }}>
-            <div style={{ ...S.h3, marginBottom:'0.75rem' }}>🔌 Conexión IBKR</div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:8 }}>
-              <div>
-                <label style={{ fontSize:'0.75rem', color:'#64748b', display:'block', marginBottom:3 }}>Gateway URL</label>
-                <input style={S.input} value={ibkrGateway} onChange={e => setIbkrGateway(e.target.value)} />
-              </div>
-              <div>
-                <label style={{ fontSize:'0.75rem', color:'#64748b', display:'block', marginBottom:3 }}>Account ID</label>
-                <input style={S.input} value={ibkrAccountId} onChange={e => setIbkrAccountId(e.target.value)} />
-              </div>
-            </div>
-            <button style={{ ...S.btn, ...S.btnB }} onClick={verifyIBKR} disabled={ibkrStatus === 'checking'}>
-              {ibkrStatus === 'checking' ? '⏳ Conectando...' : '🔌 Verificar conexión IBKR'}
-            </button>
-            {ibkrMsg && (
-              <div style={{ marginTop:8, fontSize:'0.75rem', color: ibkrStatus === 'ok' ? '#4ade80' : ibkrStatus === 'error' ? '#fca5a5' : '#94a3b8' }}>
-                {ibkrMsg}
-              </div>
-            )}
-            {ibkrStatus === 'ok' && ibkrPositions.length > 0 && (
-              <div style={{ overflowX:'auto', marginTop:12 }}>
-                <table style={S.table}>
-                  <thead>
-                    <tr>{['Activo','Qty','Precio','Valor','P&L','Avg'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {ibkrPositions.slice(0, 15).map((p: any, i: number) => {
-                      const pnl = p.unrealizedPnl ?? 0;
-                      return (
-                        <tr key={i}>
-                          <td style={S.td}><div style={{ fontWeight:700 }}>{p.ticker ?? p.contractDesc?.split(' ')[0] ?? '—'}</div></td>
-                          <td style={S.td}>{p.position}</td>
-                          <td style={S.td}>€{(p.mktPrice ?? 0).toFixed(2)}</td>
-                          <td style={S.td}>€{Math.round(p.mktValue ?? 0).toLocaleString('es-ES')}</td>
-                          <td style={{ ...S.td, color: pnl >= 0 ? '#22c55e' : '#ef4444', fontWeight:700 }}>
-                            {pnl >= 0 ? '+' : ''}€{Math.round(pnl).toLocaleString('es-ES')}
-                          </td>
-                          <td style={S.td}>€{(p.avgPrice ?? 0).toFixed(2)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+
         </div>
       )}
 

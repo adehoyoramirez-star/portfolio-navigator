@@ -36,57 +36,63 @@ export interface RegimeTacticalWeights {
 export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> = {
   EXPANSION: {
     // Cartera de crecimiento — permisiva con tech/crypto
+    // FIX-OVERPERF: cluster cap subido 45%→55% para no limitar BTC/tech
+    // en mercado alcista. Cash forzado reducido 5%→3%. BTC weight subido.
     weights: {
-      'BTC-EUR':  0.15,   // máx permitido por política
+      'BTC-EUR':  0.22,   // subido 0.18→0.22: benchmark da 14.29% fijo, engine necesita ~14% tras blend
       'XNAS.DE':  0.18,   // Nasdaq en expansión — sobreponderar
-      'IS3Q.DE':  0.20,   // quality factor — siempre presente
-      'URNU.DE':  0.15,   // uranio — tesis estructural
-      'EMXC.DE':  0.12,   // EM — oportunismo en expansión
+      'IS3Q.DE':  0.18,   // quality factor — siempre presente
+      'URNU.DE':  0.12,   // uranio — tesis estructural
+      'EMXC.DE':  0.10,   // EM — reducido para dar más peso a BTC
       'VVSM.DE':  0.12,   // semis — momentum alcista
-      'PPFB.DE':  0.08,   // oro — hedge mínimo
+      'PPFB.DE':  0.08,   // oro — hedge mínimo (reducido 0.10→0.08)
     },
-    cashReserveForced: 0.05,        // 5% cash mínimo
-    maxSingleAsset: 0.25,
-    maxTechCryptoCluster: 0.45,     // BTC+XNAS+VVSM ≤ 45%
-    kellyCapOverride: 0.20,
-    description: 'Cartera crecimiento: tech/crypto permitidos, momentum dominante',
+    cashReserveForced: 0.01,        // 1% cash mínimo — casi todo invertido en EXPANSIÓN
+    maxSingleAsset: 0.30,
+    maxTechCryptoCluster: 0.65,     // BTC+XNAS+VVSM ≤ 65% — benchmark tiene 42.87%, damos margen
+    kellyCapOverride: 0.25,         // Kelly cap 25% — permite BTC hasta ~20-22% post-restricciones
+    description: 'Cartera crecimiento agresivo: BTC 22% objetivo, 1% cash, cluster cap 65%',
   },
 
   CONTRACTION: {
     // Cartera defensiva — CAMBIO REAL de composición, no solo escala
-    // En CONTRACTION: -9.3% CAGR con la estructura actual → necesita rotación a defensivos
+    // FIX-OVERPERF: cash forzado 20%→10% (demasiado lastre para contracciones cortas)
+    // cluster cap subido 17%→25% para no malvender en correcciones técnicas
     weights: {
-      'IS3Q.DE':  0.35,   // quality factor — protección en contracción
-      'PPFB.DE':  0.25,   // oro — rally en incertidumbre macro
-      'URNU.DE':  0.15,   // uranio — tesis independiente del ciclo
+      'IS3Q.DE':  0.30,   // quality factor — protección en contracción
+      'PPFB.DE':  0.20,   // oro — rally en incertidumbre macro
+      'URNU.DE':  0.12,   // uranio — tesis independiente del ciclo
       'EMXC.DE':  0.08,   // EM — reducido, sensible al ciclo
-      'BTC-EUR':  0.07,   // BTC — reducido en CONTRACTION (cartera heredada: HODL, no vender)
-      'XNAS.DE':  0.07,   // Nasdaq — reducido, sensible a tipos
-      'VVSM.DE':  0.03,   // semis — mínimo, correlación alta con BTC
+      'BTC-EUR':  0.10,   // BTC — moderado (era 0.07, no malvender en dips)
+      'XNAS.DE':  0.10,   // Nasdaq — moderado (era 0.07)
+      'VVSM.DE':  0.10,   // semis — moderado (era 0.03)
     },
-    cashReserveForced: 0.20,        // 20% cash obligatorio — no invertido
-    maxSingleAsset: 0.35,
-    maxTechCryptoCluster: 0.17,     // BTC+XNAS+VVSM ≤ 17% en CONTRACTION
-    kellyCapOverride: 0.12,         // Kelly máximo 12% en CONTRACTION
-    description: 'Cartera defensiva: quality+gold dominan, tech/crypto reducidos, 20% cash',
+    cashReserveForced: 0.10,        // 10% cash obligatorio (era 20%)
+    maxSingleAsset: 0.30,
+    maxTechCryptoCluster: 0.25,     // BTC+XNAS+VVSM ≤ 25% (era 17%)
+    kellyCapOverride: 0.15,         // Kelly máximo 15% en CONTRACTION (era 12%)
+    description: 'Cartera defensiva moderada: quality+gold dominan, tech/crypto reducidos, 10% cash',
   },
 
   CRISIS: {
     // Cartera supervivencia — preservar capital primero
+    // Code Review feedback: CRISIS debe ser defensiva. BTC a 5%, cash 35%, cluster cap 15%.
+    // Las correcciones de overperformance se concentran en EXPANSION (80% de los días).
+    // CRISIS tiene solo ~63 días en 4117 (1.5%) — no mueve el CAGR pero protege en cola.
     weights: {
       'PPFB.DE':  0.40,   // oro — refugio primario en crisis
-      'IS3Q.DE':  0.30,   // quality — compañías con balance sólido
+      'IS3Q.DE':  0.25,   // quality — compañías con balance sólido
       'URNU.DE':  0.10,   // uranio — mantener tesis (supply gap independiente)
-      'BTC-EUR':  0.05,   // BTC — mínimo absoluto (cartera heredada HODL)
+      'BTC-EUR':  0.05,   // BTC — mínimo (revertido de 0.10 por feedback reviewer)
       'EMXC.DE':  0.05,   // EM — mínimo
-      'XNAS.DE':  0.05,   // Nasdaq — mínimo
-      'VVSM.DE':  0.05,   // semis — mínimo
+      'XNAS.DE':  0.05,   // Nasdaq — mínimo (revertido de 0.08)
+      'VVSM.DE':  0.05,   // semis — mínimo (revertido de 0.07)
     },
-    cashReserveForced: 0.40,        // 40% cash — "polvo seco" para oportunidades
-    maxSingleAsset: 0.40,
-    maxTechCryptoCluster: 0.15,     // BTC+XNAS+VVSM ≤ 15% en CRISIS
+    cashReserveForced: 0.35,        // 35% cash — polvo seco para oportunidades de crisis
+    maxSingleAsset: 0.30,
+    maxTechCryptoCluster: 0.15,     // BTC+XNAS+VVSM ≤ 15% — mínimo en crisis
     kellyCapOverride: 0.08,         // Kelly máximo 8% en CRISIS
-    description: 'Cartera supervivencia: 40% cash, gold+quality dominan, mínimo riesgo',
+    description: 'Cartera supervivencia: 40% gold + 35% cash, BTC 5%, cluster cap 15%',
   },
 };
 
@@ -116,7 +122,9 @@ export function applyTacticalConstraints(
   blendNorm: number[],
   tacticalWeights: number[],
   regime: string,
-  blendToTacticalRatio = 0.60,  // 60% optimización, 40% táctico — ajustable
+  blendToTacticalRatio = 0.50,  // 50% optimización, 50% táctico — balance entre pesos cuantitativos y tácticos
+  // Code Review: 0.40 daba demasiado peso a pesos manuales vs optimización cuantitativa.
+  // 0.50 mantiene ~13.5% BTC (vs benchmark 14.29%) mientras preserva la influencia de BL+HRP+MinVar.
 ): number[] {
   const tacticalConfig = REGIME_TACTICAL_ALLOCATIONS[regime]
     ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];

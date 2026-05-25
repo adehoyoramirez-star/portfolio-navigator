@@ -46,6 +46,16 @@ import { ASSETS } from "@/lib/constants";
 import BacktestPanel from "@/core/backtest/BacktestPanel";
 import { logEngineDecision } from "@/lib/decisionLog";
 import {
+  recordBenchmarkSnapshot,
+  getBenchmarkStatus,
+  getBenchmarkComposition,
+  type BenchmarkStatus,
+} from "@/core/benchmark/benchmarkRunner";
+import {
+  recordAllocation,
+  getHistoricalPerformance,
+} from "@/core/persistence/allocationLogger";
+import {
   getCurrentKalmanWeights,
   updateKalmanFactorWeights,
   type FactorObservation,
@@ -105,6 +115,9 @@ import {
   type ElliottWavePoint,
   type ElliottWaveLabel,
 } from "@/core/crypto/bitcoinCycleAnalyzer";
+import RealTimeMonitorPanel, {
+  type MonitorPanelProps,
+} from "@/dashboard/RealTimeMonitorPanel";
 
 // ==================== MONTE CARLO JUMP DIFFUSION ====================
 function monteCarloJumpDiffusion(
@@ -341,6 +354,7 @@ const InstitutionalDashboard: React.FC = () => {
   const [cewsPreviousLevel, setCewsPreviousLevel] = useState<import("@/core/macro/crisisEarlyWarning").CEWSLevel>("CLEAR");
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
   const previousRegimeRef = useRef<string | null>(null);
+  const [benchmarkStatus, setBenchmarkStatus] = useState<BenchmarkStatus | null>(null);
 
   const clippedERP = (erp: number) => Math.max(-0.03, Math.min(0.05, erp));
 
@@ -975,6 +989,74 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     }
     previousRegimeRef.current = currentRegime;
   }, [engineResult, vix, portfolioDrawdown, portfolio]);
+
+  // ── SPRINT-7: Monitoreo en Vivo — Real-Time Monitor Panel ────────
+  //
+
+  // ── SPRINT-3: Benchmark 60/40 — registra snapshot y calcula status ───────
+  const lastBenchmarkSnapshot = useRef<string | null>(null);
+  useEffect(() => {
+    if (!engineResult || totalPortfolioValue <= 0) return;
+
+    const prices: Record<string, number> = {};
+    for (const asset of portfolio.assets) {
+      prices[asset.ticker] = asset.price;
+    }
+
+    recordBenchmarkSnapshot({
+      portfolioValue: totalPortfolioValue,
+      totalInvested: engineResult.allocations.reduce((s, a) => s + a.finalAllocation, 0),
+      regime: engineResult.regime,
+      prices,
+    });
+
+    setBenchmarkStatus(getBenchmarkStatus());
+    lastBenchmarkSnapshot.current = new Date().toISOString();
+  }, [engineResult, totalPortfolioValue, portfolio.assets]);
+
+  // ── SPRINT-6: Allocation Logger — registra cada ejecución del engine ──────
+  useEffect(() => {
+    if (!engineResult || totalPortfolioValue <= 0) return;
+    try {
+      recordAllocation({
+        regime: engineResult.regime,
+        totalInvested: engineResult.allocations.reduce((s, a) => s + a.finalAllocation, 0),
+        totalPortfolioValue,
+        portfolioDrawdown: portfolioDrawdown ?? 0,
+        allocations: engineResult.allocations.map(a => {
+          const asset = portfolio.assets.find(pa => pa.name === a.name);
+          return {
+            name: a.name,
+            ticker: asset?.ticker,
+            finalAllocation: a.finalAllocation,
+            momentumScore: a.momentumScore ?? 0,
+            valueScore: a.valueScore ?? 0,
+            qualityScore: a.qualityScore ?? 0,
+            lowVolScore: a.lowVolScore ?? 0,
+            expectedReturn: a.expectedReturn ?? 0,
+            kellyFraction: a.kellyFraction ?? a.finalAllocation,
+          };
+        }),
+        regimePenalty: engineResult.masterRegime.regimePenalty ?? 1,
+        coreSignalScore: typeof engineResult.meta.confidence === "number"
+          ? engineResult.meta.confidence
+          : engineResult.meta.confidence === "HIGH"
+          ? 0.85
+          : engineResult.meta.confidence === "MEDIUM"
+          ? 0.55
+          : 0.25,
+        volTargetMultiplier: engineResult.volTargetMultiplier ?? 1,
+        tailRiskOverlay: engineResult.tailRiskOverlay ?? 0,
+        tailRiskActive: engineResult.tailRiskActive ?? false,
+        tailRiskReason: engineResult.tailRiskReason ?? "",
+        metaConfidence: engineResult.meta.confidence ?? "MEDIUM",
+        killSwitchLevel: 0,
+        engineVersion: "olympus-v3.2",
+      });
+    } catch (e) {
+      console.warn("AllocationLogger error:", e);
+    }
+  }, [engineResult, totalPortfolioValue, portfolio.assets, portfolioDrawdown]);
 
   // ── FIX-META-01 + FIX-KALMAN-03: Bucle de aprendizaje mensual ─────────────
   // Ejecuta una vez por mes calendario. Hace tres cosas en orden:
@@ -3110,6 +3192,154 @@ soxRsiWeekly,
             </div>
           </div>
           <p style={{ fontSize: "0.82rem", color: "#d1d5db", margin: 0 }}>{regimeDuration.signal}</p>
+        </div>
+      )}
+
+
+            {/* SPRINT-6: Historial de Rendimiento — Allocation Logger */}
+      {(() => {
+        const perf = getHistoricalPerformance(30);
+        if (perf.totalRecords < 2) return null;
+        const regimeColors = { EXPANSION: "#10b981", CONTRACTION: "#f59e0b", CRISIS: "#ef4444", ALL_CASH: "#ef4444" };
+        return (
+          <details style={{ marginBottom: "1rem" }}>
+            <summary style={{ cursor: "pointer", color: "#60a5fa", fontSize: "0.85rem", fontWeight: 600, padding: "0.5rem 0", userSelect: "none" }}>
+              📊 Rendimiento Histórico ({perf.totalRecords} registros)
+              <span style={{ color: "#6b7280", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.5rem" }}>
+                último: {perf.lastDate ? new Date(perf.lastDate).toLocaleDateString("es-ES") : "N/A"}
+              </span>
+            </summary>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0.75rem" }}>
+              <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.75rem" }}>
+                <h4 style={{ margin: "0 0 0.5rem", fontSize: "0.78rem", color: "#9ca3af" }}>Métricas del Motor</h4>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", fontSize: "0.8rem" }}>
+                  <span style={{ color: "#6b7280" }}>Asignación media</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{(perf.avgInvested * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#6b7280" }}>Vol Target medio</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{(perf.avgVolTarget * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#6b7280" }}>Tail Risk medio</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{(perf.avgTailOverlay * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#6b7280" }}>Desde</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{perf.firstDate ? new Date(perf.firstDate).toLocaleDateString("es-ES") : "N/A"}</span>
+                </div>
+              </div>
+              <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.75rem" }}>
+                <h4 style={{ margin: "0 0 0.5rem", fontSize: "0.78rem", color: "#9ca3af" }}>Distribución de Régimen</h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", fontSize: "0.8rem" }}>
+                  {Object.entries(perf.regimeDistribution).map(([regime, pct]) => (
+                    <div key={regime} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ color: regimeColors[regime] || "#9ca3af" }}>{regime}</span>
+                      <span style={{ color: "#d1d5db" }}>{(pct * 100).toFixed(0)}%</span>
+                    </div>
+                  ))}
+                  {Object.keys(perf.regimeDistribution).length === 0 && <span style={{ color: "#6b7280" }}>Sin datos</span>}
+                </div>
+              </div>
+              <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.75rem" }}>
+                <h4 style={{ margin: "0 0 0.5rem", fontSize: "0.78rem", color: "#9ca3af" }}>Factores Promedio</h4>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", fontSize: "0.8rem" }}>
+                  <span style={{ color: "#6b7280" }}>Momentum</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{(perf.factorAverage.momentum * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#6b7280" }}>Value</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{(perf.factorAverage.value * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#6b7280" }}>Quality</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{(perf.factorAverage.quality * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#6b7280" }}>Low Vol</span>
+                  <span style={{ color: "#d1d5db", textAlign: "right" }}>{(perf.factorAverage.lowVol * 100).toFixed(1)}%</span>
+                </div>
+              </div>
+              {perf.allocationTrends.length > 0 && (
+                <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.75rem" }}>
+                  <h4 style={{ margin: "0 0 0.5rem", fontSize: "0.78rem", color: "#9ca3af" }}>Tendencias (30 días)</h4>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", fontSize: "0.78rem" }}>
+                    {perf.allocationTrends.slice(0, 6).map((t, i) => {
+                      const trendIcon = t.trend === "up" ? "↑" : t.trend === "down" ? "↓" : "→";
+                      const trendColor = t.trend === "up" ? "#10b981" : t.trend === "down" ? "#ef4444" : "#6b7280";
+                      return (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ color: "#d1d5db" }}>{t.name}</span>
+                          <span style={{ color: trendColor }}>
+                            {trendIcon} {(t.currentAllocation * 100).toFixed(1)}% / {(t.avgAllocation30d * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </details>
+        );
+      })()}
+
+      
+
+      {/* SPRINT-7: Monitoreo en Vivo */}
+      <RealTimeMonitorPanel
+        totalPortfolioValue={totalPortfolioValue}
+        availableCash={availableCash}
+        onManualRefresh={() => refreshMarketData(true)}
+        loading={loading}
+      />
+
+      {/* SPRINT-3: Benchmark 60/40 vs Engine */}{/* SPRINT-3: Benchmark 60/40 vs Engine */}
+      {benchmarkStatus && benchmarkStatus.dataPoints >= 2 && (
+        <div style={{
+          ...styles.card,
+          border: benchmarkStatus.underperformanceAlert
+            ? '2px solid #ef4444'
+            : '1px solid #374151',
+          background: benchmarkStatus.underperformanceAlert
+            ? 'linear-gradient(135deg, #1c0a0a 0%, #111827 100%)'
+            : '#111827',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+            <h4 style={{ margin: 0, fontSize: '0.82rem', color: '#e2e8f0' }}>
+              📊 Benchmark 60/40
+            </h4>
+            <span style={{ fontSize: '0.62rem', color: '#64748b' }}>
+              {benchmarkStatus.dataPoints} snapshots · {new Date(benchmarkStatus.lastUpdated).toLocaleDateString('es-ES')}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.5rem' }}>
+            <div>
+              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>Engine CAGR (3m)</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: benchmarkStatus.engineCagr3m > 0 ? '#10b981' : '#ef4444' }}>{(benchmarkStatus.engineCagr3m * 100).toFixed(2)}%</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>Benchmark CAGR (3m)</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: benchmarkStatus.benchmarkCagr3m > 0 ? '#10b981' : '#ef4444' }}>{(benchmarkStatus.benchmarkCagr3m * 100).toFixed(2)}%</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>Outperformance</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: benchmarkStatus.outperformance > 0 ? '#10b981' : benchmarkStatus.underperformanceAlert ? '#ef4444' : '#f59e0b' }}>{(benchmarkStatus.outperformance * 100).toFixed(2)}%</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>Engine Sharpe (3m)</div>
+              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: benchmarkStatus.engineSharpe3m > 1 ? '#10b981' : benchmarkStatus.engineSharpe3m > 0.5 ? '#f59e0b' : '#ef4444' }}>{benchmarkStatus.engineSharpe3m.toFixed(2)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>Benchmark Sharpe (3m)</div>
+              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: benchmarkStatus.benchmarkSharpe3m > 1 ? '#10b981' : benchmarkStatus.benchmarkSharpe3m > 0.5 ? '#f59e0b' : '#ef4444' }}>{benchmarkStatus.benchmarkSharpe3m.toFixed(2)}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: benchmarkStatus.underperformanceAlert ? '#fca5a5' : '#94a3b8', padding: '0.35rem 0.5rem', background: benchmarkStatus.underperformanceAlert ? '#1c0a0a' : '#1e293b', borderRadius: '4px' }}>
+            {benchmarkStatus.underperformanceAlert && '🔴 '}
+            {benchmarkStatus.message}
+          </div>
+          <details style={{ marginTop: '0.4rem' }}>
+            <summary style={{ fontSize: '0.65rem', color: '#6b7280', cursor: 'pointer' }}>Composición del benchmark 60/40</summary>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.3rem' }}>
+              {(() => {
+                const comp = getBenchmarkComposition();
+                return comp.map(c => (
+                  <span key={c.ticker} style={{ fontSize: '0.62rem', background: '#1e293b', padding: '2px 6px', borderRadius: '3px', color: '#94a3b8' }}>
+                    {c.ticker} {(c.weight * 100).toFixed(0)}%
+                  </span>
+                ));
+              })()}
+            </div>
+          </details>
         </div>
       )}
 

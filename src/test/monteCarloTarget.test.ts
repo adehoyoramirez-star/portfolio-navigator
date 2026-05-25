@@ -71,8 +71,14 @@ describe("Monte Carlo con Target 15% Anual", () => {
     expect(result.targetFinalValue).toBeGreaterThan(totalInvested);
 
     // Con 15% anual, el target debe ser significativamente mayor
+    // FIX-V5-7: monthlyRate corregida a (1+r)^(1/12)-1 (geométrica) en lugar de r/12 (lineal).
+    // El target correcto con tasa geométrica es ~63.287€ vs ~64.400€ con la tasa lineal anterior.
     const expectedMinGrowth = Math.pow(1.15, defaultInput.years);
-    expect(result.targetFinalValue).toBeGreaterThan(totalInvested * expectedMinGrowth * 0.8); // margen del 20%
+    // Valor correcto con tasa geométrica mensual: fvInitial + fvContributions
+    //   = 10000*1.15^5 + 500*((1.15^(5/12))^60-1)/(1.15^(1/12)-1)
+    //   ≈ 20114 + 43174 = 63288
+    expect(result.targetFinalValue).toBeGreaterThan(totalInvested * 1.2); // margen amplio: 40000 * 1.2 = 48000
+    expect(result.targetFinalValue).toBeLessThan(totalInvested * 1.7); // cota superior: 40000 * 1.7 = 68000
   });
 
   test("Debe calcular media y mediana coherentes", () => {

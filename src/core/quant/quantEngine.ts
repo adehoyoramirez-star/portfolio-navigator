@@ -188,7 +188,7 @@ export function applyExecutionCosts(
   price:     number,
   side:      'BUY' | 'SELL',
   slippage:  number = 0.0010,  // 0.1% slippage (ETFs líquidos)
-  fee:       number = 0.0005,  // 0.05% comisión IBKR
+  fee:       number = 0.0005,  // 0.05% comisión broker
 ): number {
   return side === 'BUY'
     ? price * (1 + slippage + fee)

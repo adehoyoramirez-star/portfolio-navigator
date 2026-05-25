@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { ASSETS } from '@/lib/constants';
+import { cleanCloses, dailyReturns, mean, std, percentile } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { globalLiquiditySignal, fromManualInputs } from '@/core/macro/liquidityCycle';
 
@@ -105,46 +106,38 @@ export interface MarketData {
   inflationBESource: "FRED" | "MANUAL";
 }
 
-function cleanCloses(closes: number[]): number[] {
-  // Remove nulls/NaN and forward-fill
-  const clean: number[] = [];
-  let last = 0;
-  for (const c of closes) {
-    if (c != null && isFinite(c)) {
-      last = c;
-    }
-    clean.push(last);
-  }
-  return clean;
-}
+// Nota: cleanCloses, dailyReturns, mean, std, percentile importados desde @/lib/stats.ts
 
-function dailyReturns(closes: number[]): number[] {
-  const r: number[] = [];
-  for (let i = 1; i < closes.length; i++) {
-    if (closes[i - 1] > 0) {
-      r.push(closes[i] / closes[i - 1] - 1);
-    }
-  }
-  return r;
-}
+// ── Constantes de configuración (module-level) ───────────────────────────────
+const DAYS_12M = 252;
+const DAYS_3M  = 63;
+const DAYS_1M  = 21;
 
-function mean(arr: number[]): number {
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
-}
+const SHRINKAGE_FACTOR = 0.65; // φ — James-Stein estándar para T ≈ 500 días
 
-function std(arr: number[]): number {
-  const m = mean(arr);
-  return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1));
-}
+// Priors de largo plazo calibrados por clase de activo (% anual, en decimal)
+// Fuente: Damodaran (NYU) 2024, Vanguard Capital Markets Model 2024, BlackRock BII 2024
+const LONG_RUN_PRIORS: Record<string, number> = {
+  'BTC-EUR':  0.15,   // 15% — prima cripto ajustada ciclo (no bull-run)
+  'VVSM.DE':  0.14,   // 14% — semiconductores: ciclo AI, pero valoración ya alta
+  'IS3Q.DE':  0.11,   // 11% — MSCI World Quality Factor: prima quality ~2-3% sobre market
+  'URNU.DE':  0.10,   // 10% — Uranio: demanda nuclear estructural, pero ilíquido
+  'EMXC.DE':  0.08,   //  8% — EM ex-China: prima EM ~3% sobre DM, China excluida
+  'PPFB.DE':  0.06,   //  6% — Oro: retorno real histórico ~2-4%, inflación ~2%
+  'XNAS.DE':  0.15,   // 15% — NASDAQ 100: prima growth/tech histórica, proxy QQQ
+  'BAYN.DE':  0.12,   // 12% — Bayer: deep value (P/E ~8x), upside resolución litigios
+};
 
-function percentile(arr: number[], p: number): number {
-  const sorted = [...arr].sort((a, b) => a - b);
-  const idx = (p / 100) * (sorted.length - 1);
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  if (lo === hi) return sorted[lo];
-  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-}
+// Mapa de proxies americanos para ETFs europeos con historia corta
+const PROXY_FALLBACK: Partial<Record<string, string>> = {
+  'URNU.DE': 'URA',    // Global X Uranium UCITS → Global X Uranium ETF (US)
+  'VVSM.DE': 'SMH',    // VanEck Semiconductor → SOXX/SMH
+  'EMXC.DE': 'EEM',    // EM ex-China → EEM
+  'IS3Q.DE': 'QUAL',   // MSCI Quality → iShares MSCI USA Quality
+  'PPFB.DE': 'GLD',    // Gold ETC → GLD
+  'XNAS.DE': 'QQQ',    // NASDAQ 100 → QQQ
+  'BAYN.DE': 'XBI',    // SPDR S&P Biotech ETF — proxy sectorial healthcare/pharma
+};
 
 // ── FIX-COV-ADAPTIVE: Ledoit-Wolf con shrinkage adaptativo POR ACTIVO ─────────
 // PROBLEMA DETECTADO EN AUDITORÍA:
@@ -176,16 +169,34 @@ function covarianceMatrix(returnsSeries: number[][], assetTickers?: readonly str
   const minLen = Math.min(...safeLengths);
 
   if (minLen < 2) {
-    // Fallback: matriz diagonal con varianzas individuales de cada serie
-    console.warn('[Olympus] covMatrix: minLen < 2, usando diagonal fallback');
-    return Array.from({ length: n }, (_, i) => {
-      const series = returnsSeries[i];
-      const m = series.length > 0 ? series.reduce((a,b) => a+b, 0) / series.length : 0;
-      const v = series.length > 1
-        ? series.reduce((a,b) => a + (b-m)**2, 0) / (series.length - 1) * 252
-        : 0.04; // fallback: 20% vol anualizada
-      return Array.from({ length: n }, (_, j) => i === j ? v : 0);
+    // Identity-based shrinkage: mismo patrón que ledoitWolfCovariance en volatility.ts.
+    // Cuando no hay observaciones solapadas para covarianzas pairwise, regularizamos
+    // las varianzas individuales hacia la media del portafolio.
+    const variances = returnsSeries.map(r => {
+      if (r.length < 2) return 0.04;
+      const m = r.reduce((a, b) => a + b, 0) / r.length;
+      return Math.max(0.0001, r.reduce((s, v) => s + (v - m) ** 2, 0) / (r.length - 1) * 252);
     });
+    const traceMean = variances.reduce((s, v) => s + v, 0) / variances.length;
+    const shortCount = returnsSeries.filter(r => r.length < 20).length;
+    const alpha = Math.min(0.9, 0.5 + 0.3 * (shortCount / n));
+
+    console.warn(
+      '[Olympus] covMatrix: minLen=' + minLen + ' < 2, ' +
+      'identity-based shrinkage (α=' + alpha.toFixed(2) + ')' +
+      ' | meanVar=' + traceMean.toFixed(4) +
+      ' | shortSeries=' + shortCount + '/' + n
+    );
+
+    return Array.from({ length: n }, (_, i) =>
+      Array.from({ length: n }, (_, j) => {
+        if (i === j) {
+          const shrunk = (1 - alpha) * variances[i] + alpha * traceMean;
+          return isFinite(shrunk) ? shrunk : 0.04;
+        }
+        return 0;
+      })
+    );
   }
 
   // Trim all to same length (desde el final — datos más recientes)
@@ -275,8 +286,11 @@ function covarianceMatrix(returnsSeries: number[][], assetTickers?: readonly str
     }
   }
 
-  // ── Diagnóstico: loggear longitudes y alpha por activo ─────────────────
-  if (typeof console !== 'undefined') {
+  // ── Diagnóstico (solo en desarrollo) ──────────────────────────────────
+  // Gateado con import.meta.env.DEV (Vite) — evita ~5 líneas de log por refresh
+  // en producción. Los warnings de NaN/Inf se mantienen siempre.
+  const devMode = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+  if (devMode) {
     const tickers = assetTickers ?? returnsSeries.map((_, i) => 'Asset' + i);
     const lenStr = tickers.map((t, i) => t + ':' + safeLengths[i]).join(' | ');
     console.log('[Olympus] returnsPerAsset lengths: ' + lenStr);
@@ -460,24 +474,24 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
 
   const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven, fundamentals: yfFundamentals } = response;
   
-  // ====== DEBUG: Verificar estructura de datos recibidos ======
-  // FIX-DEBUG: logear la estructura del primer ticker para diagnosticar formato de Edge Function
-  const firstTicker = Object.keys(yfData)[0];
-  if (firstTicker && yfData[firstTicker]) {
-    const sample = yfData[firstTicker];
-    console.log('[Olympus] Edge Function response structure check:');
-    console.log(`  Sample ticker: ${firstTicker}`);
-    console.log(`  Has closes: ${!!sample.closes} (length: ${sample.closes?.length ?? 0})`);
-    console.log(`  Has highs: ${!!sample.highs} (length: ${(sample as any).highs?.length ?? 0})`);
-    console.log(`  Has lows: ${!!sample.lows} (length: ${(sample as any).lows?.length ?? 0})`);
-    console.log(`  Has timestamps: ${!!sample.timestamps} (length: ${sample.timestamps?.length ?? 0})`);
-    console.log(`  Current price: ${sample.currentPrice}`);
-    
-    // Si highs/lows no existen pero se esperan, avisar
-    if (!sample.highs || !sample.lows) {
-      console.warn('[Olympus] ⚠️  Edge Function NO devuelve highs/lows');
-      console.warn('  Esto es esperado si la Edge Function solo devuelve closes.');
-      console.warn('  Si necesitas highs/lows, actualiza la Edge Function.');
+  // ====== DEBUG: Verificar estructura de datos recibidos (solo dev) ======
+  const devMode = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+  if (devMode) {
+    const firstTicker = Object.keys(yfData)[0];
+    if (firstTicker && yfData[firstTicker]) {
+      const sample = yfData[firstTicker];
+      console.log('[Olympus] Edge Function response structure check:');
+      console.log(`  Sample ticker: ${firstTicker}`);
+      console.log(`  Has closes: ${!!sample.closes} (length: ${sample.closes?.length ?? 0})`);
+      console.log(`  Has highs: ${!!sample.highs} (length: ${(sample as any).highs?.length ?? 0})`);
+      console.log(`  Has lows: ${!!sample.lows} (length: ${(sample as any).lows?.length ?? 0})`);
+      console.log(`  Has timestamps: ${!!sample.timestamps} (length: ${sample.timestamps?.length ?? 0})`);
+      console.log(`  Current price: ${sample.currentPrice}`);
+      if (!sample.highs || !sample.lows) {
+        console.warn('[Olympus] ⚠️  Edge Function NO devuelve highs/lows');
+        console.warn('  Esto es esperado si la Edge Function solo devuelve closes.');
+        console.warn('  Si necesitas highs/lows, actualiza la Edge Function.');
+      }
     }
   }
   
@@ -535,9 +549,8 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     }
   }
 
-  // ====== VALIDACIÓN ROBUSTA DE DATOS ======
-  // FIX-VALIDATION: verificar que closesHistory tiene datos suficientes para backtesting
-  const minDataPoints = 60; // mínimo para backtesting (2-3 meses de trading days)
+  // ====== VALIDACIÓN ROBUSTA DE DATOS (solo dev) ======
+  const minDataPoints = 60;
   const dataReport: Record<string, number> = {};
   const validTickers: string[] = [];
   const insufficientTickers: string[] = [];
@@ -552,29 +565,27 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     }
   }
 
-  // Log detallado para debugging
-  console.log('[Olympus] closesHistory validation:');
-  console.log(`  ✅ Valid: ${validTickers.length}/${ASSETS.length} tickers con ≥${minDataPoints} días`);
-  if (validTickers.length > 0) {
-    console.log('  Data lengths:', Object.entries(dataReport)
-      .filter(([t]) => validTickers.includes(t))
-      .map(([t, l]) => `${t}: ${l}`)
-      .join(' | '));
-  }
-  if (insufficientTickers.length > 0) {
-    console.warn(`  ⚠️  Insufficient: ${insufficientTickers.join(', ')}`);
-    console.warn('  Data lengths:', Object.entries(dataReport)
-      .filter(([t]) => insufficientTickers.includes(t))
-      .map(([t, l]) => `${t}: ${l}`)
-      .join(' | '));
+  if (devMode) {
+    console.log('[Olympus] closesHistory validation:');
+    console.log(`  ✅ Valid: ${validTickers.length}/${ASSETS.length} tickers con ≥${minDataPoints} días`);
+    if (validTickers.length > 0) {
+      console.log('  Data lengths:', Object.entries(dataReport)
+        .filter(([t]) => validTickers.includes(t))
+        .map(([t, l]) => `${t}: ${l}`)
+        .join(' | '));
+    }
+    if (insufficientTickers.length > 0) {
+      console.warn(`  ⚠️  Insufficient: ${insufficientTickers.join(', ')}`);
+      console.warn('  Data lengths:', Object.entries(dataReport)
+        .filter(([t]) => insufficientTickers.includes(t))
+        .map(([t, l]) => `${t}: ${l}`)
+        .join(' | '));
+    }
   }
 
-  // Si NINGÚN ticker tiene datos suficientes, el backtesting no puede funcionar
   if (validTickers.length === 0) {
-    console.error('[Olympus] ❌ CRITICAL: closesHistory está vacío o insuficiente para TODOS los tickers');
-    console.error('  Esto significa que la Edge Function no devolvió datos válidos.');
+    console.error('[Olympus] ❌ CRITICAL: closesHistory vacío o insuficiente para TODOS los tickers');
     console.error('  Revisa Supabase Edge Function logs para ver errores de Yahoo Finance fetch.');
-    // NO throw — permitir que el resto del código use fallbacks
   }
 
   // ====== RETORNOS DIARIOS POR ACTIVO ======
@@ -603,8 +614,9 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   // PASO 5: Pi Cycle MAs — 111DMA y 350DMAx2 calculados desde histórico diario BTC
   const piCycleMAs = calculatePiCycleMAs(btcDailyCloses);
 
-  // BTC vol realizada anualizada
-  const btcReturnsForVol = dailyReturns(btcDailyCloses);
+  // BTC vol realizada anualizada (reusa returnsPerAsset para evitar dailyReturns duplicado)
+  const btcIdx = ASSETS.indexOf('BTC-EUR');
+  const btcReturnsForVol = btcIdx >= 0 ? returnsPerAsset[btcIdx] : [];
   const btcVolRealized = btcReturnsForVol.length > 20
     ? Math.sqrt(btcReturnsForVol.reduce((s, r) => { const m = 0; return s + (r - m) ** 2; }, 0)
         / btcReturnsForVol.length * 252)
@@ -622,17 +634,16 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   if (sp500Closes.length > 0) {
     closesHistory['^GSPC'] = sp500Closes;
   }
-  // PASO 5: RSI S&P500 con Wilder EMA fiable (antes solo usaba 15 datos → siempre ~50)
+  // S&P 500 RSI con Wilder EMA
   const sp500Rsi = calculateRSI14(sp500Closes);
-  const sp500Returns = dailyReturns(sp500Closes);
 
   // S&P 500 momentum: retorno 12m (excluyendo último mes = Jegadeesh-Titman)
+  const sp500Last = sp500Closes[sp500Closes.length - 1];
   const sp500_12m_start = sp500Closes[sp500Closes.length - 252 - 1];
   const sp500_1m_start  = sp500Closes[sp500Closes.length - 21 - 1];
   const sp500_3m_start  = sp500Closes[sp500Closes.length - 63 - 1];
-  const sp500Last       = sp500Closes[sp500Closes.length - 1];
   const sp500Momentum12m = sp500_12m_start > 0 && sp500_1m_start > 0
-    ? (sp500_1m_start / sp500_12m_start) - 1   // 12m excluyendo último mes
+    ? (sp500_1m_start / sp500_12m_start) - 1
     : 0.15;
   const sp500Momentum3m = sp500_3m_start > 0
     ? (sp500Last / sp500_3m_start) - 1
@@ -693,27 +704,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     Math.max(0, (30 - vixPrice) / 30) * 0.4
   ));
 
-  void sp500Returns; // reservado para futuros cálculos
-
   // ====== RETORNOS POR PERÍODO (12m, 3m, 1m) ======
-  // Aproximación: 252 días hábiles/año, 63 días/trimestre, 21 días/mes
-  const DAYS_12M = 252;
-  const DAYS_3M  = 63;
-  const DAYS_1M  = 21;
-
-  // Mapa de proxies americanos para ETFs europeos con historia corta
-  // Cuando el ETF europeo tiene pocos datos en Yahoo, usamos el proxy
-  const PROXY_FALLBACK: Partial<Record<string, string>> = {
-    'URNU.DE': 'URA',    // Global X Uranium UCITS → Global X Uranium ETF (US)
-    'VVSM.DE': 'SMH',    // VanEck Semiconductor → SOXX/SMH
-    'EMXC.DE': 'EEM',    // EM ex-China → EEM
-    'IS3Q.DE': 'QUAL',   // MSCI Quality → iShares MSCI USA Quality
-    'PPFB.DE': 'GLD',    // Gold ETC → GLD
-    'XNAS.DE': 'QQQ',    // NASDAQ 100 → QQQ
-    // BAYN.DE: datos europeos desde 2000 en Yahoo Finance — sin proxy necesario
-    // Si hay pocos datos, fallback a XBI (biotech USA) como aproximación farmacéutica
-    'BAYN.DE': 'XBI',    // SPDR S&P Biotech ETF — proxy sectorial healthcare/pharma
-  };
 
   const getCloses = (ticker: string, minLen: number): number[] => {
     const direct = closesHistory[ticker] ?? [];
@@ -754,41 +745,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     return start > 0 ? (end / start) - 1 : 0;
   });
 
-  // ====== EXPECTED RETURNS — Estimador James-Stein con shrinkage hacia priors de LP ======
-  //
-  // FIX MATH-04: mean(r) * 252 es un estimador MLE sin regularización.
-  // Con solo 2 años de datos, el error de estimación domina la señal real.
-  // Ejemplo: BTC +68% en 2023-24 → mu=0.68 → €443k mediana a 10 años sobre €6k. INCORRECTO.
-  //
-  // Solución: James-Stein shrinkage (Jorion 1986 — estándar CFA/GARP para retornos esperados):
-  //   μ_JS = (1 - φ) * μ_MLE + φ * μ_prior
-  //   φ ∈ [0,1] — mayor φ = más peso al prior de largo plazo (menos al histórico reciente)
-  //
-  // Priors de largo plazo (consenso académico / Damodaran 2024):
-  //   BTC: 15% anual (ajustado ciclo, no 68% del bull run 2023)
-  //   Semis: 14%   MSCI Quality: 11%   Uranium: 10%   EM: 8%   Gold: 6%   NASDAQ: 12%
-  //
-  // φ = 0.65 — ponderación estándar para series de 2 años (Ledoit-Wolf criterion)
-  //   Con n=500 obs y k=7 activos: φ_óptimo ≈ (k+2)/(k+2+n*(μ-μ_prior)²/σ²) ~ 0.6-0.7
-  //
-  // Impacto: mu efectivo baja de ~22% a ~12-14% → mediana MC baja de €900k a €120-180k
-  // sobre 10 años con €6k inicial + €500/mes. Rango honesto para retail investor.
-
-  // Priors de largo plazo calibrados por clase de activo (% anual, en decimal)
-  // Fuente: Damodaran (NYU) 2024, Vanguard Capital Markets Model 2024, BlackRock BII 2024
-  const LONG_RUN_PRIORS: Record<string, number> = {
-    'BTC-EUR':  0.15,   // 15% — prima cripto ajustada ciclo (no bull-run)
-    'VVSM.DE':  0.14,   // 14% — semiconductores: ciclo AI, pero valoración ya alta
-    'IS3Q.DE':  0.11,   // 11% — MSCI World Quality Factor: prima quality ~2-3% sobre market
-    'URNU.DE':  0.10,   // 10% — Uranio: demanda nuclear estructural, pero ilíquido
-    'EMXC.DE':  0.08,   //  8% — EM ex-China: prima EM ~3% sobre DM, China excluida
-    'PPFB.DE':  0.06,   //  6% — Oro: retorno real histórico ~2-4%, inflación ~2%
-    'XNAS.DE':  0.15,   // 15% — NASDAQ 100: prima growth/tech histórica, proxy QQQ
-    'BAYN.DE':  0.12,   // 12% — Bayer: deep value (P/E ~8x), upside resolución litigios
-  };
-
-  const SHRINKAGE_FACTOR = 0.65; // φ — peso al prior de LP (James-Stein estándar para T≈500 días)
-
+  // ====== EXPECTED RETURNS — James-Stein shrinkage hacia priors de LP ======
   const expectedReturns = ASSETS.map((ticker, idx) => {
     const r = returnsPerAsset[idx];
     if (r.length < 20) return LONG_RUN_PRIORS[ticker] ?? 0.08; // sin datos: usar prior

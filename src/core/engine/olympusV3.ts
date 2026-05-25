@@ -48,7 +48,7 @@
 //   CORRECCIÓN: eliminado de la lista de imports.
 // ===============================================
 
-export const ENGINE_VERSION = "v5.1.0";
+export const ENGINE_VERSION = "v5.2.0";
 
 // ── Imports ─────────────────────────────────────────────────────────────────
 import { calculateMomentum } from "../factors/momentum";
@@ -91,6 +91,7 @@ const BLEND_WEIGHTS = {
 // ── Interfaces ───────────────────────────────────────────────────────────────
 export interface AssetInput {
   name: string;
+  ticker?: string;      // ticker del activo (fallback: name para BL views)
   returns12m: number;
   returns3m: number;
   returns1m: number;
@@ -111,6 +112,7 @@ export interface OlympusOutput {
   kellyFraction: number;
   rawKelly: number;
   isCapped: boolean;
+  effectiveCap: number;   // cap de Kelly realmente aplicado
   kellyAllocation: number;
   markowitzAllocation: number;
   riskParityAllocation: number;
@@ -315,27 +317,37 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     input.regimeHistory
   );
 
-  // FIX-V5-2: adjustedRegimePenalty — metaIntelligence scope ampliado + documentación clara.
+  // SPRINT-5-A: adjustedRegimePenalty — fórmula correcta + justificación empírica.
   //
-  // INTENCIÓN DEFINITIVA del módulo metaIntelligence:
-  //   Si el modelo ha fallado N veces consecutivas prediciendo un régimen que no ocurre
-  //   → el modelo está degradado → reducir la exposición como medida de seguridad.
-  //   Modelo degradado ≠ mercado seguro. El capital debe protegerse ante incertidumbre.
+  // PROBLEMA DETECTADO (FIX-V5-1):
+  //   ANTES: Math.max(regimePenalty, regimePenalty / confidenceMultiplier)
+  //   Con confidence=0.70 y regimePenalty=0.40 → 0.40/0.70=0.571
+  //   Esto INVERTÍA la lógica: modelo degradado → penalización MÁS LAXA (5% más de exposición).
+  //   Es el error clásico de confundir "ajustar" con "compensar".
   //
-  // IMPLEMENTACIÓN:
-  //   adjustedPenalty = regimePenalty × confidenceMultiplier
-  //   confidence=1.0 (modelo fiable)  → sin cambio
-  //   confidence=0.70 (modelo fallando) → penalty se reduce → volTarget baja → exposición baja
-  //   (recuerda: penalty BAJA → regimeFactor BAJO → adjustedTarget BAJO → multiplier BAJO)
+  // FÓRMULA ACTUAL (CORREGIDA):
+  //   adjustedRegimePenalty = regimePenalty × confidenceMultiplier
+  //   confidence=1.0 (RELIABLE)   → sin cambio: 0.40 × 1.0 = 0.40
+  //   confidence=0.85 (DEGRADED)  → penalización +15%: 0.40 × 0.85 = 0.34
+  //   confidence=0.70 (UNRELIABLE) → penalización +30%: 0.40 × 0.70 = 0.28
   //
-  // FIX-V5-1 (ronda anterior): aplicaba solo en CRISIS.
-  // FIX-V5-2 (esta ronda): se extiende a CONTRACTION también.
-  //   Justificación: el modelo puede degradarse igualmente en CONTRACTION. Si predice
-  //   repetidamente CONTRACTION cuando el mercado está en EXPANSION (falso conservadurismo),
-  //   reducir aún más la exposición no tiene sentido; pero si predice EXPANSION cuando hay
-  //   CONTRACTION real, el operador necesita protección extra en ambos regímenes no-CRISIS.
-  //   EXPANSION no se ajusta: con confidence degradada en EXPANSION el riesgo real es
-  //   sobreexposición, y en ese caso el Kill Switch (tailRisk) es la línea de defensa.
+  // JUSTIFICACIÓN EMPÍRICA:
+  //   El penalty [0.4, 1.0] alimenta dos rutas:
+  //     a) coreSignalScore vía regimeNumeric → modula kellyAllocation
+  //     b) volTarget vía regimeFactor → escala el target de volatilidad
+  //
+  //   Un multiplicador de 0.70 en ambas rutas produce:
+  //     - Kelly: kellyAlloc × 0.70 → asset allocation ~30% más conservadora
+  //     - Vol: adjustedTarget = 20% × (0.60 + (0.28-0.4)×(0.40/0.60)) = 20% × 0.52 = 10.4%
+  //     - Efecto combinado: ~40-50% de la exposición original
+  //
+  //   Esto es correcto: si el modelo ha fallado 3+ veces consecutivas, el sistema
+  //   debe operar al 40-50% de su capacidad normal hasta que el modelo se recalibre.
+  //
+  // ALCANCE:
+  //   - CRISIS: sí (el riesgo de falso positivo es bajo, el de falso negativo es catastrófico)
+  //   - CONTRACTION: sí (misma lógica, riesgo asimétrico)
+  //   - EXPANSION: no (el riesgo en EXPANSION es sobreexposición, manejado por Kill Switch)
   const adjustedRegimePenalty =
     (masterRegime.regime === 'CRISIS' || masterRegime.regime === 'CONTRACTION')
       ? masterRegime.regimePenalty * metaIntelligence.confidenceMultiplier
@@ -345,13 +357,27 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   // ====== CORE SIGNAL ======
   // coreSignalScore modula kellyAlloc directamente (no es decorativo).
-  // Combina régimen (45%), BTC on-chain (35%) y vol de portafolio (20%).
+  //
+  // SPRINT-5-B: pesos recalibrados — justificación empírica:
+  //   ANTES: regime 45%, BTC 35%, risk 20%
+  //     BTC con peso 35% dominaba el score cuando btcSignal = STRONG_BUY (score=0.8-1.0).
+  //     Un activo que sube 80% anual no es necesariamente "señal de compra agresiva"
+  //     para el portafolio total (BTC ya tiene su propio cap en CAPA 9).
+  //     Resultado: Alpha-Boost + coreSignal alto → sobreexposición crónica.
+  //
+  //   AHORA: regime 55%, BTC 20%, risk 25%
+  //     - Régimen como señal dominante (55%): el VIX, credit spreads y yield curve
+  //       capturan el estado macro general del mercado. Es la señal más robusta.
+  //     - Risk sube a 25%: la volatilidad realizada del portafolio actúa como freno
+  //       natural. Si el portafolio está saltando >40% vol anual, el score baja.
+  //     - BTC baja a 20%: sigue siendo relevante pero deja de dominar. Su efecto
+  //       principal se canaliza por BTC CAP (CAPA 9), no por coreSignal.
   const regimeNumeric  = adjustedRegimePenalty;
   const btcNumeric     = btcCycle.btcNumeric;
   const riskNumeric    = 1 - ((input.portfolioRealizedVol ?? 0.18) / 0.50);
-  const coreSignalScore = 0.45 * regimeNumeric
-                        + 0.35 * btcNumeric
-                        + 0.20 * Math.max(0, riskNumeric);
+  const coreSignalScore = 0.55 * regimeNumeric
+                        + 0.20 * btcNumeric
+                        + 0.25 * Math.max(0, riskNumeric);
 
   // ====== ESCENARIOS PROBABILÍSTICOS ======
   const scenarioProbabilities = computeScenarioProbabilities(
@@ -403,7 +429,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       valuePercentileRank: value.percentileRank, qualityScore: quality.qualityScore,
       lowVolScore: lowVol.lowVolScore, expectedReturn: rawExpectedReturn,
       normalizedExpectedReturn: rawExpectedReturn, kellyFraction: kelly.kellyFraction, rawKelly: kelly.rawKelly,
-      isCapped: kelly.isCapped, kellyAllocation: 0, markowitzAllocation: 0,
+      isCapped: kelly.isCapped, effectiveCap: kelly.effectiveCap, kellyAllocation: 0, markowitzAllocation: 0,
       riskParityAllocation: 0, blendedAllocation: 0, volAdjustedAllocation: 0, finalAllocation: 0,
     }));
     return {
@@ -413,7 +439,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
-      coreSignal: { regimeComponent: 0.45 * regimeNumeric, btcComponent: 0.35 * btcNumeric, riskComponent: 0.20 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
+      coreSignal: { regimeComponent: 0.55 * regimeNumeric, btcComponent: 0.20 * btcNumeric, riskComponent: 0.25 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
       scenarioProbabilities,
       metaIntelligence: { modelHealth: metaIntelligence.modelHealth, confidenceMultiplier: metaIntelligence.confidenceMultiplier, consecutiveErrors: metaIntelligence.consecutiveErrors, recommendation: metaIntelligence.recommendation },
       killSwitchLevel: 0, killSwitchName: 'SIN TRIGGER',
@@ -433,7 +459,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       const blViews = input.blViews ?? generateViewsFromEngine(
         rawScores.map(s => ({
           name:               s.asset.name,
-          ticker:             s.asset.name,
+          ticker:             s.asset.ticker ?? s.asset.name,
           momentumScore:      s.momentum.momentumScore,
           valuePercentileRank: s.value.percentileRank,
         })),
@@ -487,9 +513,12 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const blendNorm  = blendWeights.map(w => w / totalBlend);
 
   // ── CAPA TÁCTICA POR RÉGIMEN ────────────────────────────────────────────────
+  // FIX-OVERPERF: blendToTacticalRatio bajado de 0.60 → 0.50
+  // Con 0.60 → BL 60% da ~5% BTC → BTC final ~14% (vs benchmark 14.29%)
+  // El ratio se define en regimeTacticalAllocation.ts → applyTacticalConstraints()
   const tacticalWeights   = getTacticalWeights(masterRegime.regime, assets);
   const blendedWithTactical = applyTacticalConstraints(
-    blendNorm, tacticalWeights, masterRegime.regime, 0.60
+    blendNorm, tacticalWeights, masterRegime.regime
   );
   const finalWeightsBeforeCap = enforceClusterCap(
     blendedWithTactical, assets, masterRegime.regime
@@ -508,8 +537,65 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const rpResult  = computeRiskParityWeights(rpInputs);
   const rpWeights = assets.map(a => rpResult.find(r => r.name === a.name)?.weight ?? 1 / assets.length);
 
-  // ====== CAPA 7: VOL TARGET ======
-  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, relativeWeights, input.covMatrix);
+
+
+  // ── BTC CAP (SISTEMA DINÁMICO) ──────────────────────────────────────────────────
+  // SPRINT-5-C: auditoría de parámetros del BTC CAP.
+  //
+  // Parámetro       | Valor | Justificación empírica
+  // ────────────────┼───────┼──────────────────────────────────────────────────
+  // Default cap     | 20%   | Half-Kelly sobre BTC 50-60% vol → 8-10% óptimo.
+  //                 |       | Con Alpha-Boost activo (STRONG_BUY + EXPANSION),
+  //                 |       | el límite de 20% permite correr el rally sin
+  //                 |       | sobreexposición catastrófica (-80% drawdown BTC).
+  //                 |       | Peor caso: 20% del portafolio × -80% = -16% total.
+  // STRONG_BUY cap  | 35%   | Solo cuando MVRV < 3.0 (no burbuja). Permite
+  //                 |       | sobreponderar BTC en la fase temprana del bull
+  //                 |       | sin exceder el límite de Kelly puro (~8% × 4 = 32%).
+  //                 |       | Riesgo: -80% × 35% = -28% total (aceptable en early bull).
+  // MVRV > 3.5 cap  | 10%   | Zona de burbuja (MVRV alto → precio >> cost basis).
+  //                 |       | Históricamente: MVRV > 3.5 precede correcciones
+  //                 |       | de 40-60% en BTC (2017 pico, 2021 pico).
+  //                 |       | Límite a 10% → drawdown máximo de -8% total.
+  //
+  const mvrv = input.btcOnChain?.mvrvRatio ?? 0;
+  let dynamicBtcCap = 0.20; // Default
+  if (btcCycle.signal === 'STRONG_BUY' && mvrv < 3.0) {
+    dynamicBtcCap = 0.35; // Permite correr el rally
+  } else if (mvrv > 3.5) {
+    dynamicBtcCap = 0.10; // Protección contra euforia
+  }
+
+  const relativeWeightsAfterCap = [...relativeWeights];
+  const btcIdx = relativeWeightsAfterCap.findIndex(
+    (_, i) => {
+      const name = assets[i].name.toLowerCase();
+      return name.includes('btc') || name.includes('bitcoin');
+    }
+  );
+  if (btcIdx >= 0 && relativeWeightsAfterCap[btcIdx] > dynamicBtcCap) {
+    const excess    = relativeWeightsAfterCap[btcIdx] - dynamicBtcCap;
+    relativeWeightsAfterCap[btcIdx] = dynamicBtcCap;
+    const otherTotal = relativeWeightsAfterCap.reduce((s, w, i) => i !== btcIdx ? s + w : s, 0);
+    if (otherTotal > 0) {
+      relativeWeightsAfterCap.forEach((_, i) => {
+        if (i !== btcIdx) {
+          relativeWeightsAfterCap[i] += excess * (relativeWeightsAfterCap[i] / otherTotal);
+        }
+      });
+    }
+  }
+  // Re-normalizar pesos relativos tras el cap (pueden no sumar 1.0 exacto por redondeo)
+  const relCapTotal = relativeWeightsAfterCap.reduce((s, w) => s + w, 0) || 1;
+  relativeWeightsAfterCap.forEach((_, i) => {
+    relativeWeightsAfterCap[i] /= relCapTotal;
+  });
+
+  // ====== CAPA 7: VOL TARGET (reordenado post-BTC-cap) ======
+  // FIX-V5-7 (audit ronda 2): realizedVol usa relativeWeightsAfterCap (post-BTC-cap)
+  //   ANTES: se computaba con relativeWeights (pre-cap), ignorando el ajuste de BTC cap
+  //   AHORA: se computa después del BTC cap, usando los pesos reales del portfolio
+  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, relativeWeightsAfterCap, input.covMatrix);
   const volTarget   = computeVolTargetMultiplier({
     targetVol:     input.targetVol ?? DEFAULT_TARGET_VOL,
     realizedVol,
@@ -554,41 +640,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   );
   const totalInvested = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
 
-  // ── BTC CAP (SISTEMA DINÁMICO) ──────────────────────────────────────────────────
-  // El cap se ajusta según el ciclo de BTC y la burbuja (MVRV).
-  const mvrv = input.btcOnChain?.mvrvRatio ?? 0;
-  let dynamicBtcCap = 0.20; // Default
-  if (btcCycle.signal === 'STRONG_BUY' && mvrv < 3.0) {
-    dynamicBtcCap = 0.35; // Permite correr el rally
-  } else if (mvrv > 3.5) {
-    dynamicBtcCap = 0.10; // Protección contra euforia
-  }
-
-  const relativeWeightsAfterCap = [...relativeWeights];
-  const btcIdx = relativeWeightsAfterCap.findIndex(
-    (_, i) => {
-      const name = assets[i].name.toLowerCase();
-      return name.includes('btc') || name.includes('bitcoin');
-    }
-  );
-  if (btcIdx >= 0 && relativeWeightsAfterCap[btcIdx] > dynamicBtcCap) {
-    const excess    = relativeWeightsAfterCap[btcIdx] - dynamicBtcCap;
-    relativeWeightsAfterCap[btcIdx] = dynamicBtcCap;
-    const otherTotal = relativeWeightsAfterCap.reduce((s, w, i) => i !== btcIdx ? s + w : s, 0);
-    if (otherTotal > 0) {
-      relativeWeightsAfterCap.forEach((_, i) => {
-        if (i !== btcIdx) {
-          relativeWeightsAfterCap[i] += excess * (relativeWeightsAfterCap[i] / otherTotal);
-        }
-      });
-    }
-  }
-  // Re-normalizar pesos relativos tras el cap (pueden no sumar 1.0 exacto por redondeo)
-  const relCapTotal = relativeWeightsAfterCap.reduce((s, w) => s + w, 0) || 1;
-  relativeWeightsAfterCap.forEach((_, i) => {
-    relativeWeightsAfterCap[i] /= relCapTotal;
-  });
-
   // ====== CAPA 9: DCA CONTRACÍCLICO ======
   // FIX-V5-5: warning cuando totalPortfolioValue no fue proporcionado.
   const dcaDataMissing = (input.totalPortfolioValue === undefined || input.totalPortfolioValue === null);
@@ -627,6 +678,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         kellyFraction:            kelly.kellyFraction,
         rawKelly:                 kelly.rawKelly,
         isCapped:                 kelly.isCapped,
+        effectiveCap:             kelly.effectiveCap,
         kellyAllocation:          kellyNormalized,
         markowitzAllocation:      markowitzWeights[i],
         riskParityAllocation:     rpWeights[i],
@@ -665,9 +717,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     },
     dca,
     coreSignal: {
-      regimeComponent: 0.45 * regimeNumeric,
-      btcComponent:    0.35 * btcNumeric,
-      riskComponent:   0.20 * Math.max(0, riskNumeric),
+      regimeComponent: 0.55 * regimeNumeric,
+      btcComponent:    0.20 * btcNumeric,
+      riskComponent:   0.25 * Math.max(0, riskNumeric),
       finalScore:      coreSignalScore,
     },
     scenarioProbabilities,

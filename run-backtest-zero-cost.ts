@@ -120,8 +120,9 @@ const result = runBacktest({
   transactionCostBps: 0, // <-- Costo cero
 });
 
-// 7. Mostrar resultados
-console.log('\n=== RESULTADOS DEL BACKTEST (COSTO DE TRANSACCIÓN = 0) ===\n');
+// 7. Mostrar resultadosconsole.log('\n=== RESULTADOS DEL BACKTEST (COSTO DE TRANSACCIÓN = 0) ===\n');
+
+console.log('── ENGINE (Motor Olympus) ──');
 console.log(`CAGR: ${(result.metrics.cagr * 100).toFixed(2)}%`);
 console.log(`Sharpe: ${result.metrics.sharpe.toFixed(2)}`);
 console.log(`Max Drawdown: ${(result.metrics.maxDrawdown * 100).toFixed(2)}%`);
@@ -131,6 +132,20 @@ console.log(`Win Rate mensual: ${(result.metrics.winRate * 100).toFixed(2)}%`);
 console.log(`Capital final: €${result.metrics.finalValue.toFixed(2)}`);
 console.log(`Costes totales: €${result.totalTransactionCosts.toFixed(2)}`);
 console.log(`Rebalanceos: ${result.rebalanceCount}`);
+
+console.log('');
+console.log('── BENCHMARK (Equal Weight 1/n) ──');
+console.log(`CAGR: ${(result.benchmarkMetrics.cagr * 100).toFixed(2)}%`);
+console.log(`Sharpe: ${result.benchmarkMetrics.sharpe.toFixed(2)}`);
+console.log(`Max Drawdown: ${(result.benchmarkMetrics.maxDrawdown * 100).toFixed(2)}%`);
+console.log(`Calmar: ${result.benchmarkMetrics.calmar.toFixed(2)}`);
+console.log(`Volatilidad: ${(result.benchmarkMetrics.volatility * 100).toFixed(2)}%`);
+console.log(`Win Rate mensual: ${(result.benchmarkMetrics.winRate * 100).toFixed(2)}%`);
+console.log(`Capital final: €${result.benchmarkMetrics.finalValue.toFixed(2)}`);
+
+console.log('');
+const outperformance = result.metrics.cagr - result.benchmarkMetrics.cagr;
+console.log(`📊 OUTPERFORMANCE DEL ENGINE: ${(outperformance * 100).toFixed(2)}% anual`);
 
 console.log('\n--- Métricas por régimen ---');
 for (const regime of ['EXPANSION', 'CONTRACTION', 'CRISIS'] as const) {

@@ -54,20 +54,16 @@ Yahoo Finance no devuelve consistentemente datos fundamentales (PER, EPS, Earnin
 
 ---
 
-### 3. IBKR Configuración
+### 3. IBKR — ELIMINADO
 
-**Problema:**
-Imágenes Docker de IBKR no disponibles públicamente.
-
-**Solución:**
-- Actualizado `docker-compose.yml` con servicios funcionales:
-  - Supabase local (desarrollo)
-  - Redis cache
-  - IBKR placeholder (ejecutar Gateway nativo en Windows)
-- Actualizado `ibkrConnector.ts`:
-  - Account ID: `U25387834`
-  - `enabled: false` por defecto (hasta configurar Gateway)
-- Creada documentación `IBKR_CONFIGURACION.md`
+Se ha eliminado todo el ecosistema IBKR del proyecto:
+- `api/ibkr/[...path].ts` — proxy API eliminado
+- `src/core/tactical/ibkrConnector.ts` — conector eliminado
+- `IBKR_CONFIGURACION.md` — documentación eliminada
+- Toda lógica IBKR en `liveMonitor.ts` reescrita (solo Yahoo Finance)
+- Sección IBKR eliminada de `TacticalDashboard.tsx`
+- Referencias IBKR eliminadas de `RealTimeMonitorPanel.tsx` y `verify-config.ts`
+- `ibkr-bridge` eliminado de `docker-compose.yml`
 
 ---
 
@@ -78,7 +74,7 @@ Imágenes Docker de IBKR no disponibles públicamente.
 |---------|--------|
 | `src/core/tactical/tacticalScreener.ts` | + imports fundamentalsConfig, fallback manual |
 | `src/core/tactical/types.ts` | + earningsYield, per, eps en TacticalAsset |
-| `src/core/tactical/ibkrConnector.ts` | enabled: false, docs actualizadas |
+| ~~`src/core/tactical/ibkrConnector.ts`~~ | **ELIMINADO** — IBKR removido del proyecto |
 
 ### Edge Functions
 | Archivo | Cambio |
@@ -88,14 +84,13 @@ Imágenes Docker de IBKR no disponibles públicamente.
 ### Configuración
 | Archivo | Cambio |
 |---------|--------|
-| `docker-compose.yml` | Servicios locales (Supabase, Redis, IBKR placeholder) |
-| `.env` / `.env.local` | Variables IBKR añadidas |
+| `docker-compose.yml` | Servicios locales (Supabase, Redis) — IBKR placeholder eliminado |
 
 ### Nuevos Archivos
 | Archivo | Propósito |
 |---------|-----------|
 | `src/core/tactical/fundamentalsConfig.ts` | Fundamentales manuales fallback |
-| `IBKR_CONFIGURACION.md` | Guía configuración IBKR |
+| ~~`IBKR_CONFIGURACION.md`~~ | **ELIMINADO** |
 | `CONFIGURACION_MOTOR.md` | Documentación del motor |
 | `scripts/verify-config.ts` | Script verificación configuración |
 
@@ -120,7 +115,7 @@ supabase functions deploy yahoo-finance-tactical --no-verify-jwt
 ```bash
 npx tsx scripts/verify-config.ts
 # ✓ Correcto: 15
-# ⚠ IBKR Gateway: OFFLINE (esperado - usar Gateway nativo)
+# ✅ IBKR eliminado — datos vía Yahoo Finance
 ```
 
 ---
@@ -137,11 +132,8 @@ supabase functions deploy yahoo-finance-tactical --no-verify-jwt
 ### 2. Frontend (Vercel)
 El build se genera automáticamente al hacer push a GitHub.
 
-### 3. IBKR Gateway (Windows)
-1. Descargar: https://www.interactivebrokers.com/en/trading/ibgateway.php
-2. Instalar y ejecutar
-3. Configurar API Settings → Puerto 4001
-4. Actualizar `ibkrConnector.ts`: `gatewayUrl: 'http://localhost:4001'`
+### 3. (Eliminado) IBKR Gateway — Ya no es necesario
+El proyecto ahora usa exclusivamente Yahoo Finance via Supabase Edge Functions. No requiere IBKR.
 
 ---
 
@@ -152,17 +144,16 @@ El build se genera automáticamente al hacer push a GitHub.
 | Supabase Cloud | ✅ ONLINE | Project: yrirandgftnuvdzatwgc |
 | Edge Functions | ✅ DEPLOYED | CORS fix aplicado |
 | Frontend Vercel | ✅ DEPLOYED | portfolio-navigator-dun.vercel.app |
-| IBKR Gateway | ⚠️ PENDIENTE | Requiere instalación nativa Windows |
+| ~~IBKR Gateway~~ | ❌ ELIMINADO | Datos vía Yahoo Finance |
 | Docker Local | ⚠️ OPCIONAL | Supabase/Redis para desarrollo |
 
 ---
 
 ## 🔧 Próximos Pasos (Opcionales)
 
-1. **IBKR Gateway**: Instalar nativo en Windows para trading en tiempo real
-2. **Monitorización**: Configurar alerts en Supabase para Edge Functions
-3. **Backtesting**: Ejecutar walk-forward optimization con nuevos datos
-4. **Telegram Alerts**: Configurar bot para notificaciones de señales
+1. **Monitorización**: Configurar alerts en Supabase para Edge Functions
+2. **Backtesting**: Ejecutar walk-forward optimization con nuevos datos
+3. **Telegram Alerts**: Configurar bot para notificaciones de señales
 
 ---
 
@@ -188,7 +179,5 @@ El build se genera automáticamente al hacer push a GitHub.
 - Actualizados: 2026-04-20
 - Revisar trimestralmente con earnings reports
 
-### IBKR
-- Account ID: `U25387834`
-- Sin Docker oficial disponible → usar Gateway nativo Windows
-- Puerto: 4001 (producción) o 4002 (paper)
+### IBKR — ELIMINADO
+El proyecto ya no depende de IBKR. Todos los datos se obtienen a través de Yahoo Finance via Supabase Edge Functions.

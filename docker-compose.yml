@@ -32,17 +32,6 @@ services:
     networks:
       - olympus-network
 
-  # ─────────────────────────────────────────────
-  # IBKR PLACEHOLDER (NO DOCKER OFICIAL)
-  # ─────────────────────────────────────────────
-  ibkr-bridge:
-    image: alpine
-    container_name: olympus-ibkr-bridge
-    command: ["sh", "-c", "echo 'IBKR runs externally on Windows Gateway (port 4001)' && sleep 3600"]
-    restart: unless-stopped
-    networks:
-      - olympus-network
-
 # ─────────────────────────────────────────────
 # NETWORK
 # ─────────────────────────────────────────────

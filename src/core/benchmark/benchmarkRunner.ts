@@ -1,0 +1,385 @@
+// ===============================================
+// ARCHIVO: src/core/benchmark/benchmarkRunner.ts
+// SPRINT 3: Benchmark Runner — 60/40 vs Engine
+// ===============================================
+//
+// PROPÓSITO:
+//   Ejecutar un benchmark 60/40 en paralelo al motor Olympus para
+//   detectar si el engine está underperformando un hold simple.
+//
+// ALERTA:
+//   Si el motor rinde >5% peor que el benchmark en rolling 3 meses,
+//   se dispara una advertencia. Esto indica que la complejidad del
+//   motor está DESTRUYENDO valor vs una asignación pasiva.
+//
+// ALMACENAMIENTO:
+//   localStorage (persistencia ligera). No toca Supabase.
+//   Claves: 'olympus_benchmark_snapshots' + 'olympus_benchmark_returns'
+//
+// BENCHMARK 60/40 (usando los mismos assets del portfolio):
+//   60% Equity:   XNAS.DE (20%) + IS3Q.DE (20%) + VVSM.DE (10%) + EMXC.DE (10%)
+//   40% Defensivo: PPFB.DE (25%) + BTC-EUR (10%) + URNU.DE (5%)
+//
+// Cada activo tiene peso fijo. El benchmark nunca rebalancea.
+// Esto mide: "¿qué tal le habría ido a un hold 60/40 sin rebalancear?"
+// Frente al motor que sí rebalancea, aplica vol target y tail risk.
+// ===============================================
+
+import { ASSETS } from "../../lib/constants";
+
+// ── Constantes del benchmark ─────────────────────────────────────────
+const BENCHMARK_WEIGHTS: Record<string, number> = {
+  "BTC-EUR": 0.10,
+  "EMXC.DE": 0.10,
+  "IS3Q.DE": 0.20,
+  "PPFB.DE": 0.25,
+  "URNU.DE": 0.05,
+  "VVSM.DE": 0.10,
+  "XNAS.DE": 0.20,
+};
+
+const UNDERPERFORM_THRESHOLD = 0.05; // 5% underperformance → alerta
+const ROLLING_WINDOW_DAYS = 63;     // ~3 meses de trading
+
+const STORAGE_KEY_SNAPSHOTS = "olympus_benchmark_snapshots";
+const STORAGE_KEY_RETURNS = "olympus_benchmark_returns";
+const MAX_SNAPSHOTS = 500;
+
+// ── Interfaces ──────────────────────────────────────────────────────
+
+export interface BenchmarkSnapshot {
+  /** ISO timestamp */
+  timestamp: string;
+  /** Valor total del portfolio en EUR */
+  portfolioValue: number;
+  /** Fracción del portfolio que el engine tiene invertida [0,1] */
+  totalInvested: number;
+  /** Régimen actual del engine */
+  regime: string;
+  /** Precios de cada activo en esta snapshot */
+  prices: Record<string, number>;
+}
+
+/** Retornos calculados entre dos snapshots consecutivos */
+export interface BenchmarkReturnRecord {
+  timestamp: string;
+  /** Retorno del engine en este periodo */
+  engineReturn: number;
+  /** Retorno del benchmark 60/40 en este periodo */
+  benchmarkReturn: number;
+  /** Total investido del engine en esta snapshot */
+  totalInvested: number;
+  /** Régimen */
+  regime: string;
+}
+
+export interface BenchmarkStatus {
+  /** Retorno anualizado del engine en rolling 3m */
+  engineCagr3m: number;
+  /** Retorno anualizado del benchmark 60/40 en rolling 3m */
+  benchmarkCagr3m: number;
+  /** Diferencia: engine - benchmark (positivo = engine ganando) */
+  outperformance: number;
+  /** True si engine underperforma por >5% en rolling 3m */
+  underperformanceAlert: boolean;
+  /** Sharpe ratio del engine en rolling 3m */
+  engineSharpe3m: number;
+  /** Sharpe ratio del benchmark en rolling 3m */
+  benchmarkSharpe3m: number;
+  /** Número de snapshots disponibles */
+  dataPoints: number;
+  /** Fecha de la última snapshot */
+  lastUpdated: string;
+  /** Rendimiento acumulado del engine (desde primera snapshot) */
+  engineTotalReturn: number;
+  /** Rendimiento acumulado del benchmark (desde primera snapshot) */
+  benchmarkTotalReturn: number;
+  /** Mensaje legible para el dashboard */
+  message: string;
+}
+
+// ── Helpers de persistencia ─────────────────────────────────────────
+
+function loadSnapshots(): BenchmarkSnapshot[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSnapshots(snapshots: BenchmarkSnapshot[]): void {
+  try {
+    const trimmed = snapshots.slice(-MAX_SNAPSHOTS);
+    localStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(trimmed));
+  } catch {
+    // localStorage lleno — silencio
+  }
+}
+
+function loadReturnRecords(): BenchmarkReturnRecord[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_RETURNS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveReturnRecords(records: BenchmarkReturnRecord[]): void {
+  try {
+    const trimmed = records.slice(-MAX_SNAPSHOTS);
+    localStorage.setItem(STORAGE_KEY_RETURNS, JSON.stringify(trimmed));
+  } catch {
+    // silencio
+  }
+}
+
+// ── Funciones principales ───────────────────────────────────────────
+
+/**
+ * Registra una snapshot del engine y calcula el retorno del benchmark
+ * 60/40 desde la última snapshot. Guarda ambos en localStorage.
+ *
+ * Debe llamarse cada vez que el engine produce un resultado nuevo.
+ * La primera llamada solo guarda la snapshot inicial (sin retorno).
+ *
+ * @param input - Datos de la ejecución actual del engine
+ * @returns El BenchmarkReturnRecord calculado, o null si es la primera snapshot
+ */
+export function recordBenchmarkSnapshot(input: {
+  portfolioValue: number;
+  totalInvested: number;
+  regime: string;
+  prices: Record<string, number>;
+}): BenchmarkReturnRecord | null {
+  const { portfolioValue, totalInvested, regime, prices } = input;
+
+  const snapshot: BenchmarkSnapshot = {
+    timestamp: new Date().toISOString(),
+    portfolioValue,
+    totalInvested,
+    regime,
+    prices,
+  };
+
+  const snapshots = loadSnapshots();
+
+  // Si no hay snapshot anterior, solo guardar esta y salir
+  if (snapshots.length === 0) {
+    saveSnapshots([snapshot]);
+    return null;
+  }
+
+  const prev = snapshots[snapshots.length - 1];
+
+  // ── Calcular retorno del engine ──────────────────────────────
+  // Usamos el cambio en portfolioValue
+  const engineReturn = prev.portfolioValue > 0
+    ? (portfolioValue - prev.portfolioValue) / prev.portfolioValue
+    : 0;
+
+  // ── Calcular retorno del benchmark 60/40 ─────────────────────
+  // Precio relativo de cada activo desde la última snapshot
+  let benchmarkReturn = 0;
+  for (const ticker of ASSETS) {
+    const oldPrice = prev.prices[ticker] ?? 0;
+    const newPrice = prices[ticker] ?? 0;
+    const weight = BENCHMARK_WEIGHTS[ticker] ?? 0;
+
+    if (oldPrice > 0 && weight > 0) {
+      const assetReturn = (newPrice - oldPrice) / oldPrice;
+      benchmarkReturn += weight * assetReturn;
+    }
+  }
+
+  // Guardar solo si los retornos son finitos
+  const cleanEngineReturn = isFinite(engineReturn) ? engineReturn : 0;
+  const cleanBenchmarkReturn = isFinite(benchmarkReturn) ? benchmarkReturn : 0;
+
+  const record: BenchmarkReturnRecord = {
+    timestamp: snapshot.timestamp,
+    engineReturn: cleanEngineReturn,
+    benchmarkReturn: cleanBenchmarkReturn,
+    totalInvested,
+    regime,
+  };
+
+  // Guardar snapshot + retorno
+  const updatedSnapshots = [...snapshots, snapshot];
+  const returnRecords = [...loadReturnRecords(), record];
+
+  saveSnapshots(updatedSnapshots);
+  saveReturnRecords(returnRecords);
+
+  return record;
+}
+
+/**
+ * Calcula el estado actual del benchmark: retornos rolling 3m,
+ * outperformance, y alerta de underperformance.
+ */
+export function getBenchmarkStatus(): BenchmarkStatus {
+  const returnRecords = loadReturnRecords();
+
+  const dataPoints = returnRecords.length;
+
+  const empty = (message: string): BenchmarkStatus => ({
+    engineCagr3m: 0,
+    benchmarkCagr3m: 0,
+    outperformance: 0,
+    underperformanceAlert: false,
+    engineSharpe3m: 0,
+    benchmarkSharpe3m: 0,
+    dataPoints,
+    lastUpdated: returnRecords.length > 0
+      ? returnRecords[returnRecords.length - 1].timestamp
+      : new Date().toISOString(),
+    engineTotalReturn: 0,
+    benchmarkTotalReturn: 0,
+    message,
+  });
+
+  if (returnRecords.length < 2) {
+    return empty("Recolectando datos del benchmark... mínimo 2 snapshots necesarias.");
+  }
+
+  // ── Rolling window: últimos ~3 meses de retornos ─────────────
+  const now = Date.now();
+  const cutoff = now - ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+  const rollingReturns = returnRecords.filter(
+    r => new Date(r.timestamp).getTime() >= cutoff
+  );
+
+  const windowSize = rollingReturns.length;
+
+  if (windowSize < 2) {
+    return empty("Recolectando datos rolling de 3 meses...");
+  }
+
+  const engineReturns = rollingReturns.map(r => r.engineReturn);
+  const benchmarkReturns = rollingReturns.map(r => r.benchmarkReturn);
+
+  // ── Retornos acumulados (desde el inicio) ────────────────────
+  const engineTotalReturn = returnRecords.reduce(
+    (acc, r) => acc * (1 + r.engineReturn), 1
+  ) - 1;
+
+  const benchmarkTotalReturn = returnRecords.reduce(
+    (acc, r) => acc * (1 + r.benchmarkReturn), 1
+  ) - 1;
+
+  // ── Tiempo real transcurrido en el rolling window ────────────
+  // NO usar windowSize / 252: eso asume cada snapshot = 1 día, pero
+  // las snapshots se registran a frecuencia variable (no diario).
+  const firstTs = new Date(rollingReturns[0].timestamp).getTime();
+  const lastTs = new Date(rollingReturns[rollingReturns.length - 1].timestamp).getTime();
+  const actualYears = Math.max((lastTs - firstTs) / (365.25 * 24 * 60 * 60 * 1000), 1 / 365.25);
+
+  // ── CAGR rolling 3m ──────────────────────────────────────────
+  const engineCumRet = engineReturns.reduce((acc, r) => acc * (1 + r), 1);
+  const benchmarkCumRet = benchmarkReturns.reduce((acc, r) => acc * (1 + r), 1);
+
+  const engineCagr3m = Math.pow(Math.max(0.001, engineCumRet), 1 / actualYears) - 1;
+  const benchmarkCagr3m = Math.pow(Math.max(0.001, benchmarkCumRet), 1 / actualYears) - 1;
+
+  const cleanEngineCagr = isFinite(engineCagr3m) ? engineCagr3m : 0;
+  const cleanBenchmarkCagr = isFinite(benchmarkCagr3m) ? benchmarkCagr3m : 0;
+
+  const outperformance = cleanEngineCagr - cleanBenchmarkCagr;
+  const underperformanceAlert = outperformance < -UNDERPERFORM_THRESHOLD;
+
+  // ── Sharpe ratio rolling (risk-free = 4% anual) ──────────────
+  const periodsPerYear = windowSize / actualYears;
+  const rfPerPeriod = 0.04 / periodsPerYear;
+  const engineExcess = engineReturns.map(r => r - rfPerPeriod);
+  const benchmarkExcess = benchmarkReturns.map(r => r - rfPerPeriod);
+
+  const engineMean = engineExcess.reduce((a, b) => a + b, 0) / windowSize;
+  const benchmarkMean = benchmarkExcess.reduce((a, b) => a + b, 0) / windowSize;
+
+  const engineVar = windowSize > 1
+    ? engineExcess.reduce((s, v) => s + (v - engineMean) ** 2, 0) / (windowSize - 1)
+    : 0;
+  const benchmarkVar = windowSize > 1
+    ? benchmarkExcess.reduce((s, v) => s + (v - benchmarkMean) ** 2, 0) / (windowSize - 1)
+    : 0;
+
+  const engineVol = Math.sqrt(engineVar) * Math.sqrt(periodsPerYear);
+  const benchmarkVol = Math.sqrt(benchmarkVar) * Math.sqrt(periodsPerYear);
+
+  const engineSharpe3m = engineVol > 0
+    ? (engineMean * periodsPerYear) / engineVol
+    : 0;
+  const benchmarkSharpe3m = benchmarkVol > 0
+    ? (benchmarkMean * periodsPerYear) / benchmarkVol
+    : 0;
+
+  // ── Mensaje legible ──────────────────────────────────────────
+  let message: string;
+  if (underperformanceAlert) {
+    message = `🔴 ALERTA: Motor underperformando benchmark 60/40 por ${Math.abs(outperformance * 100).toFixed(2)}% anualizado en rolling 3m. Revisar configuraciones.`;
+  } else if (outperformance > 0.02) {
+    message = `🟢 Motor superando benchmark 60/40 por ${(outperformance * 100).toFixed(2)}% anualizado en rolling 3m.`;
+  } else if (outperformance > -0.02) {
+    message = `🟡 Motor en línea con benchmark 60/40 (diferencia: ${(outperformance * 100).toFixed(2)}%).`;
+  } else {
+    message = `🟠 Motor ligeramente por debajo del benchmark (${(outperformance * 100).toFixed(2)}%). Monitorear próximos días.`;
+  }
+
+  return {
+    engineCagr3m: cleanEngineCagr,
+    benchmarkCagr3m: cleanBenchmarkCagr,
+    outperformance,
+    underperformanceAlert,
+    engineSharpe3m: isFinite(engineSharpe3m) ? engineSharpe3m : 0,
+    benchmarkSharpe3m: isFinite(benchmarkSharpe3m) ? benchmarkSharpe3m : 0,
+    dataPoints,
+    lastUpdated: returnRecords[returnRecords.length - 1].timestamp,
+    engineTotalReturn: isFinite(engineTotalReturn) ? engineTotalReturn : 0,
+    benchmarkTotalReturn: isFinite(benchmarkTotalReturn) ? benchmarkTotalReturn : 0,
+    message,
+  };
+}
+
+/**
+ * Devuelve el historial completo de retornos para gráficos en el dashboard.
+ * Últimos N registros (por defecto 252 = 1 año de trading).
+ */
+export function getBenchmarkHistory(limit: number = 252): BenchmarkReturnRecord[] {
+  const records = loadReturnRecords();
+  return records.slice(-limit);
+}
+
+/**
+ * Limpia todo el historial del benchmark (snapshots + retornos).
+ */
+export function clearBenchmarkHistory(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY_SNAPSHOTS);
+    localStorage.removeItem(STORAGE_KEY_RETURNS);
+  } catch {
+    // silencio
+  }
+}
+
+/**
+ * Obtiene el peso del benchmark para un ticker específico [0,1].
+ * Útil para mostrar la composición del benchmark en el dashboard.
+ */
+export function getBenchmarkWeight(ticker: string): number {
+  return BENCHMARK_WEIGHTS[ticker] ?? 0;
+}
+
+/**
+ * Devuelve la composición completa del benchmark para mostrar en UI.
+ */
+export function getBenchmarkComposition(): { ticker: string; weight: number }[] {
+  return ASSETS.map(ticker => ({
+    ticker,
+    weight: BENCHMARK_WEIGHTS[ticker] ?? 0,
+  })).filter(x => x.weight > 0)
+    .sort((a, b) => b.weight - a.weight);
+}

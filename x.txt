@@ -1,0 +1,11 @@
+function approximateHighsLows(closes: number[], assetType: string): { highs: number[]; lows: number[] } {
+  const volatilityFactor = assetType === "CRYPTO" ? 2.5 : assetType === "STOCK" ? 1.8 : 1.5;
+  const highs: number[] = [];
+  const lows: number[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    const atr = approximateATR(closes.slice(Math.max(0, i - 20), i + 1), assetType);
+    highs.push(closes[i] + atr * volatilityFactor * 0.5);
+    lows.push(closes[i] - atr * volatilityFactor * 0.5);
+  }
+  return { highs, lows };
+}

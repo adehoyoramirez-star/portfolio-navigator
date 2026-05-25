@@ -96,6 +96,7 @@ export interface TacticalAsset {
   totalScore:  number;
   lastUpdated: string | null;
   dataSource:  DataSource;  // NUEVO: origen de los datos
+  hasRealOHLC: boolean;     // NUEVO: OHLC real desde Yahoo, no aproximado sintético
   earningsYield?: number;
   per?: number;
   eps?: number;
@@ -193,6 +194,11 @@ export interface TacticalEngineState {
 // ── Resultado del screener ───────────────────────────────────
 import type { RegimeState } from './marketRegimeFilter';
 
+export interface BacktestStub {
+  metrics: unknown[];
+  ran: boolean;
+}
+
 export interface ScreenerResult {
   assets:        TacticalAsset[];
   opportunities: TacticalOpportunity[];
@@ -201,4 +207,5 @@ export interface ScreenerResult {
   errors:        string[];
   warnings:      string[]; // NUEVO: warnings de ultra-fallbacks usados
   marketRegime?: RegimeState;
+  backtest:      BacktestStub; // stub para compatibilidad con dashboard
 }
