@@ -395,6 +395,26 @@ export async function scanTacticalUniverse(
   const errors:       string[]              = [];
   const warnings:     string[]              = [];
 
+  // ── Diagnóstico: contadores de filtrado ──────────────────────────
+  const diag = {
+    total:         universe.length,
+    conDatos:      0,
+    primary:       0,
+    fallback:      0,
+    ultraFallback: 0,
+    sinDatos:      0,
+    errorBuild:    0,
+    sinOhlc:       0,
+    conSenales:    0,
+    oppUltraFb:    0,
+    oppStopInval:  0,
+    oppRiskReward: 0,
+    oppFiltroReg:  0,
+    oppScoreBajo:  0,
+    oppRRBajo:     0,
+    oportunidades: 0,
+  };
+
   // FIX: fetch de tasas FX antes del scan
   // Se cachean 4 horas — si no hay datos, usa fallback EUR=1
   const fxRates = await fetchFxRates(supabase);
@@ -458,6 +478,7 @@ export async function scanTacticalUniverse(
     raw = batchData[asset.yahooSymbol];
     if (raw?.closes?.length >= 21 && raw?.price > 0) {
       dataSource = 'primary';
+      diag.primary++;
     } else {
       // Nivel 2: fallback definido
       if (asset.fallbackYahooSymbol) {
@@ -465,6 +486,7 @@ export async function scanTacticalUniverse(
         if (fallbackRaw?.closes?.length >= 21 && fallbackRaw?.price > 0) {
           raw        = fallbackRaw;
           dataSource = 'fallback';
+          diag.fallback++;
           console.debug(`[Screener] ${asset.ticker}: usando fallback ${asset.fallbackYahooSymbol}`);
         }
       }
@@ -473,10 +495,10 @@ export async function scanTacticalUniverse(
       // CRÍTICO: se etiqueta explícitamente para que buildOpportunity lo descarte
       if (!raw || raw.closes?.length < 21 || raw.price <= 0) {
         const ultraTicker = ULTRA_FALLBACK_MAP[asset.sector] || 'IVV';
-        const ultraRaw    = batchData[ultraTicker];
-        if (ultraRaw?.closes?.length >= 21 && ultraRaw?.price > 0) {
+        const ultraRaw    = batchData[ultraTicker];          if (ultraRaw?.closes?.length >= 21 && ultraRaw?.price > 0) {
           raw        = ultraRaw;
           dataSource = 'ultra-fallback';
+          diag.ultraFallback++;
           const warning = `${asset.ticker}: datos de ${ultraTicker} (ultra-fallback — sin señales)`;
           warnings.push(warning);
           console.warn(`[Screener] ⚠️ ${warning}`);
@@ -485,29 +507,31 @@ export async function scanTacticalUniverse(
     }
 
     if (!raw || raw.closes.length < 21 || raw.price <= 0) {
+      diag.sinDatos++;
       errors.push(`${asset.ticker}: sin datos en ningún nivel de fallback`);
       continue;
     }
 
+    diag.conDatos++;
+
     const built = buildAsset(asset, raw, dataSource);
     if (built) {
       assets.push(built);
-      // NUEVO: warning si OHLC es aproximado sintético (ATR menos preciso)
       if (!built.hasRealOHLC && dataSource === 'primary') {
+        diag.sinOhlc++;
         warnings.push(`${asset.ticker}: sin OHLC real — ATR aproximado de closes. Señales con precisión reducida.`);
       }
     } else {
+      diag.errorBuild++;
       errors.push(`${asset.ticker}: error en cálculo de indicadores`);
     }
   }
 
-  // Paso 6: diagnóstico
-  const successCount = assets.length;
-  const totalAttempted = universe.length;
+    // Paso 6: diagnóstico
   console.debug(
-    `[Screener] ${successCount}/${totalAttempted} activos · ` +
-    `${assets.filter(a => a.dataSource === 'ultra-fallback').length} ultra-fallback (sin señales) · ` +
-    `${errors.length} errores`,
+    `[Screener] ${assets.length}/${universe.length} activos · ` +
+    `P:${diag.primary} F:${diag.fallback} UF:${diag.ultraFallback} SD:${diag.sinDatos} ` +
+    `EB:${diag.errorBuild} noOHLC:${diag.sinOhlc}`,
   );
 
   // Paso 7: régimen de mercado
@@ -525,22 +549,52 @@ export async function scanTacticalUniverse(
   for (const asset of assets) {
     // buildOpportunity ya descarta ultra-fallback internamente
     const opp = buildOpportunity(asset);
-    if (!opp) continue;
+    if (!opp) {
+      if (asset.dataSource === 'ultra-fallback') diag.oppUltraFb++;
+      continue;
+    }
+
+    diag.conSenales++; // con señales activas (pasaron buildOpportunity)
 
     // Filtro de régimen: solo señales compatibles con el estado actual
-    if (!isSignalAllowed(opp.type, marketRegime)) continue;
+    if (!isSignalAllowed(opp.type, marketRegime)) {
+      diag.oppFiltroReg++;
+      continue;
+    }
 
     // Ajuste de score por régimen: bonificación para señales alineadas
     const adjustedScore = adjustScoreByRegime(opp.score, opp.type, marketRegime);
-    if (adjustedScore < config.minScore) continue;
-    if (opp.riskReward < config.minRiskReward) continue;
+    if (adjustedScore < config.minScore) {
+      diag.oppScoreBajo++;
+      continue;
+    }
+    if (opp.riskReward < config.minRiskReward) {
+      diag.oppRRBajo++;
+      continue;
+    }
 
     opportunities.push({ ...opp, score: adjustedScore });
+    diag.oportunidades++;
   }
 
   const topPicks = [...opportunities]
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
+
+  // ── Diagnóstico: reporte de filtrado ─────────────────────────────
+  console.log(
+    `[Screener] ─── ${SCAN_MODE_LABELS[mode]} DIAGNÓSTICO ───\n` +
+    `  ℹ️  Total universo:  ${diag.total}\n` +
+    `  ✅ Con datos:        ${diag.conDatos} (primary:${diag.primary} fallback:${diag.fallback} ultra:${diag.ultraFallback})\n` +
+    `  ❌ Sin datos:        ${diag.sinDatos} | Error build: ${diag.errorBuild}\n` +
+    `  🏭 OHLC sintético:   ${diag.sinOhlc} activos (ATR aproximado)\n` +
+    `  📊 Assets con señales: ${diag.conSenales}\n` +
+    `  🔇 Filtro régimen:   -${diag.oppFiltroReg}\n` +
+    `  📉 Score < ${config.minScore}: -${diag.oppScoreBajo}\n` +
+    `  📉 R:R < ${config.minRiskReward}: -${diag.oppRRBajo}\n` +
+    `  🎯 Oportunidades:    ${diag.oportunidades}\n` +
+    `  ─────────────────────────────────────`
+  );
 
   return {
     assets,

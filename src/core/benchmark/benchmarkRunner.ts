@@ -282,8 +282,15 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   const engineCumRet = engineReturns.reduce((acc, r) => acc * (1 + r), 1);
   const benchmarkCumRet = benchmarkReturns.reduce((acc, r) => acc * (1 + r), 1);
 
-  const engineCagr3m = Math.pow(Math.max(0.001, engineCumRet), 1 / actualYears) - 1;
-  const benchmarkCagr3m = Math.pow(Math.max(0.001, benchmarkCumRet), 1 / actualYears) - 1;
+  // FIX: Usar wall-clock time con un mínimo basado en el número de puntos.
+  // Si hay winddowSize snapshots, asumimos que cada una representa al menos
+  // medio día de trading. Esto evita anualización explosiva cuando las
+  // snapshots se registran en minutos/horas (ej. al abrir el dashboard).
+  const minYears = Math.max(windowSize / 504, 21 / 252); // min ~21 días o windowSize/504
+  const effectiveYears = Math.max(actualYears, minYears);
+
+  const engineCagr3m = Math.pow(Math.max(0.001, engineCumRet), 1 / effectiveYears) - 1;
+  const benchmarkCagr3m = Math.pow(Math.max(0.001, benchmarkCumRet), 1 / effectiveYears) - 1;
 
   const cleanEngineCagr = isFinite(engineCagr3m) ? engineCagr3m : 0;
   const cleanBenchmarkCagr = isFinite(benchmarkCagr3m) ? benchmarkCagr3m : 0;
@@ -292,7 +299,9 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   const underperformanceAlert = outperformance < -UNDERPERFORM_THRESHOLD;
 
   // ── Sharpe ratio rolling (risk-free = 4% anual) ──────────────
-  const periodsPerYear = windowSize / actualYears;
+  // Usar effectiveYears (misma corrección que CAGR) para evitar
+  // Sharpe absurdos cuando hay pocas snapshots
+  const periodsPerYear = windowSize / effectiveYears;
   const rfPerPeriod = 0.04 / periodsPerYear;
   const engineExcess = engineReturns.map(r => r - rfPerPeriod);
   const benchmarkExcess = benchmarkReturns.map(r => r - rfPerPeriod);

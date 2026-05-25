@@ -1306,10 +1306,15 @@ soxRsiWeekly,
       }),
       cewsOutput: cewsResult ?? undefined,
       cewsPreviousLevel,
+      cycleTopSignals: (cycleTopResult?.signals ?? []).map(s => ({
+        ticker: s.ticker,
+        shouldTrim: s.shouldTrim,
+        zone: s.zone,
+      })),
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";

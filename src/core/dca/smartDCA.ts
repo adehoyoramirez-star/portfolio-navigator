@@ -35,6 +35,9 @@ export interface SmartDCAInput {
   motorAllocations: { name: string; ticker: string; finalAllocation: number; price: number }[];
   cewsOutput?: CEWSOutput;
   cewsPreviousLevel?: CEWSLevel;
+  /** Señales de techo de ciclo por activo. Si un activo tiene shouldTrim=true,
+   *  SmartDCA no comprará más de ese activo (redistribuye el cash a los demás). */
+  cycleTopSignals?: { ticker: string; shouldTrim: boolean; zone: string }[];
 }
 
 export interface DCAAllocation {
@@ -92,10 +95,13 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   ];
 }
 
-// ── BUILD ALLOCATIONS (sin cambios) ─────────────────────────────────────
-function buildAllocations(totalCash: number, assets: { ticker: string; name: string; finalAllocation: number; price: number }[], trancheLabel: string): DCAAllocation[] {
-  const eligible = assets.filter(a => a.finalAllocation > 0.02 && a.price > 0);
-  if (eligible.length === 0 || totalCash <= 0) return [];
+// ── BUILD ALLOCATIONS ───────────────────────────────────────────────────
+function buildAllocations(totalCash: number, assets: { ticker: string; name: string; finalAllocation: number; price: number }[], trancheLabel: string, skipTickers: Set<string> = new Set()): DCAAllocation[] {
+  // Filtrar activos con señal de techo de ciclo activa (no comprar más)
+  const eligible = assets.filter(a => a.finalAllocation > 0.02 && a.price > 0 && !skipTickers.has(a.ticker));
+  // Si todos los activos están skippeados, no comprar nada
+  if (eligible.length === 0) return [];
+  if (totalCash <= 0) return [];
   const totalWeight = eligible.reduce((s, a) => s + a.finalAllocation, 0);
   const pass1 = eligible.map(a => {
     const cashAssigned = (a.finalAllocation / totalWeight) * totalCash;
@@ -124,8 +130,23 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const defensiveLiquidity = input.accumulatedDefensiveLiquidity ?? 0;
   const ATTACK_THRESHOLD = 4;
 
+  // Extraer tickers con señal de techo de ciclo activa (CAUTION/DANGER/EXTREME)
+  // Estos activos NO se comprarán — el cash se redistribuye a los demás
+  const cycleTopTickers = new Set<string>(
+    (input.cycleTopSignals ?? [])
+      .filter(s => s.shouldTrim && s.zone !== "SAFE")
+      .map(s => s.ticker)
+  );
+
   const attackSignals = detectBottomConfluence(input);
   const attackConfluence = attackSignals.filter(s => s.active).length;
+
+  // Separar señales macro vs BTC/on-chain.
+  // Macro (CEWS, Régimen, VIX) → señales de cartera completa.
+  // BTC/on-chain (BTC oversold, momentum, BTC.D, MVRV) → solo justifican comprar BTC.
+  // Regla: si no hay ≥2 señales macro, el ataque es solo a BTC-EUR.
+  const macroSignalNames = new Set(["CEWS Recuperándose", "Régimen Mejorando", "VIX Normalizándose"]);
+  const macroConfluence = attackSignals.filter(s => macroSignalNames.has(s.name) && s.active).length;
 
   // ── BTC CYCLE OVERRIDE (≥4/7 en CRISIS) ────────────────────────────
   if (attackConfluence >= 4 && !tailRiskActive && regime === "CRISIS") {
@@ -143,6 +164,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
 
   // ── MODO ATAQUE ─────────────────────────────────────────────────────
   const canAttack = attackConfluence >= ATTACK_THRESHOLD;
+  // Si el ataque tiene <2 señales macro, solo comprar BTC-EUR (el resto del cash se acumula)
+  const btcOnlyAttack = canAttack && macroConfluence < 2;
   let olympusInvested = 0, tacticalInvested = 0, tacticalAccumulated = tacticalAvailableCash;
 
   if (canAttack) {
@@ -155,10 +178,19 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   }
 
   const totalCash = olympusInvested + tacticalInvested;
-  const allocs = totalCash > 0 ? buildAllocations(totalCash, motorAllocations, canAttack ? "ATAQUE:" : "DCA:") : [];
+  // cycleTopTickers: activos en zona de techo de ciclo no se compran
+  // btcOnlyAttack: solo BTC-EUR se compra, el resto del cash se acumula
+  const allocAssets = btcOnlyAttack
+    ? motorAllocations.filter(a => a.ticker === "BTC-EUR")
+    : motorAllocations;
+  const allocs = totalCash > 0
+    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers)
+    : [];
   const action: DCAAction = canAttack ? (attackConfluence >= 6 ? "ATTACK_MAX" : attackConfluence >= 5 ? "ATTACK_STRONG" : "ATTACK_ENTRY") : "BUY";
   const reasoning = canAttack
-    ? `🚀 ATAQUE — ${attackConfluence}/7 señales. Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
+    ? btcOnlyAttack
+      ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
+      : `🚀 ATAQUE — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
     : `DCA normal Olympus €${olympusInvested.toFixed(0)}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
   return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier: canAttack ? 1.5 : 1, attackTranche: canAttack ? (attackConfluence >= 6 ? 3 : attackConfluence >= 5 ? 2 : 1) : 0, olympusInvested, tacticalInvested, tacticalAccumulated };
