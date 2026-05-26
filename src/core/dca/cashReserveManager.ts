@@ -1,6 +1,6 @@
 // ============================================================
 // ARCHIVO: src/core/dca/cashReserveManager.ts
-// OLYMPUS X — Gestor de Cash de Reserva y Órdenes BTC Límite.
+// OLYMPUS X — Gestor de Cash de Reserva y Órdenes BTC Límite
 // ============================================================
 //
 // PROPÓSITO: Dar al motor una representación explícita del cash de reserva
