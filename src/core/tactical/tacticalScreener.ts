@@ -60,6 +60,7 @@ import {
   adjustScoreByRegime,
 } from './marketRegimeFilter';
 import { fetchFxRates, toEur, normalizeGbxToGbp, getCachedFxRates } from './fxConverter';
+import { integratedOverfittingMetric } from '../risk/overfittingMetric';
 
 export { CORE_TACTICAL_UNIVERSE, FULL_TACTICAL_UNIVERSE, VOLATILE_UNIVERSE };
 
@@ -608,6 +609,51 @@ export async function scanTacticalUniverse(
     `  📉 Score < ${config.minScore}: -${diag.oppScoreBajo}\n` +
     `  📉 R:R < ${config.minRiskReward}: -${diag.oppRRBajo}\n` +
     `  🎯 Oportunidades:    ${diag.oportunidades}\n` +
+    `  ─────────────────────────────────────`
+  );
+
+  // ── Overfitting metric ───────────────────────────────────────────
+  const totalActiveSignals = assets.reduce(
+    (sum, a) => sum + (a.signals?.filter(s => s.active)?.length ?? 0), 0
+  );
+  const ofReport = integratedOverfittingMetric({
+    totalSignals: totalActiveSignals,
+    totalAssets: diag.total,
+  });
+  console.debug(
+    `[Screener] ─── SOBREAJUSTE ───\n` +
+    `  📊 Señales activas:    ${totalActiveSignals}\n` +
+    `  🧩 Parámetros:         ${ofReport.raw.paramCount}\n` +
+    `  💾 Datos disponibles:   ${(ofReport.raw.dataPoints / 1000).toFixed(0)}k\n` +
+    `  📈 Densidad señal:     ${(ofReport.metrics.signalDensity * 100).toFixed(0)}%\n` +
+    `  🔄 Cambios régimen:    ${ofReport.raw.regimeChanges}/año\n` +
+    `  🧠 Overfitting Score:  ${ofReport.globalScorePct}% (${ofReport.level})\n` +
+    `  ${ofReport.warning}\n` +
+    `  ─────────────────────────────────────`
+  );
+
+  // ── Discrete Signals Audit ───────────────────────────────────────
+  // Mapa completo de señales discretas del sistema táctico:
+  //   MOMENTUM_BREAKOUT — ER>30 + precio>BB sup + sobreMA50 + vol confirma
+  //   MEAN_REVERSION    — RSI(2)<15 + precio<BB inf+2%
+  //   OVERSOLD_BOUNCE   — RSI(14)<35 + sobreMA200 o MA50-5%
+  //   BLOOD_IN_STREETS  — RSI(2)<10 + Z<-1.5 + sobreMA200 o drawdown<-35%
+  //   SECTOR_ROTATION   — Drawdown52w<-20% + RSI 40-55 + sobreMA200/MA50
+  //   EVENT_DRIVEN      — Definido en SIGNAL_DRIFT pero sin generador
+  const signalAudit = Object.entries(signalTypeCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, count]) => {
+      const active = count > 0 ? '✅' : '❌';
+      return `  ${active} ${type}: ${count}`;
+    })
+    .join('\n');
+  console.debug(
+    `[Screener] ─── AUDITORÍA DE SEÑALES ───\n` +
+    `  Tipos implementados: MOMENTUM_BREAKOUT, MEAN_REVERSION, OVERSOLD_BOUNCE,\n` +
+    `                       BLOOD_IN_STREETS, SECTOR_ROTATION\n` +
+    `  Tipos trackeados en SIGNAL_DRIFT pero SIN generador: EVENT_DRIVEN\n` +
+    `\n` +
+    (signalAudit || '  (sin señales activas)') + '\n' +
     `  ─────────────────────────────────────`
   );
 
