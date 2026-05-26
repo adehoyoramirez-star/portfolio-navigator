@@ -105,6 +105,7 @@ function loadSnapshots(): BenchmarkSnapshot[] {
     const raw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
     return raw ? JSON.parse(raw) : [];
   } catch {
+    console.warn('[Benchmark] Error loading from localStorage');
     return [];
   }
 }
@@ -114,7 +115,7 @@ function saveSnapshots(snapshots: BenchmarkSnapshot[]): void {
     const trimmed = snapshots.slice(-MAX_SNAPSHOTS);
     localStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(trimmed));
   } catch {
-    // localStorage lleno — silencio
+    console.warn('[Benchmark] localStorage lleno — no se pudieron guardar snapshots');
   }
 }
 
@@ -123,6 +124,7 @@ function loadReturnRecords(): BenchmarkReturnRecord[] {
     const raw = localStorage.getItem(STORAGE_KEY_RETURNS);
     return raw ? JSON.parse(raw) : [];
   } catch {
+    console.warn('[Benchmark] Error loading return records from localStorage');
     return [];
   }
 }
@@ -132,7 +134,7 @@ function saveReturnRecords(records: BenchmarkReturnRecord[]): void {
     const trimmed = records.slice(-MAX_SNAPSHOTS);
     localStorage.setItem(STORAGE_KEY_RETURNS, JSON.stringify(trimmed));
   } catch {
-    // silencio
+    console.warn('[Benchmark] localStorage lleno — no se pudieron guardar retornos');
   }
 }
 
@@ -370,7 +372,7 @@ export function clearBenchmarkHistory(): void {
     localStorage.removeItem(STORAGE_KEY_SNAPSHOTS);
     localStorage.removeItem(STORAGE_KEY_RETURNS);
   } catch {
-    // silencio
+    console.warn('[Benchmark] Error limpiando historial del benchmark');
   }
 }
 

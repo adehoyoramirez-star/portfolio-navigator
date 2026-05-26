@@ -68,7 +68,7 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
-import { FACTOR_CONFIG } from "../config/engineConfig";
+import { FACTOR_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG } from "../config/engineConfig";
 // FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
 import {
   getTacticalWeights,
@@ -150,6 +150,12 @@ export interface EngineOutput {
     hasRealCovMatrix: boolean;
     // FIX-V5-5: flag cuando totalPortfolioValue no fue proporcionado
     dcaDataMissing: boolean;
+    // ERP Trigger: equity risk premium comprimido
+    erpTriggered: boolean;
+    erpValue: number;
+    // Correlation Panic: convergencia de correlaciones
+    correlationPanicTriggered: boolean;
+    avgCorrelationValue: number;
   };
   btcCycle?: {
     btcScore: number;
@@ -219,9 +225,13 @@ export interface OlympusEngineInput {
   totalPortfolioValue?: number;
   avgCorrelation?: number;
   blendWeights?: {
-    kelly: number;
-    markowitz: number;
-    hrp: number;
+    BL?: number;
+    HRP?: number;
+    MIN_VAR?: number;
+    KELLY?: number;
+    kelly?: number;
+    hrp?: number;
+    markowitz?: number;
   };
 }
 
@@ -436,7 +446,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       allocations: empty, regime: "ALL_CASH", masterRegime, correlationPenalty: corrPenalty,
       totalAllocation: 0, totalInvested: 0, volTargetMultiplier: 0, tailRiskOverlay: 1,
       tailRiskActive: false, tailRiskReason: "", engineVersion: ENGINE_VERSION,
-      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue },
+      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0 },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
       coreSignal: { regimeComponent: 0.55 * regimeNumeric, btcComponent: 0.20 * btcNumeric, riskComponent: 0.25 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
@@ -496,14 +506,16 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     ? minimumVarianceWeights(input.covMatrix!, assets.length)
     : assets.map(() => 1 / assets.length);
 
+  const currentBlendAccess = currentBlend as Record<string, number>;
+
   const blendWeights = assets.map((_, i) => {
     if (hasRealCovMatrix) {
-      const weights = input.blendWeights ?? currentBlend;
+      const weights = input.blendWeights ?? currentBlendAccess;
       return blWeights[i]             * (weights.BL ?? weights.kelly ?? 0.20)
            + hrpWeights[i]            * (weights.HRP ?? weights.hrp ?? 0.65)
            + minVarW[i]               * (weights.MIN_VAR ?? weights.markowitz ?? 0.15);
     } else {
-      const weights = input.blendWeights ?? currentBlend;
+      const weights = input.blendWeights ?? currentBlendAccess;
       return kellyNorm[i].kellyNormalized * (weights.KELLY ?? weights.kelly ?? 0.25)
            + hrpWeights[i]               * (weights.HRP ?? weights.hrp ?? 0.75);
     }
@@ -638,7 +650,59 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     (input.liquidityGrowth ?? 0) > 0 &&
     tailRisk.killSwitchLevel === 0   // FIX-ALPHA-01: Kill Switch activo → Alpha-Boost deshabilitado
   );
-  const totalInvested = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
+  const totalInvested_alpha = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
+
+  // 📉 CAPA 8b: CORRELATION PANIC TRIGGER — Convergencia de correlaciones
+  // ================================================================
+  // Cuando las correlaciones entre activos convergen a niveles de
+  // pánico (>0.85), toda la diversificación del portafolio colapsa.
+  // HRP, MinVar, y Black-Litterman asumen que las correlaciones son
+  // estables y diferenciadas — en pánico, todos los activos caen juntos.
+  //
+  // Señal empírica: durante COVID 2020, la correlación media entre
+  // activos globales saltó de ~0.35 a ~0.92. En 2008, de ~0.40 a ~0.88.
+  // En ambos casos, la diversificación falló exactamente cuando más
+  // se necesitaba.
+  //
+  // Lógica:
+  //   - avgCorrelation > 0.85 → exposición máxima 50%
+  //   - avgCorrelation > 0.95 → exposición máxima 35%
+  //   - Se aplica DESPUÉS de ERP trigger y Alpha-Boost
+  //   - Solo se activa si avgCorrelation fue proporcionado explícitamente
+  const isCorrelationPanic = input.avgCorrelation !== undefined &&
+    input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD;
+  const isCorrelationCritical = input.avgCorrelation !== undefined &&
+    input.avgCorrelation > CORRELATION_PANIC_CONFIG.CRITICAL_THRESHOLD;
+  const corrMaxExposure = isCorrelationCritical
+    ? CORRELATION_PANIC_CONFIG.CRITICAL_EXPOSURE
+    : CORRELATION_PANIC_CONFIG.MAX_EXPOSURE;
+
+  // ================================================================
+  // 📉 CAPA 8c: ERP TRIGGER — Equity Risk Premium comprimido
+  // ============================================================
+  // Cuando el ERP cae por debajo del umbral, forzamos una reducción
+  // de exposición independientemente del régimen detectado.
+  // Esto es una señal macro que precede correcciones históricamente
+  // con alta fiabilidad (64% de acierto desde 1990 según Damodaran).
+  //
+  // Lógica:
+  //   - ERP < 2.5%  → exposición máxima 60%
+  //   - ERP < 1.0%  → exposición máxima 35% (peligro extremo)
+  //   - Se aplica DESPUÉS de Alpha-Boost, tiene prioridad máxima
+  //   - No incrementa exposición si ya está por debajo del cap
+  //   - Solo se activa si erpValue fue explícitamente proporcionado
+  //     (default 0.02 sin datos no debe activar el trigger)
+  const isERPTriggered = input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD;
+  const isERPCritical = erpRaw < ERP_CONFIG.CRITICAL_THRESHOLD;
+  const erpMaxExposure = isERPCritical ? ERP_CONFIG.CRITICAL_EXPOSURE : ERP_CONFIG.MAX_EXPOSURE;
+  const totalInvested_erp = isERPTriggered
+    ? Math.min(totalInvested_alpha, erpMaxExposure)
+    : totalInvested_alpha;
+
+  // Aplicar correlation panic DESPUÉS de ERP (ambos caps, el más restrictivo gana)
+  const totalInvested = isCorrelationPanic
+    ? Math.min(totalInvested_erp, corrMaxExposure)
+    : totalInvested_erp;
 
   // ====== CAPA 9: DCA CONTRACÍCLICO ======
   // FIX-V5-5: warning cuando totalPortfolioValue no fue proporcionado.
@@ -707,6 +771,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       dominantSignal:  masterRegime.dominantSignal,
       hasRealCovMatrix,
       dcaDataMissing,  // FIX-V5-5
+      erpTriggered:    isERPTriggered,
+      erpValue:        erpRaw,
+      correlationPanicTriggered: isCorrelationPanic,
+      avgCorrelationValue: input.avgCorrelation ?? 0,
     },
     btcCycle: {
       btcScore:   btcCycle.btcScore,

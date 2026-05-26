@@ -27,6 +27,8 @@ import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from 
 import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
 import { ledoitWolfCovariance } from "../data/volatility";
+import { getMasterRegime, MasterRegimeInput } from "../macro/masterRegime";
+import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
@@ -55,6 +57,16 @@ export interface BacktestInput {
     yieldSpread: number[];
     creditSpread: number[];
     m2Growth?: number[]; // Añadido para Alpha-Boost
+    // Campos opcionales para masterRegime completo (si faltan, backtest
+    // usa el modelo simplificado solo-VIX — compatible hacia atrás)
+    move?: number[];       // CBOE MOVE index (volatilidad bonos)
+    dxyTrend?: number[];   // Tendencia del DXY
+    btcVol?: number[];     // Volatilidad realizada BTC (anualizada)
+    wtiOil?: number[];     // WTI Crude Oil $/barril
+    // ERP: Equity Risk Premium (decimal, ej: 0.03 = 3%)
+    // Si no se provee, el ERP trigger se deshabilita
+    erpValue?: number[];
+    avgCorrelation?: number[];  // Correlación media entre activos (para panic trigger)
   };
   lookbackDays?: number;
   rebalanceDays?: number;
@@ -231,11 +243,23 @@ function estimatePortfolioVolatility(
   return Math.sqrt(Math.max(0, varPort));
 }
 
-// ── Clasificación de régimen (simplificada, igual que antes) ───────────
-function detectRegime(vix: number): BacktestRegime {
-  if (vix > 35) return "CRISIS";
-  if (vix > 25) return "CONTRACTION";
-  return "EXPANSION";
+// ── Construir CEWS data point para el backtest ─────────────────────
+// Se genera un punto CEWS por cada rebalanceo (aprox. cada 21 días)
+// a partir de los datos macro disponibles en ese momento.
+function buildCEWSPoint(
+  vix: number,
+  yieldSpread: number,
+  creditSpread: number,
+  m2Growth: number
+): CEWSDataPoint {
+  const today = new Date();
+  return {
+    timestamp: today.toISOString(),
+    vix,
+    yieldSpread,
+    creditSpread,
+    m2Growth,
+  };
 }
 
 // ── Factor scores para un activo en un momento dado ────────────────────
@@ -258,16 +282,87 @@ function computeAssetFactors(
 }
 
 // ── Asignación táctica real (réplica de olympusV3) ─────────────────────
+// Mejorada: usa masterRegime completo (crisis.ts + globalStress +
+// regimeProbabilistic + CEWS + hysteresis) en lugar de VIX-only.
+// Si los campos opcionales (move, dxyTrend, btcVol, wtiOil) no están
+// disponibles, fallback a VIX-only para compatibilidad hacia atrás.
 function computeAllocationsWithRegime(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
   t: number,
   lookbackDays: number,
-  macro: { vix: number; yieldSpread: number; creditSpread: number; m2Growth?: number },
+  macro: {
+    vix: number;
+    yieldSpread: number;
+    creditSpread: number;
+    m2Growth?: number;
+    move?: number;
+    dxyTrend?: number;
+    btcVol?: number;
+    wtiOil?: number;
+    erpValue?: number;
+    avgCorrelation?: number;
+  },
   portfolioDrawdown: number,
-  currentAllocations: Record<string, number> // para estimar vol del portfolio
-): { allocations: Record<string, number>; regime: BacktestRegime; cash: number } {
-  const regime = detectRegime(macro.vix);
+  currentAllocations: Record<string, number>,
+  // Estado tracking para masterRegime
+  cewsHistory?: CEWSDataPoint[],
+  regimeHistory?: { timestamp: string; regime: string }[]
+): {
+  allocations: Record<string, number>;
+  regime: BacktestRegime;
+  cash: number;
+  regimePenalty: number;
+  stressScore: number;
+  cewsPoint?: CEWSDataPoint;
+} {
+  // Usar masterRegime completo si hay datos suficientes
+  // Si faltan campos opcionales clave, fallback a VIX simplificado
+  const hasFullMacro = macro.move !== undefined && macro.dxyTrend !== undefined &&
+    macro.btcVol !== undefined;
+
+  // ERP value for this timestep (for the ERP trigger)
+  // Passed down so computeAllocationsWithRegime can apply the cap
+  const erpValue = macro.erpValue;
+
+  let regime: BacktestRegime;
+  let regimePenalty: number;
+  let stressScore: number;
+  let cewsPoint: CEWSDataPoint | undefined;
+
+  if (hasFullMacro) {
+    const masterInput: MasterRegimeInput = {
+      vix: macro.vix,
+      yieldSpread: macro.yieldSpread,
+      creditSpread: macro.creditSpread,
+      move: macro.move!,
+      dxyTrend: macro.dxyTrend!,
+      btcVol: macro.btcVol!,
+      m2Growth: macro.m2Growth ?? 2,
+      wtiOil: macro.wtiOil,
+    };
+    // Construir CEWS point desde los datos actuales
+    cewsPoint = buildCEWSPoint(
+      macro.vix,
+      macro.yieldSpread,
+      macro.creditSpread,
+      macro.m2Growth ?? 2
+    );
+    const updatedCews = cewsHistory
+      ? [...cewsHistory, cewsPoint].slice(-168)
+      : [cewsPoint];
+    const masterResult = getMasterRegime(masterInput, updatedCews, regimeHistory);
+    regime = masterResult.regime as BacktestRegime;
+    regimePenalty = masterResult.regimePenalty;
+    stressScore = masterResult.stressDetail.score;
+  } else {
+    // Fallback: VIX-only (compatible con datos antiguos)
+    if (macro.vix > 35) regime = "CRISIS";
+    else if (macro.vix > 25) regime = "CONTRACTION";
+    else regime = "EXPANSION";
+    regimePenalty = regime === "CRISIS" ? 0.4 : regime === "CONTRACTION" ? 0.7 : 1.0;
+    stressScore = regime === "CRISIS" ? 8 : regime === "CONTRACTION" ? 4 : 1;
+  }
   const n = ASSETS.length;
 
   // 1. Factores por activo
@@ -359,25 +454,23 @@ function computeAllocationsWithRegime(
   const totalTactical = finalWeightsBeforeCap.reduce((s, w) => s + w, 0) || 1;
   const relativeWeights = finalWeightsBeforeCap.map(w => w / totalTactical);
 
-  // 11. Vol target
+  // 11. Vol target con regimePenalty desde masterRegime (continuo [0.4-1.0])
   const portfolioVol = estimatePortfolioVolatility(
     Object.fromEntries(ASSETS.map((t, i) => [t, relativeWeights[i]])),
     covMatrix
   );
-  const regimePenalty = regime === "CRISIS" ? 0.4 : regime === "CONTRACTION" ? 0.7 : 1.0;
   const volTarget = computeVolTargetMultiplier({
     targetVol: DEFAULT_TARGET_VOL,
     realizedVol: portfolioVol,
-    regimePenalty,
+    regimePenalty, // ya calculado desde masterRegime arriba
   });
 
-  // 12. Tail risk (drawdown, VIX, credit spread)
-  const stressScore = regime === "CRISIS" ? 8 : regime === "CONTRACTION" ? 4 : 1;
+  // 12. Tail risk (drawdown, VIX, credit spread) con stressScore desde masterRegime
   const tailRisk = computeTailRiskOverlay({
     drawdown: portfolioDrawdown,
     vix: macro.vix,
     creditSpread: macro.creditSpread,
-    stressScore,
+    stressScore, // ya calculado desde masterRegime arriba
     portfolioVolatility: portfolioVol,
     avgCorrelation: 0.5,
   });
@@ -396,7 +489,37 @@ function computeAllocationsWithRegime(
     isStrongBuy &&
     (macro.m2Growth ?? 0) > 0
   );
-  const totalInvested = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
+  const totalInvested_alpha = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
+
+  // 📉 ERP TRIGGER: Equity Risk Premium comprimido
+  // Solo se activa si hay datos de ERP disponibles
+  const ERP_TRIGGER_THRESHOLD = 0.025;   // 2.5%
+  const ERP_MAX_EXPOSURE = 0.60;          // 60% cap
+  const ERP_CRITICAL_THRESHOLD = 0.010;   // 1.0% — peligro extremo
+  const ERP_CRITICAL_EXPOSURE = 0.35;     // 35% cap
+  const isERPTriggered = macro.erpValue !== undefined && macro.erpValue < ERP_TRIGGER_THRESHOLD;
+  const isERPCritical = macro.erpValue !== undefined && macro.erpValue < ERP_CRITICAL_THRESHOLD;
+  const erpMaxExposure = isERPCritical ? ERP_CRITICAL_EXPOSURE : ERP_MAX_EXPOSURE;
+  const totalInvested_erp = isERPTriggered
+    ? Math.min(totalInvested_alpha, erpMaxExposure)
+    : totalInvested_alpha;
+
+  // 📉 CORRELATION PANIC: convergencia de correlaciones
+  // Misma lógica que olympusV3.ts CAPA 8c
+  const CORR_PANIC_THRESHOLD = 0.85;
+  const CORR_PANIC_EXPOSURE = 0.50;
+  const CORR_CRITICAL_THRESHOLD = 0.95;
+  const CORR_CRITICAL_EXPOSURE = 0.35;
+  const isCorrelationPanic = macro.avgCorrelation !== undefined &&
+    macro.avgCorrelation > CORR_PANIC_THRESHOLD;
+  const isCorrelationCritical = macro.avgCorrelation !== undefined &&
+    macro.avgCorrelation > CORR_CRITICAL_THRESHOLD;
+  const corrMaxExposure = isCorrelationCritical
+    ? CORR_CRITICAL_EXPOSURE
+    : CORR_PANIC_EXPOSURE;
+  const totalInvested = isCorrelationPanic
+    ? Math.min(totalInvested_erp, corrMaxExposure)
+    : totalInvested_erp;
 
   // 14. BTC Dynamic Cap
   const mvrvProxy = 1.5 + (btcRet1m * 2); // Proxy simple para MVRV en backtest
@@ -430,7 +553,7 @@ function computeAllocationsWithRegime(
 
   const cash = 1 - (ASSETS.reduce((s, t) => s + finalAllocations[t], 0));
 
-  return { allocations: finalAllocations, regime, cash };
+  return { allocations: finalAllocations, regime, cash, regimePenalty, stressScore, cewsPoint };
 }
 
 // ── Bucle principal del backtest ───────────────────────────────────────
@@ -489,6 +612,16 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   const yieldSpreadArray = ensureLength(macroHistory.yieldSpread, maxLen);
   const creditSpreadArray = ensureLength(macroHistory.creditSpread, maxLen);
 
+  // Tracking arrays para masterRegime y CEWS
+  const regimeHistory: { timestamp: string; regime: string }[] = [];
+  const cewsHistory: CEWSDataPoint[] = [];
+
+  // Pre-computar arrays macro opcionales (pueden ser undefined)
+  const moveArray = macroHistory.move?.length ? ensureLength(macroHistory.move, maxLen) : undefined;
+  const dxyTrendArray = macroHistory.dxyTrend?.length ? ensureLength(macroHistory.dxyTrend, maxLen) : undefined;
+  const btcVolArray = macroHistory.btcVol?.length ? ensureLength(macroHistory.btcVol, maxLen) : undefined;
+  const wtiOilArray = macroHistory.wtiOil?.length ? ensureLength(macroHistory.wtiOil, maxLen) : undefined;
+
   for (let t = backtestStart; t < backtestEnd; t++) {
     const dayIndex = t - backtestStart;
 
@@ -498,12 +631,37 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const creditSpread = creditSpreadArray[t];
       const drawdown = portfolioValue < peakValue ? (portfolioValue - peakValue) / peakValue : 0;
 
-      const result = computeAllocationsWithRegime(
+      const erpAtT = input.macroHistory.erpValue?.[t];
+      const avgCorrAtT = input.macroHistory.avgCorrelation?.[t];
+    const result = computeAllocationsWithRegime(
         closesHistory, backtestTickers, t, lookbackDays,
-        { vix, yieldSpread, creditSpread },
+        {
+          vix, yieldSpread, creditSpread,
+          move: moveArray?.[t],
+          dxyTrend: dxyTrendArray?.[t],
+          btcVol: btcVolArray?.[t],
+          wtiOil: wtiOilArray?.[t],
+          m2Growth: input.macroHistory.m2Growth?.[t],
+          erpValue: erpAtT,
+          avgCorrelation: avgCorrAtT,
+        },
         drawdown,
-        currentAllocations
+        currentAllocations,
+        cewsHistory,
+        regimeHistory
       );
+      // Actualizar tracking para masterRegime y CEWS
+      if (result.regime !== currentRegime || regimeHistory.length === 0) {
+        const ts = new Date().toISOString();
+        regimeHistory.push({ timestamp: ts, regime: result.regime });
+        // Mantener max 50 entradas
+        if (regimeHistory.length > 50) regimeHistory.splice(0, regimeHistory.length - 50);
+      }
+      if (result.cewsPoint) {
+        cewsHistory.push(result.cewsPoint);
+        if (cewsHistory.length > 168) cewsHistory.splice(0, cewsHistory.length - 168);
+      }
+
       // ⚠️ FIX BUG-1: guardar oldAllocations ANTES de sobreescribir currentAllocations
       const oldAllocations = { ...currentAllocations };
       currentAllocations = result.allocations;

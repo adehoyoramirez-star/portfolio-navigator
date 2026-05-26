@@ -162,7 +162,7 @@ export function recordAllocation(input: {
   return record;
 }
 
-export function getHistoricalPerformance(limit: number): HistoricalPerformance {
+export function getHistoricalPerformance(limit?: number): HistoricalPerformance {
   if (limit === undefined) limit = 30;
   const records = loadRecords();
   if (records.length === 0) {

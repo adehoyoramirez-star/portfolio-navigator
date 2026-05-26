@@ -4,7 +4,8 @@
 // ===============================================
 import { describe, test, expect } from "vitest";
 import { computeSmartDCA } from "../core/dca/smartDCA";
-import type { SmartDCAInput, CEWSOutput } from "../core/dca/smartDCA";
+import type { SmartDCAInput } from "../core/dca/smartDCA";
+import type { CEWSOutput } from "../core/macro/crisisEarlyWarning";
 
 // ── Helper: base input con valores neutros ───────────────────────────────
 function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
@@ -36,37 +37,71 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
 // ── Helpers: condiciones para activar señales ─────────────────────────────
 function cewsRecovering(): CEWSOutput {
   return {
-    score: 15,
     level: "CLEAR",
-    signal: "CLEAR",
-    details: "Mejorando",
+    score: 6,
+    signalsInRed: 2,
+    weeksInWarning: 2,
     signals: {
-      creditSpread: { score: 10, level: "WATCH", trend: "STABLE" },
-      liquidity: { score: 10, level: "WATCH", trend: "STABLE" },
-      volClustering: { score: 10, level: "WATCH", trend: "IMPROVING" },
-      macro: { score: 10, level: "WATCH", trend: "STABLE" },
+      yieldCurve: {
+        name: "Yield Curve (10y-2y)", level: "CLEAR", score: 0,
+        trend: "STABLE", value: 1.2, threshold: 0.5,
+        description: "Curva normal — sin señal",
+      },
+      creditSpreads: {
+        name: "Credit Spreads (HY-IG)", level: "WATCH", score: 2,
+        trend: "STABLE", value: 2.5, threshold: 2.0,
+        description: "Spreads elevados",
+      },
+      liquidityImpulse: {
+        name: "Liquidity Impulse (M2 YoY)", level: "WATCH", score: 2,
+        trend: "IMPROVING", value: 2.0, threshold: 3.0,
+        description: "M2 crecimiento mínimo",
+      },
+      volClustering: {
+        name: "Volatility Clustering (VIX)", level: "WATCH", score: 2,
+        trend: "IMPROVING", value: 22, threshold: 25,
+        description: "VIX normalizándose",
+      },
     },
-    regime: "EXPANSION",
-    regimePenalty: 1.0,
-    crisisProb: 0.15,
+    earlyWarningActive: false,
+    earlyWarningReason: "Señales en vigilancia",
+    regimePenaltyAdjustment: -0.05,
+    recommendation: "Monitorear evolución",
   };
 }
 
 function cewsStable(): CEWSOutput {
   return {
-    score: 10,
     level: "CLEAR",
-    signal: "CLEAR",
-    details: "Normal",
+    score: 2,
+    signalsInRed: 0,
+    weeksInWarning: 0,
     signals: {
-      creditSpread: { score: 8, level: "CLEAR", trend: "STABLE" },
-      liquidity: { score: 8, level: "CLEAR", trend: "STABLE" },
-      volClustering: { score: 8, level: "CLEAR", trend: "STABLE" },
-      macro: { score: 8, level: "CLEAR", trend: "STABLE" },
+      yieldCurve: {
+        name: "Yield Curve (10y-2y)", level: "CLEAR", score: 0,
+        trend: "STABLE", value: 1.5, threshold: 0.5,
+        description: "Curva normal — sin señal",
+      },
+      creditSpreads: {
+        name: "Credit Spreads (HY-IG)", level: "CLEAR", score: 1,
+        trend: "STABLE", value: 1.5, threshold: 2.0,
+        description: "Spreads normales",
+      },
+      liquidityImpulse: {
+        name: "Liquidity Impulse (M2 YoY)", level: "CLEAR", score: 0,
+        trend: "STABLE", value: 3.5, threshold: 3.0,
+        description: "M2 creciendo",
+      },
+      volClustering: {
+        name: "Volatility Clustering (VIX)", level: "CLEAR", score: 1,
+        trend: "STABLE", value: 15, threshold: 25,
+        description: "VIX normalizado",
+      },
     },
-    regime: "EXPANSION",
-    regimePenalty: 1.0,
-    crisisProb: 0.05,
+    earlyWarningActive: false,
+    earlyWarningReason: "Todos los indicadores en rango normal",
+    regimePenaltyAdjustment: 0,
+    recommendation: "Seguir plan habitual",
   };
 }
 

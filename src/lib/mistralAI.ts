@@ -23,6 +23,8 @@ export interface MistralIntelligence {
   model: string;
   cachedAt: string;
   error?: string;
+  /** Indica que el resultado proviene de caché, no de una llamada API fresca */
+  cacheHit?: boolean;
 }
 
 export interface MistralConfig {
@@ -40,7 +42,11 @@ const DEFAULT_CONFIG: MistralConfig = {
 };
 
 // Caché en memoria (15 minutos TTL)
-const cacheRef: { hash: string; result: MistralIntelligence; expiresAt: number } | null = null;
+const cacheRef: { hash: string; result: MistralIntelligence; expiresAt: number } = {
+  hash: '',
+  result: {} as MistralIntelligence,
+  expiresAt: 0,
+};
 const CACHE_TTL = 15 * 60 * 1000;
 
 /**
@@ -216,7 +222,7 @@ export async function fetchMistralIntelligence(
       callMistralAPI(sentinelPrompt, ctx, config),
     ]);
 
-    const parseRole = (text: string, fallback: Record<string, any>) => {
+    const parseRole = (text: string, fallback: Record<string, any>): Record<string, any> => {
       try {
         const parsed = parseMistralResponse(text);
         return { ...parsed, model: config.model, cachedAt: ts };

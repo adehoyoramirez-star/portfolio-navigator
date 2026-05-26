@@ -1,11 +1,22 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/walkForwardOptimizer.ts
 // Walk-Forward Optimization — validación de robustez paramétrica
-// ===============================================
-// Responde a la pregunta más importante del backtesting:
-// ¿Los parámetros del motor funcionan igual en TODOS los períodos
-// o solo en el que se optimizaron?
 //
+// (LEGACY) La nueva implementación integrada con runBacktest() está
+// en walkForwardTest.ts. Este archivo mantiene la versión simple
+// que trabaja con retornos precomputados del portfolio.
+// ===============================================
+
+// Re-export del nuevo sistema walk-forward integrado con runBacktest()
+export {
+  runWalkForwardTest,
+  formatWFResult,
+  type WFTestConfig,
+  type WFWindowInfo,
+  type WFWindowResult,
+  type WFTestResult,
+  DEFAULT_WF_CONFIG,
+} from './walkForwardTest';
 // Metodología:
 //   1. Dividir los 5 años de histórico en N ventanas (default: 5)
 //   2. Para cada ventana:
@@ -40,7 +51,7 @@ export interface WFMetrics {
   winRate: number;           // % de semanas positivas
 }
 
-export interface WFWindowResult {
+export interface WFWindowResultLegacy {
   window: WFWindow;
   inSampleMetrics: WFMetrics;
   outOfSampleMetrics: WFMetrics;
@@ -48,7 +59,7 @@ export interface WFWindowResult {
 }
 
 export interface WalkForwardResult {
-  windows: WFWindowResult[];
+  windows: WFWindowResultLegacy[];
   overallStabilityScore: number;  // [0,1] — media de consistencyScore
   overfittingRisk: "LOW" | "MEDIUM" | "HIGH";
   parameterStability: {
@@ -154,7 +165,7 @@ export function runWalkForward(
   }
 
   const windowSize = Math.floor(portfolioWeeklyReturns.length / (nWindows + 1));
-  const windows: WFWindowResult[] = [];
+  const windows: WFWindowResultLegacy[] = [];
 
   for (let w = 0; w < nWindows; w++) {
     const isStart = w * windowSize;
@@ -252,7 +263,7 @@ export function runWalkForward(
 function buildRecommendation(
   stability: number,
   risk: "LOW" | "MEDIUM" | "HIGH",
-  windows: WFWindowResult[]
+  windows: WFWindowResultLegacy[]
 ): string {
   const worstWindow = windows.reduce((prev, w) =>
     w.consistencyScore < prev.consistencyScore ? w : prev

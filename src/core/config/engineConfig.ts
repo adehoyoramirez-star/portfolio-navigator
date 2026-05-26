@@ -27,6 +27,35 @@
 
 export const ENGINE_CONFIG_VERSION = "3.6.0"; // bump por FIX-SCALE-01
 
+// ── ERP TRIGGER ────────────────────────────────────────────────────────────
+// Reducción forzada de exposición cuando el Equity Risk Premium está comprimido.
+// Basado en evidencia histórica: ERP < 2.5% precede correcciones del 15-25%
+// en los siguientes 6 meses con alta frecuencia (64% desde 1990).
+export const ERP_CONFIG = {
+  TRIGGER_THRESHOLD: 0.025,    // 2.5% ERP — señal de warning
+  MAX_EXPOSURE: 0.60,          // Cap forcedo al 60%
+  CRITICAL_THRESHOLD: 0.01,    // 1.0% ERP — señal de peligro extremo
+  CRITICAL_EXPOSURE: 0.35,     // Cap forzado al 35% en peligro extremo
+} as const;
+
+// ── CORRELATION PANIC TRIGGER ────────────────────────────────────────────
+// Forzar reducción de exposición cuando las correlaciones entre activos
+// convergen a niveles de pánico (>0.85). En mercados con estrés severo
+// (COVID 2020, 2008), todas las correlaciones tienden a 1.0, haciendo
+// que la diversificación (HRP, MinVar) sea inútil.
+//
+// Lógica:
+//   - avgCorrelation > 0.85 → exposición máxima 50%
+//   - avgCorrelation > 0.95 → exposición máxima 35% (correlación casi total)
+//   - Se aplica DESPUÉS del ERP trigger y Alpha-Boost
+//   - No incrementa exposición si ya está por debajo del cap
+export const CORRELATION_PANIC_CONFIG = {
+  PANIC_THRESHOLD: 0.85,     // correlación media > 85% → señal de pánico
+  MAX_EXPOSURE: 0.50,         // cap forzado al 50%
+  CRITICAL_THRESHOLD: 0.95,  // correlación > 95% → peligro extremo
+  CRITICAL_EXPOSURE: 0.35,   // cap forzado al 35% en peligro extremo
+} as const;
+
 // ── KELLY CRITERION ───────────────────────────────────────────────────────
 export const KELLY_CONFIG = {
   // Cap 20% — reducido de 0.25 per walk-forward optimizer (overfitting HIGH)
@@ -95,34 +124,45 @@ export const REGIME_CONFIG = {
   CONTINUOUS_WEIGHT: 0.6,
 } as const;
 
-// ── TAIL RISK OVERLAY — FIX-SCALE-01 ─────────────────────────────────────
-// ANTES: triggers en -5%, -10%, -15%, -20%, -25%
-//   Problema: con €5.685 de portfolio, un DD de -5% = -€285.
-//   Bloquear compras por €285 de pérdida no realizada en una corrección
-//   de mercado hace que el motor pierda las mejores oportunidades.
+// ── TAIL RISK OVERLAY — FIX-KILLSWITCH-AGGRESSIVE ─────────────────────────
+// RECALIBRADO (27-May-2026): Kill Switch más agresivo.
+// Auditoría externa señaló que en backtesting el MaxDD era -39% con el
+// kill switch activo — esto indica que las reducciones no eran suficientes
+// para evitar drawdowns severos.
 //
-// AHORA: triggers ajustados para escala pequeña (<€20k):
-//   L1: -8%  (era -5%)  → reducción preventiva mínima
-//   L2: -15% (era -10%) → reducción moderada
-//   L3: -20% (era -15%) → modo defensivo real
-//   L4: -25% (era -20%) → salida casi total
-//   L5: -32% (era -25%) → protección máxima
+// ANTES (FIX-SCALE-01):
+//   L1: -8%  → 0.85 (15% reducción)
+//   L2: -15% → 0.65 (35% reducción)
+//   L3: -20% → 0.50 (50% reducción)
+//   L4: -25% → 0.35 (65% reducción)
+//   L5: -32% → 0.30 (70% reducción)
 //
-// Los porcentajes de reducción de exposición NO cambian (son correctos).
-// Solo cambian los UMBRALES de activación.
+// AHORA (FIX-KILLSWITCH-AGGRESSIVE):
+//   L1: -8%  → 0.80 (20% reducción) — preventivo, casi igual
+//   L2: -15% → 0.50 (50% reducción) — mucho más agresivo (era 35%)
+//   L3: -20% → 0.30 (70% reducción) — defensivo real (era 50%)
+//   L4: -25% → 0.15 (85% reducción) — casi cash (era 65%)
+//   L5: -32% → 0.05 (95% reducción) — cash virtual (era 70%)
 //
-// FILOSOFÍA: Un fondo de €500M con -5% DD = -€25M de pérdida. Para ellos
-// tiene sentido frenar inmediatamente. Con €5k, -5% = -€250. El motor
-// debe seguir operando normalmente hasta daños más significativos.
+// JUSTIFICACIÓN:
+//   Con el antiguo kill switch, en un drawdown del -25% el motor aún
+//   mantenía 35% de exposición → seguía perdiendo dinero en caídas
+//   adicionales. Con la nueva calibración, en -25% solo queda 15% de
+//   exposición, limitando el daño residual. En -32% la cartera está
+//   prácticamente en cash (5%), preservando capital para el rebote.
+//
+// REFERENCIA: La auditoría externa proponía overlay=0.40 a -15%,
+//   0.20 a -25%, 0.05 a -35%. Nuestra calibración es más conservadora
+//   en L2 (0.50 vs 0.40) pero más protectora en L4-L5.
 export const TAIL_RISK_CONFIG = {
   KILL_SWITCH: {
-    L1: { threshold: 0.08, name: "REDUCCIÓN PREVENTIVA", overlay: 0.85, reduction: 0.15 },
-    L2: { threshold: 0.15, name: "REDUCCIÓN MODERADA",   overlay: 0.65, reduction: 0.35 },
-    L3: { threshold: 0.20, name: "MODO DEFENSIVO",       overlay: 0.50, reduction: 0.50 },
-    L4: { threshold: 0.25, name: "SALIDA CASI TOTAL",    overlay: 0.35, reduction: 0.65 },
-    L5: { threshold: 0.32, name: "PROTECCIÓN MÁXIMA",    overlay: 0.30, reduction: 0.70 },
+    L1: { threshold: 0.08, name: "REDUCCIÓN PREVENTIVA",  overlay: 0.80, reduction: 0.20 },
+    L2: { threshold: 0.15, name: "REDUCCIÓN MODERADA",    overlay: 0.50, reduction: 0.50 },
+    L3: { threshold: 0.20, name: "MODO DEFENSIVO",        overlay: 0.30, reduction: 0.70 },
+    L4: { threshold: 0.25, name: "SALIDA CASI TOTAL",     overlay: 0.15, reduction: 0.85 },
+    L5: { threshold: 0.32, name: "PROTECCIÓN MÁXIMA",     overlay: 0.05, reduction: 0.95 },
   },
-  MIN_ALLOCATION: 0.25,
+  MIN_ALLOCATION: 0.05,
 } as const;
 
 // ── RISK BUDGET POR SECTOR ─────────────────────────────────────────────────
@@ -140,11 +180,19 @@ export const SECTOR_RISK_BUDGET: Record<string, number> = {
 
 // ── FACTOR CALIBRATION (primas AQR) ───────────────────────────────────────
 export const FACTOR_CONFIG = {
+  // FIX-WALKFORWARD (27-May-2026): Actualizados según walk-forward test óptimo
+  // nWindows=5, trainRatio=0.65 → Risk LOW, Consistencia 87.6%
+  // Pesos adaptativos recomendados:
+  //   momentum: 0.40 (baja de 0.45 — menos dependencia de tendencias pasadas)
+  //   value:    0.25 (baja de 0.30 — value premium más errática post-COVID)
+  //   quality:  0.20 (sube de 0.15 — quality es el factor más robusto OOS)
+  //   lowVol:   0.15 (sube de 0.10 — lowVol protege en regímenes de alta vol)
+  // Ver: walkforward_optimal_v5plus.csv
   DEFAULT_WEIGHTS: {
-    momentum: 0.45,  // Elite: aumentado para capturar más prima de momentum
-    value:    0.30,  // Elite: aumentado para capturar prima de value
-    quality:  0.15,  // reducido para balancear
-    lowVol:   0.10,  // reducido para balancear
+    momentum: 0.40,
+    value:    0.25,
+    quality:  0.20,
+    lowVol:   0.15,
   },
 
   FACTOR_PREMIUMS: {

@@ -1,0 +1,208 @@
+// GENERATED FROM walkforward JSON - DO NOT EDIT DIRECTLY
+// Run: npx tsx src/core/backtest/run-optimal.ts to regenerate
+
+export interface WalkforwardWindow {
+  Ventana: number; DiasIS: number; DiasOOS: number;
+  FechaInicioOOS: number; FechaFinOOS: number;
+  Sharpe_IS: number; Sharpe_OOS: number; Sharpe_Degradacion: number;
+  CAGR_IS_PCT: number; CAGR_OOS_PCT: number; CAGR_Degradacion_PP: number;
+  MaxDD_IS_PCT: number; MaxDD_OOS_PCT: number; MaxDD_Delta_PP: number;
+  WinRate_IS_PCT: number; WinRate_OOS_PCT: number; WinRate_Delta_PP: number;
+  Vol_IS_PCT: number; Vol_OOS_PCT: number;
+  Calmar_IS: number; Calmar_OOS: number;
+  FinalValue_IS: number; FinalValue_OOS: number;
+  Consistencia_PCT: number;
+}
+
+export interface WalkforwardResult {
+  config: { nWindows: number; trainRatio: number };
+  windows: WalkforwardWindow[];
+  global: { Ventana: string; Consistencia_PCT: number; [key: string]: any };
+  summary: {
+    consistency: number; grade: string; overfittingRisk: string;
+    avgSharpeIS: number; avgSharpeOOS: number;
+    avgCAGR_IS: number; avgCAGR_OOS: number;
+    worstMaxDD_IS: number; worstMaxDD_OOS: number;
+    windowsAllPositiveOOS: boolean; avgConsistency: number;
+  };
+}
+
+const data: WalkforwardResult = {
+  "config": {
+    "nWindows": 5,
+    "trainRatio": 0.65
+  },
+  "windows": [
+    {
+      "Ventana": 1,
+      "DiasIS": 418,
+      "DiasOOS": 226,
+      "FechaInicioOOS": 896,
+      "FechaFinOOS": 1122,
+      "Sharpe_IS": 1.7794,
+      "Sharpe_OOS": 3.023,
+      "Sharpe_Degradacion": -1.2436,
+      "CAGR_IS_PCT": 23.0579,
+      "CAGR_OOS_PCT": 52.8289,
+      "CAGR_Degradacion_PP": -29.771,
+      "MaxDD_IS_PCT": -13.1065,
+      "MaxDD_OOS_PCT": -4.7098,
+      "MaxDD_Delta_PP": 8.3967,
+      "WinRate_IS_PCT": 73.33,
+      "WinRate_OOS_PCT": 90,
+      "WinRate_Delta_PP": -16.6667,
+      "Vol_IS_PCT": 9.8594,
+      "Vol_OOS_PCT": 13.0959,
+      "Calmar_IS": 1.7593,
+      "Calmar_OOS": 11.2167,
+      "FinalValue_IS": 16979.38,
+      "FinalValue_OOS": 14603.91,
+      "Consistencia_PCT": 75.68
+    },
+    {
+      "Ventana": 2,
+      "DiasIS": 418,
+      "DiasOOS": 226,
+      "FechaInicioOOS": 1540,
+      "FechaFinOOS": 1766,
+      "Sharpe_IS": 1.0378,
+      "Sharpe_OOS": 1.4919,
+      "Sharpe_Degradacion": -0.4541,
+      "CAGR_IS_PCT": 15.7055,
+      "CAGR_OOS_PCT": 21.1703,
+      "CAGR_Degradacion_PP": -5.4648,
+      "MaxDD_IS_PCT": -22.2449,
+      "MaxDD_OOS_PCT": -5.5785,
+      "MaxDD_Delta_PP": 16.6664,
+      "WinRate_IS_PCT": 68.85,
+      "WinRate_OOS_PCT": 70,
+      "WinRate_Delta_PP": -1.1475,
+      "Vol_IS_PCT": 11.0821,
+      "Vol_OOS_PCT": 10.8402,
+      "Calmar_IS": 0.706,
+      "Calmar_OOS": 3.795,
+      "FinalValue_IS": 21064.87,
+      "FinalValue_OOS": 11870.28,
+      "Consistencia_PCT": 88.02
+    },
+    {
+      "Ventana": 3,
+      "DiasIS": 418,
+      "DiasOOS": 226,
+      "FechaInicioOOS": 2184,
+      "FechaFinOOS": 2410,
+      "Sharpe_IS": 0.9894,
+      "Sharpe_OOS": 1.2614,
+      "Sharpe_Degradacion": -0.272,
+      "CAGR_IS_PCT": 15.9395,
+      "CAGR_OOS_PCT": 21.2787,
+      "CAGR_Degradacion_PP": -5.3392,
+      "MaxDD_IS_PCT": -22.2449,
+      "MaxDD_OOS_PCT": -6.1897,
+      "MaxDD_Delta_PP": 16.0552,
+      "WinRate_IS_PCT": 67.03,
+      "WinRate_OOS_PCT": 70,
+      "WinRate_Delta_PP": -2.967,
+      "Vol_IS_PCT": 11.9567,
+      "Vol_OOS_PCT": 13.023,
+      "Calmar_IS": 0.7165,
+      "Calmar_OOS": 3.4378,
+      "FinalValue_IS": 31058.87,
+      "FinalValue_OOS": 11879.76,
+      "Consistencia_PCT": 92.25
+    },
+    {
+      "Ventana": 4,
+      "DiasIS": 418,
+      "DiasOOS": 226,
+      "FechaInicioOOS": 2828,
+      "FechaFinOOS": 3054,
+      "Sharpe_IS": 0.6691,
+      "Sharpe_OOS": 1.041,
+      "Sharpe_Degradacion": -0.3719,
+      "CAGR_IS_PCT": 11.7851,
+      "CAGR_OOS_PCT": 20.172,
+      "CAGR_Degradacion_PP": -8.3868,
+      "MaxDD_IS_PCT": -23.884,
+      "MaxDD_OOS_PCT": -7.2767,
+      "MaxDD_Delta_PP": 16.6073,
+      "WinRate_IS_PCT": 63.93,
+      "WinRate_OOS_PCT": 50,
+      "WinRate_Delta_PP": 13.9344,
+      "Vol_IS_PCT": 12.2467,
+      "Vol_OOS_PCT": 15.1536,
+      "Calmar_IS": 0.4934,
+      "Calmar_OOS": 2.7721,
+      "FinalValue_IS": 31217.71,
+      "FinalValue_OOS": 11782.92,
+      "Consistencia_PCT": 85.19
+    },
+    {
+      "Ventana": 5,
+      "DiasIS": 418,
+      "DiasOOS": 644,
+      "FechaInicioOOS": 3472,
+      "FechaFinOOS": 4116,
+      "Sharpe_IS": 0.7528,
+      "Sharpe_OOS": 0.7982,
+      "Sharpe_Degradacion": -0.0454,
+      "CAGR_IS_PCT": 12.3916,
+      "CAGR_OOS_PCT": 15.1354,
+      "CAGR_Degradacion_PP": -2.7438,
+      "MaxDD_IS_PCT": -24.2629,
+      "MaxDD_OOS_PCT": -15.0584,
+      "MaxDD_Delta_PP": 9.2046,
+      "WinRate_IS_PCT": 62.75,
+      "WinRate_OOS_PCT": 73.33,
+      "WinRate_Delta_PP": -10.5882,
+      "Vol_IS_PCT": 11.4568,
+      "Vol_OOS_PCT": 14.3209,
+      "Calmar_IS": 0.5107,
+      "Calmar_OOS": 1.0051,
+      "FinalValue_IS": 44469.71,
+      "FinalValue_OOS": 14327.82,
+      "Consistencia_PCT": 96.96
+    }
+  ],
+  "global": {
+    "Ventana": "GLOBAL",
+    "DiasIS": 4117,
+    "DiasOOS": 0,
+    "FechaInicioOOS": 0,
+    "FechaFinOOS": 0,
+    "Sharpe_IS": 1.0457,
+    "Sharpe_OOS": 1.5231,
+    "Sharpe_Degradacion": -0.4774,
+    "CAGR_IS_PCT": 15.7759,
+    "CAGR_OOS_PCT": 26.1171,
+    "CAGR_Degradacion_PP": -10.3411,
+    "MaxDD_IS_PCT": 0,
+    "MaxDD_OOS_PCT": 0,
+    "MaxDD_Delta_PP": 0,
+    "WinRate_IS_PCT": 0,
+    "WinRate_OOS_PCT": 0,
+    "WinRate_Delta_PP": 0,
+    "Vol_IS_PCT": 0,
+    "Vol_OOS_PCT": 0,
+    "Calmar_IS": 0,
+    "Calmar_OOS": 0,
+    "FinalValue_IS": 0,
+    "FinalValue_OOS": 0,
+    "Consistencia_PCT": 87.62
+  },
+  "summary": {
+    "consistency": 87.62,
+    "grade": "A",
+    "overfittingRisk": "LOW",
+    "avgSharpeIS": 1.0456999999999999,
+    "avgSharpeOOS": 1.5231,
+    "avgCAGR_IS": 15.77592,
+    "avgCAGR_OOS": 26.11706,
+    "worstMaxDD_IS": -24.2629,
+    "worstMaxDD_OOS": -15.0584,
+    "windowsAllPositiveOOS": true,
+    "avgConsistency": 87.61999999999999
+  }
+};
+
+export default data;

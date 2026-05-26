@@ -21,7 +21,11 @@ const mockHistory: Record<string, number[]> = {
 
 const input = {
   closesHistory: mockHistory,
-  macro: { vix: 18, creditSpread: 0.5 },
+  macroHistory: {
+    vix: Array(500).fill(18),
+    yieldSpread: Array(500).fill(1.5),
+    creditSpread: Array(500).fill(0.5),
+  },
   lookbackDays: 20,
   rebalanceDays: 63,  // <--- REBALANCEO CADA 3 MESES
   initialCapital: 10000,

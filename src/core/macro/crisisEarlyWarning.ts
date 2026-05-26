@@ -424,11 +424,10 @@ function fromSupabaseRow(row: SupabaseCEWSRow): CEWSDataPoint {
 }
 
 /**
- * Carga historial desde Supabase (requiere cliente Supabase)
- * Uso: import { supabase } from '@/integrations/supabase/client'
+ * Tipo unificado de cliente Supabase para CEWS (cubre select + insert)
  */
-export async function loadCEWSHistoryFromSupabase(
-  supabaseClient: { from: (table: string) => {
+type CEWSSupabaseClient = {
+  from: (table: string) => {
     select: (cols: string, opts?: { head?: boolean }) => {
       eq: (col: string, val: string) => {
         order: (col: string, opts: { ascending: boolean }) => {
@@ -436,7 +435,16 @@ export async function loadCEWSHistoryFromSupabase(
         }
       }
     }
-  } },
+    insert: (rows: unknown[]) => Promise<{ error: unknown }>
+  }
+};
+
+/**
+ * Carga historial desde Supabase (requiere cliente Supabase)
+ * Uso: import { supabase } from '@/integrations/supabase/client'
+ */
+export async function loadCEWSHistoryFromSupabase(
+  supabaseClient: CEWSSupabaseClient,
   userId: string
 ): Promise<CEWSDataPoint[]> {
   try {
@@ -463,9 +471,7 @@ export async function loadCEWSHistoryFromSupabase(
  * Guarda un punto en Supabase
  */
 export async function saveCEWSDataPointToSupabase(
-  supabaseClient: { from: (table: string) => {
-    insert: (rows: unknown[]) => Promise<{ error: unknown }>
-  } },
+  supabaseClient: CEWSSupabaseClient,
   point: Omit<CEWSDataPoint, 'timestamp'>,
   userId: string
 ): Promise<boolean> {

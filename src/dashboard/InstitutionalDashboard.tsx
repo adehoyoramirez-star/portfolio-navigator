@@ -107,6 +107,8 @@ import {
   type StressResult,
 } from "@/core/simulation/stressScenarios";
 import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
+import walkforwardResults from "@/data/walkforward-results";
+import WalkForwardSection from "@/dashboard/WalkForwardSection";
 import {
   analyzeBitcoinCycle,
   getPowerLawProjection,
@@ -3372,31 +3374,7 @@ soxRsiWeekly,
         </div>
       )}
 
-      {/* Walk-Forward */}
-      {walkForwardResult && (
-        <div style={{
-          ...styles.card,
-          border: walkForwardResult.overfittingRisk === "LOW" ? "1px solid #10b981" : walkForwardResult.overfittingRisk === "HIGH" ? "2px solid #ef4444" : "1px solid #374151",
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-            <h2 style={{ margin: 0 }}>🔬 Walk-Forward Robustness</h2>
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <span style={{
-                fontSize: "2rem", fontWeight: "bold",
-                color: walkForwardResult.robustnessGrade === "A" ? "#10b981" : walkForwardResult.robustnessGrade === "B" ? "#3b82f6" : walkForwardResult.robustnessGrade === "C" ? "#f59e0b" : "#ef4444",
-              }}>{walkForwardResult.robustnessGrade}</span>
-              <span style={{
-                padding: "0.3rem 0.8rem", borderRadius: 20, fontSize: "0.8rem", fontWeight: "bold",
-                backgroundColor: walkForwardResult.overfittingRisk === "LOW" ? "#065f46" : walkForwardResult.overfittingRisk === "HIGH" ? "#7f1d1d" : "#1e3a5f",
-                color: "#fff"
-              }}>
-                Overfitting: {walkForwardResult.overfittingRisk}
-              </span>
-            </div>
-          </div>
-          <p style={{ fontSize: "0.82rem", color: "#d1d5db", margin: 0 }}>{walkForwardResult.recommendation}</p>
-        </div>
-      )}
+      <WalkForwardSection />
 
       {/* Historial de régimen */}
       {regimeHistory.length > 0 && (
