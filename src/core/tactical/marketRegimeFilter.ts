@@ -150,9 +150,20 @@ export function detectMarketRegime(
     regime         = 'RANGING';
     confidence     = 65;
     description    = `Mercado lateral/transicional (ER=${erPct}%, MA200=${aboveMA200}). Mean Reversion y rebotes.`;
-    allowedTypes   = ['MEAN_REVERSION', 'OVERSOLD_BOUNCE', 'BLOOD_IN_STREETS'];
+    allowedTypes   = ['MOMENTUM_BREAKOUT', 'MEAN_REVERSION', 'OVERSOLD_BOUNCE', 'BLOOD_IN_STREETS'];
     sizeMultiplier = 0.8;
   }
+
+  console.log(
+    `[RegimeFilter] Régimen detectado: ${regime} | ` +
+    `confianza=${confidence}% | ` +
+    `VIX=${vix.toFixed(1)} | ` +
+    `ER=${(er * 100).toFixed(0)}% | ` +
+    `RSI14=${rsi14} | ` +
+    `mom4w=${(mom4w * 100).toFixed(1)}% | ` +
+    `sobreMA200=${price > ma200} | ` +
+    `señales permitidas: ${allowedTypes.join(', ')}`
+  );
 
   return {
     regime, confidence, description, allowedTypes,

@@ -541,6 +541,21 @@ export async function scanTacticalUniverse(
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);
 
+  // ── Log: distribución de tipos de señal generados ────────────────
+  const signalTypeCounts: Record<string, number> = {};
+  for (const a of assets) {
+    for (const s of a.signals?.filter(sig => sig.active) ?? []) {
+      signalTypeCounts[s.type] = (signalTypeCounts[s.type] || 0) + 1;
+    }
+  }
+  console.log(
+    `[Screener] Señales generadas por tipo:\n` +
+    Object.entries(signalTypeCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => `  📌 ${type}: ${count}`)
+      .join('\n')
+  );
+
   // Paso 8: construir oportunidades CON FILTRO DE RÉGIMEN
   // Re-auditoría: reactivado el filtro de régimen para evitar operar
   // en contra del mercado (ej. MOMENTUM_BREAKOUT en mercado bajista).

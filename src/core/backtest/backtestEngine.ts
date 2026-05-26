@@ -35,6 +35,7 @@ export const PROXY_MAP: Record<string, string> = {
   'URNU.DE': 'URA',
   'VVSM.DE': 'SMH',
   'XNAS.DE': 'QQQ',
+  'BAYN.DE': 'XBI',
   'BTC-EUR': 'BTC-EUR',
 };
 
@@ -168,6 +169,23 @@ function computeWindowCovAndCorr(
     const closes = closesHistory[bticker] ?? [];
     return dailyReturns(closes.slice(Math.max(0, t - window), t));
   });
+
+  // ── FIX: si algún activo tiene 0 retornos válidos, rellenar con un array
+  // de ceros (retorno 0%) para evitar minLen=0 en LedoitWolf.
+  // Esto ocurre cuando un activo (ej: BAYN.DE) tiene menos historia que
+  // el inicio de la ventana de backtest.
+  const hasEmpty = returns.some(r => r.filter(isFinite).length < 2);
+  if (hasEmpty) {
+    const maxLen = Math.max(...returns.map(r => r.length));
+    for (let i = 0; i < returns.length; i++) {
+      if (returns[i].filter(isFinite).length < 2) {
+        const origLen = returns[i].length;
+        // Rellenar con ceros (retorno diario 0%) para que LedoitWolf tenga datos
+        returns[i] = new Array(Math.max(2, maxLen)).fill(0);
+        console.debug('[Backtest] padded ' + (ASSETS[i] ?? 'asset-' + i) + ' returns (was ' + origLen + ') with zeros to prevent minLen=0');
+      }
+    }
+  }
 
   // Matriz de covarianza con Ledoit-Wolf shrinkage (anualizada ×252 internamente)
   const covMatrix = ledoitWolfCovariance(returns);
