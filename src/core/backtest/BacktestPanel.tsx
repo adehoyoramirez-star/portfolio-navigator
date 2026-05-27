@@ -17,6 +17,8 @@ interface BacktestPanelProps {
   currentVix: number;
   currentCreditSpread: number;
   portfolioInitialValue: number;
+  erpValue: number;
+  avgCorrelation?: number;
 }
 
 const COLORS = {
@@ -31,6 +33,8 @@ const COLORS = {
 
 export default function BacktestPanel({
   marketData, currentVix, currentCreditSpread, portfolioInitialValue,
+  erpValue: currentErpValue,
+  avgCorrelation: currentAvgCorrelation,
 }: BacktestPanelProps) {
 
   const [rebalanceDays, setRebalanceDays] = useState(126);
@@ -91,10 +95,45 @@ export default function BacktestPanel({
     }
     const creditHistorical = buildCreditProxy(vixHistorical);
 
+    // ── ERP proxy from IS3Q.DE (contra-cyclical earnings yield) + ^TNX (risk-free) ──
+    const is3qCloses = marketData.closesHistory['IS3Q.DE'] ?? [];
+    const tnxCloses = marketData.closesHistory['^TNX'] ?? [];
+    const erpValueProxy: number[] = [];
+    if (is3qCloses.length > 0 || tnxCloses.length > 0) {
+      const paddedIs3q = [...is3qCloses];
+      while (paddedIs3q.length < length) paddedIs3q.unshift(paddedIs3q[0] ?? 100);
+      const is3qPrices = paddedIs3q.slice(-length);
+      const paddedTnx = [...tnxCloses];
+      while (paddedTnx.length < length) paddedTnx.unshift(paddedTnx[0] ?? 4.0);
+      const tnxValues = paddedTnx.slice(-length);
+      const LONG_TERM_AVG_RETURN = 0.225;
+      for (let i = 0; i < length; i++) {
+        const price3yAgo = is3qPrices[Math.max(0, i - 756)];
+        const total3yReturn = price3yAgo > 0 ? is3qPrices[i] / price3yAgo - 1 : 0;
+        const earningsYield = 0.055 - 0.15 * (total3yReturn - LONG_TERM_AVG_RETURN);
+        const riskFree = tnxValues[i] / 100;
+        const erp = earningsYield - riskFree;
+        erpValueProxy.push(Math.max(-0.03, Math.min(0.05, erp)));
+      }
+    } else {
+      for (let i = 0; i < length; i++) erpValueProxy.push(currentErpValue);
+    }
+
+    // ── Correlation proxy from VIX (market stress → correlations converge to 1) ──
+    // Fallback to currentAvgCorrelation if VIX history is unavailable
+    let corrProxy: number[];
+    if (vixHistorical.length > 0) {
+      corrProxy = vixHistorical.map(v => 0.30 + Math.min(0.65, v / 50 * 0.65));
+    } else {
+      corrProxy = Array(length).fill(currentAvgCorrelation ?? 0.5);
+    }
+
     const macroHistory = {
       vix: vixHistorical,
       yieldSpread: Array(length).fill(0),
       creditSpread: creditHistorical,
+      erpValue: erpValueProxy,
+      avgCorrelation: corrProxy,
     };
 
     return runBacktest({
@@ -106,7 +145,7 @@ export default function BacktestPanel({
       initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
       transactionCostBps: 10,
     });
-  }, [marketData, lookbackDays, rebalanceDays, currentVix, currentCreditSpread, portfolioInitialValue]);
+  }, [marketData, lookbackDays, rebalanceDays, currentVix, currentCreditSpread, portfolioInitialValue, currentErpValue, currentAvgCorrelation]);
 
   if (!marketData) {
     return (

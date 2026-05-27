@@ -1679,7 +1679,7 @@ soxRsiWeekly,
     const mcRoute = hasCovMatrix ? "✅ Multivariante (Cholesky + correlaciones reales)" : "⚠️ Univariante (fallback — sin covMatrix)";
 
     const MAX_HISTORICAL_DD = 0.50;
-    const effectiveMaxDD = Math.max(Math.abs(portfolioDrawdown), MAX_HISTORICAL_DD);
+    const effectiveMaxDD = Math.min(Math.abs(portfolioDrawdown), MAX_HISTORICAL_DD);
     const calmar = effectiveMaxDD > 0 ? annualReturn / effectiveMaxDD : 0;
     return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol, beta, alpha, mcRoute, hasCovMatrix };
   }, [portfolioVol, expectedReturn, portfolio.riskFreeRate, portfolioDrawdown, portfolio.assets, marketData?.covMatrix]);
@@ -2733,11 +2733,17 @@ soxRsiWeekly,
         currentVix={vix}
         currentCreditSpread={creditSpread}
         portfolioInitialValue={totalPortfolioValue}
+        erpValue={erpValue}
+        avgCorrelation={dynamicCovResult?.avgCorrelation}
       />
 
       {portfolioAnalytics && (
         <div style={styles.card}>
-          <h2>📊 Portfolio Analytics</h2>
+          <h2>📊 Portfolio Analytics (Forward-Looking)</h2>
+          <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "-0.3rem", marginBottom: "0.75rem" }}>
+            Estimaciones forward-looking basadas en condiciones actuales de mercado — no es backtest histórico.
+            Sharpe, Sortino y Alpha usan el expected return estimado (μ), no retornos realizados.
+          </p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "1rem" }}>
             <div style={{ background: portfolioAnalytics.sharpe >= 1 ? "#065f46" : portfolioAnalytics.sharpe >= 0.5 ? "#1e3a5f" : portfolioAnalytics.sharpe >= 0 ? "#78350f" : "#7f1d1d", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
               <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Sharpe Ratio</div>
