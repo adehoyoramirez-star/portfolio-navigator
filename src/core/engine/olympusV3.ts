@@ -681,31 +681,48 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     : CORRELATION_PANIC_CONFIG.MAX_EXPOSURE;
 
   // ================================================================
-  // 📉 CAPA 8c: ERP TRIGGER — Equity Risk Premium comprimido
+  // 📉 CAPA 8c: ERP TRIGGER — Equity-Only Cap (FIX-ERP-EQUITY)
   // ============================================================
   // Cuando el ERP cae por debajo del umbral, forzamos una reducción
-  // de exposición independientemente del régimen detectado.
-  // Esto es una señal macro que precede correcciones históricamente
-  // con alta fiabilidad (64% de acierto desde 1990 según Damodaran).
+  // de exposición SOLO en la porción EQUITY del portafolio.
+  //
+  // FIX-ERP-EQUITY (01-Jun-2026):
+  //   ANTES: el ERP capsulaba TODO el portafolio al 35%, penalizando
+  //     activos no-equity (BTC, Gold, Uranio) que no están correlacionados
+  //     con el equity risk premium del S&P 500.
+  //     Con ERP = −1.4% → totalInvested = 35% → CAGR ~13% vs Equal Weight 19%
+  //   AHORA: solo activos con earningsYield > 0 se capsulan.
+  //     Non-equity opera sin cap de ERP.
+  //     Ej: equityWeight=52%, erpMax=35% → capFactor=0.35/0.52=0.673
+  //     Non-equity 48% al 100%, equity 52% al 67.3% → total ~83%
   //
   // Lógica:
-  //   - ERP < 2.5%  → exposición máxima 60%
-  //   - ERP < 1.0%  → exposición máxima 35% (peligro extremo)
-  //   - Se aplica DESPUÉS de Alpha-Boost, tiene prioridad máxima
-  //   - No incrementa exposición si ya está por debajo del cap
+  //   - ERP < 2.5%  → equity capped al 60% del portfolio total
+  //   - ERP < 1.0%  → equity capped al 35% (peligro extremo)
+  //   - Non-equity (earningsYield === 0): sin cap por ERP
   //   - Solo se activa si erpValue fue explícitamente proporcionado
-  //     (default 0.02 sin datos no debe activar el trigger)
   const isERPTriggered = input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD;
   const isERPCritical = erpRaw < ERP_CONFIG.CRITICAL_THRESHOLD;
   const erpMaxExposure = isERPCritical ? ERP_CONFIG.CRITICAL_EXPOSURE : ERP_CONFIG.MAX_EXPOSURE;
-  const totalInvested_erp = isERPTriggered
-    ? Math.min(totalInvested_alpha, erpMaxExposure)
+
+  // Fracción equity vs non-equity de los pesos relativos
+  const equityWeight = relativeWeightsAfterCap.reduce((s, w, i) =>
+    s + (assets[i].earningsYield > 0 ? w : 0), 0);
+
+  // ERP cap factor: escala DOWN los activos equity para que equity total ≤ erpMaxExposure.
+  // Ej: equityWeight=52%, base=1.0, erpMax=35% → capFactor = 0.35/0.52 = 0.673
+  const erpCapFactor = (isERPTriggered && equityWeight > 0 && totalInvested_alpha > 0)
+    ? Math.min(1.0, erpMaxExposure / (equityWeight * totalInvested_alpha))
+    : 1.0;
+
+  // Correlation panic aplica a TODOS los activos (en pánico todo correlaciona)
+  const totalInvested_base = isCorrelationPanic
+    ? Math.min(totalInvested_alpha, corrMaxExposure)
     : totalInvested_alpha;
 
-  // Aplicar correlation panic DESPUÉS de ERP (ambos caps, el más restrictivo gana)
-  const totalInvested = isCorrelationPanic
-    ? Math.min(totalInvested_erp, corrMaxExposure)
-    : totalInvested_erp;
+  // totalInvested real: equity usa erpCapFactor, non-equity sin cap
+  const actualTotalInvested = relativeWeightsAfterCap.reduce((sum, w, i) =>
+    sum + w * totalInvested_base * (assets[i].earningsYield > 0 ? erpCapFactor : 1.0), 0);
 
   // ====== CAPA 9: DCA CONTRACÍCLICO ======
   // FIX-V5-5: warning cuando totalPortfolioValue no fue proporcionado.
@@ -731,7 +748,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     ({ asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyNormalized }, i) => {
       const relW   = relativeWeightsAfterCap[i];
       const volAdj = relW * volTarget.multiplier;        // para display (antes de tail)
-      const final  = relW * totalInvested;               // FIX-V5-2: fracción real del portafolio total
+      // FIX-ERP-EQUITY: ERP cap solo para equity, non-equity sin cap
+      const isEquityAsset = assets[i].earningsYield > 0;
+      const final  = relW * totalInvested_base * (isEquityAsset ? erpCapFactor : 1.0);
 
       return {
         name:                     asset.name,
@@ -762,7 +781,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     masterRegime,
     correlationPenalty:  corrPenalty,
     totalAllocation:     allocations.reduce((s, a) => s + a.finalAllocation, 0),
-    totalInvested,       // FIX-V5-2: exposición real (< 1.0 cuando tail/vol activos)
+    totalInvested:       actualTotalInvested, // FIX-ERP-EQUITY: refleja cap solo equity
     volTargetMultiplier: volTarget.multiplier,
     tailRiskOverlay:     tailRisk.overlay,
     tailRiskActive:      tailRisk.isActive,
