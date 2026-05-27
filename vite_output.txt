@@ -13,3 +13,8 @@ Port 5173 is in use, trying another one...
 [2m13:29:18[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/dashboard/InstitutionalDashboard.tsx, /src/core/backtest/BacktestPanel.tsx[22m
 [2m13:31:00[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/core/backtest/BacktestPanel.tsx[22m
 [2m13:31:20[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/core/backtest/BacktestPanel.tsx[22m
+[2m14:22:45[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/dashboard/InstitutionalDashboard.tsx, /src/core/backtest/BacktestPanel.tsx[22m
+[2m14:23:02[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/dashboard/InstitutionalDashboard.tsx, /src/core/backtest/BacktestPanel.tsx[22m
+[2m14:23:11[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/dashboard/InstitutionalDashboard.tsx[22m
+[2m14:23:11[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/dashboard/InstitutionalDashboard.tsx, /src/core/backtest/BacktestPanel.tsx[22m
+[2m14:23:55[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/dashboard/InstitutionalDashboard.tsx, /src/core/backtest/BacktestPanel.tsx[22m

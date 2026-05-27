@@ -29,6 +29,7 @@ export interface RegimeTacticalWeights {
   maxSingleAsset: number;        // cap individual (default: 0.25)
   maxTechCryptoCluster: number;  // cap BTC+XNAS+VVSM (default: 0.40)
   kellyCapOverride: number;      // cap Kelly en este régimen
+  blendToTacticalRatio: number;  // blend 0-1: 0=más táctico, 1=más cuantitativo
   description: string;
 }
 
@@ -51,6 +52,7 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
     maxSingleAsset: 0.30,
     maxTechCryptoCluster: 0.65,     // BTC+XNAS+VVSM ≤ 65% — benchmark tiene 42.87%, damos margen
     kellyCapOverride: 0.25,         // Kelly cap 25% — permite BTC hasta ~20-22% post-restricciones
+    blendToTacticalRatio: 0.30,     // 70% táctico — más agresivo: BTC 22%, NASDAQ 18%, semis 12%
     description: 'Cartera crecimiento agresivo: BTC 22% objetivo, 1% cash, cluster cap 65%',
   },
 
@@ -75,6 +77,7 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
     maxSingleAsset: 0.30,
     maxTechCryptoCluster: 0.38,     // BTC+XNAS+VVSM ≤ 38% (era 25%)
     kellyCapOverride: 0.18,         // Kelly subido de 0.15 — más capacidad en crecimiento
+    blendToTacticalRatio: 0.50,     // 50/50 — balance entre protección y crecimiento
     description: 'Cartera equilibrada CONTRACTION: quality+gold moderados, tech/crypto 38%, 0% cash forzado',
   },
 
@@ -96,6 +99,7 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
     maxSingleAsset: 0.30,
     maxTechCryptoCluster: 0.15,     // BTC+XNAS+VVSM ≤ 15% — mínimo en crisis
     kellyCapOverride: 0.08,         // Kelly máximo 8% en CRISIS
+    blendToTacticalRatio: 0.70,     // 70% cuantitativo — más conservador: gold y quality dominan
     description: 'Cartera supervivencia: 40% gold + 35% cash, BTC 5%, cluster cap 15%',
   },
 };
@@ -126,16 +130,21 @@ export function applyTacticalConstraints(
   blendNorm: number[],
   tacticalWeights: number[],
   regime: string,
-  blendToTacticalRatio = 0.50,  // 50% optimización, 50% táctico — balance entre pesos cuantitativos y tácticos
-  // Code Review: 0.40 daba demasiado peso a pesos manuales vs optimización cuantitativa.
-  // 0.50 mantiene ~13.5% BTC (vs benchmark 14.29%) mientras preserva la influencia de BL+HRP+MinVar.
+  blendToTacticalRatio?: number,  // Opcional — si no se pasa, se lee del config por régimen
 ): number[] {
   const tacticalConfig = REGIME_TACTICAL_ALLOCATIONS[regime]
     ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];
 
-  // Blend: optimización cuantitativa + restricción táctica de régimen
+  // FIX-BIMODAL (30-May-2026): blendToTacticalRatio ahora es dinámico por régimen.
+  // EXPANSION: 0.30 → 70% táctico (más agresivo, BTC 22% guía)
+  // CONTRACTION: 0.50 → 50/50 balance
+  // CRISIS: 0.70 → 70% cuantitativo (más conservador, gold/quality pesan menos)
+  // Si no se pasa el ratio, se obtiene del config del régimen.
+  const effectiveBlendRatio = blendToTacticalRatio
+    ?? (REGIME_TACTICAL_ALLOCATIONS[regime]?.blendToTacticalRatio ?? 0.50);
+
   const blended = blendNorm.map((w, i) =>
-    w * blendToTacticalRatio + tacticalWeights[i] * (1 - blendToTacticalRatio)
+    w * effectiveBlendRatio + tacticalWeights[i] * (1 - effectiveBlendRatio)
   );
 
   // Normalizar

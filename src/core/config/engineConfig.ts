@@ -210,6 +210,30 @@ export const FACTOR_CONFIG = {
   EXPECTED_RETURN_MAX: 0.80,
 } as const;
 
+// ── FACTOR WEIGHTS DINÁMICOS POR RÉGIMEN ──────────────────────────────────
+// FIX-BIMODAL (30-May-2026): Factor weights cambian según el régimen macro.
+// EXPANSION: máximo momentum (perseguir tendencia alcista), mínimo quality.
+// CONTRACTION: quality como ancla, momentum reducido (no perseguir falsos rebotes).
+// CRISIS: quality + lowVol dominan (preservación de capital), momentum mínimo.
+export function getFactorWeightsByRegime(regime: string): {
+  momentum: number;
+  value: number;
+  quality: number;
+  lowVol: number;
+} {
+  const r = (regime || '').toUpperCase();
+  if (r === 'EXPANSION') {
+    return { momentum: 0.55, value: 0.20, quality: 0.10, lowVol: 0.15 };
+  }
+  if (r === 'CONTRACTION') {
+    return { momentum: 0.30, value: 0.25, quality: 0.30, lowVol: 0.15 };
+  }
+  if (r === 'CRISIS') {
+    return { momentum: 0.15, value: 0.20, quality: 0.35, lowVol: 0.30 };
+  }
+  return { ...FACTOR_CONFIG.DEFAULT_WEIGHTS };
+}
+
 // ── BLACK-LITTERMAN ───────────────────────────────────────────────────────
 export const BL_CONFIG = {
   RISK_AVERSION: 2.5,

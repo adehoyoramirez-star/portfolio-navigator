@@ -275,7 +275,11 @@ function resolveRegime(a: MasterRegimeLabel, b: MasterRegimeLabel): MasterRegime
 
 function getBinaryPenalty(regime: MasterRegimeLabel): number {
   if (regime === "CRISIS")      return 0.4;
-  if (regime === "CONTRACTION") return 0.80;  // subido de 0.70 — menos penalización en contracciones suaves
+  // FIX-BIMODAL (30-May-2026): Binary penalty bajado de 0.80→0.70.
+  // Con los pesos tácticos más equilibrados y factor weights dinámicos,
+  // podemos permitir que CONTRACTION sea más defensivo sin lastrar el CAGR.
+  // El penalty combinado (40% binario + 60% continuo) será ~0.78 en vez de ~0.86.
+  if (regime === "CONTRACTION") return 0.70;
   return 1.0;
 }
 

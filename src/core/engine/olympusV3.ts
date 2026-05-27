@@ -68,7 +68,7 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
-import { FACTOR_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG } from "../config/engineConfig";
+import { FACTOR_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, getFactorWeightsByRegime } from "../config/engineConfig";
 // FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
 import {
   getTacticalWeights,
@@ -411,7 +411,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     const quality = calculateQuality(asset as QualityInput, qualityStats);
     const lowVol  = calculateLowVol(asset, lowVolStats);
 
-    const fw = input.adaptiveFactorWeights ?? FACTOR_CONFIG.DEFAULT_WEIGHTS;
+    // FIX-BIMODAL (30-May-2026): Factor weights dinámicos por régimen.
+    // Si el usuario pasa adaptiveFactorWeights explícito, se respeta.
+    // Si no, se usan los weights dinámicos según el régimen detectado.
+    const fw = input.adaptiveFactorWeights ?? getFactorWeightsByRegime(masterRegime.regime);
     const calibrated = calibrateExpectedReturn({
       momentumScore: momentum.momentumScore,
       valueScore:    value.valueScore,
