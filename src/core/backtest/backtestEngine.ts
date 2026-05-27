@@ -14,21 +14,10 @@
 
 import { ASSETS } from "../../lib/constants";
 import { dailyReturns, mean, variance } from "../../lib/stats";
-import { calculateMomentum } from "../factors/momentum";
-import { calculateValue, computeUniverseStats } from "../factors/value";
-import { calculateQuality, computeQualityUniverseStats } from "../factors/quality";
-import { calculateLowVol, computeLowVolUniverseStats } from "../factors/lowVolatility";
-import { calibrateExpectedReturn } from "../factors/factorCalibration";
-import { calculateKelly } from "../portfolio/kelly";
-import { correlationPenalty } from "../portfolio/correlation";
-import { computeHRP } from "../risk/hrp";
-import { runBlackLitterman } from "../portfolio/blackLitterman";
-import { getTacticalWeights, applyTacticalConstraints, enforceClusterCap } from "../engine/regimeTacticalAllocation";
-import { computeTailRiskOverlay } from "../risk/tailRisk";
-import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
 import { ledoitWolfCovariance } from "../data/volatility";
-import { getMasterRegime, MasterRegimeInput } from "../macro/masterRegime";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
+import { runOlympusEngine } from "../engine/olympusV3";
+import type { AssetInput } from "../engine/olympusV3";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
@@ -278,14 +267,14 @@ function computeAssetFactors(
   const window = closes.slice(Math.max(0, t - lookbackDays), t);
   const dailyRet = dailyReturns(window);
   const vol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * 252)) : 0.25;
-  return { returns12m: r12m, returns3m: r3m, returns1m: r1m, volatility: vol, earningsYield: 0 };
+  return { returns12m: r12m, returns3m: r3m, returns1m: r1m, volatility: vol, earningsYield: 0, ticker, name: ticker };
 }
 
-// ── Asignación táctica real (réplica de olympusV3) ─────────────────────
-// Mejorada: usa masterRegime completo (crisis.ts + globalStress +
-// regimeProbabilistic + CEWS + hysteresis) en lugar de VIX-only.
-// Si los campos opcionales (move, dxyTrend, btcVol, wtiOil) no están
-// disponibles, fallback a VIX-only para compatibilidad hacia atrás.
+// ── Asignación táctica real (usando runOlympusEngine) ──────────────────
+// BUG-D FIX: Ahora delega al motor real en vez de duplicar la lógica.
+// El backtest siempre refleja fielmente el comportamiento del motor.
+// Para macro data faltante (move/dxyTrend/btcVol), usa proxies razonables
+// para que el masterRegime siempre opere en modo completo.
 function computeAllocationsWithRegime(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
@@ -316,244 +305,80 @@ function computeAllocationsWithRegime(
   stressScore: number;
   cewsPoint?: CEWSDataPoint;
 } {
-  // Usar masterRegime completo si hay datos suficientes
-  // Si faltan campos opcionales clave, fallback a VIX simplificado
-  const hasFullMacro = macro.move !== undefined && macro.dxyTrend !== undefined &&
-    macro.btcVol !== undefined;
+  // ── 1. Construir AssetInput[] desde datos históricos ──
+  const n = ASSETS.length;
+  const assets: AssetInput[] = ASSETS.map(ticker => {
+    const fact = computeAssetFactors(ticker, closesHistory, backtestTickers, t, lookbackDays);
+    return {
+      name: ticker,
+      ticker,
+      returns12m: fact.returns12m,
+      returns3m: fact.returns3m,
+      returns1m: fact.returns1m,
+      earningsYield: fact.earningsYield,
+      volatility: fact.volatility,
+    };
+  });
 
-  // ERP value for this timestep (for the ERP trigger)
-  // Passed down so computeAllocationsWithRegime can apply the cap
-  const erpValue = macro.erpValue;
+  // ── 2. Covarianza y correlación ──
+  const { covMatrix, corrMatrix } = computeWindowCovAndCorr(closesHistory, backtestTickers, t, 63);
 
-  let regime: BacktestRegime;
-  let regimePenalty: number;
-  let stressScore: number;
-  let cewsPoint: CEWSDataPoint | undefined;
+  // ── 3. Portfolio vol estimada (para engine) ──
+  const equalW = assets.map(() => 1 / n);
+  const portfolioVol = estimatePortfolioVolatility(
+    Object.fromEntries(ASSETS.map((t, i) => [t, equalW[i]])),
+    covMatrix
+  );
 
-  if (hasFullMacro) {
-    const masterInput: MasterRegimeInput = {
+  // ── 4. CEWS point para tracking ──
+  const cewsPoint = buildCEWSPoint(
+    macro.vix, macro.yieldSpread, macro.creditSpread, macro.m2Growth ?? 2
+  );
+  const updatedCews = cewsHistory
+    ? [...cewsHistory, cewsPoint].slice(-168)
+    : [cewsPoint];
+
+  // ── 5. Ejecutar motor real — runOlympusEngine ──
+  // Esto reemplaza TODO el código duplicado: factor scores, Kelly, HRP, BL,
+  // MinVar, blend, weights tácticos con blendToTacticalRatio dinámico,
+  // cluster cap, vol target, tail risk, Alpha-Boost, ERP trigger,
+  // correlation panic, BTC cap dinámico, etc.
+  const engineOutput = runOlympusEngine({
+    assets,
+    correlationMatrix: corrMatrix,
+    macro: {
       vix: macro.vix,
       yieldSpread: macro.yieldSpread,
       creditSpread: macro.creditSpread,
-      move: macro.move!,
-      dxyTrend: macro.dxyTrend!,
-      btcVol: macro.btcVol!,
+      move: macro.move ?? (macro.vix * 4.5 + 20),
+      dxyTrend: macro.dxyTrend ?? 0,
+      btcVol: macro.btcVol ?? 0.5,
       m2Growth: macro.m2Growth ?? 2,
       wtiOil: macro.wtiOil,
-    };
-    // Construir CEWS point desde los datos actuales
-    cewsPoint = buildCEWSPoint(
-      macro.vix,
-      macro.yieldSpread,
-      macro.creditSpread,
-      macro.m2Growth ?? 2
-    );
-    const updatedCews = cewsHistory
-      ? [...cewsHistory, cewsPoint].slice(-168)
-      : [cewsPoint];
-    const masterResult = getMasterRegime(masterInput, updatedCews, regimeHistory);
-    regime = masterResult.regime as BacktestRegime;
-    regimePenalty = masterResult.regimePenalty;
-    stressScore = masterResult.stressDetail.score;
-  } else {
-    // Fallback: VIX-only (compatible con datos antiguos)
-    if (macro.vix > 35) regime = "CRISIS";
-    else if (macro.vix > 25) regime = "CONTRACTION";
-    else regime = "EXPANSION";
-    regimePenalty = regime === "CRISIS" ? 0.4 : regime === "CONTRACTION" ? 0.7 : 1.0;
-    stressScore = regime === "CRISIS" ? 8 : regime === "CONTRACTION" ? 4 : 1;
-  }
-  const n = ASSETS.length;
-
-  // 1. Factores por activo
-  const assetFactors = ASSETS.map(ticker => {
-    const fact = computeAssetFactors(ticker, closesHistory, backtestTickers, t, lookbackDays);
-    return { ticker, ...fact };
+    },
+    covMatrix: covMatrix.length > 0 ? covMatrix : undefined,
+    portfolioDrawdown,
+    portfolioRealizedVol: portfolioVol,
+    erpValue: macro.erpValue,
+    cewsHistory: updatedCews,
+    regimeHistory,
+    avgCorrelation: macro.avgCorrelation,
   });
 
-  // 2. Scores de factores
-  const universeStats = computeUniverseStats(assetFactors.map(a => ({ earningsYield: a.earningsYield })));
-  const qualityInputs = assetFactors.map(a => ({
-    volatility: a.volatility,
-    returns12m: a.returns12m,
-    returns3m: a.returns3m,
-    returns1m: a.returns1m,
-    // FIX BUG-3: IS3Q.DE (MSCI World Quality) recibe bonus de calidad explícito
-    isQualityFactor: a.ticker === 'IS3Q.DE',
-  }));
-  const qualityStats = computeQualityUniverseStats(qualityInputs);
-  const lowVolStats = computeLowVolUniverseStats(assetFactors.map(a => ({
-    volatility: a.volatility,
-    returns12m: a.returns12m,
-    returns3m: a.returns3m,
-  })));
-
-  const rawScores = assetFactors.map((af, idx) => {
-    const momentum = calculateMomentum({ returns12m: af.returns12m, returns1m: af.returns1m, returns3m: af.returns3m });
-    const value = calculateValue({ earningsYield: af.earningsYield }, universeStats);
-    const quality = calculateQuality(qualityInputs[idx], qualityStats);
-    const lowVol = calculateLowVol(af, lowVolStats);
-    const calibrated = calibrateExpectedReturn({
-      momentumScore: momentum.momentumScore,
-      valueScore: value.valueScore,
-      qualityScore: quality.qualityScore,
-      lowVolScore: lowVol.lowVolScore + lowVol.downsideVolPenalty,
-    });
-    return { ticker: af.ticker, expectedReturn: calibrated.expectedReturn, volatility: af.volatility, momentum, value, quality, lowVol };
+  // ── 6. Extraer allocations del engine output ──
+  const allocations: Record<string, number> = {};
+  engineOutput.allocations.forEach(a => {
+    allocations[a.name] = a.finalAllocation;
   });
 
-  // 3. Covarianza y correlación
-  const { covMatrix, corrMatrix } = computeWindowCovAndCorr(closesHistory, backtestTickers, t, 63);
-  const corrPen = correlationPenalty(corrMatrix);
-
-  // 4. Kelly fractions
-  const kellyFractions = rawScores.map(s => {
-    const kelly = calculateKelly({ expectedReturn: s.expectedReturn, volatility: s.volatility });
-    const alloc = kelly.kellyFraction * corrPen;
-    return Math.max(0, isFinite(alloc) ? alloc : 0);
-  });
-  const totalKelly = kellyFractions.reduce((s, v) => s + v, 0);
-  const kellyNorm = totalKelly > 0 ? kellyFractions.map(k => k / totalKelly) : ASSETS.map(() => 1 / n);
-
-  // 5. HRP
-  const hrpResult = computeHRP(covMatrix, n);
-  const hrpWeights = hrpResult.weights;
-
-  // 6. Mínima varianza
-  const minVarW = minimumVarianceWeights(covMatrix, n);
-
-  // 7. Black-Litterman (sin views)
-  // FIX BUG-6: BL sin views con marketWeights = 1/n degenera a ejercico matemático
-  // sin significado económico. Usamos pesos uniformes directamente.
-  const blWeights = ASSETS.map(() => 1 / n);
-
-  // 8. Blend Dinámico (Slicing de Blend)
-  const useAggressiveBlend = regime === "EXPANSION";
-  const currentBlend = useAggressiveBlend
-    ? (covMatrix.length > 0 ? BLEND_WEIGHTS.WITH_COV.AGGRESSIVE : BLEND_WEIGHTS.WITHOUT_COV.AGGRESSIVE)
-    : (covMatrix.length > 0 ? BLEND_WEIGHTS.WITH_COV.CONSERVATIVE : BLEND_WEIGHTS.WITHOUT_COV.CONSERVATIVE);
-
-  const blendWeights = ASSETS.map((_, i) => {
-    if (covMatrix.length > 0) {
-      const b = currentBlend as any;
-      return blWeights[i] * b.BL + hrpWeights[i] * b.HRP + minVarW[i] * b.MIN_VAR;
-    } else {
-      const b = currentBlend as any;
-      return kellyNorm[i] * b.KELLY + hrpWeights[i] * b.HRP;
-    }
-  });
-  const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
-  const blendNorm = blendWeights.map(w => w / totalBlend);
-
-  // 9. Capa táctica
-  const tacticalWeights = getTacticalWeights(regime, ASSETS.map(t => ({ name: t })));
-  const blendedWithTactical = applyTacticalConstraints(blendNorm, tacticalWeights, regime, 0.60);
-  const finalWeightsBeforeCap = enforceClusterCap(blendedWithTactical, ASSETS.map(t => ({ name: t })), regime);
-
-  // 10. Pesos relativos (suman 1)
-  const totalTactical = finalWeightsBeforeCap.reduce((s, w) => s + w, 0) || 1;
-  const relativeWeights = finalWeightsBeforeCap.map(w => w / totalTactical);
-
-  // 11. Vol target con regimePenalty desde masterRegime (continuo [0.4-1.0])
-  const portfolioVol = estimatePortfolioVolatility(
-    Object.fromEntries(ASSETS.map((t, i) => [t, relativeWeights[i]])),
-    covMatrix
-  );
-  const volTarget = computeVolTargetMultiplier({
-    targetVol: DEFAULT_TARGET_VOL,
-    realizedVol: portfolioVol,
-    regimePenalty, // ya calculado desde masterRegime arriba
-  });
-
-  // 12. Tail risk (drawdown, VIX, credit spread) con stressScore desde masterRegime
-  const tailRisk = computeTailRiskOverlay({
-    drawdown: portfolioDrawdown,
-    vix: macro.vix,
-    creditSpread: macro.creditSpread,
-    stressScore, // ya calculado desde masterRegime arriba
-    portfolioVolatility: portfolioVol,
-    avgCorrelation: 0.5,
-  });
-
-  // 13. Exposición total con ALPHA-BOOST
-  const totalInvested_raw = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
-
-  // Alpha Mode Trigger: EXPANSION + BTC Momentum (Strong Buy) + Liquidez Positiva
-  const btcTicker = ASSETS.find(t => t.includes('BTC'));
-  const btcCloses = closesHistory[backtestTickers[btcTicker!]] ?? [];
-  const btcRet1m = btcCloses.length > 21 ? btcCloses[btcCloses.length - 1] / btcCloses[btcCloses.length - 21] - 1 : 0;
-  const isStrongBuy = btcRet1m > 0.10; // Proxy para STRONG_BUY
-
-  const isAlphaMode = (
-    regime === "EXPANSION" &&
-    isStrongBuy &&
-    (macro.m2Growth ?? 0) > 0
-  );
-  const totalInvested_alpha = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
-
-  // 📉 ERP TRIGGER: Equity Risk Premium comprimido
-  // Solo se activa si hay datos de ERP disponibles
-  const ERP_TRIGGER_THRESHOLD = 0.025;   // 2.5%
-  const ERP_MAX_EXPOSURE = 0.60;          // 60% cap
-  const ERP_CRITICAL_THRESHOLD = 0.010;   // 1.0% — peligro extremo
-  const ERP_CRITICAL_EXPOSURE = 0.35;     // 35% cap
-  const isERPTriggered = macro.erpValue !== undefined && macro.erpValue < ERP_TRIGGER_THRESHOLD;
-  const isERPCritical = macro.erpValue !== undefined && macro.erpValue < ERP_CRITICAL_THRESHOLD;
-  const erpMaxExposure = isERPCritical ? ERP_CRITICAL_EXPOSURE : ERP_MAX_EXPOSURE;
-  const totalInvested_erp = isERPTriggered
-    ? Math.min(totalInvested_alpha, erpMaxExposure)
-    : totalInvested_alpha;
-
-  // 📉 CORRELATION PANIC: convergencia de correlaciones
-  // Misma lógica que olympusV3.ts CAPA 8c
-  const CORR_PANIC_THRESHOLD = 0.85;
-  const CORR_PANIC_EXPOSURE = 0.50;
-  const CORR_CRITICAL_THRESHOLD = 0.95;
-  const CORR_CRITICAL_EXPOSURE = 0.35;
-  const isCorrelationPanic = macro.avgCorrelation !== undefined &&
-    macro.avgCorrelation > CORR_PANIC_THRESHOLD;
-  const isCorrelationCritical = macro.avgCorrelation !== undefined &&
-    macro.avgCorrelation > CORR_CRITICAL_THRESHOLD;
-  const corrMaxExposure = isCorrelationCritical
-    ? CORR_CRITICAL_EXPOSURE
-    : CORR_PANIC_EXPOSURE;
-  const totalInvested = isCorrelationPanic
-    ? Math.min(totalInvested_erp, corrMaxExposure)
-    : totalInvested_erp;
-
-  // 14. BTC Dynamic Cap
-  const mvrvProxy = 1.5 + (btcRet1m * 2); // Proxy simple para MVRV en backtest
-  let dynamicBtcCap = 0.20;
-  if (isStrongBuy && mvrvProxy < 3.0) {
-    dynamicBtcCap = 0.35;
-  } else if (mvrvProxy > 3.5) {
-    dynamicBtcCap = 0.10;
-  }
-
-  const relativeWeightsAfterCap = [...relativeWeights];
-  const btcIdx = relativeWeightsAfterCap.findIndex((_, i) => ASSETS[i].includes('BTC'));
-  if (btcIdx >= 0 && relativeWeightsAfterCap[btcIdx] > dynamicBtcCap) {
-    const excess = relativeWeightsAfterCap[btcIdx] - dynamicBtcCap;
-    relativeWeightsAfterCap[btcIdx] = dynamicBtcCap;
-    const otherTotal = relativeWeightsAfterCap.reduce((s, w, i) => i !== btcIdx ? s + w : s, 0);
-    if (otherTotal > 0) {
-      relativeWeightsAfterCap.forEach((_, i) => {
-        if (i !== btcIdx) relativeWeightsAfterCap[i] += excess * (relativeWeightsAfterCap[i] / otherTotal);
-      });
-    }
-  }
-  const relCapTotal = relativeWeightsAfterCap.reduce((s, w) => s + w, 0) || 1;
-  relativeWeightsAfterCap.forEach((_, i) => { relativeWeightsAfterCap[i] /= relCapTotal; });
-
-  // 15. Asignaciones finales
-  const finalAllocations: Record<string, number> = {};
-  ASSETS.forEach((ticker, i) => {
-    finalAllocations[ticker] = relativeWeightsAfterCap[i] * totalInvested;
-  });
-
-  const cash = 1 - (ASSETS.reduce((s, t) => s + finalAllocations[t], 0));
-
-  return { allocations: finalAllocations, regime, cash, regimePenalty, stressScore, cewsPoint };
+  return {
+    allocations,
+    regime: engineOutput.regime as BacktestRegime,
+    cash: Math.max(0, 1 - engineOutput.totalInvested),
+    regimePenalty: engineOutput.masterRegime.regimePenalty,
+    stressScore: engineOutput.masterRegime.stressDetail.score,
+    cewsPoint,
+  };
 }
 
 // ── Bucle principal del backtest ───────────────────────────────────────

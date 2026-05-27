@@ -97,5 +97,51 @@ export function buildMacroHistoryFromCSV(csvData: CSVBacktestData, length: numbe
     return Math.max(-0.03, Math.min(0.05, earningsYield - riskFree));
   });
   const avgCorrelation = vix.map(v => 0.30 + Math.min(0.65, v / 50 * 0.65));
-  return { vix, yieldSpread, creditSpread, erpValue, avgCorrelation };
+
+  // ── btcVol: volatilidad realizada de BTC desde precios CSV ──
+  const btcPrices = csvData.closesHistory['BTC-EUR']?.slice(-length) ?? [];
+  const btcVol: number[] = [];
+  const VOL_WINDOW = 63; // ~3 meses hábiles
+  for (let i = 0; i < btcPrices.length; i++) {
+    if (i < VOL_WINDOW + 1 || btcPrices[i] <= 0 || btcPrices[i - 1] <= 0) {
+      btcVol.push(0.50); // fallback 50%
+      continue;
+    }
+    let sumLog = 0, sumLog2 = 0;
+    let count = 0;
+    for (let j = i - VOL_WINDOW; j <= i; j++) {
+      if (btcPrices[j] > 0 && btcPrices[j - 1] > 0) {
+        const ret = Math.log(btcPrices[j] / btcPrices[j - 1]);
+        sumLog += ret;
+        sumLog2 += ret * ret;
+        count++;
+      }
+    }
+    if (count < 20) {
+      btcVol.push(0.50);
+    } else {
+      const mean = sumLog / count;
+      const variance = sumLog2 / count - mean * mean;
+      btcVol.push(Math.max(0.20, Math.min(2.0, Math.sqrt(variance * 252))));
+    }
+  }
+
+  // ── move: proxy desde VIX (relación empírica MOVE ≈ VIX × 4.5 + 20) ──
+  const move = vix.map(v => Math.max(40, Math.min(300, v * 4.5 + 20)));
+
+  // ── dxyTrend: proxy desde cambios en yield spread ──
+  // Cuando yield spread se amplía (empinamiento) → USD suele fortalecerse
+  // Usamos el gradiente suavizado del yield spread como proxy
+  const dxyTrend: number[] = [];
+  const DXY_WINDOW = 21;
+  for (let i = 0; i < yieldSpread.length; i++) {
+    if (i < DXY_WINDOW) {
+      dxyTrend.push(0);
+    } else {
+      const change = yieldSpread[i] - yieldSpread[i - DXY_WINDOW];
+      dxyTrend.push(Math.max(-0.05, Math.min(0.05, change * 0.05)));
+    }
+  }
+
+  return { vix, yieldSpread, creditSpread, erpValue, avgCorrelation, btcVol, move, dxyTrend };
 }

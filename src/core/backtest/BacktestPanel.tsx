@@ -114,7 +114,10 @@ export default function BacktestPanel({
         const mean = window.reduce((s, v) => s + v, 0) / window.length;
         const variance = window.reduce((s, v) => s + (v - mean) ** 2, 0) / window.length;
         const annualVol = Math.sqrt(variance * 252);
-        computed.push(Math.max(10, Math.min(80, annualVol * 100)));
+        // Añadir prima de riesgo de volatilidad: VIX ≈ realized_vol + 3-5pts
+        // En periodos de baja vol (<15) la brecha es menor; en alta (>30) se amplía
+        const vrp = Math.max(2, Math.min(8, annualVol * 100 * 0.08 + 2));
+        computed.push(Math.max(10, Math.min(80, annualVol * 100 + vrp)));
       }
       while (computed.length < targetLen) computed.unshift(currentVix);
       return computed.slice(-targetLen);
@@ -135,9 +138,30 @@ export default function BacktestPanel({
     }
     const creditHistorical = buildCreditProxy(vixHistorical);
 
+    // ── Yield curve proxy from ^TNX (10y) - ^IRX (13wk) ──
+    // El yield spread (empinamiento/achatamiento) es entrada clave para masterRegime
+    const tnxCloses = marketData.closesHistory['^TNX'] ?? [];
+    const irxCloses = marketData.closesHistory['^IRX'] ?? [];
+    let yieldHistorical: number[];
+    if (tnxCloses.length > 0) {
+      const paddedTnx = [...tnxCloses];
+      while (paddedTnx.length < length) paddedTnx.unshift(paddedTnx[0] ?? 4.0);
+      const tnxValues = paddedTnx.slice(-length);
+      if (irxCloses.length > 0) {
+        const paddedIrx = [...irxCloses];
+        while (paddedIrx.length < length) paddedIrx.unshift(paddedIrx[0] ?? 4.0);
+        const irxValues = paddedIrx.slice(-length);
+        yieldHistorical = tnxValues.map((tnx, i) => Math.max(-1, Math.min(5, tnx - irxValues[i])));
+      } else {
+        // Fallback: TNX - 2.5% como proxy de yield spread histórica
+        yieldHistorical = tnxValues.map(tnx => Math.max(-1, Math.min(5, tnx - 2.5)));
+      }
+    } else {
+      yieldHistorical = Array(length).fill(0);
+    }
+
     // ── ERP proxy from IS3Q.DE (contra-cyclical earnings yield) + ^TNX (risk-free) ──
     const is3qCloses = marketData.closesHistory['IS3Q.DE'] ?? [];
-    const tnxCloses = marketData.closesHistory['^TNX'] ?? [];
     const erpValueProxy: number[] = [];
     if (is3qCloses.length > 0 || tnxCloses.length > 0) {
       const paddedIs3q = [...is3qCloses];
@@ -170,7 +194,7 @@ export default function BacktestPanel({
 
     const macroHistory = {
       vix: vixHistorical,
-      yieldSpread: Array(length).fill(0),
+      yieldSpread: yieldHistorical,
       creditSpread: creditHistorical,
       erpValue: erpValueProxy,
       avgCorrelation: corrProxy,
