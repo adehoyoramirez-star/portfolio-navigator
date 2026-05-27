@@ -22,3 +22,4 @@ Port 5173 is in use, trying another one...
 [2m14:53:45[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/core/backtest/BacktestPanel.tsx[22m
 [2m14:54:33[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/core/backtest/BacktestPanel.tsx, /src/dashboard/InstitutionalDashboard.tsx[22m
 [2m14:57:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/core/backtest/BacktestPanel.tsx, /src/dashboard/InstitutionalDashboard.tsx[22m
+[2m15:09:10[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/core/backtest/BacktestPanel.tsx[22m
