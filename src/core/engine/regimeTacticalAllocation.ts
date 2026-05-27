@@ -54,24 +54,28 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
     description: 'Cartera crecimiento agresivo: BTC 22% objetivo, 1% cash, cluster cap 65%',
   },
 
+  // FIX-CAGR-BOOST (28-May-2026): Cartera más equilibrada en CONTRACTION.
+  // cash forzado ELIMINADO (era 10%) — ese 10% ganaba 0% siempre, lastrando CAGR.
+  // Quality bajado 30%→25%, Gold bajado 20%→15% — menos sobreponderación defensiva.
+  // BTC subido 10%→13%, NASDAQ subido 10%→13%, Semis subido 10%→12% — más crecimiento.
+  // EM subido 8%→10% — small cap value con buen momentum.
+  // cluster cap subido de 25%→38% para acomodar los nuevos pesos.
   CONTRACTION: {
-    // Cartera defensiva — CAMBIO REAL de composición, no solo escala
-    // FIX-OVERPERF: cash forzado 20%→10% (demasiado lastre para contracciones cortas)
-    // cluster cap subido 17%→25% para no malvender en correcciones técnicas
+    // Cartera equilibrada — menos defensiva, mantiene protección pero captura crecimiento
     weights: {
-      'IS3Q.DE':  0.30,   // quality factor — protección en contracción
-      'PPFB.DE':  0.20,   // oro — rally en incertidumbre macro
+      'IS3Q.DE':  0.25,   // quality — bajado de 0.30, sigue siendo el ancla defensiva
+      'PPFB.DE':  0.15,   // oro — bajado de 0.20, suficiente cobertura macro
       'URNU.DE':  0.12,   // uranio — tesis independiente del ciclo
-      'EMXC.DE':  0.08,   // EM — reducido, sensible al ciclo
-      'BTC-EUR':  0.10,   // BTC — moderado (era 0.07, no malvender en dips)
-      'XNAS.DE':  0.10,   // Nasdaq — moderado (era 0.07)
-      'VVSM.DE':  0.10,   // semis — moderado (era 0.03)
+      'EMXC.DE':  0.10,   // EM — subido de 0.08, value/momentum favorable
+      'BTC-EUR':  0.13,   // BTC — subido de 0.10, correlación decreciente con equities
+      'XNAS.DE':  0.13,   // Nasdaq — subido de 0.10, quality tech hold
+      'VVSM.DE':  0.12,   // semis — subido de 0.10, ciclo AI estructural
     },
-    cashReserveForced: 0.10,        // 10% cash obligatorio (era 20%)
+    cashReserveForced: 0.00,        // ELIMINADO: 0% cash forzado (era 10%)
     maxSingleAsset: 0.30,
-    maxTechCryptoCluster: 0.25,     // BTC+XNAS+VVSM ≤ 25% (era 17%)
-    kellyCapOverride: 0.15,         // Kelly máximo 15% en CONTRACTION (era 12%)
-    description: 'Cartera defensiva moderada: quality+gold dominan, tech/crypto reducidos, 10% cash',
+    maxTechCryptoCluster: 0.38,     // BTC+XNAS+VVSM ≤ 38% (era 25%)
+    kellyCapOverride: 0.18,         // Kelly subido de 0.15 — más capacidad en crecimiento
+    description: 'Cartera equilibrada CONTRACTION: quality+gold moderados, tech/crypto 38%, 0% cash forzado',
   },
 
   CRISIS: {

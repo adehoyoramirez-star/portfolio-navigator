@@ -188,11 +188,15 @@ export const FACTOR_CONFIG = {
   //   quality:  0.20 (sube de 0.15 — quality es el factor más robusto OOS)
   //   lowVol:   0.15 (sube de 0.10 — lowVol protege en regímenes de alta vol)
   // Ver: walkforward_optimal_v5plus.csv
+  // FIX-CAGR-BOOST (28-May-2026): Pesos recalibrados para mejorar CAGR
+  // momentum subido 0.40→0.45 — captura mejor las tendencias alcistas
+  // quality bajado 0.20→0.15 — reduce sesgo defensivo que lastra el CAGR
+  // value y lowVol sin cambios
   DEFAULT_WEIGHTS: {
-    momentum: 0.40,
-    value:    0.25,
-    quality:  0.20,
-    lowVol:   0.15,
+    momentum: 0.45,   // subido de 0.40 — más tendencia, captura rallies
+    value:    0.25,   // igual
+    quality:  0.15,   // bajado de 0.20 — menos sesgo defensivo
+    lowVol:   0.15,   // igual
   },
 
   FACTOR_PREMIUMS: {

@@ -275,7 +275,7 @@ function resolveRegime(a: MasterRegimeLabel, b: MasterRegimeLabel): MasterRegime
 
 function getBinaryPenalty(regime: MasterRegimeLabel): number {
   if (regime === "CRISIS")      return 0.4;
-  if (regime === "CONTRACTION") return 0.7;
+  if (regime === "CONTRACTION") return 0.80;  // subido de 0.70 — menos penalización en contracciones suaves
   return 1.0;
 }
 

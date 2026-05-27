@@ -1,9 +1,10 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/BacktestPanel.tsx
 // CORREGIDO: IIFE para forzar recálculo del backtest
+// + Soporte CSV local (11 años de datos)
 // ===============================================
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, AreaChart, Area,
@@ -11,6 +12,7 @@ import {
 import { runBacktest, BacktestOutput, BacktestMetrics, RegimeMetrics, PROXY_MAP } from "./backtestEngine";
 import { MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
+import { loadCSVBacktestData, buildMacroHistoryFromCSV, CSVBacktestData } from "@/lib/csvBacktestProvider";
 
 interface BacktestPanelProps {
   marketData: MarketData | null;
@@ -40,19 +42,57 @@ export default function BacktestPanel({
   const [rebalanceDays, setRebalanceDays] = useState(126);
   const [lookbackDays, setLookbackDays]   = useState(252);
   const [activeTab, setActiveTab]         = useState<"equity" | "regime" | "rolling">("equity");
+  const [dataSource, setDataSource]       = useState<"yahoo" | "csv">("yahoo");
+  const [csvData, setCsvData]             = useState<CSVBacktestData | null>(null);
+  const [csvLoading, setCsvLoading]       = useState(false);
+
+  // Load CSV data when dataSource switches to "csv"
+  useEffect(() => {
+    if (dataSource === "csv" && !csvData && !csvLoading) {
+      setCsvLoading(true);
+      loadCSVBacktestData()
+        .then(data => {
+          setCsvData(data);
+          setCsvLoading(false);
+          console.log('[BacktestPanel] CSV loaded: ' + data.totalDays + ' days');
+        })
+        .catch(err => {
+          console.error('[BacktestPanel] CSV load failed:', err);
+          setCsvLoading(false);
+          setDataSource('yahoo');
+        });
+    }
+  }, [dataSource, csvData, csvLoading]);
 
   const availableDays = useMemo(() => {
+    if (dataSource === "csv" && csvData) return csvData.totalDays;
     if (!marketData?.closesHistory) return 0;
     const allTickers = [...ASSETS.map(t => PROXY_MAP[t] ?? t), ...ASSETS];
     const lengths = allTickers.map(t => (marketData.closesHistory[t] ?? []).length);
     return Math.max(...lengths);
-  }, [marketData]);
+  }, [marketData, csvData, dataSource]);
 
   // Cálculo del backtest en useMemo — solo recalcula cuando cambian los inputs relevantes.
   // CORRECCIÓN: antes era una IIFE que corría en cada render, causando
   // "metrics undefined" en los primeros renders antes de que marketData estuviera listo
   // y generando carga computacional innecesaria.
+  // FIX-CSV: soporta dataSource="csv" para backtest con 11 años de datos locales.
   const result: BacktestOutput | null = useMemo(() => {
+    // CSV mode: usar datos locales con 11 years de historico
+    if (dataSource === "csv" && csvData) {
+      const length = csvData.totalDays;
+      const macroHistory = buildMacroHistoryFromCSV(csvData, length);
+      return runBacktest({
+        closesHistory: csvData.closesHistory,
+        covMatrix: undefined,
+        macroHistory,
+        lookbackDays,
+        rebalanceDays,
+        initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
+        transactionCostBps: 10,
+      });
+    }
+
     if (!marketData?.closesHistory) return null;
 
     const length = marketData.closesHistory['BTC-EUR']?.length || 0;
@@ -145,13 +185,18 @@ export default function BacktestPanel({
       initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
       transactionCostBps: 10,
     });
-  }, [marketData, lookbackDays, rebalanceDays, currentVix, currentCreditSpread, portfolioInitialValue, currentErpValue, currentAvgCorrelation]);
+  }, [marketData, lookbackDays, rebalanceDays, currentVix, currentCreditSpread, portfolioInitialValue, currentErpValue, currentAvgCorrelation, csvData, dataSource]);
 
-  if (!marketData) {
+  if (!marketData && dataSource !== "csv") {
     return (
       <div style={styles.card}>
         <h2>📈 Backtesting — Nivel 4</h2>
         <p style={{ color: "#9ca3af" }}>Pulsa "Actualizar datos" para cargar el histórico desde Supabase.</p>
+        <div style={{ marginTop: "0.75rem" }}>
+          <button onClick={() => setDataSource('csv')} style={{ ...styles.tab, backgroundColor: "#4f46e5", color: "#fff" }}>
+            📂 Usar datos CSV locales (11 años)
+          </button>
+        </div>
       </div>
     );
   }
@@ -240,7 +285,7 @@ export default function BacktestPanel({
         </div>
       )}
 
-      <div style={{ display: "flex", gap: "2rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem", flexWrap: "wrap", alignItems: "center" }}>
         <label style={styles.label}>
           Rebalanceo cada
           <select value={rebalanceDays} onChange={e => setRebalanceDays(Number(e.target.value))} style={styles.select}>
@@ -258,6 +303,20 @@ export default function BacktestPanel({
             <option value={504}>2 años</option>
           </select>
         </label>
+        <div style={{ display: "flex", gap: "0.25rem", marginLeft: "auto" }}>
+          <button
+            onClick={() => setDataSource('yahoo')}
+            style={{ ...styles.tab, backgroundColor: dataSource === 'yahoo' ? '#4f46e5' : '#1f2937', color: dataSource === 'yahoo' ? '#fff' : '#9ca3af' }}
+          >
+            📡 Yahoo Finance
+          </button>
+          <button
+            onClick={() => setDataSource('csv')}
+            style={{ ...styles.tab, backgroundColor: dataSource === 'csv' ? '#4f46e5' : '#1f2937', color: dataSource === 'csv' ? '#fff' : '#9ca3af' }}
+          >
+            {csvLoading ? '⏳ Cargando...' : '📂 CSV Local (11 años)'}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", margin: "1rem 0" }}>
