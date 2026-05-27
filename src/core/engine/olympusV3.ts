@@ -223,6 +223,9 @@ export interface OlympusEngineInput {
   };
   availableCash?: number;
   totalPortfolioValue?: number;
+  // FIX-HYSTERESIS (01-Jun-2026): el backtest necesita saltarse la hysteresis
+  // porque todas las llamadas ocurren en milisegundos.
+  bypassHysteresis?: boolean;
   avgCorrelation?: number;
   blendWeights?: {
     BL?: number;
@@ -324,7 +327,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       wtiOil:      macro.wtiOil,
     },
     input.cewsHistory,
-    input.regimeHistory
+    input.regimeHistory,
+    input.bypassHysteresis  // FIX-HYSTERESIS: backtest pasa true
   );
 
   // SPRINT-5-A: adjustedRegimePenalty — fórmula correcta + justificación empírica.

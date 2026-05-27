@@ -142,7 +142,10 @@ export function getMasterRegime(
   input: MasterRegimeInput,
   cewsHistory?: CEWSDataPoint[],
   // FIX MATH-NEW-02: añadir parámetro regimeHistory para computar duración
-  regimeHistory?: RegimeHistoryEntry[]
+  regimeHistory?: RegimeHistoryEntry[],
+  // FIX-HYSTERESIS (01-Jun-2026): el backtest necesita bypass porque todas
+  // las llamadas ocurren en milisegundos, bloqueando el régimen para siempre.
+  bypassHysteresis?: boolean
 ): MasterRegimeOutput {
   const crisis = detectCrisis(input.vix, input.yieldSpread, input.creditSpread);
   const stress = computeGlobalStress({
@@ -208,42 +211,49 @@ export function getMasterRegime(
   // ── HYSTERESIS: estabilizar régimen contra cambios manuales rápidos ──────
   // Aplicar SOLO a downgrades (mejoras de régimen). Las alertas de crisis nunca
   // se suavizan — si el modelo dice CRISIS, es CRISIS inmediatamente.
-  const hysteresis = loadHysteresisState();
+  //
+  // FIX-HYSTERESIS (01-Jun-2026): el backtest necesita bypass porque todas las
+  // llamadas ocurren en milisegundos, haciendo que hoursElapsed ≈ 0 siempre.
+  // Si el primer rebalanceo detecta CRISIS, los siguientes 28 quedan LOCKED.
   let effectiveRegime = regime;
   let effectivePenalty = finalPenalty;
   let hysteresisActive = false;
 
-  if (hysteresis) {
-    const hoursElapsed = (Date.now() - hysteresis.lastTimestamp) / 3_600_000;
-    const prevSeverity = REGIME_SEVERITY[hysteresis.lastRegime] ?? 0;
-    const currSeverity = REGIME_SEVERITY[regime] ?? 0;
-    const isDowngrade = currSeverity < prevSeverity;
-    // Si el usuario pulsó "Actualizar datos" en los últimos 2 min → bypass total
-    const bypassActive = isManualRefreshActive();
+  if (!bypassHysteresis) {
+    const hysteresis = loadHysteresisState();
 
-    if (isDowngrade && hoursElapsed < HYSTERESIS_DOWNGRADE_HOURS && !bypassActive) {
-      // Mantener el régimen anterior — solo suavizar la penalización hacia el nuevo
-      effectiveRegime = hysteresis.lastRegime as MasterRegimeLabel;
-      // Interpolar penalización: avanzar 30% hacia el nuevo valor por hora transcurrida
-      const lerpFactor = Math.min(1, hoursElapsed / HYSTERESIS_DOWNGRADE_HOURS);
-      effectivePenalty = hysteresis.penaltyAtChange * (1 - lerpFactor) + finalPenalty * lerpFactor;
-      effectivePenalty = Math.max(0.4, Math.min(1.0, effectivePenalty));
-      hysteresisActive = true;
+    if (hysteresis) {
+      const hoursElapsed = (Date.now() - hysteresis.lastTimestamp) / 3_600_000;
+      const prevSeverity = REGIME_SEVERITY[hysteresis.lastRegime] ?? 0;
+      const currSeverity = REGIME_SEVERITY[regime] ?? 0;
+      const isDowngrade = currSeverity < prevSeverity;
+      // Si el usuario pulsó "Actualizar datos" en los últimos 2 min → bypass total
+      const bypassActive = isManualRefreshActive();
+
+      if (isDowngrade && hoursElapsed < HYSTERESIS_DOWNGRADE_HOURS && !bypassActive) {
+        // Mantener el régimen anterior — solo suavizar la penalización hacia el nuevo
+        effectiveRegime = hysteresis.lastRegime as MasterRegimeLabel;
+        // Interpolar penalización: avanzar 30% hacia el nuevo valor por hora transcurrida
+        const lerpFactor = Math.min(1, hoursElapsed / HYSTERESIS_DOWNGRADE_HOURS);
+        effectivePenalty = hysteresis.penaltyAtChange * (1 - lerpFactor) + finalPenalty * lerpFactor;
+        effectivePenalty = Math.max(0.4, Math.min(1.0, effectivePenalty));
+        hysteresisActive = true;
+      } else {
+        // Actualizar hysteresis state con el nuevo régimen
+        saveHysteresisState({
+          lastRegime: regime,
+          lastTimestamp: Date.now(),
+          penaltyAtChange: finalPenalty,
+        });
+      }
     } else {
-      // Actualizar hysteresis state con el nuevo régimen
+      // Primera vez — guardar estado actual
       saveHysteresisState({
         lastRegime: regime,
         lastTimestamp: Date.now(),
         penaltyAtChange: finalPenalty,
       });
     }
-  } else {
-    // Primera vez — guardar estado actual
-    saveHysteresisState({
-      lastRegime: regime,
-      lastTimestamp: Date.now(),
-      penaltyAtChange: finalPenalty,
-    });
   }
 
   return {

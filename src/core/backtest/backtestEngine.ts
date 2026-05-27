@@ -360,6 +360,8 @@ function computeAllocationsWithRegime(
     portfolioDrawdown,
     portfolioRealizedVol: portfolioVol,
     erpValue: macro.erpValue,
+    // FIX-HYSTERESIS: las llamadas del backtest ocurren en ms → saltar hysteresis
+    bypassHysteresis: true,
     cewsHistory: updatedCews,
     regimeHistory,
     avgCorrelation: macro.avgCorrelation,
