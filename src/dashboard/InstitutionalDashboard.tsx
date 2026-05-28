@@ -3102,8 +3102,14 @@ soxRsiWeekly,
                 <strong>{a.name.replace('.DE', '')}</strong> {(a.finalAllocation * 100).toFixed(1)}%
               </span>
             ))}
-            <span style={{ color: "#fbbf24" }}><strong>Cash</strong> {(cashReserve / Math.max(1, totalPortfolioValue) * 100).toFixed(1)}%</span>
-            <span style={{ color: "#60a5fa" }}><strong>EUR</strong> 100%</span>
+            <span style={{ color: "#fbbf24" }}><strong>Cash (cuenta)</strong> {(cashReserve / Math.max(1, totalPortfolioValue) * 100).toFixed(1)}%</span>
+            <span style={{ color: "#f97316" }}><strong>Cash retenido por motor</strong> {engineResult
+                ? (Math.max(0, 1 - engineResult.totalAllocation - cashReserve / Math.max(1, totalPortfolioValue)) * 100).toFixed(1)
+                : 0}%</span>
+            <span style={{ color: "#34d399" }}><strong>Total invertido</strong> {engineResult
+                ? (engineResult.totalAllocation * 100).toFixed(1)
+                : 0}%</span>
+            <span style={{ color: "#9ca3af", fontWeight: "bold" }}>Σ 100%</span>
           </div>
         </div>
 
