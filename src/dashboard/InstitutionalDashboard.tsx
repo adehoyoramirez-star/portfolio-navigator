@@ -329,14 +329,17 @@ const InstitutionalDashboard: React.FC = () => {
   const [execPrice, setExecPrice] = useState<number>(0);
   const [execShares, setExecShares] = useState<number>(0);
 
-  const [btcOrdersEur, setBtcOrdersEur] = useState<number>(() => {
-    try { return parseFloat(localStorage.getItem('olympus_btc_orders_eur') ?? '0') || 0; } catch { return 0; }
-  });
   const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);
   const [uraniumLT, setUraniumLT] = useState<number | undefined>(undefined);
  const [siaSalesYoY, setSiaSalesYoY] = useState<number | undefined>(undefined);
  const [soxRsiWeekly, setSoxRsiWeekly] = useState<number | undefined>(undefined);
   const [inflationBreakeven, setInflationBreakeven] = useState<number | undefined>(undefined);
+  const [is3qRsiWeekly, setIs3qRsiWeekly] = useState<number | undefined>(undefined);
+  const [is3qPERatio, setIs3qPERatio] = useState<number | undefined>(undefined);
+  const [emxcRsiWeekly, setEmxcRsiWeekly] = useState<number | undefined>(undefined);
+  const [emxcPERatio, setEmxcPERatio] = useState<number | undefined>(undefined);
+  const [xnasRsiWeekly, setXnasRsiWeekly] = useState<number | undefined>(undefined);
+  const [xnasPERatio, setXnasPERatio] = useState<number | undefined>(undefined);
 
   const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
@@ -389,12 +392,10 @@ const InstitutionalDashboard: React.FC = () => {
 
       setVix(md.vix);
       setManualBond10y(md.tnx);
-      setBond2y(md.irx);
 
       if (md.dxy > 0) setDxy(parseFloat(md.dxy.toFixed(2)));
       if (md.wtiOil > 0) setWtiOil(parseFloat(md.wtiOil.toFixed(2)));
       if (md.moveIndex && md.moveIndex > 0) setMoveIndex(parseFloat(md.moveIndex.toFixed(1)));
-      if (md.creditSpread && md.creditSpread > 0) setCreditSpread(parseFloat(md.creditSpread.toFixed(2)));
       if (md.m2GrowthSource === "FRED") setM2Growth(parseFloat(md.m2Growth.toFixed(2)));
       if (md.perSource === "FRED" && md.per > 0) setManualPER(parseFloat(md.per.toFixed(2)));
 
@@ -455,7 +456,6 @@ const InstitutionalDashboard: React.FC = () => {
       try {
         const { data: cryptoRaw } = await supabase.functions.invoke('crypto-signals');
         if (cryptoRaw && !cryptoRaw.error) {
-          if (cryptoRaw.btcDominance > 0) setBtcDominance(parseFloat(cryptoRaw.btcDominance.toFixed(2)));
           if (cryptoRaw.fearGreedValue >= 0) setFearGreedIndex({
             value: cryptoRaw.fearGreedValue,
             label: cryptoRaw.fearGreedLabel,
@@ -723,6 +723,12 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         setElliottPivots(pts);
         setElliottPivotsText(savedMacro.elliottPivots.map((p: { price: number; dateStr: string; type: string }) => `${p.price}:${p.type}`).join(", "));
       }
+      if (savedMacro.is3qRsiWeekly !== undefined) setIs3qRsiWeekly(savedMacro.is3qRsiWeekly);
+      if (savedMacro.is3qPERatio !== undefined) setIs3qPERatio(savedMacro.is3qPERatio);
+      if (savedMacro.emxcRsiWeekly !== undefined) setEmxcRsiWeekly(savedMacro.emxcRsiWeekly);
+      if (savedMacro.emxcPERatio !== undefined) setEmxcPERatio(savedMacro.emxcPERatio);
+      if (savedMacro.xnasRsiWeekly !== undefined) setXnasRsiWeekly(savedMacro.xnasRsiWeekly);
+      if (savedMacro.xnasPERatio !== undefined) setXnasPERatio(savedMacro.xnasPERatio);
     }
     refreshMarketData();
   }, []);
@@ -758,9 +764,12 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
         dateStr: p.date ? p.date.toISOString() : new Date().toISOString(),
         type: p.label,
       })),
+      is3qRsiWeekly, is3qPERatio,
+      emxcRsiWeekly, emxcPERatio,
+      xnasRsiWeekly, xnasPERatio,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, is3qRsiWeekly, is3qPERatio, emxcRsiWeekly, emxcPERatio, xnasRsiWeekly, xnasPERatio]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -1207,9 +1216,15 @@ soxRsiWeekly,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
+      is3qRsiWeekly,
+      is3qPERatio,
+      emxcRsiWeekly,
+      emxcPERatio,
+      xnasRsiWeekly,
+      xnasPERatio,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, is3qRsiWeekly, is3qPERatio, emxcRsiWeekly, emxcPERatio, xnasRsiWeekly, xnasPERatio]);
 
   const btcCycleResult = useMemo((): BitcoinCycleOutput | null => {
     const btcAssetLocal = portfolio.assets.find(a => a.ticker === "BTC-EUR");
@@ -2100,7 +2115,7 @@ soxRsiWeekly,
           <input type="number" value={manualBond10y} onChange={(e) => setManualBond10y(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
         </div>
         <div>
-          <label style={styles.label}>Bono USA 2y % {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Bono USA 2y % {" "}<span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● manual</span></label>
           <input type="number" value={bond2y} onChange={(e) => setBond2y(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
         </div>
         <div>
@@ -2114,14 +2129,7 @@ soxRsiWeekly,
         </div>
         <div>
           <label style={styles.label}>Credit Spread %{" "}
-            <span style={{ fontSize: "0.65rem", fontWeight: "normal",
-              color: marketData?.creditSpreadSource === "FRED" ? "#10b981"
-                : marketData?.creditSpreadSource === "YAHOO_PROXY" ? "#f59e0b"
-                : "#ef4444" }}>
-              {marketData?.creditSpreadSource === "FRED" ? "● FRED auto"
-                : marketData?.creditSpreadSource === "YAHOO_PROXY" ? "● Yahoo proxy (HYG-LQD)"
-                : "● manual"}
-            </span>
+            <span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● manual</span>
           </label>
           <input type="number" value={creditSpread} onChange={(e) => setCreditSpread(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
@@ -2197,9 +2205,7 @@ soxRsiWeekly,
           </label>
           <input type="number" value={btcVol} onChange={(e) => setBtcVol(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="2" />
           <label style={styles.label}>BTC Dominance %{" "}
-            <span style={{ fontSize: "0.65rem", color: onChainSource === "GLASSNODE" || fearGreedIndex ? "#10b981" : "#ef4444", fontWeight: "normal" }}>
-              {fearGreedIndex?.source === "CoinGecko" ? "● CoinGecko auto (PASO 3)" : "● manual — TradingView: BTC.D"}
-            </span>
+            <span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● manual</span>
           </label>
           <input type="number" value={btcDominance} onChange={(e) => setBtcDominance(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="100" />
           <label style={styles.label}>MVRV Ratio{" "}
@@ -2256,6 +2262,30 @@ soxRsiWeekly,
                 </span>
               </label>
               <input type="number" placeholder="—" value={inflationBreakeven ?? ""} onChange={e => setInflationBreakeven(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="10" />
+            </div>
+            <div>
+              <label style={styles.label}>IS3Q RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: IS3Q.DE · W · RSI(14)</span></label>
+              <input type="number" placeholder="—" value={is3qRsiWeekly ?? ""} onChange={e => setIs3qRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
+            </div>
+            <div>
+              <label style={styles.label}>IS3Q P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: IS3Q.DE · P/E (TTM)</span></label>
+              <input type="number" placeholder="—" value={is3qPERatio ?? ""} onChange={e => setIs3qPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
+            </div>
+            <div>
+              <label style={styles.label}>EMXC RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · W · RSI(14)</span></label>
+              <input type="number" placeholder="—" value={emxcRsiWeekly ?? ""} onChange={e => setEmxcRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
+            </div>
+            <div>
+              <label style={styles.label}>EMXC P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · P/E (TTM)</span></label>
+              <input type="number" placeholder="—" value={emxcPERatio ?? ""} onChange={e => setEmxcPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
+            </div>
+            <div>
+              <label style={styles.label}>XNAS RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: XNAS.DE · W · RSI(14)</span></label>
+              <input type="number" placeholder="—" value={xnasRsiWeekly ?? ""} onChange={e => setXnasRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
+            </div>
+            <div>
+              <label style={styles.label}>XNAS P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: XNAS.DE · P/E (TTM)</span></label>
+              <input type="number" placeholder="—" value={xnasPERatio ?? ""} onChange={e => setXnasPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
             </div>
           </div>
         </div>
@@ -2934,13 +2964,7 @@ soxRsiWeekly,
               onChange={(e) => setCashReserve(Number(e.target.value))} style={styles.input} />
             <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>Cash total en cuenta ahora mismo</p>
           </div>
-          <div>
-            <label htmlFor="btcOrdersInput" style={styles.label}>Órdenes BTC límite (€)</label>
-            <input id="btcOrdersInput" type="number" value={btcOrdersEur}
-              onChange={(e) => { const val = Math.max(0, Number(e.target.value)); setBtcOrdersEur(val); try { localStorage.setItem("olympus_btc_orders_eur", String(val)); } catch {} }}
-              style={{ ...styles.input, borderColor: "#f59e0b" }} />
-            <p style={{ fontSize: "0.7rem", color: "#f59e0b", marginTop: "3px", maxWidth: "140px" }}>Capital comprometido en órdenes BTC pendientes</p>
-          </div>
+
           <div>
             <label htmlFor="monthlyInjection" style={styles.label}>Aportación mensual (€)</label>
             <input id="monthlyInjection" name="monthlyInjection" type="number" value={monthlyInjection}
@@ -2979,13 +3003,7 @@ soxRsiWeekly,
                 onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
                 style={{ ...styles.input, width: "100%", boxSizing: "border-box" }} />
             </div>
-            {btcOrdersEur > 0 && (
-              <div style={{ marginTop: "6px", fontSize: "0.7rem", color: btcOrdersEur > cashReserve ? "#ef4444" : "#f59e0b" }}>
-                {btcOrdersEur > cashReserve
-                  ? `⚠️ Órdenes BTC (€${btcOrdersEur.toFixed(0)}) > cash — revisar`
-                  : `₿ €${btcOrdersEur.toFixed(0)} comprometido en órdenes BTC`}
-              </div>
-            )}
+
           </div>
 
           {/* Columna 2: Liquidez Defensiva */}
@@ -3075,13 +3093,18 @@ soxRsiWeekly,
           </div>
         </div>
 
-        {/* ── Órdenes BTC (mantener) ── */}
-        <div style={{ marginBottom: "12px" }}>
-          <label htmlFor="btcOrdersInput" style={styles.label}>₿ Capital comprometido en órdenes BTC límite (€)</label>
-          <input id="btcOrdersInput" type="number" value={btcOrdersEur} min={0}
-            onChange={(e) => { const val = Math.max(0, Number(e.target.value)); setBtcOrdersEur(val); try { localStorage.setItem("olympus_btc_orders_eur", String(val)); } catch {} }}
-            style={{ ...styles.input, borderColor: "#f59e0b", width: "160px" }} />
-          <p style={{ fontSize: "0.7rem", color: "#f59e0b", marginTop: "3px" }}>Capital reservado en órdenes BTC pendientes — descuéntalo del cash disponible mentalmente</p>
+        {/* ── Pesos del Portfolio ── */}
+        <div style={{ marginTop: "0.5rem", padding: "0.5rem 0", borderTop: "1px solid #374151" }}>
+          <h3 style={{ fontSize: "0.75rem", fontWeight: "bold", color: "#9ca3af", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.06em" }}>📊 Pesos del Motor</h3>
+          <div style={{ display: "flex", gap: "0.75rem 1.2rem", flexWrap: "wrap", fontSize: "0.78rem" }}>
+            {engineResult && engineResult.allocations.length > 0 && engineResult.allocations.map(a => (
+              <span key={a.name}>
+                <strong>{a.name.replace('.DE', '')}</strong> {(a.finalAllocation * 100).toFixed(1)}%
+              </span>
+            ))}
+            <span style={{ color: "#fbbf24" }}><strong>Cash</strong> {(cashReserve / Math.max(1, totalPortfolioValue) * 100).toFixed(1)}%</span>
+            <span style={{ color: "#60a5fa" }}><strong>EUR</strong> 100%</span>
+          </div>
         </div>
 
         {/* ── Resumen portfolio ── */}
