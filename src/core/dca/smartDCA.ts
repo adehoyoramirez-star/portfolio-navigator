@@ -78,7 +78,8 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   const cewsRecovering = cewsOutput !== undefined && cewsPreviousLevel !== undefined &&
     (cewsPreviousLevel === "ALERT" || cewsPreviousLevel === "WARNING") &&
     (cewsOutput.level === "WATCH" || cewsOutput.level === "CLEAR");
-  const regimeImproving = regime === "CONTRACTION" && regimePenalty > 0.55;
+  const regimeImproving = (regime === "EXPANSION" && regimePenalty >= 0.80) ||
+    (regime === "CONTRACTION" && regimePenalty > 0.55);
   const momentumDivergence = btcMomentum1m < -0.10 && btcZScore > -2.5;
   const dominanceAccumulation = btcDominance !== undefined && btcDominance > 52;
   const mvrvUndervalued = mvrvRatio !== undefined && mvrvRatio < 1.5;
@@ -87,7 +88,7 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   return [
     { name: "BTC Sobreventa Extrema", active: btcOversold, description: btcOversold ? `RSI ${btcRsi.toFixed(0)} + Z-Score ${btcZScore.toFixed(2)}` : `RSI ${btcRsi.toFixed(0)}, Z ${btcZScore.toFixed(2)}` },
     { name: "CEWS Recuperándose", active: cewsRecovering, description: cewsRecovering ? `CEWS mejoró de ${cewsPreviousLevel} → ${cewsOutput?.level}` : `CEWS en ${cewsOutput?.level ?? "sin datos"}` },
-    { name: "Régimen Mejorando", active: regimeImproving, description: regimeImproving ? `CONTRACTION con penalty ${regimePenalty.toFixed(2)}` : `Régimen ${regime} (${regimePenalty.toFixed(2)})` },
+    { name: "Régimen Mejorando", active: regimeImproving, description: regimeImproving ? `Régimen ${regime} (×${regimePenalty.toFixed(2)}) — mejora confirmada` : `Régimen ${regime} (×${regimePenalty.toFixed(2)})` },
     { name: "Divergencia de Momentum", active: momentumDivergence, description: momentumDivergence ? `Caída ${(btcMomentum1m*100).toFixed(1)}% con Z ${btcZScore.toFixed(2)}` : `Momentum ${(btcMomentum1m*100).toFixed(1)}%` },
     { name: "VIX Normalizándose", active: volNormalizing, description: volNormalizing ? `Volatility clustering mejorando` : `Vol clustering sin normalización` },
     { name: "BTC Dominance Acumulación", active: dominanceAccumulation, description: btcDominance !== undefined ? (dominanceAccumulation ? `BTC.D ${btcDominance.toFixed(1)}% — acumulación` : `BTC.D ${btcDominance.toFixed(1)}%`) : "Sin dato" },
