@@ -96,6 +96,43 @@ const SIGNAL_DRIFT: Record<OpportunityType, number> = {
   EVENT_DRIVEN:      0.10,
 };
 
+// ── Eventos corporativos conocidos ─────────────────────────────
+// Fechas estimadas de próximos eventos que pueden generar
+// dislocaciones de precio. Se actualiza manualmente cada mes.
+interface CorporateEvent {
+  ticker:   string;
+  type:     'EARNINGS' | 'SPLIT' | 'SPINOFF' | 'BUYBACK' | 'IPO_LOCKUP' | 'REGULATORY';
+  date:     string;  // ISO date
+  impact:   'HIGH' | 'MEDIUM' | 'LOW';
+  detail:   string;
+}
+
+const UPCOMING_EVENTS: CorporateEvent[] = [
+  // Earnings de mega-caps — ventanas de alta volatilidad
+  { ticker: 'AAPL',  type: 'EARNINGS', date: '2026-07-25', impact: 'HIGH',   detail: 'Apple Q3 2026 earnings' },
+  { ticker: 'MSFT',  type: 'EARNINGS', date: '2026-07-18', impact: 'HIGH',   detail: 'Microsoft Q4 2026 earnings' },
+  { ticker: 'NVDA',  type: 'EARNINGS', date: '2026-08-22', impact: 'HIGH',   detail: 'NVIDIA Q2 2026 earnings' },
+  { ticker: 'TSLA',  type: 'EARNINGS', date: '2026-07-16', impact: 'HIGH',   detail: 'Tesla Q2 2026 earnings (volatility play)' },
+  { ticker: 'AMZN',  type: 'EARNINGS', date: '2026-07-30', impact: 'HIGH',   detail: 'Amazon Q2 2026 earnings' },
+  { ticker: 'META',  type: 'EARNINGS', date: '2026-07-24', impact: 'HIGH',   detail: 'Meta Q2 2026 earnings' },
+  { ticker: 'GOOGL', type: 'EARNINGS', date: '2026-07-23', impact: 'MEDIUM', detail: 'Alphabet Q2 2026 earnings' },
+  // Eventos regulatorios
+  { ticker: 'COIN',  type: 'REGULATORY', date: '2026-09-15', impact: 'HIGH',   detail: 'MiCA crypto regulation final implementation EU' },
+  { ticker: 'MSTR',  type: 'BUYBACK',    date: '2026-08-01', impact: 'MEDIUM', detail: 'MicroStrategy ATM share issuance update' },
+];
+
+// ── Buscar eventos corporativos cercanos ───────────────────────
+function getUpcomingEvent(ticker: string, daysAhead: number = 14): CorporateEvent | null {
+  const now = Date.now();
+  const limit = now + daysAhead * 86400000;
+  for (const ev of UPCOMING_EVENTS) {
+    if (ev.ticker !== ticker) continue;
+    const evDate = new Date(ev.date).getTime();
+    if (evDate >= now && evDate <= limit) return ev;
+  }
+  return null;
+}
+
 // ── RSI con Wilder's Smoothing ───────────────────────────────
 function calcRSI(closes: number[], period: number): number {
   if (!closes || closes.length < period + 1) return 50;
@@ -358,13 +395,50 @@ function signalSectorRotation(ind: TechnicalIndicators): TacticalSignal {
     'Drawdown52w<-20% AND RSI 40-55 AND sobreMA200/MA50');
 }
 
-export function generateSignals(ind: TechnicalIndicators): TacticalSignal[] {
+// ── EVENT_DRIVEN: señal por evento corporativo próximo ─────────
+function signalEventDriven(ind: TechnicalIndicators, ticker: string): TacticalSignal {
+  if (!ticker) return mkSig('EVENT_DRIVEN', false, 0,
+    'Sin ticker para buscar eventos', 'Ticker requerido para EVENT_DRIVEN');
+  const event = getUpcomingEvent(ticker);
+  if (!event) return mkSig('EVENT_DRIVEN', false, 0,
+    `Sin eventos cercanos (${ticker})`, 'Próximo evento corporativo en <14 días');
+
+  // Score basado en impacto y configuración técnica
+  const impactScore =
+    event.impact === 'HIGH'   ? 38
+    : event.impact === 'MEDIUM' ? 25
+    : 15;
+
+  // Confirmación técnica: si el activo está en tendencia comprable
+  let techBonus = 0;
+  if (ind.aboveMA200) techBonus += 12;
+  if (ind.trend === 'UPTREND') techBonus += 10;
+  if (ind.volumeRatio > 1.2) techBonus += 8;
+  if (ind.rsi14 > 30 && ind.rsi14 < 70) techBonus += 5;  // Sin extremos
+
+  // EARNINGS: más score si vol está comprimida (esperando ruptura)
+  if (event.type === 'EARNINGS' && ind.bbWidth < 0.05) techBonus += 10;
+
+  const score = Math.min(100, impactScore + techBonus);
+  const active = score >= 35;
+
+  const daysToEvent = Math.round((new Date(event.date).getTime() - Date.now()) / 86400000);
+
+  return mkSig('EVENT_DRIVEN', active, score,
+    active
+      ? `${event.type} · ${event.detail} en ${daysToEvent}d · Score ${score}`
+      : `${event.type} · ${event.detail} en ${daysToEvent}d — Score bajo (${score})`,
+    'Evento corporativo próximo + confirmación técnica');
+}
+
+export function generateSignals(ind: TechnicalIndicators, ticker?: string): TacticalSignal[] {
   const raw = [
     signalBloodInStreets(ind),
     signalMeanReversion(ind),
     signalMomentumBreakout(ind),
     signalOversoldBounce(ind),
     signalSectorRotation(ind),
+    ...(ticker ? [signalEventDriven(ind, ticker)] : []),
   ];
   return raw.sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;

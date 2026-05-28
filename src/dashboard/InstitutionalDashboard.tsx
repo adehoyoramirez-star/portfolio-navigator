@@ -95,6 +95,16 @@ import {
 import { generateAlerts, RegimeAlert } from "@/core/alerts/regimeAlerts";
 import { computeSmartDCA } from "@/core/dca/smartDCA";
 import {
+  buildCashReserveState,
+  createBTCLimitOrder,
+  markOrderFilled,
+  cancelOrder,
+  diagnoseCashState,
+  type BTCLimitOrder,
+  type CashReserveState,
+  type CashDiagnostic,
+} from "@/core/dca/cashReserveManager";
+import {
   computeCEWS, loadCEWSHistory, saveCEWSDataPoint, generateSyntheticHistory,
   CEWSDataPoint,
 } from "@/core/macro/crisisEarlyWarning";
@@ -302,6 +312,18 @@ const InstitutionalDashboard: React.FC = () => {
   // Ahora: defensiveLiquidity es el único colchón de oportunidad, gestionado 100% manual.
   // transferAmount: importe que el usuario quiere mover de cashReserve → defensiveLiquidity
   const [transferAmount, setTransferAmount] = useState<number>(0);
+  // ── Cash Reserve Manager: BTC limit orders + operational buffer ──
+  const [btcLimitOrders, setBtcLimitOrders] = useState<BTCLimitOrder[]>(() => {
+    try { return JSON.parse(localStorage.getItem('olympus_btc_orders') ?? '[]'); } catch { return []; }
+  });
+  const [operationalBuffer, setOperationalBuffer] = useState<number>(() => {
+    try { return parseFloat(localStorage.getItem('olympus_op_buffer') ?? '350') || 350; } catch { return 350; }
+  });
+  const [newOrderPrice, setNewOrderPrice] = useState<number>(50000);
+  const [newOrderAmount, setNewOrderAmount] = useState<number>(400);
+  const [newOrderLevel, setNewOrderLevel] = useState<1 | 2 | 3 | 4>(3);
+  const [newOrderNotes, setNewOrderNotes] = useState<string>('');
+
 
   // MEJORA-9: Log de operaciones ejecutadas — persiste en localStorage
   // Cada vez que el usuario confirma una operación real, se registra aquí.
@@ -1269,26 +1291,15 @@ soxRsiWeekly,
     catch { return null; }
   }, [portfolio.assets, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
 
-  // CASH-REDESIGN-02: modelo de cash simplificado y alineado con el flujo real del usuario.
-  //
-  // ANTES (modelo automático — nunca coincidía con el broker real):
-  //   olympusAvailableCash = defensiveLiquidity * 0.80 + monthlyInjection
-  //   tacticalAvailableCash = defensiveLiquidity * tacticalPct / 100
-  //
-  // AHORA (modelo manual — lo que realmente existe en la cuenta):
-  //   cashReserve       = todo el dinero disponible en broker ahora mismo
-  //                       (aportación ya incluida si se hizo, sobrante de compras, etc.)
-  //   defensiveLiquidity = colchón de oportunidad, solo para señales ATTACK ≥4/7
-  //   monthlyInjection   = solo para proyecciones Monte Carlo (no es cash real ahora)
-  //
-  // SmartDCA compra usando cashReserve.
-  // En modo ATTACK (≥4 señales), también puede usar defensiveLiquidity.
-  // El usuario transfiere manualmente el sobrante a defensiveLiquidity con el botón.
-  const totalCashForDCA = cashReserve;
-  const olympusAvailableCash = cashReserve;
-  const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK ≥4/7
-
-  // Declaraciones BTC para SmartDCA (se movieron al redesign cash, se restauran aquí)
+    // CASH-RESERVE-MANAGER: cash model con BTC orders + operational buffer
+  const cashState = useMemo(() => buildCashReserveState(
+    cashReserve,
+    btcLimitOrders,
+    0,
+    operationalBuffer,
+  ), [cashReserve, btcLimitOrders, operationalBuffer]);
+  const olympusAvailableCash = cashState.freeCash;
+  const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK≥4/7
   const btcAsset = portfolio.assets.find(a => a.ticker === "BTC-EUR");
   const btcRsi = btcAsset?.rsi ?? calculateRSI(btcAsset?.history || [], 14);
   const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
@@ -1321,6 +1332,14 @@ soxRsiWeekly,
           price: asset?.price ?? 0,
         };
       }),
+      // FIX-DCA-DRIFT: pasar pesos actuales para calcular drift (solo comprar infraponderados)
+      currentAllocations: portfolio.assets.map(a => ({
+        ticker: a.ticker,
+        name: a.name,
+        currentWeight: totalPortfolioValue > 0
+          ? (a.price * a.shares) / totalPortfolioValue
+          : 0,
+      })),
       cewsOutput: cewsResult ?? undefined,
       cewsPreviousLevel,
       cycleTopSignals: (cycleTopResult?.signals ?? []).map(s => ({
@@ -1331,7 +1350,7 @@ soxRsiWeekly,
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashState, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
@@ -1346,6 +1365,35 @@ soxRsiWeekly,
   // Nada toca defensiveLiquidity automáticamente.
 
   // Botón "Transferir sobrante a Liquidez Defensiva"
+  // ── Persist BTC limit orders ──
+  useEffect(() => {
+    try { localStorage.setItem('olympus_btc_orders', JSON.stringify(btcLimitOrders)); } catch { /* silencio */ }
+  }, [btcLimitOrders]);
+  useEffect(() => {
+    try { localStorage.setItem('olympus_op_buffer', String(operationalBuffer)); } catch { /* silencio */ }
+  }, [operationalBuffer]);
+
+  // Cash diagnostic
+  const cashDiagnostic = useMemo(() => diagnoseCashState(cashState), [cashState]);
+
+  // ── Handlers for BTC limit orders ──
+  const handleCreateOrder = () => {
+    if (newOrderPrice <= 0 || newOrderAmount <= 0) return;
+    const order = createBTCLimitOrder(newOrderLevel, newOrderPrice, newOrderAmount, newOrderNotes || undefined);
+    setBtcLimitOrders(prev => [order, ...prev]);
+    setNewOrderPrice(50000);
+    setNewOrderAmount(400);
+    setNewOrderLevel(3);
+    setNewOrderNotes('');
+  };
+  const handleMarkFilled = (orderId: string, fillPrice: number) => {
+    setBtcLimitOrders(prev => markOrderFilled(prev, orderId, fillPrice));
+  };
+  const handleCancelOrder = (orderId: string) => {
+    setBtcLimitOrders(prev => cancelOrder(prev, orderId));
+  };
+
+
   const handleTransferToDefensive = () => {
     const amount = Math.min(transferAmount, cashReserve);
     if (amount <= 0) return;
@@ -2982,20 +3030,29 @@ soxRsiWeekly,
           </div>
         </div>
 
-        {/* ── CASH-REDESIGN: Panel de liquidez manual ── */}
-        {/* Tres columnas: cashReserve | defensiveLiquidity | totalDisponible */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginBottom: "12px" }}>
+        {/* ── CASH-RESERVE-MANAGER: Panel completo de liquidez ── */}
+        {/* 4 columnas: cash breakdown | defensive | BTC orders | summary */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "12px" }}>
 
-          {/* Columna 1: Cash en broker */}
+          {/* Columna 1: Cash breakdown con órdenes BTC */}
           <div style={{ padding: "14px", background: "#1f2937", borderRadius: "8px", borderTop: "3px solid #6366f1" }}>
             <div style={{ fontSize: "0.65rem", color: "#818cf8", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
-              💵 Cash en broker ahora mismo
+              {'💵'} Cash en broker ahora mismo
             </div>
             <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#e2e8f0" }}>
-              €{cashReserve.toFixed(0)}
+              {'€'}{cashReserve.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.65rem", color: "#94a3b8", marginTop: "4px" }}>
+              {'🔒'} Buffer operacional: {'€'}{operationalBuffer.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.65rem", color: "#f59e0b", marginTop: "2px" }}>
+              {'🔒'} {'💿'} Órdenes BTC pendientes: {'€'}{cashState.btcOrdersCommitted.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#34d399", marginTop: "6px", borderTop: "1px solid #374151", paddingTop: "6px" }}>
+              {'✅'} Cash LIBRE para compras: {'€'}{cashState.freeCash.toFixed(0)}
             </div>
             <div style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "4px" }}>
-              Incluye aportaciones ya realizadas y sobrante de compras
+              {cashDiagnostic?.message ?? ""}
             </div>
             <div style={{ marginTop: "10px" }}>
               <label style={{ fontSize: "0.7rem", color: "#94a3b8", display: "block", marginBottom: "3px" }}>Actualizar saldo</label>
@@ -3003,16 +3060,23 @@ soxRsiWeekly,
                 onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
                 style={{ ...styles.input, width: "100%", boxSizing: "border-box" }} />
             </div>
-
+            <div style={{ marginTop: "6px" }}>
+              <label style={{ fontSize: "0.68rem", color: "#94a3b8", display: "block", marginBottom: "2px" }}>
+                Buffer operacional ({'€'})
+              </label>
+              <input type="number" value={operationalBuffer} min={0} step={50}
+                onChange={(e) => setOperationalBuffer(Math.max(0, Number(e.target.value)))}
+                style={{ ...styles.input, width: "100%", boxSizing: "border-box" }} />
+            </div>
           </div>
 
           {/* Columna 2: Liquidez Defensiva */}
           <div style={{ padding: "14px", background: "#052e16", borderRadius: "8px", borderTop: "3px solid #16a34a" }}>
             <div style={{ fontSize: "0.65rem", color: "#4ade80", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
-              🛡 Liquidez defensiva (colchón de ataque)
+              {'🛡'} Liquidez defensiva (colchón de ataque)
             </div>
             <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#86efac" }}>
-              €{defensiveLiquidity.toFixed(0)}
+              {'€'}{defensiveLiquidity.toFixed(0)}
             </div>
             <div style={{ fontSize: "0.7rem", color: "#166534", marginTop: "4px" }}>
               Solo se despliega con señal ATTACK ≥4/7. No tocar en meses normales.
@@ -3020,75 +3084,154 @@ soxRsiWeekly,
             {/* Transferencia manual desde cashReserve */}
             <div style={{ marginTop: "10px", padding: "8px", background: "#071a0d", borderRadius: "6px" }}>
               <label style={{ fontSize: "0.68rem", color: "#4ade80", display: "block", marginBottom: "4px" }}>
-                ↓ Mover de Cash → Defensiva (fin de mes)
+                {'↓'} Mover de Cash {'→'} Defensiva (fin de mes)
               </label>
               <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                 <input type="number" value={transferAmount} min={0} max={cashReserve} step={10}
                   onChange={(e) => setTransferAmount(Math.min(cashReserve, Math.max(0, Number(e.target.value))))}
-                  placeholder="€ importe"
+                  placeholder={"€ importe"}
                   style={{ ...styles.input, flex: 1, fontSize: "0.8rem" }} />
                 <button
                   onClick={handleTransferToDefensive}
                   disabled={transferAmount <= 0 || transferAmount > cashReserve}
                   style={{
                     background: transferAmount > 0 && transferAmount <= cashReserve ? "#16a34a" : "#374151",
-                    color: "white", border: "none", borderRadius: "5px",
-                    padding: "6px 10px", cursor: transferAmount > 0 ? "pointer" : "not-allowed",
+                    color: "#fff", border: "none", borderRadius: "6px", padding: "6px 12px",
+                    cursor: transferAmount > 0 && transferAmount <= cashReserve ? "pointer" : "default",
                     fontSize: "0.75rem", whiteSpace: "nowrap",
-                  }}
-                >
-                  Transferir ↓
+                  }}>
+                  Mover
                 </button>
               </div>
-              <div style={{ fontSize: "0.62rem", color: "#166534", marginTop: "3px" }}>
-                Úsalo cuando quieras apartar sobrante del mes como colchón de oportunidad
-              </div>
             </div>
-            {/* Desplegar defensiva (modo ataque manual) */}
-            {defensiveLiquidity > 0 && smartDCAResult?.attackMode && (
-              <div style={{ marginTop: "8px", padding: "6px 8px", background: "#14532d", borderRadius: "5px", border: "1px solid #16a34a" }}>
-                <div style={{ fontSize: "0.68rem", color: "#86efac", marginBottom: "4px" }}>
-                  ⚡ Señal ATTACK activa — ¿desplegar defensiva?
-                </div>
+            {defensiveLiquidity > 0 && (
+              <div style={{ marginTop: "8px", padding: "8px", background: "#071a0d", borderRadius: "6px" }}>
                 <button
-                  onClick={() => handleDeployDefensive(defensiveLiquidity)}
-                  style={{ background: "#15803d", color: "white", border: "none", borderRadius: "5px", padding: "5px 10px", cursor: "pointer", fontSize: "0.72rem" }}
-                >
-                  Mover €{defensiveLiquidity.toFixed(0)} → Cash ↑
+                  onClick={() => {
+                    if (window.confirm("¿Devolver todo el colchón a Cash?")) {
+                      setCashReserve(prev => prev + defensiveLiquidity);
+                      setDefensiveLiquidity(0);
+                      setTransferAmount(0);
+                    }
+                  }}
+                  style={{ background: "transparent", color: "#f87171", border: "1px solid #7f1d1d", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontSize: "0.7rem", width: "100%" }}>
+                  {'↩'} Retornar todo a Cash
                 </button>
               </div>
             )}
           </div>
 
-          {/* Columna 3: Totales y proyección */}
-          <div style={{ padding: "14px", background: "#0f172a", borderRadius: "8px", borderTop: "3px solid #3b82f6" }}>
-            <div style={{ fontSize: "0.65rem", color: "#60a5fa", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
-              📊 Resumen de liquidez
+          {/* Columna 3: Órdenes BTC límite */}
+          <div style={{ padding: "14px", background: "#1e1b2e", borderRadius: "8px", borderTop: "3px solid #f59e0b" }}>
+            <div style={{ fontSize: "0.65rem", color: "#fbbf24", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
+              {'💿'} Órdenes BTC límite ({btcLimitOrders.length})
             </div>
-            <div style={{ fontSize: "0.8rem", color: "#94a3b8", lineHeight: "1.8" }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>Cash disponible hoy</span>
-                <strong style={{ color: "#e2e8f0" }}>€{cashReserve.toFixed(0)}</strong>
+
+            {/* Lista de órdenes existentes */}
+            <div style={{ maxHeight: "140px", overflowY: "auto", marginBottom: "8px" }}>
+              {btcLimitOrders.length === 0 ? (
+                <div style={{ fontSize: "0.7rem", color: "#6b7280", fontStyle: "italic" }}>
+                  Sin órdenes pendientes
+                </div>
+              ) : (
+                btcLimitOrders.map(order => (
+                  <div key={order.id} style={{ padding: "4px 6px", background: "#2d2a3e", borderRadius: "4px", marginBottom: "4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <span style={{ fontSize: "0.7rem", color: "#fbbf24" }}>Nivel {order.level}</span>
+                      <span style={{ fontSize: "0.7rem", color: "#94a3b8", marginLeft: "6px" }}>
+                        {'€'}{order.limitPrice.toFixed(0)} | {'€'}{order.amountEUR.toFixed(0)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleMarkFilled(order.id, order.limitPrice)}
+                      title="Marcar como ejecutada"
+                      style={{ background: "#065f46", color: "#34d399", border: "none", borderRadius: "3px", padding: "2px 6px", cursor: "pointer", fontSize: "0.65rem" }}>
+                      {'✓'}
+                    </button>
+                    <button
+                      onClick={() => handleCancelOrder(order.id)}
+                      title="Cancelar orden"
+                      style={{ background: "#7f1d1d", color: "#fca5a5", border: "none", borderRadius: "3px", padding: "2px 6px", cursor: "pointer", fontSize: "0.65rem", marginLeft: "3px" }}>
+                      {'✖'}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Compromiso total */}
+            {btcLimitOrders.length > 0 && (
+              <div style={{ fontSize: "0.7rem", color: "#f59e0b", marginBottom: "6px", padding: "4px 6px", background: "#2d2a3e", borderRadius: "4px" }}>
+                Comprometido: {'€'}{cashState.btcOrdersCommitted.toFixed(0)} | {(cashState.btcOrdersCommitted / Math.max(cashState.totalCashEUR, 1) * 100).toFixed(0)}% del cash
+                {cashState.btcAvgEntryIfFilled > 0 && (
+                  <span>{' | '}Precio medio si fill: {'€'}{cashState.btcAvgEntryIfFilled.toFixed(0)}</span>
+                )}
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>Defensiva apartada</span>
-                <strong style={{ color: "#4ade80" }}>€{defensiveLiquidity.toFixed(0)}</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #1e3a5f", marginTop: "6px", paddingTop: "6px" }}>
-                <span>Total liquidez</span>
-                <strong style={{ color: "#60a5fa" }}>€{(cashReserve + defensiveLiquidity).toFixed(0)}</strong>
+            )}
+
+            {/* Crear nueva orden */}
+            <div style={{ padding: "6px", background: "#2d2a3e", borderRadius: "6px" }}>
+              <div style={{ fontSize: "0.65rem", color: "#9ca3af", marginBottom: "4px" }}>Nueva orden límite</div>
+              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                <select value={newOrderLevel} onChange={(e) => setNewOrderLevel(Number(e.target.value) as 1|2|3|4)}
+                  style={{ ...styles.input, width: "60px", fontSize: "0.7rem", padding: "2px 4px" }}>
+                  <option value={1}>N1</option>
+                  <option value={2}>N2</option>
+                  <option value={3}>N3</option>
+                  <option value={4}>N4</option>
+                </select>
+                <input type="number" value={newOrderPrice} min={0} step={100}
+                  onChange={(e) => setNewOrderPrice(Math.max(0, Number(e.target.value)))}
+                  placeholder="Precio"
+                  style={{ ...styles.input, width: "80px", fontSize: "0.7rem", padding: "2px 4px" }} />
+                <input type="number" value={newOrderAmount} min={0} step={50}
+                  onChange={(e) => setNewOrderAmount(Math.max(0, Number(e.target.value)))}
+                  placeholder={"€"}
+                  style={{ ...styles.input, width: "60px", fontSize: "0.7rem", padding: "2px 4px" }} />
+                <button
+                  onClick={handleCreateOrder}
+                  disabled={newOrderPrice <= 0 || newOrderAmount <= 0}
+                  style={{
+                    background: newOrderPrice > 0 && newOrderAmount > 0 ? "#d97706" : "#374151",
+                    color: "#fff", border: "none", borderRadius: "4px", padding: "2px 8px",
+                    cursor: newOrderPrice > 0 && newOrderAmount > 0 ? "pointer" : "default",
+                    fontSize: "0.7rem" }}>
+                  +Crear
+                </button>
               </div>
             </div>
-            <div style={{ marginTop: "12px" }}>
-              <label style={{ fontSize: "0.68rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>
-                📅 Aportación mensual habitual (solo para proyecciones)
+          </div>
+
+          {/* Columna 4: Totales y proyección */}
+          <div style={{ padding: "14px", background: "#1f2937", borderRadius: "8px", borderTop: "3px solid #8b5cf6" }}>
+            <div style={{ fontSize: "0.65rem", color: "#a78bfa", textTransform: "uppercase", marginBottom: "6px", letterSpacing: "0.06em" }}>
+              {'📊'} Resumen de liquidez
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "#e2e8f0", marginBottom: "3px" }}>
+              Total en broker: {'€'}{cashState.totalCashEUR.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginBottom: "3px" }}>
+              {'🔒'} Buffer: -{'€'}{cashState.operationalBuffer.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "#f59e0b", marginBottom: "3px" }}>
+              {'💿'} Órdenes BTC: -{'€'}{cashState.btcOrdersCommitted.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#34d399", marginBottom: "3px", borderTop: "1px solid #374151", paddingTop: "4px" }}>
+              {'✅'} LIBRE: {'€'}{cashState.freeCash.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "#86efac", marginBottom: "3px" }}>
+              {'🛡'} Defensiva: +{'€'}{defensiveLiquidity.toFixed(0)}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "#a78bfa", marginTop: "6px", borderTop: "1px solid #374151", paddingTop: "4px" }}>
+              {'📈'} Total disponible (si ataque): {'€'}{(cashState.freeCash + defensiveLiquidity).toFixed(0)}
+            </div>
+            <div style={{ marginTop: "8px" }}>
+              <label style={{ fontSize: "0.68rem", color: "#6b7280", display: "block", marginBottom: "2px" }}>
+                {'📅'} Aportación mensual habitual (solo para proyecciones)
               </label>
               <input type="number" value={monthlyInjection} min={0} step={50}
                 onChange={(e) => setMonthlyInjection(Math.max(0, Number(e.target.value)))}
-                style={{ ...styles.input, width: "100%", boxSizing: "border-box", borderColor: "#374151" }} />
-              <div style={{ fontSize: "0.62rem", color: "#4b5563", marginTop: "3px" }}>
-                No es cash real ahora. Se usa para simular tu cartera a 10 años.
-              </div>
+                style={{ ...styles.input, width: "100%", boxSizing: "border-box" }} />
             </div>
           </div>
         </div>

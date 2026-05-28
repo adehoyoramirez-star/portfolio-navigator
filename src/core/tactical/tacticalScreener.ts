@@ -265,7 +265,7 @@ function buildAsset(
   let indicators, signals, totalScore;
   try {
     indicators = calcIndicators(raw.closes, raw.volumes ?? [], highs, lows);
-    signals    = generateSignals(indicators);  // Ya devuelve ordenadas por score DESC
+    signals    = generateSignals(indicators, asset.ticker);  // Ya devuelve ordenadas por score DESC + EVENT_DRIVEN
     totalScore = calcTotalScore(signals);
   } catch (err) {
     console.warn(`[Screener] calcIndicators error ${asset.ticker}:`, err);
@@ -593,9 +593,46 @@ export async function scanTacticalUniverse(
     diag.oportunidades++;
   }
 
-  const topPicks = [...opportunities]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+  // ── Priority scoring: combina score de señal + R:R + capital efficiency ──
+  // rankPriority añade:
+  //   +5 si R:R > 2.0
+  //   +10 si R:R > 3.0
+  //   -5 si el activo ya está en posiciones abiertas (conflicto de capital)
+  //   +8 si type es MOMENTUM_BREAKOUT en TRENDING_UP
+  //   +5 si type es BLOOD_IN_STREETS en CRASH (contrarian oportunidad única)
+  interface RankedOpp {
+    opp:      TacticalOpportunity;
+    priority: number;
+  }
+  const ranked: RankedOpp[] = opportunities.map(opp => {
+    let priority = opp.score;
+    // R:R premium
+    if (opp.riskReward > 3.0) priority += 10;
+    else if (opp.riskReward > 2.0) priority += 5;
+    // Capital efficiency: preferir activos con entryPrice bajo (más shares)
+    // No penalizar absolutamente, solo bonificar si es bajo
+    if (opp.entryPrice < 20) priority += 5;   // Accesible para cualquier capital
+    // Regime alignment bonus
+    if (marketRegime) {
+      if (marketRegime.regime === 'TRENDING_UP' && opp.type === 'MOMENTUM_BREAKOUT') priority += 8;
+      if (marketRegime.regime === 'CRASH' && opp.type === 'BLOOD_IN_STREETS') priority += 5;
+    }
+    return { opp, priority };
+  });
+
+  const topPicks = ranked
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 5)
+    .map(r => r.opp);
+
+  // Log de prioridades
+  console.debug(
+    `[Screener] ─── TOP 5 PRIORIDADES ───\n` +
+    topPicks.map((opp, i) =>
+      `  ${i + 1}. ${opp.asset.ticker} (${opp.type}) · Score ${opp.score} · R:R ${opp.riskReward.toFixed(2)} · €${opp.entryPrice.toFixed(0)}`
+    ).join('\n') + '\n' +
+    `  ─────────────────────────────────────`
+  );
 
   // ── Diagnóstico: reporte de filtrado ─────────────────────────────
   console.log(

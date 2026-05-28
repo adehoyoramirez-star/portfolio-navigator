@@ -18,6 +18,12 @@ export type DCAAction =
   | "ATTACK_ENTRY" | "ATTACK_STRONG" | "ATTACK_MAX"
   | "BTC_CYCLE_OVERRIDE";
 
+export interface CurrentAllocation {
+  ticker: string;
+  name: string;
+  currentWeight: number;
+}
+
 export interface SmartDCAInput {
   btcRsi: number;
   btcZScore: number;
@@ -33,6 +39,10 @@ export interface SmartDCAInput {
   tacticalAvailableCash: number;
   accumulatedDefensiveLiquidity?: number;
   motorAllocations: { name: string; ticker: string; finalAllocation: number; price: number }[];
+  /** Pesos actuales del portfolio para calcular drift (target - actual).
+   *  Si se proporciona, buildAllocations solo comprará activos con drift POSITIVO
+   *  (infraponderados), prorrateando el cash según el drift en vez del target absoluto. */
+  currentAllocations?: CurrentAllocation[];
   cewsOutput?: CEWSOutput;
   cewsPreviousLevel?: CEWSLevel;
   /** Señales de techo de ciclo por activo. Si un activo tiene shouldTrim=true,
@@ -46,6 +56,9 @@ export interface DCAAllocation {
   motorWeight: number; shares: number;
   pricePerShare: number; isFractional: boolean;
   skipped: boolean; reason: string;
+  /** Gap entre peso objetivo y peso actual (positivo = infraponderado). */
+  drift?: number;
+  currentWeight?: number;
 }
 
 export interface AttackSignal {
@@ -96,32 +109,76 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   ];
 }
 
-// ── BUILD ALLOCATIONS ───────────────────────────────────────────────────
-function buildAllocations(totalCash: number, assets: { ticker: string; name: string; finalAllocation: number; price: number }[], trancheLabel: string, skipTickers: Set<string> = new Set()): DCAAllocation[] {
-  // Filtrar activos con señal de techo de ciclo activa (no comprar más)
-  const eligible = assets.filter(a => a.finalAllocation > 0.02 && a.price > 0 && !skipTickers.has(a.ticker));
-  // Si todos los activos están skippeados, no comprar nada
+// ── BUILD ALLOCATIONS (drift-aware) ──────────────────────────────────────
+// Distribuye el cash entre activos infraponderados (drift positivo),
+// prorrateando por el drift en vez del peso objetivo.
+// Si un activo está sobreponderado (drift negativo), NO recibe cash.
+function buildAllocations(
+  totalCash: number,
+  assets: { ticker: string; name: string; finalAllocation: number; price: number }[],
+  trancheLabel: string,
+  skipTickers: Set<string> = new Set(),
+  currentAllocations: Map<string, number> = new Map()
+): DCAAllocation[] {
+  // 1. Calcular drift para cada activo
+  const withDrift = assets.map(a => {
+    const currentWeight = currentAllocations.get(a.ticker) ?? 0;
+    const drift = a.finalAllocation - currentWeight;
+    return { ...a, drift, currentWeight };
+  });
+
+  // 2. Filtrar: solo activos con target > 2%, precio > 0, sin techo de ciclo, y drift POSITIVO
+  const eligible = withDrift.filter(a =>
+    a.finalAllocation > 0.02 &&
+    a.price > 0 &&
+    !skipTickers.has(a.ticker) &&
+    a.drift > 0.005 // al menos 0.5pp de infraponderación
+  );
+
   if (eligible.length === 0) return [];
   if (totalCash <= 0) return [];
-  const totalWeight = eligible.reduce((s, a) => s + a.finalAllocation, 0);
+
+  // 3. Prorratear cash por drift, no por target absoluto
+  const totalDrift = eligible.reduce((s, a) => s + a.drift, 0);
   const pass1 = eligible.map(a => {
-    const cashAssigned = (a.finalAllocation / totalWeight) * totalCash;
+    const cashAssigned = (a.drift / totalDrift) * totalCash;
     const isFractional = a.ticker === "BTC-EUR";
     const shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
     const actualCost = shares * a.price;
     const skipped = !isFractional && shares === 0;
     return { ...a, cashAssigned, shares, actualCost, isFractional, skipped };
   });
+
+  // 4. Redistribuir cash sobrante de activos que no alcanzan 1 acción
   const stranded = pass1.filter(a => a.skipped).reduce((s, a) => s + a.cashAssigned, 0);
   const canBuy = pass1.filter(a => !a.skipped);
-  const canBuyWeight = canBuy.reduce((s, a) => s + a.finalAllocation, 0);
+  const canBuyDrift = canBuy.reduce((s, a) => s + a.drift, 0);
+
+  // 5. Construir resultado final con drift en la descripción
   return pass1.map(a => {
-    if (a.skipped) return { ticker: a.ticker, name: a.name, cashToInvest: a.cashAssigned, actualCost: 0, motorWeight: a.finalAllocation, shares: 0, pricePerShare: a.price, isFractional: false, skipped: true, reason: `Necesita €${a.price.toFixed(0)} mín.` };
+    if (a.skipped) {
+      return {
+        ticker: a.ticker, name: a.name,
+        cashToInvest: a.cashAssigned, actualCost: 0,
+        motorWeight: a.finalAllocation, shares: 0,
+        pricePerShare: a.price, isFractional: false,
+        skipped: true, reason: `Necesita €${a.price.toFixed(0)} mín.`,
+        drift: a.drift, currentWeight: a.currentWeight,
+      };
+    }
     let extra = 0;
-    if (stranded > 0 && canBuyWeight > 0) extra = (a.finalAllocation / canBuyWeight) * stranded;
+    if (stranded > 0 && canBuyDrift > 0) extra = (a.drift / canBuyDrift) * stranded;
     const total = a.cashAssigned + extra;
     const shares = a.isFractional ? total / a.price : Math.floor(total / a.price);
-    return { ticker: a.ticker, name: a.name, cashToInvest: total, actualCost: shares * a.price, motorWeight: a.finalAllocation, shares, pricePerShare: a.price, isFractional: a.isFractional, skipped: false, reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}%` };
+    return {
+      ticker: a.ticker, name: a.name,
+      cashToInvest: total, actualCost: shares * a.price,
+      motorWeight: a.finalAllocation, shares,
+      pricePerShare: a.price, isFractional: a.isFractional,
+      skipped: false,
+      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)`,
+      drift: a.drift, currentWeight: a.currentWeight,
+    };
   });
 }
 
@@ -184,8 +241,15 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const allocAssets = btcOnlyAttack
     ? motorAllocations.filter(a => a.ticker === "BTC-EUR")
     : motorAllocations;
+  // En modo DCA normal: usar drift-aware (solo comprar infraponderados).
+  // En modo ATAQUE: pasar mapa vacío → ignorar drift, comprar por target (la oportunidad prima sobre la sobreponderación).
+  const currentAllocMap = canAttack
+    ? new Map<string, number>()  // ataque: sin filtro de drift
+    : new Map<string, number>(
+        (input.currentAllocations ?? []).map(ca => [ca.ticker, ca.currentWeight])
+      );
   const allocs = totalCash > 0
-    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers)
+    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap)
     : [];
   const action: DCAAction = canAttack ? (attackConfluence >= 6 ? "ATTACK_MAX" : attackConfluence >= 5 ? "ATTACK_STRONG" : "ATTACK_ENTRY") : "BUY";
   const reasoning = canAttack

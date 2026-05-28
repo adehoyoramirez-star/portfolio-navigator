@@ -39,6 +39,7 @@ import {
 } from './tacticalSignals';
 import { checkCorrelation, getSectorGroup } from './correlationManager';
 import { toEur, getCachedFxRates } from './fxConverter';
+import type { MarketRegime } from './marketRegimeFilter';
 
 // ── Estado inicial ────────────────────────────────────────────
 export function initTacticalState(config: TacticalConfig): TacticalEngineState {
@@ -112,6 +113,13 @@ export function saveTacticalState(state: TacticalEngineState): void {
   }
 }
 
+// ── WARNING: código ELITE — no modificar sin entender el modelo ─
+// Este archivo implementa 3 sistemas de sizing:
+//   1. calcPositionSize      → Fixed % risk (estándar, config.riskPerTradePct)
+//   2. calcKellyPositionSize → Kelly Criterion (óptimo, ajusta por winRate)
+//   3. calcHalfKellySize     → Half-Kelly (conservador, recomendado para retail)
+// ================================================================
+
 // ── Tamaño de posición (en EUR, FX-aware) ────────────────────
 // entryPriceEur y stopLossEur ya están en EUR (convertidos por screener)
 export function calcPositionSize(
@@ -149,6 +157,80 @@ export function calcPositionSize(
     capitalRisked: safe > 0 ? +(safe * riskPerShareEur).toFixed(2) : 0,
     totalInvested: safe > 0 ? +(safe * entryPriceEur).toFixed(2)   : 0,
   };
+}
+
+// ── Kelly Criterion position sizing ───────────────────────────
+// f* = (W × avgWin - (1-W) × avgLoss) / (avgWin × avgLoss)
+// donde:
+//   W       = win rate del sistema [0,1]
+//   avgWin  = ganancia promedio / riesgo (R múltiplo)
+//   avgLoss = pérdida promedio / riesgo (R múltiplo, normalizado a 1)
+//
+// Half-Kelly (recomendado para retail): f_half = f* × 0.5
+// Full Kelly maximiza crecimiento pero drawdown puede ser >50%
+export function calcKellyPositionSize(
+  capitalAvailableEur: number,
+  entryPriceEur:       number,
+  stopLossEur:         number,
+  winRate:             number,     // 0-100 (ej. 55 = 55% win rate)
+  avgRiskReward:       number,     // R múltiplo (ej. 1.8)
+  useHalfKelly:        boolean = true,
+): { shares: number; capitalRisked: number; totalInvested: number; kellyPct: number } {
+  const riskPerShareEur = entryPriceEur - stopLossEur;
+  if (riskPerShareEur <= 0 || winRate <= 0 || capitalAvailableEur <= 0) {
+    return { shares: 0, capitalRisked: 0, totalInvested: 0, kellyPct: 0 };
+  }
+
+  const W = winRate / 100;
+  const avgWin = Math.max(avgRiskReward, 0.1);
+  const avgLoss = 1.0;  // Normalizado: perder es 1R siempre
+
+  // Fórmula de Kelly para tamaño de apuesta
+  // f* = (W × avgWin - (1-W) × avgLoss) / (avgWin × avgLoss)
+  // = (W/R - (1-W)/1) / (R/1 × 1)
+  const numerator = W * avgWin - (1 - W) * avgLoss;
+  const denominator = avgWin * avgLoss;
+  const fullKelly = denominator > 0 ? Math.max(0, numerator / denominator) : 0;
+
+  // Kelly limitado a [0, 0.25] — nunca apostar >25% en un solo trade
+  const kellyPct = useHalfKelly
+    ? Math.min(0.25, fullKelly * 0.5)
+    : Math.min(0.25, fullKelly);
+
+  // Warning si Kelly = 0 con winRate > 0 (setup válido pero no scalable)
+  if (fullKelly <= 0 && winRate > 0) {
+    console.warn(
+      `[Kelly] f*=0 — WinRate ${winRate}%, R:R ${avgRiskReward.toFixed(2)} insuficiente ` +
+      `para Kelly positivo (necesitas W > 1/(R+1) = ${(1 / (avgWin + 1) * 100).toFixed(0)}%)`
+    );
+  }
+
+  const riskEur = capitalAvailableEur * kellyPct;
+  const rawShares = riskEur / riskPerShareEur;
+
+  const shares = entryPriceEur < 1_000
+    ? Math.floor(rawShares)
+    : Math.round(rawShares * 10_000) / 10_000;
+
+  const safe = Math.max(0, shares >= 1 ? Math.floor(shares) : 0);
+
+  return {
+    shares:        safe,
+    capitalRisked: safe > 0 ? +(safe * riskPerShareEur).toFixed(2) : 0,
+    totalInvested: safe > 0 ? +(safe * entryPriceEur).toFixed(2)   : 0,
+    kellyPct:      +(kellyPct * 100).toFixed(1),
+  };
+}
+
+// ── Half-Kelly wrapper (conveniencia) ─────────────────────────
+export function calcHalfKellySize(
+  capitalAvailableEur: number,
+  entryPriceEur:       number,
+  stopLossEur:         number,
+  winRate:             number,
+  avgRiskReward:       number,
+): { shares: number; capitalRisked: number; totalInvested: number; kellyPct: number } {
+  return calcKellyPositionSize(capitalAvailableEur, entryPriceEur, stopLossEur, winRate, avgRiskReward, true);
 }
 
 // ── Abrir posición ────────────────────────────────────────────
@@ -308,9 +390,29 @@ export function closePosition(
 export function updatePositionPrices(
   state:  TacticalEngineState,
   prices: Record<string, number>,   // Precios en divisa nativa de cada activo
+  marketRegime?: MarketRegime,      // NUEVO: para cierre de emergencia en CRASH
 ): TacticalEngineState {
   const fxRates = getCachedFxRates();
   let autoClose = { ...state };
+
+  // ── EMERGENCY CRASH EXIT ────────────────────────────────────
+  // Si el régimen es CRASH (VIX > 35), cerrar TODAS las posiciones
+  // inmediatamente para preservar capital. Solo se salvan posiciones
+  // BLOOD_IN_STREETS que están en ganancia (stop ya movido a breakeven).
+  if (marketRegime === 'CRASH') {
+    console.warn('[Tactical] ⚠️ CRASH DETECTED — cerrando todas las posiciones activas');
+    for (const pos of state.openPositions) {
+      // Exception: BLOOD_IN_STREETS positions already in profit keep running
+      if (pos.type === 'BLOOD_IN_STREETS' && pos.unrealizedPnL > 0) {
+        console.warn(`[Tactical] ${pos.ticker}: BLOOD_IN_STREETS con ganancia — manteniendo`);
+        continue;
+      }
+      const price = prices[pos.ticker] ?? pos.currentPrice;
+      autoClose = closePosition(autoClose, pos.id, price, 'CLOSED_SL');
+    }
+    // Recargar state después de cierres
+    return recalcMetrics(autoClose);
+  }
 
   const updatedOpen = state.openPositions.map(pos => {
     const price        = prices[pos.ticker] ?? pos.currentPrice;
@@ -330,15 +432,28 @@ export function updatePositionPrices(
       (Date.now() - new Date(pos.entryDate).getTime()) / 86400000,
     );
 
-    // ── Trailing stop dinámico ────────────────────────────────
+    // ── Trailing stop dinámico + breakeven ─────────────────────
+    // ETAPA 1: progreso > 50% → trailing stop activo (stop sube con precio)
+    // ETAPA 2: progreso >= 100% (TP1 alcanzado) → stop a breakeven mínimo
     const newStopLoss = (() => {
       if (!state.config.trailingStop) return pos.stopLoss;
       const progressToTP1 = pos.takeProfit1 > pos.entryPriceEur
         ? (priceEur - pos.entryPriceEur) / (pos.takeProfit1 - pos.entryPriceEur)
         : 0;
-      if (progressToTP1 < 0.5) return pos.stopLoss;
-      const trailLevel = priceEur - atr * 1.5;
-      return Math.max(pos.stopLoss, trailLevel);
+
+      // ETAPA 0: stop original intacto
+      if (progressToTP1 < 0.3) return pos.stopLoss;
+
+      // ETAPA 1 (30-99%): trailing con 1.5×ATR bajo el precio actual
+      if (progressToTP1 < 1.0) {
+        const trailLevel = priceEur - atr * 1.5;
+        return Math.max(pos.stopLoss, trailLevel);
+      }
+
+      // ETAPA 2 (TP1 alcanzado): stop a breakeven, nunca dejar perder
+      // Si ya alcanzó TP1, movemos el stop a entryPrice + 0.5×ATR como mínimo
+      const breakevenStop = pos.entryPriceEur + atr * 0.3;  // Ligeramente sobre breakeven
+      return Math.max(pos.stopLoss, breakevenStop);
     })();
 
     // ── TP2 dinámico ──────────────────────────────────────────

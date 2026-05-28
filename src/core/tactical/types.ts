@@ -51,7 +51,7 @@ export interface TechnicalIndicators {
   adx:         number;
   efficiencyRatio: number;
   atr14:       number;
-  atr:         number;     // ← AÑADE ESTA LÍNEA (alias de atr14)
+  atr:         number;     // alias de atr14 para compatibilidad
   atrPct:      number;
   bbUpper:     number;
   bbMiddle:    number;
