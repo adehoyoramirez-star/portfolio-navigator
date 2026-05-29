@@ -1,25 +1,32 @@
 // ============================================================
-// src/core/tactical/tacticalSignals.ts — v6
+// src/core/tactical/tacticalSignals.ts — v7 IMPROVED
 //
-// CORRECCIONES v6 (BUG CRÍTICO — dashboard sin resultados):
+// MEJORAS v7 (Antonio's SMCI Strategy Integration):
 //
-//   1. calcTakeProfits REESCRITA.
-//      BUG: usaba sigma20 * 0.6/0.8 para calcular TP.
-//      En ETFs de baja vol (sigma20≈0.50€ sobre 50€):
-//        TP1 = 50 + 0.30 → riesgo 1.20€ → R:R = 0.25 → FAIL filtro 1.2
-//      Resultado: 0 oportunidades en el screener → dashboard vacío.
-//      FIX: TP basados en risk * tp1Mult (siempre ≥ 1.25×Risk).
-//      R:R garantizado por construcción ≥ 1.25 > umbral 1.2.
+//   1. ENTRY CONFIRMATION (RSI Pullback)
+//      - Nueva función: checkEntryConfirmation()
+//      - No entra si RSI(2) > 75 (espera agotamiento)
+//      - Entrada confirmada cuando RSI(2) está 60-75 (pullback en curso)
+//      - Devuelve { confirmed: bool, rsi2Current: number, nextAction: string }
+//      - CASO SMCI: RSI(2)=99.8 → NO ENTRA, espera a 60-75
 //
-//   2. calcDynamicTPMultiplier:
-//      TOO_SLOW: tp1 subido de 1.0 → 1.25 (R:R mínimo seguro).
-//      SLOW:     tp1 subido de 1.2 → 1.3 (margen ante redondeo).
+//   2. DYNAMIC STOP-LOSS (MA50 + 1×ATR)
+//      - Nueva función: calcDynamicStopLoss()
+//      - Stop = MA50 + 1×ATR en lugar de entry - ATR*mult
+//      - Más tight, mejor para breakouts + tendencias
+//      - Reduce riesgo real manteniendo trade valido
 //
-// CORRECCIONES v5 (previas):
-//   - Eliminadas funciones duplicadas.
-//   - Añadida propiedad 'atr' en TechnicalIndicators (alias de atr14).
-//   - Validaciones robustas en todas las funciones auxiliares.
-//   - calcEfficiencyRatio con índice corregido.
+//   3. EARNINGS AUTO-CLOSE DETECTION
+//      - Función mejorada: getUpcomingEvent() ahora devuelve daysToEvent
+//      - Nueva función: shouldAutoCloseBeforeEarnings()
+//      - Cierra 5 días ANTES de earnings (HIGH impact)
+//      - Dashboard alertará 10 días antes
+//      - Aplica límite de pérdida -2% o profit
+//
+// COMPATIBILIDAD:
+//   - Toda la API existente se mantiene
+//   - Las funciones nuevas son aditivas
+//   - calcStopLoss() clásico disponible como fallback
 // ============================================================
 
 import type {
@@ -96,44 +103,113 @@ const SIGNAL_DRIFT: Record<OpportunityType, number> = {
   EVENT_DRIVEN:      0.10,
 };
 
-// ── Eventos corporativos conocidos ─────────────────────────────
-// Fechas estimadas de próximos eventos que pueden generar
-// dislocaciones de precio. Se actualiza manualmente cada mes.
-interface CorporateEvent {
-  ticker:   string;
-  type:     'EARNINGS' | 'SPLIT' | 'SPINOFF' | 'BUYBACK' | 'IPO_LOCKUP' | 'REGULATORY';
-  date:     string;  // ISO date
-  impact:   'HIGH' | 'MEDIUM' | 'LOW';
-  detail:   string;
+// ════════════════════════════════════════════════════════════
+// CORPORATE EVENTS DATABASE (v7 IMPROVED)
+// ════════════════════════════════════════════════════════════
+
+export interface CorporateEvent {
+  ticker:      string;
+  type:        'EARNINGS' | 'SPLIT' | 'SPINOFF' | 'BUYBACK' | 'IPO_LOCKUP' | 'REGULATORY';
+  date:        string;  // ISO date (YYYY-MM-DD)
+  impact:      'HIGH' | 'MEDIUM' | 'LOW';
+  detail:      string;
+  autoCloseDaysAhead?: number;  // default 5 para EARNINGS HIGH
 }
 
-const UPCOMING_EVENTS: CorporateEvent[] = [
-  // Earnings de mega-caps — ventanas de alta volatilidad
-  { ticker: 'AAPL',  type: 'EARNINGS', date: '2026-07-25', impact: 'HIGH',   detail: 'Apple Q3 2026 earnings' },
-  { ticker: 'MSFT',  type: 'EARNINGS', date: '2026-07-18', impact: 'HIGH',   detail: 'Microsoft Q4 2026 earnings' },
-  { ticker: 'NVDA',  type: 'EARNINGS', date: '2026-08-22', impact: 'HIGH',   detail: 'NVIDIA Q2 2026 earnings' },
-  { ticker: 'TSLA',  type: 'EARNINGS', date: '2026-07-16', impact: 'HIGH',   detail: 'Tesla Q2 2026 earnings (volatility play)' },
-  { ticker: 'AMZN',  type: 'EARNINGS', date: '2026-07-30', impact: 'HIGH',   detail: 'Amazon Q2 2026 earnings' },
-  { ticker: 'META',  type: 'EARNINGS', date: '2026-07-24', impact: 'HIGH',   detail: 'Meta Q2 2026 earnings' },
-  { ticker: 'GOOGL', type: 'EARNINGS', date: '2026-07-23', impact: 'MEDIUM', detail: 'Alphabet Q2 2026 earnings' },
-  // Eventos regulatorios
+export const UPCOMING_EVENTS: CorporateEvent[] = [
+  // ── EARNINGS — Mega-caps ──────────────────────────────────
+  { ticker: 'AAPL',  type: 'EARNINGS', date: '2026-07-25', impact: 'HIGH',   detail: 'Apple Q3 2026 earnings', autoCloseDaysAhead: 5 },
+  { ticker: 'MSFT',  type: 'EARNINGS', date: '2026-07-18', impact: 'HIGH',   detail: 'Microsoft Q4 2026 earnings', autoCloseDaysAhead: 5 },
+  { ticker: 'NVDA',  type: 'EARNINGS', date: '2026-08-22', impact: 'HIGH',   detail: 'NVIDIA Q2 2026 earnings', autoCloseDaysAhead: 5 },
+  { ticker: 'TSLA',  type: 'EARNINGS', date: '2026-07-16', impact: 'HIGH',   detail: 'Tesla Q2 2026 earnings', autoCloseDaysAhead: 5 },
+  { ticker: 'AMZN',  type: 'EARNINGS', date: '2026-07-30', impact: 'HIGH',   detail: 'Amazon Q2 2026 earnings', autoCloseDaysAhead: 5 },
+  { ticker: 'META',  type: 'EARNINGS', date: '2026-07-24', impact: 'HIGH',   detail: 'Meta Q2 2026 earnings', autoCloseDaysAhead: 5 },
+  { ticker: 'GOOGL', type: 'EARNINGS', date: '2026-07-23', impact: 'MEDIUM', detail: 'Alphabet Q2 2026 earnings', autoCloseDaysAhead: 3 },
+  { ticker: 'SMCI',  type: 'EARNINGS', date: '2026-08-11', impact: 'HIGH',   detail: 'Super Micro Q3 2026 earnings', autoCloseDaysAhead: 5 },
+  
+  // ── EVENTOS REGULATORIOS ───────────────────────────────────
   { ticker: 'COIN',  type: 'REGULATORY', date: '2026-09-15', impact: 'HIGH',   detail: 'MiCA crypto regulation final implementation EU' },
   { ticker: 'MSTR',  type: 'BUYBACK',    date: '2026-08-01', impact: 'MEDIUM', detail: 'MicroStrategy ATM share issuance update' },
 ];
 
-// ── Buscar eventos corporativos cercanos ───────────────────────
-function getUpcomingEvent(ticker: string, daysAhead: number = 14): CorporateEvent | null {
+// ════════════════════════════════════════════════════════════
+// EVENT DETECTION FUNCTIONS (v7 IMPROVED)
+// ════════════════════════════════════════════════════════════
+
+export interface UpcomingEventInfo {
+  event: CorporateEvent | null;
+  daysToEvent: number;
+  shouldAutoClose: boolean;
+  closeDaysAhead: number;
+}
+
+/**
+ * Busca eventos corporativos cercanos.
+ * Devuelve info completa incluyendo días al evento.
+ */
+export function getUpcomingEventInfo(ticker: string, daysAhead: number = 14): UpcomingEventInfo {
   const now = Date.now();
   const limit = now + daysAhead * 86400000;
+  
   for (const ev of UPCOMING_EVENTS) {
     if (ev.ticker !== ticker) continue;
     const evDate = new Date(ev.date).getTime();
-    if (evDate >= now && evDate <= limit) return ev;
+    if (evDate >= now && evDate <= limit) {
+      const daysToEv = Math.round((evDate - now) / 86400000);
+      const closeDays = ev.autoCloseDaysAhead ?? (ev.impact === 'HIGH' ? 5 : 3);
+      const shouldClose = daysToEv <= closeDays && ev.type === 'EARNINGS';
+      
+      return {
+        event: ev,
+        daysToEvent: daysToEv,
+        shouldAutoClose: shouldClose,
+        closeDaysAhead: closeDays,
+      };
+    }
   }
-  return null;
+  
+  return { event: null, daysToEvent: 999, shouldAutoClose: false, closeDaysAhead: 5 };
 }
 
-// ── RSI con Wilder's Smoothing ───────────────────────────────
+/**
+ * Determina si una posición abierta debe cerrarse antes de earnings.
+ * 
+ * @param ticker - Símbolo del activo
+ * @param currentPnL - P&L actual de la posición (en %)
+ * @returns { shouldClose, reason, minAcceptableReturn }
+ */
+export function shouldAutoCloseBeforeEarnings(
+  ticker: string,
+  currentPnL: number,
+): { shouldClose: boolean; reason: string; minAcceptableReturn: number } {
+  const info = getUpcomingEventInfo(ticker);
+  
+  if (!info.shouldAutoClose) {
+    return { shouldClose: false, reason: 'No earnings cercanas', minAcceptableReturn: -999 };
+  }
+  
+  // Earnings HIGH impact: cierra si está ganando O si pierde <2%
+  const minReturn = info.event?.impact === 'HIGH' ? -2 : -5;
+  
+  if (currentPnL >= minReturn) {
+    return {
+      shouldClose: true,
+      reason: `Cierre automático: ${info.event?.detail} en ${info.daysToEvent}d. P&L actual ${currentPnL.toFixed(1)}%`,
+      minAcceptableReturn: minReturn,
+    };
+  }
+  
+  return {
+    shouldClose: false,
+    reason: `Earnings en ${info.daysToEvent}d pero P&L ${currentPnL.toFixed(1)}% < mín ${minReturn}% (espera)`,
+    minAcceptableReturn: minReturn,
+  };
+}
+
+// ════════════════════════════════════════════════════════════
+// RSI Y ENTRY CONFIRMATION (v7 IMPROVED)
+// ════════════════════════════════════════════════════════════
+
 function calcRSI(closes: number[], period: number): number {
   if (!closes || closes.length < period + 1) return 50;
   const slice = closes.slice(-(period * 3 + period));
@@ -164,7 +240,68 @@ function calcRSI(closes: number[], period: number): number {
   return parseFloat((100 - 100 / (1 + avgG / avgL)).toFixed(2));
 }
 
-// ── Efficiency Ratio de Kaufman (CORREGIDO) ──────────────────
+/**
+ * Verifica si la entrada está confirmada según el RSI(2).
+ * 
+ * LÓGICA:
+ *   - RSI(2) > 75: TOO_HOT, espera pullback
+ *   - RSI(2) 60-75: CONFIRMED, entrada óptima
+ *   - RSI(2) < 60: EARLY, puede entrar pero sin confirmar
+ *
+ * @param rsi2 - RSI de 2 períodos
+ * @returns { confirmed, status, nextAction }
+ * 
+ * CASO SMCI:
+ *   - RSI(2)=99.8 → status='TOO_HOT', confirmed=false
+ *   - Espera a que RSI(2) caiga a 60-75 para entrada óptima
+ */
+export function checkEntryConfirmation(rsi2: number): {
+  confirmed: boolean;
+  status: 'CONFIRMED' | 'EARLY' | 'TOO_HOT' | 'EXTREME';
+  nextAction: string;
+  recommendedRsiRange: [number, number];
+} {
+  const recommendedRsiRange: [number, number] = [60, 75];
+  
+  if (rsi2 > 85) {
+    return {
+      confirmed: false,
+      status: 'EXTREME',
+      nextAction: `RSI(2)=${rsi2.toFixed(0)} EXTREMO. Espera pullback a 60-75 (1-2 días típico).`,
+      recommendedRsiRange,
+    };
+  }
+  
+  if (rsi2 > 75) {
+    return {
+      confirmed: false,
+      status: 'TOO_HOT',
+      nextAction: `RSI(2)=${rsi2.toFixed(0)} caliente. Espera a 60-75 para entrada confirmada.`,
+      recommendedRsiRange,
+    };
+  }
+  
+  if (rsi2 >= 60 && rsi2 <= 75) {
+    return {
+      confirmed: true,
+      status: 'CONFIRMED',
+      nextAction: `RSI(2)=${rsi2.toFixed(0)} ✓ Entrada confirmada (pullback en curso).`,
+      recommendedRsiRange,
+    };
+  }
+  
+  return {
+    confirmed: true,  // Puede entrar pero sin la confirmación óptima
+    status: 'EARLY',
+    nextAction: `RSI(2)=${rsi2.toFixed(0)} bajo. Entrada posible pero espera 60-75 es más seguro.`,
+    recommendedRsiRange,
+  };
+}
+
+// ════════════════════════════════════════════════════════════
+// INDICADORES TÉCNICOS
+// ════════════════════════════════════════════════════════════
+
 function calcEfficiencyRatio(closes: number[], period: number): number {
   if (!closes || closes.length < period + 1) return 0;
   const valid = closes.filter(v => typeof v === 'number' && isFinite(v));
@@ -177,10 +314,6 @@ function calcEfficiencyRatio(closes: number[], period: number): number {
   }
   return totalPath > 0 ? netMove / totalPath : 0;
 }
-
-// ════════════════════════════════════════════════════════════
-// INDICADORES TÉCNICOS
-// ════════════════════════════════════════════════════════════
 
 export function calcIndicators(
   closes:  number[],
@@ -283,7 +416,7 @@ export function calcIndicators(
     adx,
     efficiencyRatio: er,
     atr14,
-    atr: atr14,        // ← ALIAS para compatibilidad con calcTakeProfits
+    atr: atr14,
     atrPct: atrPctSafe,
     bbUpper, bbMiddle: m20, bbLower, bbWidth,
     zScore20, zScore50, volumeRatio: volRatio, trend,
@@ -295,7 +428,7 @@ export function calcIndicators(
 }
 
 // ════════════════════════════════════════════════════════════
-// GENERADORES DE SEÑAL
+// SIGNAL GENERATORS (SAME AS v6)
 // ════════════════════════════════════════════════════════════
 
 function mkSig(
@@ -395,40 +528,37 @@ function signalSectorRotation(ind: TechnicalIndicators): TacticalSignal {
     'Drawdown52w<-20% AND RSI 40-55 AND sobreMA200/MA50');
 }
 
-// ── EVENT_DRIVEN: señal por evento corporativo próximo ─────────
 function signalEventDriven(ind: TechnicalIndicators, ticker: string): TacticalSignal {
   if (!ticker) return mkSig('EVENT_DRIVEN', false, 0,
     'Sin ticker para buscar eventos', 'Ticker requerido para EVENT_DRIVEN');
-  const event = getUpcomingEvent(ticker);
-  if (!event) return mkSig('EVENT_DRIVEN', false, 0,
+  
+  const eventInfo = getUpcomingEventInfo(ticker);
+  if (!eventInfo.event) return mkSig('EVENT_DRIVEN', false, 0,
     `Sin eventos cercanos (${ticker})`, 'Próximo evento corporativo en <14 días');
 
-  // Score basado en impacto y configuración técnica
+  const event = eventInfo.event;
+  
   const impactScore =
     event.impact === 'HIGH'   ? 38
     : event.impact === 'MEDIUM' ? 25
     : 15;
 
-  // Confirmación técnica: si el activo está en tendencia comprable
   let techBonus = 0;
   if (ind.aboveMA200) techBonus += 12;
   if (ind.trend === 'UPTREND') techBonus += 10;
   if (ind.volumeRatio > 1.2) techBonus += 8;
-  if (ind.rsi14 > 30 && ind.rsi14 < 70) techBonus += 5;  // Sin extremos
+  if (ind.rsi14 > 30 && ind.rsi14 < 70) techBonus += 5;
 
-  // EARNINGS: más score si vol está comprimida (esperando ruptura)
   if (event.type === 'EARNINGS' && ind.bbWidth < 0.05) techBonus += 10;
 
   const score = Math.min(100, impactScore + techBonus);
   const active = score >= 35;
 
-  const daysToEvent = Math.round((new Date(event.date).getTime() - Date.now()) / 86400000);
-
   return mkSig('EVENT_DRIVEN', active, score,
     active
-      ? `${event.type} · ${event.detail} en ${daysToEvent}d · Score ${score}`
-      : `${event.type} · ${event.detail} en ${daysToEvent}d — Score bajo (${score})`,
-    'Evento corporativo próximo + confirmación técnica');
+      ? `${event.type} · ${event.detail} en ${eventInfo.daysToEvent}d · Score ${score}${eventInfo.shouldAutoClose ? ' · ⚠️ Auto-close 5d antes' : ''}`
+      : `${event.type} · ${event.detail} en ${eventInfo.daysToEvent}d — Score bajo (${score})`,
+    `Evento corporativo próximo + confirmación técnica${eventInfo.shouldAutoClose ? ' + auto-close flag' : ''}`);
 }
 
 export function generateSignals(ind: TechnicalIndicators, ticker?: string): TacticalSignal[] {
@@ -454,9 +584,13 @@ export function calcTotalScore(signals: TacticalSignal[]): number {
 }
 
 // ════════════════════════════════════════════════════════════
-// STOP LOSS Y TAKE PROFITS
+// STOP LOSS Y TAKE PROFITS (v7 IMPROVED)
 // ════════════════════════════════════════════════════════════
 
+/**
+ * Stop-loss clásico (v6 compatible).
+ * Mantener para compatibilidad hacia atrás.
+ */
 export function calcStopLoss(
   entryPrice: number,
   atr:        number,
@@ -473,6 +607,43 @@ export function calcStopLoss(
   return Math.min(stopByATR, stopByLow);
 }
 
+/**
+ * NUEVO v7: Stop-loss dinámico basado en MA50 + ATR.
+ * 
+ * LÓGICA:
+ *   - Stop = MA50 + 1×ATR
+ *   - Proporciona un nivel natural de soporte dinámico
+ *   - Mejor para breakouts alcistas + tendencias
+ *   - Reduce riesgo real manteniendo validez de trade
+ *
+ * @param ma50 - Media móvil de 50 periodos
+ * @param atr - Average True Range
+ * @param price - Precio actual
+ * @returns Stop-loss dinámico
+ * 
+ * CASO SMCI:
+ *   - MA50: $27.90
+ *   - ATR: $2.57
+ *   - Stop dinámico = $27.90 + $2.57 = $30.47
+ *   - Vs. 20% estático = $34.48
+ *   - Diferencia: -12% riesgo (más tight, mejor)
+ */
+export function calcDynamicStopLoss(
+  ma50: number,
+  atr: number,
+  price: number,
+): number {
+  const stopByMA = ma50 + atr;
+  
+  // Sanity check: el stop nunca debería estar por encima del precio actual
+  // (eso sería una posición SHORT)
+  if (stopByMA >= price) {
+    return price * 0.97;  // Fallback: 3% por debajo del precio
+  }
+  
+  return stopByMA;
+}
+
 export function calcTakeProfits(
   entryPrice: number,
   stopLoss:   number,
@@ -485,25 +656,13 @@ export function calcTakeProfits(
     return { tp1: entryPrice * 1.02, tp2: entryPrice * 1.04, rr: 1.5, useTrailing: false };
   }
 
-  // ── CORRECCIÓN CRÍTICA v6 ────────────────────────────────────
-  // BUG ANTERIOR: tp1 = entryPrice + sigma20 * 0.6
-  //   → sigma20 es la desviación típica absoluta del precio.
-  //   → En ETFs de baja vol (sigma20 ≈ 0.50€ sobre precio 50€):
-  //       tp1 = 50 + 0.50 * 0.6 = 50.30€ (subida de 0.30€)
-  //       stop = ~48.80€ → riesgo = 1.20€
-  //       R:R = 0.30 / 1.20 = 0.25  → FAIL filtro 1.2 → 0 oportunidades → dashboard vacío
-  //
-  // FIX: TPs basados en multiplicadores de RISK (entryPrice − stopLoss)
-  //   → R:R = tp1Mult siempre ≥ 1.25 → supera filtro → oportunidades reales
-  // ────────────────────────────────────────────────────────────
-
-  const mults  = calcDynamicTPMultiplier(ind.atrPct);   // basado en ATR% del activo
+  const mults  = calcDynamicTPMultiplier(ind.atrPct);
 
   const tp1    = entryPrice + risk * mults.tp1;
   const tp2Raw = entryPrice + risk * mults.tp2;
-  const tp2    = Math.max(tp1 * 1.005, tp2Raw);          // tp2 siempre > tp1
+  const tp2    = Math.max(tp1 * 1.005, tp2Raw);
 
-  const rr = (tp1 - entryPrice) / risk;                  // == mults.tp1 por construcción
+  const rr = (tp1 - entryPrice) / risk;
 
   return {
     tp1,
@@ -514,7 +673,7 @@ export function calcTakeProfits(
 }
 
 // ════════════════════════════════════════════════════════════
-// VELOCIDAD DEL ACTIVO Y HORIZONTE DINÁMICO
+// ASSET SPEED & DYNAMIC HORIZONS
 // ════════════════════════════════════════════════════════════
 
 export type AssetSpeed = 'FAST' | 'MEDIUM' | 'SLOW' | 'TOO_SLOW';
@@ -534,16 +693,14 @@ export function calcDynamicMaxDays(atrPct: number): number {
 }
 
 export function calcDynamicTPMultiplier(atrPct: number): { tp1: number; tp2: number } {
-  // FIX v6: tp1 nunca < 1.25 — garantiza R:R >= 1.25 > filtro mínimo 1.2
-  // Antes: SLOW=1.2, TOO_SLOW=1.0 → R:R caía a 0.3–1.0 con sigma20 → 0 oportunidades
   if (atrPct >= 0.04)  return { tp1: 1.5, tp2: 4.0 };
   if (atrPct >= 0.02)  return { tp1: 1.5, tp2: 2.5 };
   if (atrPct >= 0.008) return { tp1: 1.3, tp2: 1.8 };
-  return { tp1: 1.25, tp2: 1.5 };   // TOO_SLOW: mínimo 1.25 (antes 1.0 → sin señales)
+  return { tp1: 1.25, tp2: 1.5 };
 }
 
 // ════════════════════════════════════════════════════════════
-// MODELO FIRST PASSAGE TIME (FPT)
+// FIRST PASSAGE TIME MODEL
 // ════════════════════════════════════════════════════════════
 
 export function calcOptimalHorizon(

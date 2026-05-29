@@ -25,6 +25,17 @@ export type OpportunityType =
   | 'SECTOR_ROTATION'
   | 'EVENT_DRIVEN';
 
+// ── Evento corporativo (earnings, splits, etc) ───────────────
+// v7 NEW: para tracking de earnings y auto-cierre
+export interface CorporateEvent {
+  ticker:              string;
+  type:                'EARNINGS' | 'SPLIT' | 'SPINOFF' | 'BUYBACK' | 'IPO_LOCKUP' | 'REGULATORY';
+  date:                string;  // ISO date (YYYY-MM-DD)
+  impact:              'HIGH' | 'MEDIUM' | 'LOW';
+  detail:              string;  // Descripción (ej: "Apple Q3 2026 earnings")
+  autoCloseDaysAhead?: number;  // default 5 para EARNINGS HIGH
+}
+
 export type SignalStrength    = 'WEAK' | 'MODERATE' | 'STRONG' | 'EXTREME';
 export type TrendDirection    = 'UPTREND' | 'DOWNTREND' | 'SIDEWAYS';
 export type OpportunityStatus = 'OPEN' | 'CLOSED_TP' | 'CLOSED_SL' | 'CLOSED_TIME' | 'CLOSED_MANUAL';
@@ -157,6 +168,17 @@ export interface TacticalPosition {
   optimalDaysTP1:    number;
   optimalDaysTP2:    number;
   optimalProbTP1:    number;
+  // ── v5 NEW: Earnings tracking & auto-close ──────────────
+  daysToEarnings?:   number;      // Días hasta próximos earnings (si hay)
+  shouldAutoClose?:  boolean;     // Flag: debe cerrarse automáticamente
+  autoCloseReason?:  string;      // Motivo de auto-cierre (earnings, etc)
+}
+
+// ── Opciones para abrir posición con stop-loss dinámico ─────────
+// v5 NEW: permite usar MA50 + ATR en lugar del stop-loss clásico
+export interface OpenPositionOptions {
+  useDynamicStopLoss?: boolean;  // Si true: usa MA50+ATR, si false: entry-ATR (clásico)
+  ma50?: number;                  // Media móvil de 50 periodos (en EUR, requerido si useDynamicStopLoss)
 }
 
 // ── Configuración del motor táctico ─────────────────────────
