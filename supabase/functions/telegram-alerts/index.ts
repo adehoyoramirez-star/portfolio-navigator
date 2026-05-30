@@ -39,7 +39,7 @@ const regimeEmoji: Record<string, string> = {
 
 // ── Tipado de body de mensajes ───────────────────────────────────────────
 interface TelegramBody {
-  type: "regime_change" | "tail_risk" | "black_swan" | "vix_spike" | "daily_summary";
+  type: "regime_change" | "tail_risk" | "black_swan" | "vix_spike" | "daily_summary" | "tactical_opportunity";
   currentRegime?: string;
   previousRegime?: string;
   regimePenalty?: number;
@@ -58,6 +58,20 @@ interface TelegramBody {
   fearGreed?: number;
   fearGreedLabel?: string;
   geminiNarrative?: string;
+  // Tactical opportunity fields
+  tacticalTicker?: string;
+  tacticalName?: string;
+  tacticalType?: string;
+  tacticalScore?: number;
+  tacticalEntry?: number;
+  tacticalStop?: number;
+  tacticalTP1?: number;
+  tacticalTP2?: number;
+  tacticalRR?: number;
+  tacticalSignals?: string;
+  tacticalATR?: string;
+  tacticalReasoning?: string;
+  tacticalScanMode?: string;
 }
 
 // ── Telegram ─────────────────────────────────────────────────────────────
@@ -145,6 +159,44 @@ function buildVixSpike(body: TelegramBody): string {
   ].join("\n");
 }
 
+function buildTacticalOpportunity(body: TelegramBody): string {
+  const typeEmojis: Record<string, string> = {
+    BLOOD_IN_STREETS: "🩸",
+    MEAN_REVERSION: "↩️",
+    MOMENTUM_BREAKOUT: "🚀",
+    OVERSOLD_BOUNCE: "📈",
+    SECTOR_ROTATION: "🔄",
+    EVENT_DRIVEN: "⚡",
+  };
+  const emoji = typeEmojis[body.tacticalType ?? ""] ?? "🎯";
+  const score = body.tacticalScore ?? 0;
+  const scoreEmoji = score >= 80 ? "🏆" : score >= 60 ? "✅" : "⚠️";
+
+  return [
+    `${emoji} <b>OPORTUNIDAD TÁCTICA — ${body.tacticalTicker ?? ""}</b>`,
+    "",
+    `<b>${body.tacticalName ?? ""}</b>`,
+    `<b>Tipo:</b> ${body.tacticalType ?? ""} ${scoreEmoji} Score ${score.toFixed(0)}`,
+    "",
+    `📌 <b>Niveles (EUR)</b>`,
+    `Entrada: ${eur(body.tacticalEntry)}`,
+    `Stop Loss: ${eur(body.tacticalStop)}`,
+    `TP1: ${eur(body.tacticalTP1)}`,
+    `TP2: ${eur(body.tacticalTP2)}`,
+    `R:R: ${body.tacticalRR?.toFixed(2) ?? "N/D"}:1`,
+    "",
+    body.tacticalATR ? `📊 ATR: ${body.tacticalATR}` : "",
+    body.tacticalSignals ? `🧩 Señales: ${body.tacticalSignals}` : "",
+    "",
+    body.tacticalReasoning ? `<i>${body.tacticalReasoning}</i>` : "",
+    "",
+    `🔍 <b>Verificar en TradingView antes de ejecutar</b>`,
+    `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function buildDailySummary(body: TelegramBody): string {
   const emoji = regimeEmoji[body.currentRegime ?? ""] ?? "📊";
   const allocs = Array.isArray(body.allocations)
@@ -223,6 +275,9 @@ Deno.serve(async (req: Request) => {
         break;
       case "vix_spike":
         message = buildVixSpike(body);
+        break;
+      case "tactical_opportunity":
+        message = buildTacticalOpportunity(body);
         break;
       case "daily_summary":
         message = buildDailySummary(body);

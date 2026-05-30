@@ -56,7 +56,7 @@ import { calculateValue, computeUniverseStats, ValueInput } from "../factors/val
 import { calculateQuality, computeQualityUniverseStats, QualityInput } from "../factors/quality";
 import { calculateLowVol, computeLowVolUniverseStats } from "../factors/lowVolatility";
 import { computeHRP } from "../risk/hrp";
-import { getMasterRegime, MasterRegimeOutput, RegimeHistoryEntry } from "../macro/masterRegime";
+import { getMasterRegime, MasterRegimeOutput, RegimeHistoryEntry, RegimeLock } from "../macro/masterRegime";
 import type { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
@@ -227,6 +227,7 @@ export interface OlympusEngineInput {
   // porque todas las llamadas ocurren en milisegundos.
   bypassHysteresis?: boolean;
   avgCorrelation?: number;
+  regimeLock?: RegimeLock | null;
   blendWeights?: {
     BL?: number;
     HRP?: number;
@@ -328,7 +329,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     },
     input.cewsHistory,
     input.regimeHistory,
-    input.bypassHysteresis  // FIX-HYSTERESIS: backtest pasa true
+    input.bypassHysteresis,  // FIX-HYSTERESIS: backtest pasa true
+    input.regimeLock
   );
 
   // SPRINT-5-A: adjustedRegimePenalty — fórmula correcta + justificación empírica.
@@ -388,7 +390,22 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //       principal se canaliza por BTC CAP (CAPA 9), no por coreSignal.
   const regimeNumeric  = adjustedRegimePenalty;
   const btcNumeric     = btcCycle.btcNumeric;
-  const riskNumeric    = 1 - ((input.portfolioRealizedVol ?? 0.18) / 0.50);
+  // ── RiskNumeric usa vol CORE (ex-BTC) ─────────────────────────────────────
+  // BTC con vol ~72% contamina la métrica de riesgo del portfolio completo.
+  // Para el coreSignalScore usamos la vol media de los activos NO-BTC,
+  // para que EMXC/IS3Q/PPFB/URNU/VVSM/XNAS no sean penalizados por BTC.
+  const btcIdxRisk = assets.findIndex(a => {
+    const n = a.name.toLowerCase();
+    return n.includes('btc') || n.includes('bitcoin');
+  });
+  let coreVolEstimate = input.portfolioRealizedVol ?? 0.18;
+  if (btcIdxRisk >= 0) {
+    const nonBtcVols = assets.filter((_, i) => i !== btcIdxRisk).map(a => a.volatility);
+    if (nonBtcVols.length > 0) {
+      coreVolEstimate = nonBtcVols.reduce((s, v) => s + v, 0) / nonBtcVols.length;
+    }
+  }
+  const riskNumeric    = 1 - (coreVolEstimate / 0.50);
   const coreSignalScore = 0.55 * regimeNumeric
                         + 0.20 * btcNumeric
                         + 0.25 * Math.max(0, riskNumeric);
@@ -615,9 +632,34 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   ANTES: se computaba con relativeWeights (pre-cap), ignorando el ajuste de BTC cap
   //   AHORA: se computa después del BTC cap, usando los pesos reales del portfolio
   const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, relativeWeightsAfterCap, input.covMatrix);
+
+  // ── Core realized vol (ex-BTC) ──────────────────────────────────────────────
+  // BTC con vol ~72% anual contamina el VolTarget: si BTC es ~50% del portfolio,
+  // la vol realizada es ~43% → VolTarget = 20%/43% = 0.47 → 53% a cash forzoso.
+  // Para que EMXC/IS3Q/PPFB/URNU/VVSM/XNAS operen sin esta penalización,
+  // calculamos la vol del CORE (6 activos sin BTC) y la usamos para VolTarget.
+  // BTC sigue limitado por BTC CAP (CAPA 9), Tail Risk (full vol) y el régimen.
+  const btcCoreIdx = assets.findIndex(a => {
+    const n = a.name.toLowerCase();
+    return n.includes('btc') || n.includes('bitcoin');
+  });
+  let coreRealizedVol = realizedVol;
+  if (btcCoreIdx >= 0) {
+    const nonBtcAssets = assets.filter((_, i) => i !== btcCoreIdx);
+    const nonBtcWeights = relativeWeightsAfterCap.filter((_, i) => i !== btcCoreIdx);
+    const nonBtcSum = nonBtcWeights.reduce((s, w) => s + w, 0);
+    if (nonBtcSum > 0) {
+      const normW = nonBtcWeights.map(w => w / nonBtcSum);
+      const nonBtcCov = input.covMatrix
+        ?.map(r => r.filter((_, j) => j !== btcCoreIdx))
+        .filter((_, i) => i !== btcCoreIdx);
+      coreRealizedVol = estimatePortfolioVol(nonBtcAssets, normW, nonBtcCov);
+    }
+  }
+
   const volTarget   = computeVolTargetMultiplier({
     targetVol:     input.targetVol ?? DEFAULT_TARGET_VOL,
-    realizedVol,
+    realizedVol:   coreRealizedVol,  // ← usa vol del CORE (ex-BTC)
     regimePenalty: adjustedRegimePenalty,
   });
 
@@ -627,7 +669,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     vix:                macro.vix,
     creditSpread:       macro.creditSpread,
     stressScore:        masterRegime.stressDetail.score,
-    portfolioVolatility: input.portfolioRealizedVol,
+    portfolioVolatility: realizedVol,  // ← vol FULL (incluye BTC) para la red de seguridad
     avgCorrelation:     input.avgCorrelation,
   });
 
@@ -736,7 +778,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     btcCycle,
     totalPortfolioValue:  input.totalPortfolioValue ?? 0,
     availableCash:        input.availableCash ?? 0,
-    portfolioVolatility:  input.portfolioRealizedVol ?? 0.18,
+    portfolioVolatility:  coreRealizedVol ?? input.portfolioRealizedVol ?? 0.18,
     portfolioDrawdown:    input.portfolioDrawdown ?? 0,
   });
   const dca = {

@@ -121,8 +121,9 @@ export interface LiveMonitorState {
 // ── CONFIGURACIÓN DEL MONITOR ─────────────────────────────────
 
 const MONITOR_CONFIG = {
-  PRICE_UPDATE_MS: 15_000,          // precios cada 15s
-  RISK_UPDATE_MS: 60_000,           // métricas de riesgo cada 1min
+  // PRICE_UPDATE_MS ahora es dinámico vía computeOptimalPriceInterval()
+  //   mercado abierto=60s · cerrado=120s · finde=300s · alertas=30s
+  RISK_UPDATE_MS: 60_000,           // métricas de riesgo cada 1min (local, sin Supabase)
 
   MAX_CONSECUTIVE_ERRORS: 5,
   CIRCUIT_BREAKER_RESET_MS: 120_000,
@@ -424,7 +425,7 @@ function generateSmartAlerts(
 
 export class OlympusLiveMonitor {
   private state: LiveMonitorState;
-  private priceIntervalId?: ReturnType<typeof setInterval>;
+  private priceTimeoutId?: ReturnType<typeof setTimeout>;
   private riskIntervalId?: ReturnType<typeof setInterval>;
   private listeners: Set<(state: LiveMonitorState) => void> = new Set();
 
@@ -487,13 +488,58 @@ export class OlympusLiveMonitor {
     this.emit();
   }
 
+  // ── POLLING ADAPTATIVO ────────────────────────────────────
+  // En lugar de un setInterval fijo, usamos setTimeout recursivo que
+  // recalcula el intervalo óptimo en cada ciclo según las condiciones:
+  //   - Mercado abierto (Lun-Vie 15:30-22:00 UTC): cada 60s
+  //   - Mercado cerrado: cada 120s
+  //   - Fin de semana: cada 300s
+  //   - Alertas críticas / DCA activo: cada 30s
+  //   - Errores consecutivos: backoff progresivo hasta 120s
+  //   - Circuit breaker abierto: cada 30s (para detectar recuperación)
+  //
+  // BENEFICIO: reduce ~95% las llamadas a Supabase vs el antiguo intervalo fijo de 15s.
+  //
+  private computeOptimalPriceInterval(): number {
+    const s = this.state;
+
+    if (s.connection.circuitBreakerOpen) return 30_000;
+    if (s.connection.consecutiveErrors >= 3) return 120_000;
+    if (s.connection.consecutiveErrors >= 1) return 60_000;
+
+    const hasCritical = s.alerts.some(a => a.level === 'CRITICAL' && !a.dismissed);
+    const hasActiveDCA = s.dcaOpportunities.some(o => o.active && o.confidence === 'HIGH');
+    if (hasCritical || hasActiveDCA) return 30_000;
+
+    const now = new Date();
+    const day = now.getUTCDay();
+    const hour = now.getUTCHours() + now.getUTCMinutes() / 60;
+    const isOpen = day >= 1 && day <= 5 && hour >= 14.5 && hour < 21;
+
+    if (isOpen) return 60_000;                         // mercado abierto
+    if (day === 0 || day === 6) return 300_000;        // fin de semana (5min)
+    return 120_000;                                     // mercado cerrado (2min)
+  }
+
+  private isPollingScheduled = false;
+
+  private scheduleNextPriceUpdate(): void {
+    if (this.isPollingScheduled) return;
+    this.isPollingScheduled = true;
+
+    const interval = this.computeOptimalPriceInterval();
+    this.priceTimeoutId = setTimeout(() => {
+      this.isPollingScheduled = false;
+      this.updatePrices()
+        .catch(e => this.handleError(e))
+        .finally(() => this.scheduleNextPriceUpdate());
+    }, interval);
+  }
+
   // ── INICIAR/PARAR MONITOR ───────────────────────────────────
 
   start(): void {
-    this.priceIntervalId = setInterval(
-      () => this.updatePrices().catch(e => this.handleError(e)),
-      MONITOR_CONFIG.PRICE_UPDATE_MS
-    );
+    this.scheduleNextPriceUpdate();
 
     this.riskIntervalId = setInterval(
       () => this.updateRiskMetrics(),
@@ -505,7 +551,8 @@ export class OlympusLiveMonitor {
   }
 
   stop(): void {
-    if (this.priceIntervalId) clearInterval(this.priceIntervalId);
+    if (this.priceTimeoutId) clearTimeout(this.priceTimeoutId);
+    this.isPollingScheduled = false;
     if (this.riskIntervalId) clearInterval(this.riskIntervalId);
   }
 

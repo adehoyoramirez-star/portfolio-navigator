@@ -172,6 +172,11 @@ export interface TacticalPosition {
   daysToEarnings?:   number;      // Días hasta próximos earnings (si hay)
   shouldAutoClose?:  boolean;     // Flag: debe cerrarse automáticamente
   autoCloseReason?:  string;      // Motivo de auto-cierre (earnings, etc)
+  // ── v6 NEW: Trailing stop en TP2 ─────────────────────────
+  trailingStopActive?: boolean;   // True tras cerrar 50% en TP1
+  trailingStopPrice?:  number;    // Precio activado del trailing stop
+  trailingStopDistance?: number;  // Distancia ATR (en EUR) para el trailing
+  highestPriceSinceTP1?: number;  // Precio más alto alcanzado tras TP1
 }
 
 // ── Opciones para abrir posición con stop-loss dinámico ─────────

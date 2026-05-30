@@ -39,7 +39,7 @@ import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/po
 import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
-import { signalManualRefresh } from "@/core/macro/masterRegime";
+import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked } from "@/core/macro/masterRegime";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
@@ -874,6 +874,9 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
   // estrictamente top-down: primero el useState, luego el useMemo que lo consume.
   const [regimeChangeCounter, setRegimeChangeCounter] = useState(0);
 
+  // REGIME-LOCK: el usuario puede congelar el régimen manualmente (30 min)
+  const [regimeLock, setRegimeLockState] = useState(() => isRegimeLocked());
+
   // FIX-KALMAN-01: kalmanWeights como useMemo para que React detecte cambios
   // y lo propague correctamente al engine useMemo.
   // updateKalmanFactorWeights se llama en el useEffect mensual (ver más abajo).
@@ -930,6 +933,7 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       totalPortfolioValue,
       avgCorrelation: dynamicCovResult?.avgCorrelation,
       blendWeights: autoBlend,
+      regimeLock,
     });
   // FIX-DCC-01: dynamicCovResult añadido a deps para que el engine reaccione
   // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
@@ -943,6 +947,18 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
       setRegimeChangeCounter(c => c + 1);
     }
   }, [engineResult?.regime, lastRegime]);
+
+
+  // REGIME-LOCK: auto-unlock si ha pasado el tiempo
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const lock = isRegimeLocked();
+      if (regimeLock && !lock) {
+        setRegimeLockState(null);
+      }
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [regimeLock]);
 
   const liquidityOutput = useMemo(() =>
     fromManualInputs({ liquidityGrowth, dxy }),
@@ -2037,7 +2053,34 @@ soxRsiWeekly,
             </div>
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>
               ×{(engineResult.masterRegime.regimePenalty ?? 1).toFixed(3)} penalización
-            </div>
+            
+            <div style={{ marginTop: "4px" }}>
+              <button
+                onClick={() => {
+                  if (regimeLock) {
+                    clearRegimeLock();
+                    setRegimeLockState(null);
+                  } else {
+                    setRegimeLock(engineResult.regime as any, engineResult.masterRegime.regimePenalty);
+                    setRegimeLockState(isRegimeLocked());
+                  }
+                }}
+                style={{
+                  background: regimeLock ? "#b45309" : "#374151",
+                  border: "1px solid " + (regimeLock ? "#f59e0b" : "#4b5563"),
+                  color: regimeLock ? "#fbbf24" : "#9ca3af",
+                  borderRadius: "5px",
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                  fontSize: "0.68rem",
+                  fontWeight: 600,
+                  width: "100%",
+                }}
+                title={regimeLock ? "Régimen congelado. Pulsa para desbloquear." : "Congela el régimen actual mientras actualizas datos manualmente (auto-unlock 30 min)"}
+              >
+                {regimeLock ? "🔒 Regimen Bloqueado" : "🔓 Lock Regime"}
+              </button>
+            </div></div>
           </div>
 
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>

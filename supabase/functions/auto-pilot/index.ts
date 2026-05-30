@@ -56,9 +56,10 @@ function detectRegime(vix: number, creditSpread: number, fearGreed: number): str
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-  const [yahooRaw, cryptoRaw] = await Promise.all([
+  const [yahooRaw, cryptoRaw, tacticalScan] = await Promise.all([
     callFunction('yahoo-finance'),
     callFunction('crypto-signals'),
+    callFunction('tactical-scan'),
   ]);
 
   if (!yahooRaw) {
@@ -145,12 +146,50 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const newState = { regime: currentRegime, vix, btc_rsi: btcRsi, credit_spread: creditSpread, fear_greed: fearGreed, btc_dominance: btcDominance, updated_at: new Date().toISOString() };
+  // ── TACTICAL SCAN → Alertas Telegram ────────────────────────────
+  const tacticalOpportunities = tacticalScan?.topOpportunities ?? [];
+  if (tacticalOpportunities.length > 0) {
+    for (const opp of tacticalOpportunities.slice(0, 3)) {
+      // Rate limit: solo las mejores 3, y solo si no se ha alertado antes
+      const prevOpps = prev?.last_tactical_tickers ?? [];
+      if (!prevOpps.includes(opp.ticker)) {
+        alerts.push(`tactical_${opp.ticker}`);
+        await callFunction('telegram-alerts', {
+          type: 'tactical_opportunity',
+          tacticalTicker: opp.ticker,
+          tacticalName: opp.name,
+          tacticalType: opp.type,  // raw enum type para emoji mapping en telegram
+          tacticalScore: opp.score,
+          tacticalEntry: opp.entryPrice,
+          tacticalStop: opp.stopLoss,
+          tacticalTP1: opp.takeProfit1,
+          tacticalTP2: opp.takeProfit2,
+          tacticalRR: opp.riskReward,
+          tacticalSignals: opp.signals,
+          tacticalATR: opp.atr_pct,
+          tacticalReasoning: opp.reasoning,
+          tacticalScanMode: 'auto',
+        });
+      }
+    }
+  }
+
+  const lastTacticalTickers = tacticalOpportunities.slice(0, 10).map(o => o.ticker);
+
+  const newState = {
+    regime: currentRegime, vix, btc_rsi: btcRsi,
+    credit_spread: creditSpread, fear_greed: fearGreed,
+    btc_dominance: btcDominance,
+    last_tactical_tickers: lastTacticalTickers,
+    updated_at: new Date().toISOString(),
+  };
   await saveState(newState);
 
   return new Response(JSON.stringify({
     ok: true, timestamp: new Date().toISOString(),
     currentState: newState, previousRegime: prev?.regime ?? 'none',
-    alertsFired: alerts, dataQuality: { yahoo: 'OK', crypto: cryptoRaw ? 'OK' : 'failed', m2Growth },
+    alertsFired: alerts,
+    tacticalOpportunities: tacticalOpportunities.length,
+    dataQuality: { yahoo: 'OK', crypto: cryptoRaw ? 'OK' : 'failed', tactical: tacticalScan ? 'OK' : 'failed', m2Growth },
   }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });

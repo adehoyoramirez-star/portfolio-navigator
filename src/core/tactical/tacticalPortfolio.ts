@@ -343,7 +343,6 @@ export function openPosition(
 // ════════════════════════════════════════════════════════════
 // UPDATE POSITION PRICES (includes earnings auto-close check)
 // ════════════════════════════════════════════════════════════
-
 export function updatePositionPrices(
   state: TacticalEngineState,
   priceUpdates: Record<string, number>,  // ticker -> currentPrice
@@ -369,6 +368,37 @@ export function updatePositionPrices(
     // ── v5 NEW: Earnings auto-close check ──────────────────────
     const earningsCheck = shouldAutoCloseBeforeEarnings(p.ticker, unrealPct);
     const shouldClose = earningsCheck.shouldClose;
+
+    // ── v6 NEW: Trailing stop check ────────────────────────────
+    // Si trailing stop está activo, actualizar highestPrice y
+    // verificar si el precio ha caído por debajo del trailing stop
+    let trailingHit = false;
+    let trailingReason = '';
+
+    if (p.trailingStopActive && p.trailingStopPrice != null && p.highestPriceSinceTP1 != null) {
+      const newHighest = Math.max(p.highestPriceSinceTP1, current);
+      // Actualizar trailing stop: 2× ATR desde el máximo
+      const trailDist = p.trailingStopDistance ?? (current * 0.04);
+      const newTrailPrice = Math.max(0.01, newHighest - trailDist);
+
+      if (current <= newTrailPrice) {
+        trailingHit = true;
+        trailingReason = `TRAILING_STOP: precio €${current.toFixed(2)} cayó desde max €${newHighest.toFixed(2)} (distancia €${trailDist.toFixed(2)})`;
+      }
+
+      return {
+        ...p,
+        currentPrice: current,
+        unrealizedPnL: unrealPnL,
+        unrealizedPnLPct: unrealPct,
+        daysOpen,
+        timingScore,
+        highestPriceSinceTP1: newHighest,
+        trailingStopPrice: trailingHit ? p.trailingStopPrice : newTrailPrice,
+        shouldAutoClose: shouldClose || trailingHit,
+        autoCloseReason: trailingHit ? trailingReason : (shouldClose ? earningsCheck.reason : p.autoCloseReason),
+      };
+    }
 
     return {
       ...p,

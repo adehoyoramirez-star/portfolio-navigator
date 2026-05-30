@@ -99,6 +99,48 @@ const HYSTERESIS_MAX_HOURS = 72;        // reset completo después de 3 días
 export const HYSTERESIS_BYPASS_KEY = 'olympus_manual_refresh_v1';
 const BYPASS_VALID_MS = 120_000; // 2 minutos — ventana tras pulsar el botón
 
+// ── REGIME LOCK: el usuario puede congelar el régimen manualmente ─────────
+// Cuando el usuario está editando datos manualmente, los cambios en los inputs
+// pueden provocar cambios espurios de régimen. El Lock congela el régimen y
+// la penalización actuales durante un máximo de LOCK_MAX_MINUTES minutos.
+//
+// El dashboard muestra un candado 🔒 cuando está activo.
+//
+const LOCK_KEY = 'olympus_regime_lock_v1';
+const LOCK_MAX_MS = 30 * 60 * 1000; // 30 minutos de auto-unlock
+
+export interface RegimeLock {
+  regime: MasterRegimeLabel;
+  regimePenalty: number;
+  lockedAt: number; // timestamp ms
+}
+
+export function setRegimeLock(regime: MasterRegimeLabel, regimePenalty: number): void {
+  try {
+    const lock: RegimeLock = { regime, regimePenalty, lockedAt: Date.now() };
+    localStorage.setItem(LOCK_KEY, JSON.stringify(lock));
+  } catch { /* silencio */ }
+}
+
+export function clearRegimeLock(): void {
+  try { localStorage.removeItem(LOCK_KEY); } catch { /* silencio */ }
+}
+
+export function isRegimeLocked(): RegimeLock | null {
+  try {
+    const raw = localStorage.getItem(LOCK_KEY);
+    if (!raw) return null;
+    const lock = JSON.parse(raw) as RegimeLock;
+    if (Date.now() - lock.lockedAt > LOCK_MAX_MS) {
+      localStorage.removeItem(LOCK_KEY); // auto-unlock
+      return null;
+    }
+    return lock;
+  } catch {
+    return null;
+  }
+}
+
 function isManualRefreshActive(): boolean {
   try {
     const ts = parseInt(localStorage.getItem(HYSTERESIS_BYPASS_KEY) ?? '0');
@@ -141,11 +183,11 @@ const REGIME_SEVERITY: Record<string, number> = { EXPANSION: 0, CONTRACTION: 1, 
 export function getMasterRegime(
   input: MasterRegimeInput,
   cewsHistory?: CEWSDataPoint[],
-  // FIX MATH-NEW-02: añadir parámetro regimeHistory para computar duración
   regimeHistory?: RegimeHistoryEntry[],
-  // FIX-HYSTERESIS (01-Jun-2026): el backtest necesita bypass porque todas
-  // las llamadas ocurren en milisegundos, bloqueando el régimen para siempre.
-  bypassHysteresis?: boolean
+  bypassHysteresis?: boolean,
+  // REGIME-LOCK: cuando el usuario congela el régimen manualmente, el sistema
+  // respeta el lock durante 30 minutos, ignorando cualquier cambio en los inputs.
+  regimeLock?: RegimeLock | null
 ): MasterRegimeOutput {
   const crisis = detectCrisis(input.vix, input.yieldSpread, input.creditSpread);
   const stress = computeGlobalStress({
@@ -206,6 +248,21 @@ export function getMasterRegime(
   // (el +0.08 de durationAdjustment puede llevarnos a 0.53, que es correcto)
   if (regime === "CRISIS") {
     finalPenalty = Math.min(finalPenalty, 0.55);
+  }
+
+  // ── REGIME LOCK: si el usuario ha congelado el régimen, lo respetamos ─────
+  if (regimeLock) {
+    return {
+      regime: regimeLock.regime,
+      regimePenalty: regimeLock.regimePenalty,
+      crisisDetail: crisis,
+      stressDetail: stress,
+      regimeProbs,
+      dominantSignal,
+      confidence: confidence,
+      cews,
+      regimeDuration,
+    };
   }
 
   // ── HYSTERESIS: estabilizar régimen contra cambios manuales rápidos ──────

@@ -452,10 +452,15 @@ export default function TacticalDashboard() {
         shares:           halfShares,
         totalInvested:    pos.entryPrice * halfShares,
         capitalRisked:    0,
-        stopLoss:         pos.entryPrice,
+        stopLoss:         pos.entryPrice,  // → breakeven
         unrealizedPnL:    parseFloat(((pos.currentPrice - pos.entryPrice) * halfShares).toFixed(2)),
         unrealizedPnLPct: parseFloat(((pos.currentPrice / pos.entryPrice - 1) * 100).toFixed(2)),
         name:             `${pos.ticker} (50% → TP2)`,
+        // ── v6: Activar trailing stop ──────────────────────
+        trailingStopActive: true,
+        trailingStopPrice:  pos.entryPrice, // parte de breakeven
+        trailingStopDistance: pos.atrAtEntry * 2,  // 2× ATR
+        highestPriceSinceTP1: pos.currentPrice,
       };
 
       const recoveredCapital = exitPrice * halfShares;
