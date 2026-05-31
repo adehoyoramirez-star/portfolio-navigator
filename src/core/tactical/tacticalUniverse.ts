@@ -226,6 +226,18 @@ export const EM_EX_CHINA: UniverseAsset[] = [
   { ticker:'EPHE',   name:'iShares MSCI Philippines ETF',     sector:'Emerging',    type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'EPHE', },
 ];
 
+// ── REITs US (NYSE) — completamente ausentes en v5
+// Comportamiento diferenciado: muy reactivos a yields, señales de
+// Oversold Bounce funcionan especialmente bien.
+// Todos son tickers NYSE estándar, sin sufijos especiales.
+export const US_REITS: UniverseAsset[] = [
+  { ticker:'O',     name:'Realty Income Corp.',              sector:'Real Estate', type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'O', },
+  { ticker:'AMT',   name:'American Tower Corp.',            sector:'Real Estate', type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'AMT', },
+  { ticker:'PLD',   name:'Prologis Inc.',                   sector:'Real Estate', type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'PLD', },
+  { ticker:'WELL',  name:'Welltower Inc.',                  sector:'Real Estate', type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'WELL', },
+  { ticker:'SPG',   name:'Simon Property Group Inc.',       sector:'Real Estate', type:'STOCK', exchange:'NYSE',   currency:'USD', yahooSymbol:'SPG', },
+];
+
 // ── Small Caps & Factor ETFs ─────────────────────────────────
 export const FACTOR_ETFS: UniverseAsset[] = [
   { ticker:'IWM',    name:'iShares Russell 2000 ETF',         sector:'Small Cap',   type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'IWM', },
@@ -281,6 +293,7 @@ export const FULL_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...CAC40_STOCKS,
   ...FTSE100_STOCKS,
   ...US_STOCKS,
+  ...US_REITS,
   ...US_SECTOR_ETFS,
   ...EM_EX_CHINA,
   ...FACTOR_ETFS,
@@ -301,6 +314,7 @@ export const CORE_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...CAC40_STOCKS.filter(a => ['MC.PA','AIR.PA','SAN.PA','TTE.PA','SU.PA'].includes(a.ticker)),
   ...FTSE100_STOCKS.filter(a => ['SHEL.L','AZN.L','HSBA.L','ULVR.L','BP.L'].includes(a.ticker)),
   ...US_STOCKS.filter(a => ['NVDA','AAPL','MSFT','TSLA','META','GOOGL','AMZN','AMD','JPM','V'].includes(a.ticker)),
+  ...US_REITS.filter(a => ['O','PLD'].includes(a.ticker)),
   ...US_SECTOR_ETFS.filter(a => ['XLK','XLE','XLF','XLV','SOXX'].includes(a.ticker)),
 ];
 
