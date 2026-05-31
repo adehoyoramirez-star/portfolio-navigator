@@ -93,6 +93,16 @@ function fptCDF(t: number, d: number, mu: number, sigma: number): number {
   return Math.max(0, Math.min(1, val));
 }
 
+// ── Pesos por tipo de señal (señales de capitulación pesan más) ─
+export const SIGNAL_WEIGHTS: Record<OpportunityType, number> = {
+  BLOOD_IN_STREETS:  1.0,
+  MOMENTUM_BREAKOUT: 0.8,
+  MEAN_REVERSION:    0.7,
+  OVERSOLD_BOUNCE:   0.5,
+  SECTOR_ROTATION:   0.4,
+  EVENT_DRIVEN:      0.2,
+};
+
 // ── Drift diario calibrado por tipo de señal ─────────────────
 const SIGNAL_DRIFT: Record<OpportunityType, number> = {
   MOMENTUM_BREAKOUT: 0.15,
@@ -579,8 +589,22 @@ export function generateSignals(ind: TechnicalIndicators, ticker?: string): Tact
 export function calcTotalScore(signals: TacticalSignal[]): number {
   const active = signals.filter(s => s.active);
   if (active.length === 0) return 0;
-  const best = Math.max(...active.map(s => s.score));
-  return Math.min(100, best + Math.min(20, (active.length - 1) * 8));
+  
+  // Weighted score: each signal contributes its score × weight
+  // Normalized so the best possible score is 100
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const sig of active) {
+    const w = SIGNAL_WEIGHTS[sig.type] ?? 0.5;
+    weightedSum += sig.score * w;
+    totalWeight += w;
+  }
+  const weightedAvg = totalWeight > 0 ? weightedSum / totalWeight : 0;
+  
+  // Confluence bonus: capped at +15 for 3+ signals
+  const confluenceBonus = active.length >= 3 ? 10 : active.length === 2 ? 5 : 0;
+  
+  return Math.min(100, Math.round(weightedAvg + confluenceBonus));
 }
 
 // ════════════════════════════════════════════════════════════

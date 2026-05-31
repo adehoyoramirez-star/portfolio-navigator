@@ -360,13 +360,22 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
 
   if (stopLossEur >= priceEur || tp1Eur <= priceEur) return null;
   const riskReward = (tp1Eur - priceEur) / Math.max(0.0001, priceEur - stopLossEur);
-  if (riskReward < 1.2) return null;
+  // FIX INSTITUCIONAL: R/R mínimo 2.0 (era 1.2)
+  if (riskReward < 2.0) return null;
+
+  // FIX INSTITUCIONAL: Execution Score = opportunity * 0.6 + quality * 0.4
+  const qualityScore = asset.qualityScore ?? 50;
+  const executionScore = Math.min(100, Math.round(
+    asset.totalScore * 0.6 + qualityScore * 0.4
+  ));
 
   return {
     id:           `opp_${asset.ticker}_${Date.now()}`,
     asset,
     type:         signalType,
     score:        asset.totalScore,
+    qualityScore,
+    executionScore,
     entryPrice:   priceEur,   // En EUR
     stopLoss:     stopLossEur,
     takeProfit1:  tp1Eur,
@@ -413,6 +422,7 @@ export async function scanTacticalUniverse(
     oppFiltroReg:  0,
     oppScoreBajo:  0,
     oppRRBajo:     0,
+    oppExecBajo:   0,  // FIX INSTITUCIONAL: executionScore < 65
     oportunidades: 0,
   };
 
@@ -429,7 +439,8 @@ export async function scanTacticalUniverse(
     .filter(a => a.fallbackYahooSymbol)
     .map(a => a.fallbackYahooSymbol!);
 
-  const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX'])];
+  // FIX INSTITUCIONAL: añadir SPY como benchmark para fuerza relativa
+  const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX', 'SPY'])];
 
   // Paso 2: fetch batch de todos los símbolos
   let batchData = await fetchBatch(supabase, allSymbols, 'yahoo-finance-tactical');
@@ -466,9 +477,49 @@ export async function scanTacticalUniverse(
     }
   }
 
-  // Paso 4: VIX real
-  const vixPrice = batchData['^VIX']?.price ?? 20;
-  console.debug(`[Screener] VIX real: ${vixPrice.toFixed(2)}`);
+  // Paso 4: VIX real + benchmark SPY
+  const vixPrice    = batchData['^VIX']?.price ?? 20;
+  const spyCloses   = batchData['SPY']?.closes ?? [];
+  const spyPrice    = batchData['SPY']?.price ?? 500;
+  console.debug(`[Screener] VIX: ${vixPrice.toFixed(2)} | SPY: $${spyPrice.toFixed(0)}`);
+
+  // Helper: fuerza relativa vs SPY (252 días)
+  function calcRelativeStrength(assetCloses: number[]): number {
+    if (assetCloses.length < 252 || spyCloses.length < 252) return 1.0;
+    const aPerf252 = assetCloses[assetCloses.length - 1] / assetCloses[assetCloses.length - 252];
+    const sPerf252 = spyCloses[spyCloses.length - 1] / spyCloses[spyCloses.length - 252];
+    if (aPerf252 <= 0 || sPerf252 <= 0) return 1.0;
+    return parseFloat((aPerf252 / sPerf252).toFixed(3));
+  }
+
+  // Helper: calidad del activo (0-100)
+  function calcQualityScore(
+    rs:      number,
+    volRatio: number,
+    trend:   string,
+    atrPct:  number,
+    price:   number,
+  ): number {
+    let score = 0;
+    // Fuerza relativa (35%)
+    if (rs > 1.15)      score += 35;
+    else if (rs > 1.05) score += 25;
+    else if (rs > 0.95) score += 15;
+    else if (rs > 0.85) score += 5;
+    // Liquidez — volumen ratio (20%)
+    if (volRatio > 2.0)    score += 20;
+    else if (volRatio > 1.5) score += 15;
+    else if (volRatio > 1.0) score += 10;
+    else if (volRatio >= 0.5) score += 5;
+    // Tendencia semanal (25%)
+    if (trend === 'UPTREND')    score += 25;
+    else if (trend === 'SIDEWAYS') score += 10;
+    // Volatilidad controlada (20%) — penalizar si > 8%
+    if (atrPct < 0.03)      score += 20;
+    else if (atrPct < 0.05) score += 15;
+    else if (atrPct < 0.08) score += 8;
+    return Math.min(100, score);
+  }
 
   // Paso 5: construir assets con 3 niveles de fallback
   for (const asset of universe) {
@@ -517,6 +568,17 @@ export async function scanTacticalUniverse(
 
     const built = buildAsset(asset, raw, dataSource);
     if (built) {
+      // FIX INSTITUCIONAL: fuerza relativa + calidad
+      const rs = calcRelativeStrength(built.closes);
+      built.relativeStrength = rs;
+      built.qualityScore = calcQualityScore(
+        rs,
+        built.indicators?.volumeRatio ?? 1,
+        built.indicators?.trend ?? 'SIDEWAYS',
+        built.indicators?.atrPct ?? 0.02,
+        built.price,
+      );
+
       assets.push(built);
       if (!built.hasRealOHLC && dataSource === 'primary') {
         diag.sinOhlc++;
@@ -588,6 +650,12 @@ export async function scanTacticalUniverse(
       diag.oppRRBajo++;
       continue;
     }
+    // FIX INSTITUCIONAL: executionScore mínimo 65
+    const execScore = opp.executionScore ?? 0;
+    if (execScore < 65) {
+      diag.oppExecBajo++;
+      continue;
+    }
 
     opportunities.push({ ...opp, score: adjustedScore });
     diag.oportunidades++;
@@ -645,6 +713,7 @@ export async function scanTacticalUniverse(
     `  🔇 Filtro régimen:   -${diag.oppFiltroReg}\n` +
     `  📉 Score < ${config.minScore}: -${diag.oppScoreBajo}\n` +
     `  📉 R:R < ${config.minRiskReward}: -${diag.oppRRBajo}\n` +
+    `  📉 Execution < 65:   -${diag.oppExecBajo}\n` +
     `  🎯 Oportunidades:    ${diag.oportunidades}\n` +
     `  ─────────────────────────────────────`
   );

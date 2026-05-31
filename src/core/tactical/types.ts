@@ -105,6 +105,8 @@ export interface TacticalAsset {
   indicators:  TechnicalIndicators | null;
   signals:     TacticalSignal[];
   totalScore:  number;
+  relativeStrength?: number;     // NUEVO: RS vs SPY benchmark (1.0=igual, >1.0=supera). Opcional: se setea post-buildAsset
+  qualityScore?: number;         // NUEVO: calidad compuesta (liquidez + tendencia + vol). Opcional: se setea post-buildAsset
   lastUpdated: string | null;
   dataSource:  DataSource;  // NUEVO: origen de los datos
   hasRealOHLC: boolean;     // NUEVO: OHLC real desde Yahoo, no aproximado sintético
@@ -124,6 +126,8 @@ export interface TacticalOpportunity {
   takeProfit1: number;    // En EUR
   takeProfit2: number;    // En EUR
   riskReward:  number;
+  qualityScore: number;        // NUEVO: calidad del activo (0-100)
+  executionScore: number;      // NUEVO: combinación opportunity*0.6 + quality*0.4
   reasoning:   string;
   detectedAt:  string;
   expiresAt:   string;
