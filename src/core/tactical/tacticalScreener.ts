@@ -368,8 +368,6 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
 
   if (stopLossEur >= priceEur || tp1Eur <= priceEur) return null;
   const riskReward = (tp1Eur - priceEur) / Math.max(0.0001, priceEur - stopLossEur);
-  // FIX INSTITUCIONAL: R/R mínimo 2.0 (era 1.2)
-  if (riskReward < 2.0) return null;
 
   // FIX INSTITUCIONAL: Execution Score = opportunity * 0.6 + quality * 0.4
   const qualityScore = asset.qualityScore ?? 50;
@@ -823,7 +821,7 @@ export function defaultTacticalConfig(
     maxOpenPositions:       4,
     minScore:               38,
     requireAboveMA200:      false,
-    minRiskReward:          1.3,
+    minRiskReward:          2.0, // Filtro R/R con diagnóstico (antes hardcodeado en buildOpportunity)
     maxAtrPct:              0.15,
     maxDaysPerTrade:        75,
     trailingStop:           true,
