@@ -46,6 +46,7 @@ import type {
 import {
   calcIndicators, generateSignals, calcTotalScore,
   calcStopLoss, calcTakeProfits,
+  generateMacroSignal,
 } from './tacticalSignals';
 import {
   CORE_TACTICAL_UNIVERSE,
@@ -61,6 +62,7 @@ import {
 } from './marketRegimeFilter';
 import { fetchFxRates, toEur, normalizeGbxToGbp, getCachedFxRates } from './fxConverter';
 import { integratedOverfittingMetric } from '../risk/overfittingMetric';
+import { fetchSectorNarrative, applyNarrativeBias } from './aiNarrative';
 
 export { CORE_TACTICAL_UNIVERSE, FULL_TACTICAL_UNIVERSE, VOLATILE_UNIVERSE };
 
@@ -607,19 +609,52 @@ export async function scanTacticalUniverse(
     }
   }
 
-    // Paso 6: diagnóstico
-  console.debug(
-    `[Screener] ${assets.length}/${universe.length} activos · ` +
-    `P:${diag.primary} F:${diag.fallback} UF:${diag.ultraFallback} SD:${diag.sinDatos} ` +
-    `EB:${diag.errorBuild} noOHLC:${diag.sinOhlc}`,
-  );
-
-  // Paso 7: régimen de mercado
+    // Paso 6: régimen de mercado (necesario para narrative + filtros)
   const indexAsset = assets.find(a =>
     ['IS3Q.DE', 'XNAS.DE', 'CSPX.AS', 'SPY', 'QQQ', 'IVV'].includes(a.ticker),
   );
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);
+
+  // Paso 7: AI Narrative Overlay (Gemini Flash — gratis)
+  // Gemini analiza las narrativas de mercado actuales y ajusta calidad
+  // por sector. Si falla (sin API key), el sistema sigue sin penalización.
+  if (assets.length > 0) {
+    const narrative = await fetchSectorNarrative(supabase, {
+      regime: marketRegime?.regime ?? 'RANGING',
+      vix: vixPrice,
+      spyPrice,
+    });
+    if (narrative.narrativeActive) {
+      for (const asset of assets) {
+        applyNarrativeBias(asset, narrative.sectorBiases, narrative.marketWideBias);
+      }
+    }
+  }
+
+  // Paso 7b: Macro Event Signal (calendario económico)
+  // Si hay eventos macro relevantes (FOMC, CPI, NFP) en los próximos
+  // 14 días, penaliza la calidad de todos los activos (incertidumbre).
+  const macroSignal = generateMacroSignal();
+  if (macroSignal.active) {
+    const macroPenalty = Math.round(macroSignal.score * 0.3); // Hasta -30pts de calidad
+    for (const asset of assets) {
+      if (asset.qualityScore != null) {
+        asset.qualityScore = Math.max(10, asset.qualityScore - macroPenalty);
+      }
+    }
+    console.log(
+      `[Screener] 📅 Macro eventos: ${macroSignal.description}` +
+      ` · Penalizando calidad -${macroPenalty}pts en todos los activos`
+    );
+  }
+
+  // Paso 8: diagnóstico
+  console.debug(
+    `[Screener] ${assets.length}/${universe.length} activos · ` +
+    `P:${diag.primary} F:${diag.fallback} UF:${diag.ultraFallback} SD:${diag.sinDatos} ` +
+    `EB:${diag.errorBuild} noOHLC:${diag.sinOhlc}`,
+  );
 
   // ── Log: distribución de tipos de señal generados ────────────────
   const signalTypeCounts: Record<string, number> = {};
@@ -636,7 +671,7 @@ export async function scanTacticalUniverse(
       .join('\n')
   );
 
-  // Paso 8: construir oportunidades CON FILTRO DE RÉGIMEN
+  // Paso 9: construir oportunidades CON FILTRO DE RÉGIMEN
   // Re-auditoría: reactivado el filtro de régimen para evitar operar
   // en contra del mercado (ej. MOMENTUM_BREAKOUT en mercado bajista).
   // marketRegimeFilter.ts detecta TRENDING_UP | RANGING | TRENDING_DOWN | CRASH

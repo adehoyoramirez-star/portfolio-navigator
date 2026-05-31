@@ -114,12 +114,12 @@ const SIGNAL_DRIFT: Record<OpportunityType, number> = {
 };
 
 // ════════════════════════════════════════════════════════════
-// CORPORATE EVENTS DATABASE (v7 IMPROVED)
+// CORPORATE EVENTS + ECONOMIC CALENDAR DATABASE (v8)
 // ════════════════════════════════════════════════════════════
 
 export interface CorporateEvent {
   ticker:      string;
-  type:        'EARNINGS' | 'SPLIT' | 'SPINOFF' | 'BUYBACK' | 'IPO_LOCKUP' | 'REGULATORY';
+  type:        'EARNINGS' | 'SPLIT' | 'SPINOFF' | 'BUYBACK' | 'IPO_LOCKUP' | 'REGULATORY' | 'MACRO';
   date:        string;  // ISO date (YYYY-MM-DD)
   impact:      'HIGH' | 'MEDIUM' | 'LOW';
   detail:      string;
@@ -140,6 +140,62 @@ export const UPCOMING_EVENTS: CorporateEvent[] = [
   // ── EVENTOS REGULATORIOS ───────────────────────────────────
   { ticker: 'COIN',  type: 'REGULATORY', date: '2026-09-15', impact: 'HIGH',   detail: 'MiCA crypto regulation final implementation EU' },
   { ticker: 'MSTR',  type: 'BUYBACK',    date: '2026-08-01', impact: 'MEDIUM', detail: 'MicroStrategy ATM share issuance update' },
+
+  // ════════════════════════════════════════════════════════════
+  // CALENDARIO ECONÓMICO 2026 — 100% gratis, hardcodeado
+  // Fuentes: FED calendar, BLS (Bureau of Labor Statistics)
+  // Marcador macro: '__MACRO__' — afecta a TODOS los activos
+  // ════════════════════════════════════════════════════════════
+
+  // ── FOMC Rate Decisions (8 reuniones/año) ───────────────────
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-07-28', impact: 'HIGH',   detail: 'FOMC rate decision (Jul 28-29)' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-09-16', impact: 'HIGH',   detail: 'FOMC rate decision (Sep 16-17)' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-11-04', impact: 'HIGH',   detail: 'FOMC rate decision (Nov 4-5)' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-12-16', impact: 'HIGH',   detail: 'FOMC rate decision (Dec 16-17)' },
+
+  // ── CPI (Consumer Price Index) — mensual ────────────────────
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-07-15', impact: 'HIGH',   detail: 'US CPI Jun 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-08-12', impact: 'HIGH',   detail: 'US CPI Jul 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-09-16', impact: 'HIGH',   detail: 'US CPI Aug 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-10-14', impact: 'HIGH',   detail: 'US CPI Sep 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-11-13', impact: 'HIGH',   detail: 'US CPI Oct 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-12-10', impact: 'HIGH',   detail: 'US CPI Nov 2026' },
+
+  // ── NFP (Non-Farm Payrolls / Empleo USA) — mensual ──────────
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-07-02', impact: 'HIGH',   detail: 'US Jobs Report (NFP) Jun 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-08-05', impact: 'HIGH',   detail: 'US Jobs Report (NFP) Jul 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-09-04', impact: 'HIGH',   detail: 'US Jobs Report (NFP) Aug 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-10-07', impact: 'HIGH',   detail: 'US Jobs Report (NFP) Sep 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-11-06', impact: 'HIGH',   detail: 'US Jobs Report (NFP) Oct 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-12-04', impact: 'HIGH',   detail: 'US Jobs Report (NFP) Nov 2026' },
+
+  // ── PPI (Producer Price Index) — mensual ────────────────────
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-07-14', impact: 'MEDIUM', detail: 'US PPI Jun 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-08-11', impact: 'MEDIUM', detail: 'US PPI Jul 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-09-15', impact: 'MEDIUM', detail: 'US PPI Aug 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-10-14', impact: 'MEDIUM', detail: 'US PPI Sep 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-11-13', impact: 'MEDIUM', detail: 'US PPI Oct 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-12-10', impact: 'MEDIUM', detail: 'US PPI Nov 2026' },
+
+  // ── GDP (advance/revised) ───────────────────────────────────
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-07-30', impact: 'HIGH',   detail: 'US GDP Q2 2026 (advance)' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-08-27', impact: 'HIGH',   detail: 'US GDP Q2 2026 (revised)' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-10-29', impact: 'HIGH',   detail: 'US GDP Q3 2026 (advance)' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-11-26', impact: 'HIGH',   detail: 'US GDP Q3 2026 (revised)' },
+
+  // ── ISM Manufacturing & Services PMI ────────────────────────
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-07-01', impact: 'MEDIUM', detail: 'ISM Manufacturing PMI Jun 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-07-06', impact: 'MEDIUM', detail: 'ISM Services PMI Jun 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-08-03', impact: 'MEDIUM', detail: 'ISM Manufacturing PMI Jul 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-08-05', impact: 'MEDIUM', detail: 'ISM Services PMI Jul 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-09-01', impact: 'MEDIUM', detail: 'ISM Manufacturing PMI Aug 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-09-04', impact: 'MEDIUM', detail: 'ISM Services PMI Aug 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-10-01', impact: 'MEDIUM', detail: 'ISM Manufacturing PMI Sep 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-10-06', impact: 'MEDIUM', detail: 'ISM Services PMI Sep 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-11-02', impact: 'MEDIUM', detail: 'ISM Manufacturing PMI Oct 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-11-04', impact: 'MEDIUM', detail: 'ISM Services PMI Oct 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-12-01', impact: 'MEDIUM', detail: 'ISM Manufacturing PMI Nov 2026' },
+  { ticker: '__MACRO__', type: 'MACRO', date: '2026-12-03', impact: 'MEDIUM', detail: 'ISM Services PMI Nov 2026' },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -569,6 +625,66 @@ function signalEventDriven(ind: TechnicalIndicators, ticker: string): TacticalSi
       ? `${event.type} · ${event.detail} en ${eventInfo.daysToEvent}d · Score ${score}${eventInfo.shouldAutoClose ? ' · ⚠️ Auto-close 5d antes' : ''}`
       : `${event.type} · ${event.detail} en ${eventInfo.daysToEvent}d — Score bajo (${score})`,
     `Evento corporativo próximo + confirmación técnica${eventInfo.shouldAutoClose ? ' + auto-close flag' : ''}`);
+}
+
+/**
+ * Genera señal EVENT_DRIVEN para eventos macro (FOMC, CPI, NFP...).
+ * Se ejecuta una vez por scan, no por activo.
+ */
+export function generateMacroSignal(): TacticalSignal {
+  const now = Date.now();
+  const limit14 = now + 14 * 86400000;
+  const limit3 = now + 3 * 86400000;
+
+  const macroEvents = UPCOMING_EVENTS.filter(e =>
+    e.ticker === '__MACRO__' &&
+    new Date(e.date).getTime() >= now &&
+    new Date(e.date).getTime() <= limit14
+  );
+
+  if (macroEvents.length === 0) {
+    return mkSig('EVENT_DRIVEN', false, 0,
+      'Sin eventos macro en 14 días',
+      'Macro evento (FOMC/CPI/NFP) en <14 días');
+  }
+
+  // Ordenar por fecha, más cercano primero
+  macroEvents.sort((a, b) => a.date.localeCompare(b.date));
+
+  // Construir descripción con los eventos más cercanos
+  const nextEvent = macroEvents[0];
+  const daysToEvent = Math.round(
+    (new Date(nextEvent.date).getTime() - now) / 86400000
+  );
+
+  // Calcular score según:
+  // - Impacto del evento más cercano
+  // - Cuántos eventos se acumulan (semana cargada = más volátil)
+  // - Cuán cerca está (3 días = máxima alerta)
+  const nearEventCount = macroEvents.filter(e =>
+    new Date(e.date).getTime() <= limit3
+  ).length;
+
+  let score = 35; // base
+  if (nextEvent.impact === 'HIGH') score += 20;
+  if (daysToEvent <= 3) score += 25;        // Inminente
+  else if (daysToEvent <= 7) score += 15;   // Esta semana
+  else score += 5;                           // Lejano
+  if (nearEventCount >= 2) score += 15;      // Semana macro cargada
+  if (nearEventCount >= 3) score += 10;      // Semana macro muy cargada
+
+  const finalScore = Math.min(100, score);
+  const active = finalScore >= 35;
+
+  const eventListStr = macroEvents.slice(0, 3).map(e =>
+    `${e.detail}`
+  ).join(' | ');
+
+  return mkSig('EVENT_DRIVEN', active, finalScore,
+    active
+      ? `📅 ${macroEvents.length} eventos macro · Próximo: ${nextEvent.detail} en ${daysToEvent}d · Score ${finalScore}${nearEventCount >= 2 ? ' · ⚠️ Semana cargada' : ''}`
+      : `📅 ${macroEvents.length} eventos macro en 14d — Score bajo (${finalScore})`,
+    'Evento macro próximo (FOMC/CPI/NFP) en <14 días');
 }
 
 export function generateSignals(ind: TechnicalIndicators, ticker?: string): TacticalSignal[] {
