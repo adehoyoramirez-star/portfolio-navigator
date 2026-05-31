@@ -619,12 +619,20 @@ export async function scanTacticalUniverse(
   // Paso 7: AI Narrative Overlay (Gemini Flash — gratis)
   // Gemini analiza las narrativas de mercado actuales y ajusta calidad
   // por sector. Si falla (sin API key), el sistema sigue sin penalización.
+  let narrativeStatus: ScreenerResult['narrativeStatus'] = undefined;
   if (assets.length > 0) {
     const narrative = await fetchSectorNarrative(supabase, {
       regime: marketRegime?.regime ?? 'RANGING',
       vix: vixPrice,
       spyPrice,
     });
+    narrativeStatus = {
+      active: narrative.narrativeActive,
+      sectorBiases: narrative.sectorBiases,
+      marketWideBias: narrative.marketWideBias,
+      marketSentiment: narrative.marketSentiment,
+      topNarratives: narrative.topNarratives,
+    };
     if (narrative.narrativeActive) {
       for (const asset of assets) {
         applyNarrativeBias(asset, narrative.sectorBiases, narrative.marketWideBias);
@@ -636,6 +644,7 @@ export async function scanTacticalUniverse(
   // Si hay eventos macro relevantes (FOMC, CPI, NFP) en los próximos
   // 14 días, penaliza la calidad de todos los activos (incertidumbre).
   const macroSignal = generateMacroSignal();
+  let macroEventInfo: ScreenerResult['macroEventInfo'] = undefined;
   if (macroSignal.active) {
     const macroPenalty = Math.round(macroSignal.score * 0.3); // Hasta -30pts de calidad
     for (const asset of assets) {
@@ -643,10 +652,23 @@ export async function scanTacticalUniverse(
         asset.qualityScore = Math.max(10, asset.qualityScore - macroPenalty);
       }
     }
+    macroEventInfo = {
+      active: true,
+      description: macroSignal.description ?? '',
+      penalty: macroPenalty,
+      score: macroSignal.score,
+    };
     console.log(
       `[Screener] 📅 Macro eventos: ${macroSignal.description}` +
       ` · Penalizando calidad -${macroPenalty}pts en todos los activos`
     );
+  } else {
+    macroEventInfo = {
+      active: false,
+      description: 'Sin eventos macro próximos',
+      penalty: 0,
+      score: 0,
+    };
   }
 
   // Paso 8: diagnóstico
@@ -823,6 +845,28 @@ export async function scanTacticalUniverse(
     errors,
     warnings,
     marketRegime,
+    narrativeStatus,
+    macroEventInfo,
+    diagnostics: {
+      total: diag.total,
+      conDatos: diag.conDatos,
+      primary: diag.primary,
+      fallback: diag.fallback,
+      ultraFallback: diag.ultraFallback,
+      sinDatos: diag.sinDatos,
+      errorBuild: diag.errorBuild,
+      sinOhlc: diag.sinOhlc,
+      conSenales: diag.conSenales,
+      oppFiltroReg: diag.oppFiltroReg,
+      oppScoreBajo: diag.oppScoreBajo,
+      oppRRBajo: diag.oppRRBajo,
+      oppExecBajo: diag.oppExecBajo,
+      oportunidades: diag.oportunidades,
+      signalTypeCounts,
+      totalActiveSignals,
+      overfittingScore: ofReport.globalScorePct,
+      overfittingLevel: ofReport.level,
+    },
     // FIX v11: stub vacío para evitar "BACKTEST metrics undefined" en el dashboard.
     // El dashboard debe leer result.backtest?.metrics ?? [] (optional chaining).
     backtest: { metrics: [], ran: false },

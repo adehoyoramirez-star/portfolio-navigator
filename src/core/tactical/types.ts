@@ -243,4 +243,39 @@ export interface ScreenerResult {
   warnings:      string[]; // NUEVO: warnings de ultra-fallbacks usados
   marketRegime?: RegimeState;
   backtest:      BacktestStub; // stub para compatibilidad con dashboard
+  // NUEVO: diagnóstico visible para el dashboard
+  narrativeStatus?: {
+    active: boolean;
+    sectorBiases: Record<string, number>;
+    marketWideBias: number;
+    marketSentiment: string;
+    topNarratives: string[];
+    error?: string;
+  };
+  macroEventInfo?: {
+    active: boolean;
+    description: string;
+    penalty: number;
+    score: number;
+  };
+  diagnostics?: {
+    total: number;
+    conDatos: number;
+    primary: number;
+    fallback: number;
+    ultraFallback: number;
+    sinDatos: number;
+    errorBuild: number;
+    sinOhlc: number;
+    conSenales: number;
+    oppFiltroReg: number;
+    oppScoreBajo: number;
+    oppRRBajo: number;
+    oppExecBajo: number;
+    oportunidades: number;
+    signalTypeCounts: Record<string, number>;
+    totalActiveSignals: number;
+    overfittingScore: number;
+    overfittingLevel: string;
+  };
 }

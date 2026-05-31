@@ -19,7 +19,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import type {
-  TacticalEngineState, TacticalOpportunity,
+  TacticalEngineState, TacticalOpportunity, ScreenerResult,
   TacticalPosition, TacticalConfig,
 } from '../core/tactical/types';
 import type { TacticalSignal } from '../core/tactical/types';
@@ -235,6 +235,11 @@ export default function TacticalDashboard() {
   const [lastRun, setLastRun]   = useState<string | null>(state.lastScreened);
   const [scanMode, setScanMode] = useState<ScanMode>('core');
 
+  // ── Estado del último scan (narrative, macro, diagnóstico) ──
+  const [scanNarrative, setScanNarrative] = useState<ScreenerResult['narrativeStatus']>(undefined);
+  const [scanMacro, setScanMacro] = useState<ScreenerResult['macroEventInfo']>(undefined);
+  const [scanDiagnostics, setScanDiagnostics] = useState<ScreenerResult['diagnostics']>(undefined);
+
   const [openModal,   setOpenModal]   = useState<TacticalOpportunity | null>(null);
   const [modalEntry,  setModalEntry]  = useState('');
   const [modalStop,   setModalStop]   = useState('');
@@ -340,8 +345,15 @@ export default function TacticalDashboard() {
         opportunities,
         lastScreened: screennedAt,
       }));
+      // Guardar diagnóstico del scan (narrative, macro, contadores)
+      setScanNarrative(result.narrativeStatus);
+      setScanMacro(result.macroEventInfo);
+      setScanDiagnostics(result.diagnostics);
       setLastRun(screennedAt);
       if (errors.length > 0) setError(`Datos parciales (${errors.length} activos sin datos)`);
+      if (result.warnings?.length > 0) {
+        console.warn('[Screener] Warnings:', result.warnings.slice(0, 5).join(' | '));
+      }
     } catch (e: any) {
       console.error('[Screener Error]', e);
       setError(e?.message ?? 'Error en el screener');
@@ -1135,6 +1147,138 @@ export default function TacticalDashboard() {
           </button>
         ))}
       </div>
+
+      {/* ── DIAGNÓSTICO DEL SCAN (si hay datos) ── */}
+      {(scanNarrative || scanMacro || scanDiagnostics) && (
+        <div style={{ ...S.cardB, marginBottom:'1rem' }}>
+          <details>
+            <summary style={{ fontWeight:700, fontSize:'0.82rem', color:'#93c5fd', cursor:'pointer', marginBottom:'0.5rem', userSelect:'none' }}>
+              📋 Diagnóstico del último scan
+            </summary>
+            <div style={{ marginTop:'0.5rem' }}>
+              {/* ── AI Narrative ── */}
+              {scanNarrative && (
+                <div style={{ background:'#0f172a', borderRadius:6, padding:'8px 10px', marginBottom:'0.5rem', border:'1px solid #334155' }}>
+                  <div style={{ fontWeight:700, fontSize:'0.7rem', color:'#f59e0b', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>
+                    🧠 AI Narrative
+                  </div>
+                  {scanNarrative.active ? (
+                    <>
+                      {scanNarrative.marketSentiment && (
+                        <div style={{ fontSize:'0.72rem', color:'#94a3b8', marginBottom:4 }}>
+                          Sentimiento: <span style={{ color:'#e2e8f0' }}>{scanNarrative.marketSentiment}</span>
+                        </div>
+                      )}
+                      {Object.keys(scanNarrative.sectorBiases).length > 0 && (
+                        <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginBottom:4 }}>
+                          {Object.entries(scanNarrative.sectorBiases)
+                            .filter(([, b]) => Math.abs(b) >= 5)
+                            .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                            .map(([sector, bias]) => (
+                              <span key={sector} style={{
+                                ...S.badge,
+                                background: bias > 0 ? '#052e16' : '#450a0a',
+                                color: bias > 0 ? '#4ade80' : '#fca5a5',
+                                border: `1px solid ${bias > 0 ? '#16a34a' : '#ef4444'}44`,
+                              }}>
+                                {sector} {bias > 0 ? '+' : ''}{bias}
+                              </span>
+                            ))}
+                        </div>
+                      )}
+                      {scanNarrative.marketWideBias !== 0 && (
+                        <div style={{ fontSize:'0.7rem', color: scanNarrative.marketWideBias > 0 ? '#22c55e' : '#ef4444' }}>
+                          Mercado global: {scanNarrative.marketWideBias > 0 ? '+' : ''}{scanNarrative.marketWideBias}pts
+                        </div>
+                      )}
+                      {scanNarrative.topNarratives.length > 0 && (
+                        <div style={{ fontSize:'0.65rem', color:'#64748b', marginTop:3 }}>
+                          {scanNarrative.topNarratives.join(' · ')}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ fontSize:'0.7rem', color:'#64748b' }}>
+                      {scanNarrative.error ? `⚠️ ${scanNarrative.error}` : '⏸️ Sin datos de narrativa (Gemini no disponible)'}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Macro Events ── */}
+              {scanMacro && (
+                <div style={{ background:'#0f172a', borderRadius:6, padding:'8px 10px', marginBottom:'0.5rem', border:'1px solid #334155' }}>
+                  <div style={{ fontWeight:700, fontSize:'0.7rem', color: scanMacro.active ? '#f97316' : '#64748b', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>
+                    📅 Macro Events
+                  </div>
+                  {scanMacro.active ? (
+                    <>
+                      <div style={{ fontSize:'0.72rem', color:'#f97316' }}>
+                        ⚠️ {scanMacro.description}
+                      </div>
+                      <div style={{ display:'flex', gap:10, marginTop:3, fontSize:'0.68rem' }}>
+                        <span style={{ color:'#ef4444' }}>Penalización: -{scanMacro.penalty}pts</span>
+                        <span style={{ color:'#64748b' }}>| Señal: {scanMacro.score}/100</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize:'0.7rem', color:'#64748b' }}>✅ {scanMacro.description}</div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Diagnóstico numérico ── */}
+              {scanDiagnostics && (
+                <div style={{ background:'#0f172a', borderRadius:6, padding:'8px 10px', border:'1px solid #334155' }}>
+                  <div style={{ fontWeight:700, fontSize:'0.7rem', color:'#60a5fa', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>
+                    📊 Contadores del scan
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:4 }}>
+                    {[
+                      { label:'Universo', val: scanDiagnostics.total, c:'#94a3b8' },
+                      { label:'Con datos', val: scanDiagnostics.conDatos, c:'#22c55e' },
+                      { label:'Primary', val: scanDiagnostics.primary, c:'#60a5fa' },
+                      { label:'Fallback', val: scanDiagnostics.fallback, c:'#f59e0b' },
+                      { label:'Ultra-FB', val: scanDiagnostics.ultraFallback, c:'#64748b' },
+                      { label:'Sin datos', val: scanDiagnostics.sinDatos, c:'#ef4444' },
+                      { label:'Error build', val: scanDiagnostics.errorBuild, c:'#ef4444' },
+                      { label:'OHLC sint.', val: scanDiagnostics.sinOhlc, c:'#f59e0b' },
+                      { label:'Con señales', val: scanDiagnostics.conSenales, c:'#22c55e' },
+                      { label:'Oportunid.', val: scanDiagnostics.oportunidades, c:'#22c55e' },
+                    ].map(m => (
+                      <div key={m.label} style={{ background:'#1e293b', borderRadius:4, padding:'3px 6px', textAlign:'center' }}>
+                        <div style={{ fontWeight:700, fontSize:'0.82rem', color:m.c }}>{m.val}</div>
+                        <div style={{ fontSize:'0.58rem', color:'#64748b' }}>{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {scanDiagnostics.signalTypeCounts && Object.keys(scanDiagnostics.signalTypeCounts).length > 0 && (
+                    <div style={{ marginTop:5, display:'flex', flexWrap:'wrap', gap:3 }}>
+                      {Object.entries(scanDiagnostics.signalTypeCounts)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([type, count]) => (
+                          <span key={type} style={{
+                            ...S.badge,
+                            background: '#1e293b',
+                            color: typeColors[type] ?? '#64748b',
+                            border: `1px solid ${(typeColors[type] ?? '#64748b')}44`,
+                          }}>
+                            {type.replace('_', ' ')}: {count}
+                          </span>
+                        ))}
+                    </div>
+                  )}
+                  {scanDiagnostics.overfittingScore != null && (
+                    <div style={{ fontSize:'0.65rem', color: scanDiagnostics.overfittingLevel === 'LOW' ? '#22c55e' : scanDiagnostics.overfittingLevel === 'MEDIUM' ? '#f59e0b' : '#ef4444', marginTop:4 }}>
+                      Overfitting: {scanDiagnostics.overfittingScore}% ({scanDiagnostics.overfittingLevel})
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </details>
+        </div>
+      )}
 
       {/* ── TAB: OPORTUNIDADES ── */}
       {tab === 'opportunities' && (
