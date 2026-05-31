@@ -95,9 +95,11 @@ const INTER_CHUNK_DELAY = 300;
 
 // ── Thresholds institucionales ────────────────────────────────
 // MIN_EXECUTION_SCORE: combinación weighted (opportunity×0.6 + quality×0.4).
-// Fijado en 65 tras validar que los RS se calculan correctamente.
-// Ajustar si se añaden activos con <63 días de histórico.
-const MIN_EXECUTION_SCORE = 65;
+// Temporalmente en 55 para validar comportamiento real.
+// En mercados laterales, qualityScore típico es ~40-50,
+// lo que fuerza señales con totalScore > 75 para ejecutar.
+// Subir gradualmente: 55 → 60 → 65 tras observar el comportamiento real.
+const MIN_EXECUTION_SCORE = 55;
 
 // ── Tipo de dato crudo de Yahoo ───────────────────────────────
 interface RawTickerData {
