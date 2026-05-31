@@ -46,6 +46,47 @@ import type { MarketRegime } from './marketRegimeFilter';
 // ESTADO INICIAL Y PERSISTENCIA
 // ════════════════════════════════════════════════════════════
 
+// ── Supabase persistence: cliente inyectado por el dashboard ───
+let supabaseClient: any = null;
+export function setSupabaseClient(client: any): void {
+  supabaseClient = client;
+}
+
+// ── Guardar estado en Supabase ──────────────────────────────────
+async function saveToSupabase(toSave: Record<string, unknown>): Promise<boolean> {
+  if (!supabaseClient) return false;
+  try {
+    const { error } = await supabaseClient
+      .from('tactical_engine_state')
+      .upsert({ id: 1, state: toSave, updated_at: new Date().toISOString() });
+    if (error) {
+      console.warn('[Tactical] Supabase save error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Tactical] Supabase save exception:', err);
+    return false;
+  }
+}
+
+// ── Cargar estado desde Supabase ────────────────────────────────
+async function loadFromSupabase(): Promise<Record<string, unknown> | null> {
+  if (!supabaseClient) return null;
+  try {
+    const { data, error } = await supabaseClient
+      .from('tactical_engine_state')
+      .select('state')
+      .eq('id', 1)
+      .single();
+    if (error || !data?.state) return null;
+    return data.state as Record<string, unknown>;
+  } catch (err) {
+    console.warn('[Tactical] Supabase load error:', err);
+    return null;
+  }
+}
+
 export function initTacticalState(config: TacticalConfig): TacticalEngineState {
   return {
     config,
@@ -99,6 +140,13 @@ export function loadTacticalState(config: TacticalConfig): TacticalEngineState {
   }
 }
 
+export async function loadTacticalStateFromSupabase(config: TacticalConfig): Promise<TacticalEngineState | null> {
+  if (!config.supabasePersistence) return null;
+  const supabaseState = await loadFromSupabase();
+  if (!supabaseState) return null;
+  return sanitizeState({ ...supabaseState as unknown as TacticalEngineState, config });
+}
+
 export function saveTacticalState(state: TacticalEngineState): void {
   try {
     const toSave = {
@@ -106,6 +154,11 @@ export function saveTacticalState(state: TacticalEngineState): void {
       opportunities: [],
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+
+    // ── Backup a Supabase si config.supabasePersistence está activo ──
+    if (state.config.supabasePersistence) {
+      saveToSupabase(toSave);
+    }
   } catch (err) {
     console.error('[Tactical] Error al guardar estado:', err);
   }
@@ -219,6 +272,50 @@ export interface OpenPositionOptions {
   ma50?: number;                  // Media móvil de 50 periodos (en EUR)
 }
 
+/**
+ * Calcula el sizing Kelly progresivo basado en executionScore.
+ * executionScore ≥ 85 → Kelly completo (hasta 25% del capital disponible)
+ * executionScore ≥ 75 → Half-Kelly (hasta 15%)
+ * executionScore ≥ 65 → Quarter-Kelly (hasta 8%)
+ * executionScore < 65 → Fixed risk (config.riskPerTradePct, 1%)
+ */
+function calcKellySizingFromScore(
+  capitalAvailableEur: number,
+  entryPriceEur:       number,
+  stopLossEur:         number,
+  executionScore:      number,
+): { shares: number; capitalRisked: number; totalInvested: number; kellyPct: number } {
+  const riskPerShareEur = entryPriceEur - stopLossEur;
+  if (riskPerShareEur <= 0 || capitalAvailableEur <= 0) {
+    return { shares: 0, capitalRisked: 0, totalInvested: 0, kellyPct: 0 };
+  }
+
+  // Escalar Kelly según executionScore
+  // executionScore 100 → 0.25 (25% del capital disponible)
+  // executionScore 65 → 0.01 (1%, igual que fixed risk)
+  // interpolación lineal entre 0.01 y 0.25 para scores 65-100
+  const minPct = 0.01;
+  const maxPct = 0.25;
+  const normalizedScore = Math.max(65, Math.min(100, executionScore)) - 65;
+  const kellyPct = minPct + (maxPct - minPct) * (normalizedScore / 35);
+
+  const riskEur = capitalAvailableEur * kellyPct;
+  const rawShares = riskEur / riskPerShareEur;
+
+  const shares = entryPriceEur < 1_000
+    ? Math.floor(rawShares)
+    : Math.max(1, Math.round(rawShares * 10_000) / 10_000);
+
+  const safe = Math.max(0, shares >= 1 ? Math.floor(shares) : 0);
+
+  return {
+    shares:        safe,
+    capitalRisked: safe > 0 ? +(safe * riskPerShareEur).toFixed(2) : 0,
+    totalInvested: safe > 0 ? +(safe * entryPriceEur).toFixed(2)   : 0,
+    kellyPct:      +(kellyPct * 100).toFixed(1),
+  };
+}
+
 export function openPosition(
   state:       TacticalEngineState,
   opportunity: TacticalOpportunity,
@@ -228,6 +325,16 @@ export function openPosition(
 
   if (state.openPositions.length >= config.maxOpenPositions) {
     console.warn('[Tactical] Max open positions reached');
+    return state;
+  }
+
+  // ── INSTITUCIONAL: VaR/Drawdown circuit breaker ───────────────
+  // Si el drawdown actual supera el límite, bloquear nuevas posiciones
+  if (config.maxDrawdownPct > 0 && Math.abs(state.maxDrawdown) >= config.maxDrawdownPct) {
+    console.warn(
+      `[Tactical] 🔴 CIRCUIT BREAKER — Drawdown ${state.maxDrawdown.toFixed(1)}% ` +
+      `≥ límite ${config.maxDrawdownPct}%. No se abren nuevas posiciones.`
+    );
     return state;
   }
 
@@ -256,14 +363,36 @@ export function openPosition(
     }
   }
 
-  const { shares, capitalRisked, totalInvested } = calcPositionSize(
-    state.capitalAvailable, entryPriceEur, stopLossEur, config,
-  );
+  // ── INSTITUCIONAL: Kelly sizing progresivo por executionScore ──
+  let shares: number;
+  let capitalRisked: number;
+  let totalInvested: number;
+  let kellyInfo = '';
+
+  if (config.useKellySizing && opportunity.executionScore > 0) {
+    const kelly = calcKellySizingFromScore(
+      state.capitalAvailable, entryPriceEur, stopLossEur,
+      opportunity.executionScore,
+    );
+    shares = kelly.shares;
+    capitalRisked = kelly.capitalRisked;
+    totalInvested = kelly.totalInvested;
+    kellyInfo = ` (Kelly ${opportunity.executionScore}pt → ${kelly.kellyPct.toFixed(1)}%)`;
+  } else {
+    const fixed = calcPositionSize(
+      state.capitalAvailable, entryPriceEur, stopLossEur, config,
+    );
+    shares = fixed.shares;
+    capitalRisked = fixed.capitalRisked;
+    totalInvested = fixed.totalInvested;
+  }
 
   if (shares === 0 || totalInvested > state.capitalAvailable) {
     console.warn('[Tactical] Capital insuficiente para abrir posición');
     return state;
   }
+
+  console.log(`[Tactical] Abriendo ${opportunity.asset.ticker}: ${shares} acc. × €${entryPriceEur.toFixed(2)} = €${totalInvested.toFixed(0)}${kellyInfo}`);
 
   const fxRates   = getCachedFxRates();
   const currency  = opportunity.asset.currency;
@@ -659,3 +788,5 @@ export function getTacticalSummary(state: TacticalEngineState) {
 
 export { calcExpectedDays } from './tacticalSignals';
 export { calcTimingScore } from './tacticalSignals';
+export { calcKellySizingFromScore };
+export type { TacticalEngineState } from './types';

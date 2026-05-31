@@ -25,11 +25,14 @@ import type {
 import type { TacticalSignal } from '../core/tactical/types';
 import {
   initTacticalState, loadTacticalState, saveTacticalState,
+  loadTacticalStateFromSupabase,
   openPosition, closePosition, updatePositionPrices,
   calcExpectedDays, calcTimingScore,
   evaluatePositionHealth, type PositionHealth,
-  getTacticalSummary,
+  getTacticalSummary, calcKellySizingFromScore,
+  setSupabaseClient,
 } from '../core/tactical/tacticalPortfolio';
+import { checkCorrelation } from '../core/tactical/correlationManager';
 import {
   calcOptimalHorizon,
   classifyAssetSpeed,
@@ -250,14 +253,27 @@ export default function TacticalDashboard() {
   const [manualShares,  setManualShares]  = useState('1');
   const [manualCurrent, setManualCurrent] = useState('68.40');
 
-  const [cfgCapital,  setCfgCapital]  = useState(state.config.tacticalCapitalEur);
-  const [cfgMinScore, setCfgMinScore] = useState(state.config.minScore);
-  const [cfgMinRR,    setCfgMinRR]    = useState(state.config.minRiskReward);
-  const [cfgMaxPos,   setCfgMaxPos]   = useState(state.config.maxOpenPositions);
-  const [cfgRiskPct,  setCfgRiskPct]  = useState(state.config.riskPerTradePct * 100);
-  const [cfgMA200,    setCfgMA200]    = useState(state.config.requireAboveMA200);
+  const [cfgCapital,     setCfgCapital]     = useState(state.config.tacticalCapitalEur);
+  const [cfgMinScore,    setCfgMinScore]    = useState(state.config.minScore);
+  const [cfgMinRR,       setCfgMinRR]       = useState(state.config.minRiskReward);
+  const [cfgMaxPos,      setCfgMaxPos]      = useState(state.config.maxOpenPositions);
+  const [cfgRiskPct,     setCfgRiskPct]     = useState(state.config.riskPerTradePct * 100);
+  const [cfgMA200,       setCfgMA200]       = useState(state.config.requireAboveMA200);
+  const [cfgSupabasePersistence, setCfgSupabasePersistence] = useState(state.config.supabasePersistence);
 
-
+  // ── Cargar desde Supabase al montar (si supabasePersistence activo) ──
+  useEffect(() => {
+    loadTacticalStateFromSupabase(state.config).then(supabaseLoaded => {
+      if (supabaseLoaded) {
+        // Solo sobreescribir si hay datos en Supabase
+        const localSaved = localStorage.getItem('olympus_tactical_state_v5');
+        if (!localSaved) {
+          setState(supabaseLoaded);
+        }
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── [FIX-DAY-COUNTER] Ref para leer siempre el state más reciente ──
   // Sin esto, el tick del interval captura el state del primer render
@@ -287,6 +303,11 @@ export default function TacticalDashboard() {
     const interval = setInterval(tick, 60_000);
     return () => clearInterval(interval);
   }, []); // Dependencia vacía: el interval se registra una sola vez
+
+  // ── Conectar Supabase persistence al montar ──────────────────────
+  useEffect(() => {
+    setSupabaseClient(supabase);
+  }, []);
 
   useEffect(() => { saveTacticalState(state); }, [state]);
   const summary = useMemo(() => getTacticalSummary(state), [state]);
@@ -329,12 +350,24 @@ export default function TacticalDashboard() {
     }
   }, [state.config, scanMode]);
 
-  // ── Abrir modal ─────────────────────────────────────────────
+  // ── Abrir modal (con Kelly sizing si activo) ──────────────────
   const handleOpenModal = useCallback((opp: TacticalOpportunity) => {
-    const riskPerSh = Math.max(0.01, opp.entryPrice - opp.stopLoss);
-    const autoShares = Math.max(1, Math.floor(
-      (state.config.tacticalCapitalEur * state.config.riskPerTradePct) / riskPerSh,
-    ));
+    const entry = opp.entryPrice;
+    const stop  = opp.stopLoss;
+    const riskPerSh = Math.max(0.01, entry - stop);
+
+    const curState = stateRef.current;
+    let autoShares: number;
+    if (curState.config.useKellySizing && opp.executionScore > 0) {
+      const kelly = calcKellySizingFromScore(
+        curState.capitalAvailable, entry, stop, opp.executionScore,
+      );
+      autoShares = kelly.shares;
+    } else {
+      autoShares = Math.max(1, Math.floor(
+        curState.config.tacticalCapitalEur * curState.config.riskPerTradePct / riskPerSh,
+      ));
+    }
     setOpenModal(opp);
     setModalEntry(opp.entryPrice.toFixed(2));
     setModalStop(opp.stopLoss.toFixed(2));
@@ -343,7 +376,7 @@ export default function TacticalDashboard() {
     setModalShares(String(autoShares));
   }, [state.config]);
 
-  // ── Confirmar apertura ──────────────────────────────────────
+  // ── Confirmar apertura (con circuit breaker + correlación + Kelly) ──
   const handleConfirmOpen = useCallback(() => {
     if (!openModal) return;
     const entry  = parseFloat(modalEntry);
@@ -352,6 +385,19 @@ export default function TacticalDashboard() {
     const tp2    = parseFloat(modalTP2);
     const shares = Math.max(1, parseInt(modalShares, 10) || 1);
     if (!entry || !stop || !tp1 || !tp2 || entry <= stop) return;
+
+    // ── INSTITUCIONAL: VaR/Drawdown circuit breaker ────────────────
+    if (state.config.maxDrawdownPct > 0 && Math.abs(state.maxDrawdown) >= state.config.maxDrawdownPct) {
+      alert(`🔴 CIRCUIT BREAKER — Drawdown ${state.maxDrawdown.toFixed(1)}% ≥ límite ${state.config.maxDrawdownPct}%. No se abren nuevas posiciones.`);
+      return;
+    }
+
+    // ── INSTITUCIONAL: Correlation check ───────────────────────────
+    const corrCheck = checkCorrelation(openModal, state.openPositions, state.config.maxOpenPositions);
+    if (!corrCheck.allowed) {
+      alert(`🚫 ${corrCheck.reason}`);
+      return;
+    }
 
     const atr    = openModal.asset.indicators?.atr14 ?? (entry * 0.02);
     const atrPct = atr / Math.max(0.01, entry);
@@ -408,7 +454,7 @@ export default function TacticalDashboard() {
       return { ...prev, openPositions: [...prev.openPositions, position], capitalUsed, capitalAvailable };
     });
     setOpenModal(null);
-  }, [openModal, modalEntry, modalStop, modalTP1, modalTP2, modalShares]);
+  }, [openModal, modalEntry, modalStop, modalTP1, modalTP2, modalShares, state]);
 
   // ── Cerrar posición ─────────────────────────────────────────
   const handleClose = useCallback((
@@ -477,7 +523,7 @@ export default function TacticalDashboard() {
     });
   }, []);
 
-  // ── Añadir posición manual ──────────────────────────────────
+  // ── Añadir posición manual (con circuit breaker + correlación + Kelly) ──
   const handleAddManual = useCallback(() => {
     const entry   = parseFloat(manualEntry);
     const stop    = parseFloat(manualStop);
@@ -486,6 +532,23 @@ export default function TacticalDashboard() {
     const curr    = parseFloat(manualCurrent) || entry;
     const shares  = Math.max(1, parseInt(manualShares, 10) || 1);
     if (!entry || !stop || !tp1 || !tp2 || entry <= stop) return;
+
+    // ── INSTITUCIONAL: VaR/Drawdown circuit breaker ────────────────
+    if (state.config.maxDrawdownPct > 0 && Math.abs(state.maxDrawdown) >= state.config.maxDrawdownPct) {
+      alert(`🔴 CIRCUIT BREAKER — Drawdown ${state.maxDrawdown.toFixed(1)}% ≥ límite ${state.config.maxDrawdownPct}%. No se abren nuevas posiciones.`);
+      return;
+    }
+
+    // ── INSTITUCIONAL: Correlation check ───────────────────────────
+    // Para manual, creamos un objeto oportunidad mínimo para checkCorrelation
+    const manualOppForCheck = {
+      asset: { ticker: manualTicker.trim().toUpperCase(), sector: manualType },
+    } as unknown as TacticalOpportunity;
+    const corrCheck = checkCorrelation(manualOppForCheck, state.openPositions, state.config.maxOpenPositions);
+    if (!corrCheck.allowed) {
+      alert(`🚫 ${corrCheck.reason}`);
+      return;
+    }
 
     const atr    = entry * 0.021;
     const atrPct = atr / entry;
@@ -535,7 +598,7 @@ export default function TacticalDashboard() {
       capitalAvailable: +Math.max(0, prev.capitalAvailable - position.totalInvested).toFixed(2),
     }));
     setManualModal(false);
-  }, [manualTicker, manualName, manualType, manualEntry, manualStop, manualTP1, manualTP2, manualShares, manualCurrent]);
+  }, [manualTicker, manualName, manualType, manualEntry, manualStop, manualTP1, manualTP2, manualShares, manualCurrent, state]);
 
   // ── Aplicar config ──────────────────────────────────────────
   const applyConfig = useCallback(() => {
@@ -548,6 +611,7 @@ export default function TacticalDashboard() {
         maxOpenPositions:   cfgMaxPos,
         riskPerTradePct:    cfgRiskPct / 100,
         requireAboveMA200:  cfgMA200,
+        supabasePersistence: cfgSupabasePersistence,
       };
       const capitalUsed = prev.openPositions.reduce((s: number, p: TacticalPosition) => s + (p.totalInvested ?? 0), 0);
       return { ...prev, config: newConfig, capitalUsed, capitalAvailable: Math.max(0, cfgCapital - capitalUsed) };
@@ -1328,6 +1392,13 @@ export default function TacticalDashboard() {
                   Solo activos sobre MA200
                 </label>
               </div>
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
+                <input type="checkbox" checked={cfgSupabasePersistence} onChange={e => setCfgSupabasePersistence(e.target.checked)} id="supabasecheck"
+                  style={{ width:16, height:16, cursor:'pointer', accentColor:'#3b82f6' }} />
+                <label htmlFor="supabasecheck" style={{ fontSize:'0.75rem', color:'#94a3b8', cursor:'pointer' }}>
+                  Persistencia en Supabase (backup nube)
+                </label>
+              </div>
             </div>
           </div>
           <div style={{ marginTop:'1rem', display:'flex', gap:8 }}>
@@ -1336,7 +1407,7 @@ export default function TacticalDashboard() {
               if (confirm('¿Borrar todo el historial y posiciones?')) {
                 const fresh = initTacticalState(state.config);
                 setState({ ...fresh, openPositions: state.openPositions });
-                localStorage.removeItem('olympus_tactical_state');
+                localStorage.removeItem('olympus_tactical_state_v5');
               }
             }}>🗑 Reset completo</button>
           </div>

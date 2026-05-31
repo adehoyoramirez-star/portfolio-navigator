@@ -147,6 +147,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── TACTICAL SCAN → Alertas Telegram ────────────────────────────
+  // FIX CRÍTICO: tactical-scan devuelve 'topOpportunities', no 'topPicks'
   const tacticalOpportunities = tacticalScan?.topOpportunities ?? [];
   if (tacticalOpportunities.length > 0) {
     for (const opp of tacticalOpportunities.slice(0, 3)) {
@@ -158,15 +159,17 @@ Deno.serve(async (req: Request) => {
           type: 'tactical_opportunity',
           tacticalTicker: opp.ticker,
           tacticalName: opp.name,
-          tacticalType: opp.type,  // raw enum type para emoji mapping en telegram
+          tacticalType: opp.type,
           tacticalScore: opp.score,
           tacticalEntry: opp.entryPrice,
           tacticalStop: opp.stopLoss,
           tacticalTP1: opp.takeProfit1,
           tacticalTP2: opp.takeProfit2,
           tacticalRR: opp.riskReward,
-          tacticalSignals: opp.signals,
-          tacticalATR: opp.atr_pct,
+          tacticalSignals: opp.activeSignals?.map((s: any) => `${s.type} (${s.score})`).join(', ') ?? '',
+          tacticalATR: opp.asset?.indicators?.atrPct
+            ? (opp.asset.indicators.atrPct * 100).toFixed(1)
+            : 'N/A',
           tacticalReasoning: opp.reasoning,
           tacticalScanMode: 'auto',
         });
@@ -174,7 +177,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const lastTacticalTickers = tacticalOpportunities.slice(0, 10).map(o => o.ticker);
+  const lastTacticalTickers = tacticalOpportunities.slice(0, 10).map((o: any) => o.ticker);
 
   const newState = {
     regime: currentRegime, vix, btc_rsi: btcRsi,

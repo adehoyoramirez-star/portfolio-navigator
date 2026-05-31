@@ -93,6 +93,12 @@ const CHUNK_SIZE        = 30;
 const MAX_CONCURRENT    = 3;
 const INTER_CHUNK_DELAY = 300;
 
+// ── Thresholds institucionales ────────────────────────────────
+// MIN_EXECUTION_SCORE: combinación weighted (opportunity×0.6 + quality×0.4).
+// Fijado en 65 tras validar que los RS se calculan correctamente.
+// Ajustar si se añaden activos con <63 días de histórico.
+const MIN_EXECUTION_SCORE = 65;
+
 // ── Tipo de dato crudo de Yahoo ───────────────────────────────
 interface RawTickerData {
   closes:         number[];
@@ -422,7 +428,7 @@ export async function scanTacticalUniverse(
     oppFiltroReg:  0,
     oppScoreBajo:  0,
     oppRRBajo:     0,
-    oppExecBajo:   0,  // FIX INSTITUCIONAL: executionScore < 65
+    oppExecBajo:   0,  // FIX INSTITUCIONAL: executionScore < MIN_EXECUTION_SCORE
     oportunidades: 0,
   };
 
@@ -483,13 +489,24 @@ export async function scanTacticalUniverse(
   const spyPrice    = batchData['SPY']?.price ?? 500;
   console.debug(`[Screener] VIX: ${vixPrice.toFixed(2)} | SPY: $${spyPrice.toFixed(0)}`);
 
-  // Helper: fuerza relativa vs SPY (252 días)
+  // Helper: fuerza relativa vs SPY (252 días, fallback a 126)
+  // IMPORTANTE: activos europeos (ej. IWDA.AS, EXH3.DE) pueden tener
+  // <252 días de histórico si el símbolo primario falló y usan fallback.
+  // Cuando el fallback es SPY, el RS ≈ 1.0 (correcto: SPY vs SPY).
+  // Pero activos sin 252d de datos propios merecen intentar 126d.
   function calcRelativeStrength(assetCloses: number[]): number {
-    if (assetCloses.length < 252 || spyCloses.length < 252) return 1.0;
-    const aPerf252 = assetCloses[assetCloses.length - 1] / assetCloses[assetCloses.length - 252];
-    const sPerf252 = spyCloses[spyCloses.length - 1] / spyCloses[spyCloses.length - 252];
-    if (aPerf252 <= 0 || sPerf252 <= 0) return 1.0;
-    return parseFloat((aPerf252 / sPerf252).toFixed(3));
+    if (spyCloses.length < 21) return 1.0;
+
+    const getRS = (window: number): number | null => {
+      if (assetCloses.length < window || spyCloses.length < window) return null;
+      const aPerf = assetCloses[assetCloses.length - 1] / assetCloses[assetCloses.length - window];
+      const sPerf = spyCloses[spyCloses.length - 1] / spyCloses[spyCloses.length - window];
+      if (aPerf <= 0 || sPerf <= 0) return null;
+      return aPerf / sPerf;
+    };
+
+    const rs = getRS(252) ?? getRS(126) ?? getRS(Math.max(63, Math.min(assetCloses.length, spyCloses.length) - 1)) ?? 1.0;
+    return parseFloat(Math.min(Math.max(rs, 0.1), 3.0).toFixed(3));
   }
 
   // Helper: calidad del activo (0-100)
@@ -650,9 +667,9 @@ export async function scanTacticalUniverse(
       diag.oppRRBajo++;
       continue;
     }
-    // FIX INSTITUCIONAL: executionScore mínimo 65
+    // FIX INSTITUCIONAL: executionScore mínimo (55 inicial, subir a 65 tras validar)
     const execScore = opp.executionScore ?? 0;
-    if (execScore < 65) {
+    if (execScore < MIN_EXECUTION_SCORE) {
       diag.oppExecBajo++;
       continue;
     }
@@ -713,7 +730,7 @@ export async function scanTacticalUniverse(
     `  🔇 Filtro régimen:   -${diag.oppFiltroReg}\n` +
     `  📉 Score < ${config.minScore}: -${diag.oppScoreBajo}\n` +
     `  📉 R:R < ${config.minRiskReward}: -${diag.oppRRBajo}\n` +
-    `  📉 Execution < 65:   -${diag.oppExecBajo}\n` +
+    `  📉 Execution < ${MIN_EXECUTION_SCORE}: -${diag.oppExecBajo}\n` +
     `  🎯 Oportunidades:    ${diag.oportunidades}\n` +
     `  ─────────────────────────────────────`
   );
@@ -806,8 +823,12 @@ export function defaultTacticalConfig(
     requireAboveMA200:      false,
     minRiskReward:          1.3,
     maxAtrPct:              0.15,
-    maxDaysPerTrade:        75,   // FIX: consistente con dynMax máximo del FPT
+    maxDaysPerTrade:        75,
     trailingStop:           true,
     maxPctFromDefensiveLiq: 0.20,
+    // ── INSTITUCIONAL v2 ───────────────────────────────────
+    useKellySizing:        true,     // Kelly progresivo por executionScore
+    maxDrawdownPct:         15,      // Circuit breaker al -15% drawdown
+    supabasePersistence:    false,   // Desactivado por defecto (requiere supabaseClient)
   };
 }
