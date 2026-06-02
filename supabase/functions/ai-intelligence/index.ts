@@ -8,7 +8,7 @@ const corsHeaders = {
 
 // === API KEYS ===
 const GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') ?? '';
-const GEMINI_MODELS = ['gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'];
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const CLAUDE_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
@@ -48,7 +48,7 @@ async function callGemini(prompt: string, maxTokens=500) {
           generationConfig: { maxOutputTokens: maxTokens, temperature: 0.25 },
         }),
       });
-      if (res.status===429||res.status===503) continue;
+      if (res.status===429||res.status===503||res.status===404) continue;
       if (!res.ok) throw new Error(`${model}: ${res.status}`);
       const json = await res.json();
       const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
@@ -173,7 +173,7 @@ Deno.serve(async (req: Request) => {
   const [r1,r2,r3] = await Promise.allSettled([runMacro(ctx),runElliott(ctx),runSentinel(ctx)]);
 
   const gemini = r1.status==='fulfilled'
-    ? {...r1.value, model:'gemini-2.0-flash', cachedAt:ts}
+    ? {...r1.value, model:'gemini-2.5-flash', cachedAt:ts}
     : {error:String(r1.reason).slice(0,200), model:'gemini', cachedAt:ts};
 
   const claude = r2.status==='fulfilled'

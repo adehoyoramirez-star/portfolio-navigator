@@ -1,11 +1,10 @@
 // ============================================================
-// OLYMPUS TACTICAL MOTOR — Pine Script v8 REFUERZOS BRUTALES
-// Copia este codigo entero en TradingView Pine Editor
+// OLYMPUS TACTICAL MOTOR — Pine Script v8 COMPILABLE
 // ============================================================
 //@version=6
-indicator("Olympus Tactical Motor v8", overlay=true, max_lines_count=12, max_labels_count=50)
+indicator("Olympus Tactical v8", overlay=true, max_lines_count=12, max_labels_count=50)
 
-// INPUTS
+// ── INPUTS ──────────────────────────────────────────────────
 show_blood     = input.bool(true,  "BLOOD IN STREETS",    group="SENALES")
 show_mean      = input.bool(true,  "MEAN REVERSION",      group="SENALES")
 show_momentum  = input.bool(true,  "MOMENTUM BREAKOUT",   group="SENALES")
@@ -15,64 +14,64 @@ show_stops     = input.bool(true,  "Mostrar Stop Loss/TPs", group="NIVELES")
 show_entry     = input.bool(true,  "Zona entrada RSI(2)", group="NIVELES")
 min_exec_score = input.int(55, "Execution Score minimo", 0, 100, group="FILTROS")
 
-// REGIMEN FILTER
+// ── REGIMEN FILTER (TODO LOCAL, sin ta.xx() dentro de request.security) ──
 spy_sym    = input.symbol("SPY", "Benchmark SPY", group="REGIMEN")
 vix_sym    = input.symbol("VIX", "VIX", group="REGIMEN")
-show_regime = input.bool(true, "Mostrar regimen", group="REGIMEN")
 
-spy_close    = request.security(spy_sym, timeframe.period, close)
-spy_close20  = request.security(spy_sym, timeframe.period, close[20])
-spy_close50  = request.security(spy_sym, timeframe.period, close[50])
-spy_ma200    = request.security(spy_sym, timeframe.period, ta.sma(close, 200))
-spy_ma50     = request.security(spy_sym, timeframe.period, ta.sma(close, 50))
-vix_close    = request.security(vix_sym, timeframe.period, close)
+// 1 sola llamada por simbolo — todo lo demas se calcula localmente
+spy_close = request.security(spy_sym, timeframe.period, close)
+vix_close = request.security(vix_sym, timeframe.period, close)
 
-spy_net_move = math.abs(spy_close - spy_close50)
-spy_path_sum = 0.0
-if bar_index >= 50
-    for i = 0 to 49
-        spy_c1 = request.security(spy_sym, timeframe.period, close[i])
-        spy_c2 = request.security(spy_sym, timeframe.period, close[i+1])
-        spy_path_sum := spy_path_sum + math.abs(spy_c1 - spy_c2)
-spy_er = spy_path_sum > 0 ? spy_net_move / spy_path_sum : 0
-spy_mom4w = spy_close20 > 0 ? (spy_close / spy_close20) - 1 : 0
+// Indicadores de SPY calculados LOCALMENTE sobre la serie spy_close
+spy_ma200 = ta.sma(spy_close, 200)
+spy_ma50  = ta.sma(spy_close, 50)
+spy_mom4w = spy_close[20] > 0 ? (spy_close / spy_close[20]) - 1 : 0
 spy_above_ma200 = spy_close > spy_ma200
 spy_above_ma50  = spy_close > spy_ma50
 
+// Efficiency Ratio de SPY (sin bucle: precomputamos con funcion nativa)
+spy_er_num = math.abs(spy_close - spy_close[50])
+spy_er_den = 0.0
+for i = 0 to 49
+    spy_er_den += math.abs(spy_close[i] - spy_close[i+1])
+spy_er = spy_er_den > 0 ? spy_er_num / spy_er_den : 0
+
+// Regimen solo se recalcula en la ultima barra (var para persistir)
 var string market_regime = "RANGING"
-var float  regime_size_mult = 0.8
+var float  regime_mult   = 0.8
 
 if barstate.islast
     if vix_close > 35
-        market_regime      := "CRASH"
-        regime_size_mult   := 0.3
+        market_regime := "CRASH"
+        regime_mult   := 0.3
     else if not spy_above_ma200 and spy_mom4w < -0.05
-        market_regime      := "TRENDING_DOWN"
-        regime_size_mult   := 0.5
+        market_regime := "TRENDING_DOWN"
+        regime_mult   := 0.5
     else if spy_above_ma200 and spy_above_ma50 and spy_mom4w > 0.02 and spy_er > 0.40
-        market_regime      := "TRENDING_UP"
-        regime_size_mult   := 1.0
+        market_regime := "TRENDING_UP"
+        regime_mult   := 1.0
     else
-        market_regime      := "RANGING"
-        regime_size_mult   := 0.8
+        market_regime := "RANGING"
+        regime_mult   := 0.8
 
-// STRENGTH VS SECTOR
-sector_etf = input.symbol("XLK", "Sector ETF referencia", group="VS SECTOR", tooltip="XLK=Tech XLF=Finance XLE=Energy XLV=Health")
+// ── STRENGTH VS SECTOR (ETF referencia) ─────────────────────
+sector_etf = input.symbol("XLK", "Sector ETF ref.", group="VS SECTOR",
+     tooltip="XLK=Tech XLF=Finance XLE=Energy XLV=Health")
+sector_close = request.security(sector_etf, timeframe.period, close)
 
-sector_close    = request.security(sector_etf, timeframe.period, close)
-sector_close126 = request.security(sector_etf, timeframe.period, close[126])
-rs_vs_sector = (close[126] > 0 and sector_close126 > 0) ?
-     (close / close[126]) / (sector_close / sector_close126) : 1.0
+rs_vs_sector = (close[126] > 0 and sector_close[126] > 0) ?
+     (close / close[126]) / (sector_close / sector_close[126]) : 1.0
 
-// RS HARD FILTER
+// ── RS vs SPY HARD FILTER ───────────────────────────────────
 rs_vs_spy = (close[252] > 0 and spy_close[252] > 0) ?
      (close / close[252]) / (spy_close / spy_close[252]) : 1.0
-min_rs_spy    = 0.85
-min_rs_sector = 0.90
+
+min_rs_spy    = input.float(0.85, "RS vs SPY minimo", 0.5, 1.5, step=0.01, group="FILTROS")
+min_rs_sector = input.float(0.90, "RS vs Sector minimo", 0.5, 1.5, step=0.01, group="FILTROS")
 passes_rs_spy    = rs_vs_spy >= min_rs_spy
 passes_rs_sector = rs_vs_sector >= min_rs_sector
 
-// INDICADORES BASE
+// ── INDICADORES BASE ────────────────────────────────────────
 ma20   = ta.sma(close, 20)
 ma50   = ta.sma(close, 50)
 ma200  = ta.sma(close, 200)
@@ -82,191 +81,307 @@ rsi14  = ta.rsi(close, 14)
 sd20     = ta.stdev(close, 20)
 zScore20 = sd20 > 0 ? (close - ma20) / sd20 : 0
 sd50     = ta.stdev(close, 50)
-zScore50 = sd50 > 0 ? (close - ta.sma(close, 50)) / sd50 : 0
+zScore50 = sd50 > 0 ? (close - ma50) / sd50 : 0
 atr14  = ta.atr(14)
 atrPct = close > 0 ? atr14 / close : 0.02
 
-netMove   = math.abs(close - close[20])
-totalPath = 0.0
+// Efficiency Ratio local
+er_num = math.abs(close - close[20])
+er_den = 0.0
 for i = 1 to 20
-    totalPath += math.abs(close[i-1] - close[i])
-er  = totalPath > 0 ? netMove / totalPath : 0
+    er_den += math.abs(close[i-1] - close[i])
+er  = er_den > 0 ? er_num / er_den : 0
 adx = er * 100
 
 volAvg20 = ta.sma(volume, 20)
 volRatio = volAvg20 > 0 ? volume / volAvg20 : 1.0
-high52w      = ta.highest(close, 252)
-drawdown52w  = high52w > 0 ? (close / high52w) - 1 : 0
+high52w     = ta.highest(close, 252)
+drawdown52w = high52w > 0 ? (close / high52w) - 1 : 0
 aboveMA200 = close > ma200
 aboveMA50  = close > ma50
 trend_up   = close > ma50 and ma50 > ma200
 trend_down = close < ma50 and ma50 < ma200
 [macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
 
-// SENALES
+// ── 5 SENALES ────────────────────────────────────────────────
 inExtremeCrash  = drawdown52w < -0.35
 blood_active    = rsi2 < 10 and zScore20 < -1.5 and (aboveMA200 or inExtremeCrash)
-blood_score_raw = blood_active ? math.min(100, 45 + (10 - math.min(10, rsi2)) * 4 + (math.abs(zScore20) - 1.5) * 5 + (volRatio > 1.5 ? 8 : 0) + (aboveMA200 ? 0 : -15)) : 0
+blood_score_raw = blood_active ? math.min(100, 45 + (10 - math.min(10, rsi2)) * 4 +
+     (math.abs(zScore20) - 1.5) * 5 + (volRatio > 1.5 ? 8 : 0) + (aboveMA200 ? 0 : -15)) : 0
 
 mean_active    = rsi2 < 15 and close < bbLower * 1.02
-mean_score_raw = mean_active ? math.min(100, 40 + (15 - math.min(15, rsi2)) * 2 + (close < bbLower ? 12 : 4) + (zScore20 < -1.5 ? 8 : 0)) : 0
+mean_score_raw = mean_active ? math.min(100, 40 + (15 - math.min(15, rsi2)) * 2 +
+     (close < bbLower ? 12 : 4) + (zScore20 < -1.5 ? 8 : 0)) : 0
 
 mom_active    = adx > 30 and close > bbUpper * 0.995 and aboveMA50
-mom_score_raw = mom_active ? math.min(100, 45 + math.min(20, (adx - 30) * 1.2) + (volRatio > 1.5 ? 20 : 0) + (close > bbUpper ? 15 : 5)) : 0
+mom_score_raw = mom_active ? math.min(100, 45 + math.min(20, (adx - 30) * 1.2) +
+     (volRatio > 1.5 ? 20 : 0) + (close > bbUpper ? 15 : 5)) : 0
 
 ov_active    = rsi14 < 35 and (aboveMA200 or close > ma50 * 0.95)
-ov_score_raw = ov_active ? math.min(100, 42 + (35 - math.min(35, rsi14)) * 1.8 + (aboveMA200 ? 18 : 6) + (zScore50 < -1 ? 8 : 0)) : 0
+ov_score_raw = ov_active ? math.min(100, 42 + (35 - math.min(35, rsi14)) * 1.8 +
+     (aboveMA200 ? 18 : 6) + (zScore50 < -1 ? 8 : 0)) : 0
 
 sec_active    = drawdown52w < -0.20 and rsi14 > 40 and rsi14 < 55 and (aboveMA200 or aboveMA50)
-sec_score_raw = sec_active ? math.min(100, 40 + math.min(25, (math.abs(drawdown52w) - 0.20) * 100) + (aboveMA200 ? 20 : 5) + 15) : 0
+sec_score_raw = sec_active ? math.min(100, 40 + math.min(25, (math.abs(drawdown52w) - 0.20) * 100) +
+     (aboveMA200 ? 20 : 5) + 15) : 0
 
-// EXHAUSTION DETECTION
-price_near_resistance = bbUpper > 0 and close / bbUpper > 0.98
-vol_declining_3bars = volume < volume[1] and volume[1] < volume[2] and volume[2] < volume[3]
-weak_rally = (close > close[1] or close[1] > close[2]) and vol_declining_3bars
+// ── EXHAUSTION DETECTION ─────────────────────────────────────
+price_near_bb  = bbUpper > 0 and close / bbUpper > 0.98
+vol_decl_3bars = volume < volume[1] and volume[1] < volume[2] and volume[2] < volume[3]
+weak_rally     = (close > close[1] or close[1] > close[2]) and vol_decl_3bars
 rsi_overbought = rsi14 > 75
 rsi_stretched  = rsi14 > 70
 macd_weakening = macdHist > 0 and macdHist < macdHist[1] and macdHist < 0.5
 price_stalling = math.abs(close - close[2]) / close < 0.005 and math.abs(close - close[1]) / close < 0.003
 
-exhaustion_confidence = 0
-if price_near_resistance
-    exhaustion_confidence := exhaustion_confidence + 25
+var float exhaust_conf = 0.0
+exhaust_conf := 0
+if price_near_bb
+    exhaust_conf += 25
 if weak_rally
-    exhaustion_confidence := exhaustion_confidence + 20
+    exhaust_conf += 20
 if rsi_overbought
-    exhaustion_confidence := exhaustion_confidence + 25
+    exhaust_conf += 25
 else if rsi_stretched and (bbUpper > 0 and close / bbUpper > 0.95)
-    exhaustion_confidence := exhaustion_confidence + 20
+    exhaust_conf += 20
 if price_stalling
-    exhaustion_confidence := exhaustion_confidence + 20
+    exhaust_conf += 20
 if macd_weakening
-    exhaustion_confidence := exhaustion_confidence + 10
-rally_exhausted = exhaustion_confidence >= 40
+    exhaust_conf += 10
+rally_exhausted = exhaust_conf >= 40
 
-// TOTAL SCORE
-w_blood=1.0; w_mom=0.8; w_mean=0.7; w_oversold=0.5; w_sector=0.4
-weighted_sum=0.0; total_weight=0.0; n_active=0
+// ── SCORES PONDERADOS ────────────────────────────────────────
+w_blood = 1.0
+w_mom   = 0.8
+w_mean  = 0.7
+w_over  = 0.5
+w_sec   = 0.4
+
+weighted_sum = 0.0
+total_weight = 0.0
+n_active     = 0
 
 if blood_active
-    weighted_sum:=weighted_sum+blood_score_raw*w_blood; total_weight:=total_weight+w_blood; n_active:=n_active+1
+    weighted_sum += blood_score_raw * w_blood
+    total_weight += w_blood
+    n_active     += 1
 if mom_active
-    weighted_sum:=weighted_sum+mom_score_raw*w_mom; total_weight:=total_weight+w_mom; n_active:=n_active+1
+    weighted_sum += mom_score_raw * w_mom
+    total_weight += w_mom
+    n_active     += 1
 if mean_active
-    weighted_sum:=weighted_sum+mean_score_raw*w_mean; total_weight:=total_weight+w_mean; n_active:=n_active+1
+    weighted_sum += mean_score_raw * w_mean
+    total_weight += w_mean
+    n_active     += 1
 if ov_active
-    weighted_sum:=weighted_sum+ov_score_raw*w_oversold; total_weight:=total_weight+w_oversold; n_active:=n_active+1
+    weighted_sum += ov_score_raw * w_over
+    total_weight += w_over
+    n_active     += 1
 if sec_active
-    weighted_sum:=weighted_sum+sec_score_raw*w_sector; total_weight:=total_weight+w_sector; n_active:=n_active+1
+    weighted_sum += sec_score_raw * w_sec
+    total_weight += w_sec
+    n_active     += 1
 
-opportunity_score = math.min(100, math.round(total_weight > 0 ? weighted_sum / total_weight : 0) + (n_active >= 3 ? 10 : n_active == 2 ? 5 : 0))
+confluence   = n_active >= 3 ? 10 : n_active == 2 ? 5 : 0
+opp_raw      = total_weight > 0 ? weighted_sum / total_weight : 0
+opportunity  = math.min(100, math.round(opp_raw + confluence))
 
-// QUALITY SCORE
-q_rs = rs_vs_spy > 1.15 ? 35 : rs_vs_spy > 1.05 ? 25 : rs_vs_spy > 0.95 ? 15 : rs_vs_spy > 0.85 ? 5 : 0
-q_vol = volRatio > 2.0 ? 20 : volRatio > 1.5 ? 15 : volRatio > 1.0 ? 10 : volRatio >= 0.5 ? 5 : 0
-q_trend = trend_up ? 25 : (not trend_down and not trend_up) ? 10 : 0
-q_atr = atrPct < 0.03 ? 20 : atrPct < 0.05 ? 15 : atrPct < 0.08 ? 8 : 0
-quality_score = math.min(100, q_rs + q_vol + q_trend + q_atr)
+// ── QUALITY SCORE ────────────────────────────────────────────
+q_rs    = rs_vs_spy > 1.15 ? 35 : rs_vs_spy > 1.05 ? 25 : rs_vs_spy > 0.95 ? 15 : rs_vs_spy > 0.85 ? 5 : 0
+q_vol   = volRatio > 2.0 ? 20 : volRatio > 1.5 ? 15 : volRatio > 1.0 ? 10 : volRatio >= 0.5 ? 5 : 0
+q_trend = trend_up ? 25 : not trend_down and not trend_up ? 10 : 0
+q_atr   = atrPct < 0.03 ? 20 : atrPct < 0.05 ? 15 : atrPct < 0.08 ? 8 : 0
+quality = math.min(100, q_rs + q_vol + q_trend + q_atr)
 
-// EXECUTION SCORE
-execution_score = math.min(100, math.round(opportunity_score * 0.6 + quality_score * 0.4))
+execution = math.min(100, math.round(opportunity * 0.6 + quality * 0.4))
 
-// TIPO DE SENAL ACTIVA
-signal_type = blood_active ? "BLOOD" : mom_active ? "MOMENTUM" : mean_active ? "MEAN_REV" : ov_active ? "OVERSOLD" : sec_active ? "SECTOR_ROT" : "NONE"
+// ── TIPO DE SENAL ────────────────────────────────────────────
+signal_type = blood_active ? "BLOOD" :
+              mom_active   ? "MOMENTUM" :
+              mean_active  ? "MEAN_REV" :
+              ov_active    ? "OVERSOLD" :
+              sec_active   ? "SECTOR_ROT" : "NONE"
 
-// FILTRO DE REGIMEN
-signal_regime_allowed =
-     (market_regime == "CRASH"          and signal_type == "BLOOD") or
-     (market_regime == "TRENDING_DOWN"  and (signal_type == "BLOOD" or signal_type == "OVERSOLD")) or
-     (market_regime == "TRENDING_UP"    and (signal_type == "MOMENTUM" or signal_type == "SECTOR_ROT" or signal_type == "OVERSOLD")) or
+// ── FILTROS BRUTALES ─────────────────────────────────────────
+regime_ok =
+     (market_regime == "CRASH"         and signal_type == "BLOOD") or
+     (market_regime == "TRENDING_DOWN" and (signal_type == "BLOOD" or signal_type == "OVERSOLD")) or
+     (market_regime == "TRENDING_UP"   and (signal_type == "MOMENTUM" or signal_type == "SECTOR_ROT" or signal_type == "OVERSOLD")) or
      (market_regime == "RANGING")
 
 exhaustion_block = (signal_type == "MOMENTUM" or signal_type == "SECTOR_ROT") and rally_exhausted
-passes_filter     = execution_score >= min_exec_score and n_active > 0
-passes_all_filters = passes_filter and signal_regime_allowed and passes_rs_spy and passes_rs_sector and not exhaustion_block
+passes_filter    = execution >= min_exec_score and n_active > 0
+passes_all       = passes_filter and regime_ok and passes_rs_spy and passes_rs_sector and not exhaustion_block
 
-// STOP LOSS & TAKE PROFITS
-stop_dynamic  = ma50 + atr14 >= close ? close * 0.97 : ma50 + atr14
-stop_classic  = close - atr14 * 2.0
-stop_loss     = mom_active ? stop_dynamic : stop_classic
-min_rr = (blood_active or mean_active or ov_active) ? 1.5 : 2.0
-tp1_mult = atrPct >= 0.04 ? 2.0 : atrPct >= 0.02 ? 2.0 : atrPct >= 0.008 ? 1.8 : 1.5
-tp2_mult = atrPct >= 0.04 ? 4.5 : atrPct >= 0.02 ? 3.2 : atrPct >= 0.008 ? 2.8 : 2.2
+// ── STOP LOSS / TAKE PROFITS ─────────────────────────────────
+stop_dyn   = ma50 + atr14
+stop_loss  = stop_dyn < close ? stop_dyn : close * 0.97
+
+min_rr     = (blood_active or mean_active or ov_active) ? 1.5 : 2.0
+tp1_mult   = atrPct >= 0.04 ? 2.0 : atrPct >= 0.02 ? 2.0 : atrPct >= 0.008 ? 1.8 : 1.5
+tp2_mult   = atrPct >= 0.04 ? 4.5 : atrPct >= 0.02 ? 3.2 : atrPct >= 0.008 ? 2.8 : 2.2
+
 risk = math.max(close * 0.01, close - stop_loss)
 tp1  = close + risk * tp1_mult
 tp2  = close + risk * tp2_mult
 rr   = risk > 0 ? (tp1 - close) / risk : 0
-passes_rr = n_active > 0 and passes_all_filters and rr >= min_rr
+rr_ok = n_active > 0 and passes_all and rr >= min_rr
 
-// ENTRY CONFIRMATION
-entry_extreme   = rsi2 > 85
-entry_too_hot   = rsi2 > 75 and rsi2 <= 85
-entry_confirmed = rsi2 >= 60 and rsi2 <= 75
-entry_early     = rsi2 < 60
+// ── ENTRY TIMING ─────────────────────────────────────────────
+entry_go    = rsi2 >= 60 and rsi2 <= 75
+entry_hot   = rsi2 > 75 and rsi2 <= 85
+entry_ext   = rsi2 > 85
+entry_cold  = rsi2 < 60
 
-// VISUALIZACION - MEDIAS
-plot(ma20, "MA20", color=color.new(color.yellow, 60), linewidth=1)
-plot(ma50, "MA50", color=color.new(color.orange, 40), linewidth=2)
-plot(ma200, "MA200", color=color.new(color.red, 30), linewidth=2)
+// ══════════════════════════════════════════════════════════════
+// VISUALIZACION
+// ══════════════════════════════════════════════════════════════
+
+// Medias moviles
+plot(ma20,  "MA20",  color=color.new(color.yellow, 60), linewidth=1)
+plot(ma50,  "MA50",  color=color.new(color.orange, 40), linewidth=2)
+plot(ma200, "MA200", color=color.new(color.red,    30), linewidth=2)
+
+// Bollinger Bands
 bbU = plot(bbUpper, "BB Sup", color=color.new(color.blue, 70), linewidth=1)
 bbL = plot(bbLower, "BB Inf", color=color.new(color.blue, 70), linewidth=1)
 fill(bbU, bbL, color=color.new(color.blue, 93))
 
-// SENALES VISUALES
-plotshape(show_blood and blood_active and passes_all_filters, title="BLOOD OK", style=shape.triangleup, location=location.belowbar, color=color.new(color.red, 0), size=size.normal, text="BLOOD")
-plotshape(show_blood and blood_active and not passes_all_filters, title="BLOOD NO", style=shape.triangleup, location=location.belowbar, color=color.new(color.red, 80), size=size.tiny, text="x")
-plotshape(show_mean and mean_active and passes_all_filters, title="MEAN OK", style=shape.circle, location=location.belowbar, color=color.new(color.orange, 0), size=size.normal, text="MR")
-plotshape(show_momentum and mom_active and passes_all_filters, title="MOM OK", style=shape.arrowup, location=location.abovebar, color=color.new(color.lime, 0), size=size.normal, text="MOM")
-plotshape(show_momentum and mom_active and rally_exhausted, title="MOM AGOTADO", style=shape.triangledown, location=location.abovebar, color=color.new(color.yellow, 10), size=size.small, text="AGOT")
-plotshape(show_oversold and ov_active and passes_all_filters, title="OV OK", style=shape.diamond, location=location.belowbar, color=color.new(color.aqua, 0), size=size.small, text="OB")
-plotshape(show_sector and sec_active and passes_all_filters, title="SEC OK", style=shape.square, location=location.belowbar, color=color.new(color.blue, 0), size=size.small, text="SR")
+// Senales (shapes)
+plotshape(show_blood    and blood_active and passes_all, "BLOOD", style=shape.triangleup, location=location.belowbar, color=color.rgb(220,38,38), size=size.normal, text="BLOOD")
+plotshape(show_blood    and blood_active and not passes_all, "", style=shape.triangleup, location=location.belowbar, color=color.new(color.red,   80), size=size.tiny, text="x")
+plotshape(show_mean     and mean_active  and passes_all, "MR",   style=shape.circle,     location=location.belowbar, color=color.rgb(234,88,12), size=size.normal, text="MR")
+plotshape(show_momentum and mom_active   and passes_all, "MOM",  style=shape.arrowup,    location=location.abovebar, color=color.rgb(34,197,94), size=size.normal, text="MOM")
+plotshape(show_momentum and mom_active   and rally_exhausted, "AGOT", style=shape.triangledown, location=location.abovebar, color=color.rgb(234,179,8), size=size.small, text="AGOT")
+plotshape(show_oversold and ov_active    and passes_all, "OB",   style=shape.diamond,    location=location.belowbar, color=color.rgb(6,182,212), size=size.small, text="OB")
+plotshape(show_sector   and sec_active   and passes_all, "SR",   style=shape.square,     location=location.belowbar, color=color.rgb(59,130,246), size=size.small, text="SR")
 
-any_signal = n_active > 0 and passes_all_filters
-plot(show_stops and any_signal ? stop_loss : na, "Stop Loss", color=color.new(color.red, 20), style=plot.style_linebr, linewidth=2)
-plot(show_stops and any_signal and passes_rr ? tp1 : na, "TP1", color=color.new(color.green, 20), style=plot.style_linebr, linewidth=1)
-plot(show_stops and any_signal and passes_rr ? tp2 : na, "TP2", color=color.new(color.green, 40), style=plot.style_linebr, linewidth=1)
+any_signal = n_active > 0 and passes_all
 
-// FONDOS DE ENTRADA
-bgcolor(show_entry and entry_confirmed and mom_active and not exhaustion_block ? color.new(color.green, 88) : na, title="Entrada optima")
-bgcolor(show_entry and (entry_extreme or entry_too_hot) and mom_active ? color.new(color.red, 90) : na, title="RSI caliente")
+// Stop Loss y Take Profits
+plot(show_stops and any_signal ? stop_loss : na, "Stop", color=color.new(color.red,   20), style=plot.style_linebr, linewidth=2)
+plot(show_stops and any_signal and rr_ok ? tp1 : na, "TP1", color=color.new(color.green, 20), style=plot.style_linebr, linewidth=1)
+plot(show_stops and any_signal and rr_ok ? tp2 : na, "TP2", color=color.new(color.green, 40), style=plot.style_linebr, linewidth=1)
+
+// Fondos de entrada
+bgcolor(show_entry and entry_go and mom_active and not exhaustion_block ? color.new(color.green, 88) : na, title="Entrada optima")
+bgcolor(show_entry and (entry_hot or entry_ext) and mom_active ? color.new(color.red, 90) : na, title="RSI caliente")
 bgcolor(show_entry and rally_exhausted and mom_active ? color.new(color.yellow, 85) : na, title="Rally agotado")
 
-// TABLA DE SCORES v8
-var table t = table.new(position.top_right, 3, 17, bgcolor=color.new(color.black, 20), border_color=color.new(color.gray, 60), border_width=1, frame_color=color.new(color.gray, 40), frame_width=1)
+// ══════════════════════════════════════════════════════════════
+// TABLA DE SCORES
+// ══════════════════════════════════════════════════════════════
+var table t = table.new(position.top_right, 3, 17,
+     bgcolor=color.new(color.black, 20),
+     border_color=color.new(color.gray, 60), border_width=1,
+     frame_color=color.new(color.gray, 40), frame_width=1)
 
 if barstate.islast
-    table.cell(t,0,0,"OLYMPUS v8",text_color=color.white,bgcolor=color.new(color.navy,20)); table.cell(t,1,0,"SCORE",text_color=color.white,bgcolor=color.new(color.navy,20)); table.cell(t,2,0,"FILTRO",text_color=color.white,bgcolor=color.new(color.navy,20))
-    rc = market_regime=="TRENDING_UP"?color.green:market_regime=="CRASH"?color.red:market_regime=="TRENDING_DOWN"?color.orange:color.yellow
-    table.cell(t,0,1,"REGIMEN: "+market_regime,text_color=rc,bgcolor=color.new(rc,85)); table.cell(t,1,1,"VIX "+str.tostring(vix_close,"#.#"),text_color=color.white); table.cell(t,2,1,"x"+str.tostring(regime_size_mult,"#.#"),text_color=color.white)
-    table.cell(t,0,2,"BLOOD",text_color=blood_active?color.red:color.gray); table.cell(t,1,2,str.tostring(math.round(blood_score_raw)),text_color=blood_active?color.red:color.gray,bgcolor=blood_active?color.new(color.red,80):na); table.cell(t,2,2,blood_active?(passes_all_filters?"OK":"NO"):"-",text_color=blood_active?(passes_all_filters?color.green:color.red):color.gray)
-    table.cell(t,0,3,"MEAN REV",text_color=mean_active?color.orange:color.gray); table.cell(t,1,3,str.tostring(math.round(mean_score_raw)),text_color=mean_active?color.orange:color.gray,bgcolor=mean_active?color.new(color.orange,80):na); table.cell(t,2,3,mean_active?(passes_all_filters?"OK":"NO"):"-",text_color=mean_active?(passes_all_filters?color.green:color.red):color.gray)
-    table.cell(t,0,4,"MOMENTUM",text_color=mom_active?color.lime:color.gray); table.cell(t,1,4,str.tostring(math.round(mom_score_raw)),text_color=mom_active?color.lime:color.gray,bgcolor=mom_active?color.new(color.lime,80):na); table.cell(t,2,4,mom_active?(passes_all_filters?"OK":"NO"):"-",text_color=mom_active?(passes_all_filters?color.green:color.red):color.gray)
-    table.cell(t,0,5,"OVERSOLD",text_color=ov_active?color.aqua:color.gray); table.cell(t,1,5,str.tostring(math.round(ov_score_raw)),text_color=ov_active?color.aqua:color.gray,bgcolor=ov_active?color.new(color.aqua,80):na); table.cell(t,2,5,ov_active?(passes_all_filters?"OK":"NO"):"-",text_color=ov_active?(passes_all_filters?color.green:color.red):color.gray)
-    table.cell(t,0,6,"SECTOR ROT",text_color=sec_active?color.blue:color.gray); table.cell(t,1,6,str.tostring(math.round(sec_score_raw)),text_color=sec_active?color.blue:color.gray,bgcolor=sec_active?color.new(color.blue,80):na); table.cell(t,2,6,sec_active?(passes_all_filters?"OK":"NO"):"-",text_color=sec_active?(passes_all_filters?color.green:color.red):color.gray)
-    table.cell(t,0,7,"----",text_color=color.gray); table.cell(t,1,7,"----",text_color=color.gray); table.cell(t,2,7,"",text_color=color.gray)
-    oc = opportunity_score>=70?color.green:opportunity_score>=50?color.yellow:color.gray
-    table.cell(t,0,8,"OPPORTUNITY",text_color=oc); table.cell(t,1,8,str.tostring(opportunity_score),text_color=oc,bgcolor=color.new(oc,70)); table.cell(t,2,8,"",text_color=color.gray)
-    table.cell(t,0,9,"QUALITY",text_color=color.silver); table.cell(t,1,9,str.tostring(quality_score),text_color=color.silver); table.cell(t,2,9,"",text_color=color.gray)
-    ec = execution_score>=min_exec_score?color.green:color.red
-    table.cell(t,0,10,"EXECUTION",text_color=ec); table.cell(t,1,10,str.tostring(execution_score)+(passes_filter?" OK":" NO"),text_color=ec,bgcolor=color.new(ec,70)); table.cell(t,2,10,passes_filter?"OK":"NO",text_color=ec)
-    rsc = rs_vs_spy>1.05?color.green:rs_vs_spy>min_rs_spy?color.yellow:color.red
-    table.cell(t,0,11,"RS vs SPY",text_color=rsc); table.cell(t,1,11,str.tostring(math.round(rs_vs_spy*100)/100),text_color=rsc); table.cell(t,2,11,passes_rs_spy?"OK":"<"+str.tostring(min_rs_spy),text_color=passes_rs_spy?color.green:color.red)
-    src2 = rs_vs_sector>1.05?color.green:rs_vs_sector>min_rs_sector?color.yellow:color.red
-    table.cell(t,0,12,"RS vs Sector",text_color=src2); table.cell(t,1,12,str.tostring(math.round(rs_vs_sector*100)/100),text_color=src2); table.cell(t,2,12,passes_rs_sector?"OK":"<"+str.tostring(min_rs_sector),text_color=passes_rs_sector?color.green:color.red)
-    rrc = rr>=min_rr?color.green:rr>=1.2?color.yellow:color.red
-    table.cell(t,0,13,"R:R",text_color=rrc); table.cell(t,1,13,str.tostring(math.round(rr*10)/10),text_color=rrc); table.cell(t,2,13,passes_rr?"OK":"NO",text_color=passes_rr?color.green:color.red)
-    exc = exhaustion_confidence>=40?color.red:exhaustion_confidence>=25?color.yellow:color.green
-    table.cell(t,0,14,"EXHAUSTION",text_color=exc); table.cell(t,1,14,str.tostring(math.round(exhaustion_confidence))+"%",text_color=exc); table.cell(t,2,14,rally_exhausted?"BLOQ":"OK",text_color=rally_exhausted?color.red:color.green)
-    entry_txt = entry_extreme?"EXTREME":entry_too_hot?"TOO HOT":entry_confirmed?"CONFIRMED":"EARLY"
-    entry_col = entry_confirmed?color.green:(entry_extreme or entry_too_hot)?color.red:color.yellow
-    table.cell(t,0,15,"RSI(2)",text_color=entry_col); table.cell(t,1,15,str.tostring(math.round(rsi2)),text_color=entry_col); table.cell(t,2,15,entry_txt,text_color=entry_col)
-    fc = passes_all_filters and passes_rr ? color.green : color.red
-    ft = passes_all_filters and passes_rr ? "LISTO" : not signal_regime_allowed ? "Regimen" : not passes_rs_spy ? "RS SPY" : not passes_rs_sector ? "RS Sector" : exhaustion_block ? "Agotado" : "Filtros"
-    table.cell(t,0,16,"VEREDICTO",text_color=fc,bgcolor=color.new(fc,85)); table.cell(t,1,16,ft,text_color=fc,bgcolor=color.new(fc,85)); table.cell(t,2,16,"",text_color=color.gray)
+    // Header
+    table.cell(t,0,0,"OLYMPUS v8",     text_color=color.white, bgcolor=color.new(color.navy,20))
+    table.cell(t,1,0,"SCORE",          text_color=color.white, bgcolor=color.new(color.navy,20))
+    table.cell(t,2,0,"FILTRO",         text_color=color.white, bgcolor=color.new(color.navy,20))
 
-// ALERTAS
-alertcondition(blood_active and passes_all_filters, title="BLOOD OK", message="BLOOD IN STREETS. Score="+str.tostring(opportunity_score)+" Regimen="+market_regime)
-alertcondition(mom_active and passes_all_filters and entry_confirmed, title="MOM OK", message="MOMENTUM confirmado. RS="+str.tostring(math.round(rs_vs_spy*100)/100))
-alertcondition(mom_active and rally_exhausted, title="MOM AGOTADO", message="MOMENTUM agotado ("+str.tostring(math.round(exhaustion_confidence))+"%). No entrar.")
-alertcondition(ov_active and passes_all_filters, title="OV OK", message="OVERSOLD BOUNCE. Regimen="+market_regime)
-alertcondition(passes_all_filters and passes_rr and n_active >= 2, title="CONFLUENCIA", message="CONFLUENCIA: "+str.tostring(n_active)+" senales. Regimen="+market_regime)
+    // Regimen
+    rc = market_regime=="TRENDING_UP"?color.green:market_regime=="CRASH"?color.red:market_regime=="TRENDING_DOWN"?color.orange:color.yellow
+    table.cell(t,0,1,"REGIMEN: "+market_regime, text_color=rc, bgcolor=color.new(rc,85))
+    table.cell(t,1,1,"VIX "+str.tostring(vix_close,"#.#"), text_color=color.white)
+    table.cell(t,2,1,"x"+str.tostring(regime_mult,"#.#"), text_color=color.white)
+
+    // Blood
+    bc = blood_active ? color.red : color.gray
+    bf = blood_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,2,"BLOOD",   text_color=bc); table.cell(t,1,2,str.tostring(math.round(blood_score_raw)), text_color=bc, bgcolor=blood_active?color.new(color.red,80):na)
+    table.cell(t,2,2,bf,        text_color=blood_active?(passes_all?color.green:color.red):color.gray)
+
+    // Mean Reversion
+    mc = mean_active ? color.orange : color.gray
+    mf = mean_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,3,"MEAN REV",text_color=mc); table.cell(t,1,3,str.tostring(math.round(mean_score_raw)), text_color=mc, bgcolor=mean_active?color.new(color.orange,80):na)
+    table.cell(t,2,3,mf,        text_color=mean_active?(passes_all?color.green:color.red):color.gray)
+
+    // Momentum
+    mc2 = mom_active ? color.lime : color.gray
+    mf2 = mom_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,4,"MOMENTUM",text_color=mc2); table.cell(t,1,4,str.tostring(math.round(mom_score_raw)), text_color=mc2, bgcolor=mom_active?color.new(color.lime,80):na)
+    table.cell(t,2,4,mf2,       text_color=mom_active?(passes_all?color.green:color.red):color.gray)
+
+    // Oversold
+    oc = ov_active ? color.aqua : color.gray
+    of2 = ov_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,5,"OVERSOLD",text_color=oc); table.cell(t,1,5,str.tostring(math.round(ov_score_raw)), text_color=oc, bgcolor=ov_active?color.new(color.aqua,80):na)
+    table.cell(t,2,5,of2,       text_color=ov_active?(passes_all?color.green:color.red):color.gray)
+
+    // Sector Rotation
+    sc = sec_active ? color.blue : color.gray
+    sf2 = sec_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,6,"SECTOR ROT",text_color=sc); table.cell(t,1,6,str.tostring(math.round(sec_score_raw)), text_color=sc, bgcolor=sec_active?color.new(color.blue,80):na)
+    table.cell(t,2,6,sf2,       text_color=sec_active?(passes_all?color.green:color.red):color.gray)
+
+    // Separador
+    table.cell(t,0,7,"────",    text_color=color.gray); table.cell(t,1,7,"────",   text_color=color.gray); table.cell(t,2,7,"", text_color=color.gray)
+
+    // Opportunity
+    oc2 = opportunity>=70?color.green:opportunity>=50?color.yellow:color.gray
+    table.cell(t,0,8,"OPPORTUNITY", text_color=oc2); table.cell(t,1,8,str.tostring(opportunity), text_color=oc2, bgcolor=color.new(oc2,70))
+    table.cell(t,2,8,"",            text_color=color.gray)
+
+    // Quality
+    table.cell(t,0,9,"QUALITY",  text_color=color.silver); table.cell(t,1,9,str.tostring(quality), text_color=color.silver)
+    table.cell(t,2,9,"",         text_color=color.gray)
+
+    // Execution
+    ec2 = execution>=min_exec_score?color.green:color.red
+    table.cell(t,0,10,"EXECUTION", text_color=ec2); table.cell(t,1,10,str.tostring(execution)+(passes_filter?" OK":" NO"), text_color=ec2, bgcolor=color.new(ec2,70))
+    table.cell(t,2,10,passes_filter?"OK":"NO", text_color=ec2)
+
+    // RS vs SPY
+    rs1c = rs_vs_spy>1.05?color.green:rs_vs_spy>min_rs_spy?color.yellow:color.red
+    table.cell(t,0,11,"RS vs SPY", text_color=rs1c); table.cell(t,1,11,str.tostring(math.round(rs_vs_spy*100)/100), text_color=rs1c)
+    table.cell(t,2,11,passes_rs_spy?"OK":"<"+str.tostring(min_rs_spy), text_color=passes_rs_spy?color.green:color.red)
+
+    // RS vs Sector
+    rs2c = rs_vs_sector>1.05?color.green:rs_vs_sector>min_rs_sector?color.yellow:color.red
+    table.cell(t,0,12,"RS vs Sector", text_color=rs2c); table.cell(t,1,12,str.tostring(math.round(rs_vs_sector*100)/100), text_color=rs2c)
+    table.cell(t,2,12,passes_rs_sector?"OK":"<"+str.tostring(min_rs_sector), text_color=passes_rs_sector?color.green:color.red)
+
+    // R:R
+    rrc = rr>=min_rr?color.green:rr>=1.2?color.yellow:color.red
+    table.cell(t,0,13,"R:R", text_color=rrc); table.cell(t,1,13,str.tostring(math.round(rr*10)/10), text_color=rrc)
+    table.cell(t,2,13,rr_ok?"OK":"NO", text_color=rr_ok?color.green:color.red)
+
+    // Exhaustion
+    exc = exhaust_conf>=40?color.red:exhaust_conf>=25?color.yellow:color.green
+    table.cell(t,0,14,"EXHAUSTION", text_color=exc); table.cell(t,1,14,str.tostring(math.round(exhaust_conf))+"%", text_color=exc)
+    table.cell(t,2,14,rally_exhausted?"BLOQ":"OK", text_color=rally_exhausted?color.red:color.green)
+
+    // RSI(2) Entry
+    etxt = entry_ext?"EXTREME":entry_hot?"TOO HOT":entry_go?"CONFIRMED":"EARLY"
+    ecol = entry_go?color.green:entry_hot or entry_ext?color.red:color.yellow
+    table.cell(t,0,15,"RSI(2)", text_color=ecol); table.cell(t,1,15,str.tostring(math.round(rsi2)), text_color=ecol)
+    table.cell(t,2,15,etxt, text_color=ecol)
+
+    // Veredicto
+    fc = passes_all and rr_ok ? color.green : color.red
+    ft = passes_all and rr_ok ? "LISTO" :
+         not regime_ok ? "Regimen" :
+         not passes_rs_spy ? "RS SPY" :
+         not passes_rs_sector ? "RS Sector" :
+         exhaustion_block ? "Agotado" : "Filtros"
+    table.cell(t,0,16,"VEREDICTO", text_color=fc, bgcolor=color.new(fc,85))
+    table.cell(t,1,16,ft,          text_color=fc, bgcolor=color.new(fc,85))
+    table.cell(t,2,16,"",          text_color=color.gray)
+
+// ══════════════════════════════════════════════════════════════
+// ALERTAS — usamos alert() porque market_regime es series, no const
+// ══════════════════════════════════════════════════════════════
+alert(message="BLOOD IN STREETS. " + str.tostring(market_regime),
+     condition=blood_active and passes_all, freq=alert.freq_once_per_bar)
+alert(message="MOM confirmado. RS=" + str.tostring(math.round(rs_vs_spy*100)/100),
+     condition=mom_active and passes_all and entry_go, freq=alert.freq_once_per_bar)
+alert(message="MOM agotado (" + str.tostring(math.round(exhaust_conf)) + "%)",
+     condition=mom_active and rally_exhausted, freq=alert.freq_once_per_bar)
+alert(message="OVERSOLD. " + str.tostring(market_regime),
+     condition=ov_active and passes_all, freq=alert.freq_once_per_bar)
+alert(message="CONFLUENCIA: " + str.tostring(n_active) + " senales",
+     condition=passes_all and rr_ok and n_active>=2, freq=alert.freq_once_per_bar)
