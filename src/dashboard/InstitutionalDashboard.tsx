@@ -297,10 +297,8 @@ const InstitutionalDashboard: React.FC = () => {
     claude: { elliottAnalysis: string; rebalanceAdvice: string; contradictionAnalysis: string; model: string; cachedAt: string; error?: string } | null;
     fetchedAt: string;
     cacheHit: boolean;
-    ollamaModel?: string;
   } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [ollamaModel, setOllamaModel] = useState<string>('llama3.1:8b');
   const [telegramStatus, setTelegramStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
   const [telegramError, setTelegramError] = useState<string>('');
 
@@ -511,133 +509,52 @@ const InstitutionalDashboard: React.FC = () => {
     }
   };
 
-  const aiCacheRef = React.useRef<{ hash: string; result: any; expiresAt: number } | null>(null);
-
-  const callOllama = async (systemPrompt: string, userContent: string, model: string): Promise<string> => {
-    const OLLAMA_URL = 'http://127.0.0.1:11434/api/chat';
-    const res = await fetch(OLLAMA_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        options: { temperature: 0.2, num_predict: 500 },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ],
-      }),
-    });
-    if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
-    const json = await res.json();
-    const text: string = json.message?.content ?? '';
-    return text.replace(/```json[\s\S]*?```|```[\s\S]*?```/g, m =>
-      m.replace(/```json\n?|```\n?/g, '').trim()
-    ).trim();
-  };
-
-  const detectOllamaModel = async (): Promise<string> => {
-    try {
-      const res = await fetch('http://127.0.0.1:11434/api/tags');
-      if (!res.ok) return ollamaModel;
-      const json = await res.json();
-      const models: string[] = (json.models ?? []).map((m: any) => m.name as string);
-      if (models.length === 0) return ollamaModel;
-      const preferred = ['llama3.1:8b', 'llama3.1', 'llama3.3', 'llama3.2', 'llama3', 'mistral', 'mixtral', 'qwen2.5', 'deepseek-r1'];
-      for (const p of preferred) {
-        const exact = models.find(m => m === p);
-        if (exact) return exact;
-        const prefix = models.find(m => m.startsWith(p));
-        if (prefix) return prefix;
-      }
-      return models[0];
-    } catch {
-      return ollamaModel;
-    }
-  };
-
-  const refreshAIIntelligence = async () => {
+    const refreshAIIntelligence = async () => {
     if (!engineResult) return;
     setAiLoading(true);
     try {
       const contradictions: string[] = [];
-      if (dxy > 103 && wtiOil > 90) contradictions.push('DXY alto + Brent alto (señales opuestas)');
-      if (vix > 28 && rsi > 65) contradictions.push('VIX pánico + RSI sobrecompra (incoherente)');
+      if (dxy > 103 && wtiOil > 90) contradictions.push('DXY alto + Brent alto (senales opuestas)');
+      if (vix > 28 && rsi > 65) contradictions.push('VIX panico + RSI sobrecompra (incoherente)');
       if (creditSpread > 4.5 && manualPER > 26) contradictions.push('Credit spread elevado + PER caro');
 
       const totalPortfolioVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
-
-      const ctxHash = `${engineResult.regime}-${Math.round(vix)}-${Math.round((mvrvRatio ?? 0) * 100)}-${Math.round((fearGreedIndex?.value ?? 50))}`;
-      const now = Date.now();
-      const CACHE_TTL = 15 * 60 * 1000;
-
-      if (aiCacheRef.current && aiCacheRef.current.hash === ctxHash && aiCacheRef.current.expiresAt > now) {
-        setAiIntelligence({ ...aiCacheRef.current.result, cacheHit: true });
-        setAiLoading(false);
-        return;
-      }
-
-      const model = await detectOllamaModel();
-      setOllamaModel(model);
-
       const ts = new Date().toISOString();
 
-      const ctx = `FECHA: ${ts.slice(0, 10)}
-RÉGIMEN: ${engineResult.regime} | penalty=${((engineResult.masterRegime.regimePenalty ?? 1) * 100).toFixed(0)}% | P(crisis)=${(((engineResult.masterRegime as any).crisisProb ?? 0) * 100).toFixed(0)}%
-MACRO: VIX=${vix.toFixed(1)} MOVE=${moveIndex.toFixed(0)} Bond10y=${manualBond10y.toFixed(2)}% Bond2y=${bond2y.toFixed(2)}% CreditSprd=${creditSpread.toFixed(2)}% M2=${m2Growth.toFixed(1)}% DXY=${dxy.toFixed(1)} Brent=$${wtiOil.toFixed(0)}
-CRYPTO: BTC=€${(portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price ?? 0).toFixed(0)} RSI_semanal=${(btcRsiWeekly ?? 50).toFixed(0)} DOM=${(btcDominance ?? 0).toFixed(1)}% MVRV=${(mvrvRatio ?? 0).toFixed(2)} FearGreed=${fearGreedIndex?.value ?? 50}/${fearGreedIndex?.label ?? 'N/D'}
-PORTFOLIO: €${totalPortfolioVal.toFixed(0)} vol=${((portfolioVol ?? 0.18) * 100).toFixed(1)}% drawdown=${((portfolioDrawdown ?? 0) * 100).toFixed(1)}% mu=${(Math.min(0.15, expectedReturn) * 100).toFixed(1)}%
-ELLIOTT: Onda ${elliottCurrentWave ?? 'N/D'} | Hash Ribbon: ${hashRibbonState ?? 'N/D'} | Puell: ${(puellMultiple ?? 0).toFixed(2)}
-${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') : ''}`.trim();
-
-      const macroPrompt = `Eres estratega macro senior de hedge fund institucional. Analiza el contexto y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones fuera del JSON:
-{"regimeNarrative":"<3 frases sobre el régimen macro actual y sus implicaciones para el portfolio>","macroValidation":"<2 frases sobre coherencia entre las señales macro>","btcCycleSummary":"<2 frases sobre la posición actual en el ciclo BTC y qué esperar>"}`;
-
-      const elliottPrompt = `Eres analista técnico especialista en ciclos crypto y Elliott Wave. Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown:
-{"elliottAnalysis":"<3 frases sobre la onda actual, dirección y proyección de precio>","rebalanceAdvice":"<2 frases de rebalanceo concreto dado el ciclo>","contradictionAnalysis":"<2 frases sobre señales contradictorias detectadas>"}`;
-
-      const bsAlert = (vix ?? 0) > 35 && (creditSpread ?? 0) > 6 || (mvrvRatio ?? 0) > 7;
-      const sentinelPrompt = `Eres analista de riesgo sistémico y vigilante de cisnes negros. Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown:
-{"marketSentiment":"<2 frases del sentimiento actual del mercado>","topNarratives":["<narrativa dominante 1>","<narrativa dominante 2>","<narrativa dominante 3>"],"blackSwanAlert":${bsAlert},"blackSwanReason":${bsAlert ? '"<describe el riesgo sistémico detectado>"' : 'null'}}`;
-
-      const [r1, r2, r3] = await Promise.allSettled([
-        callOllama(macroPrompt, ctx, model),
-        callOllama(elliottPrompt, ctx, model),
-        callOllama(sentinelPrompt, ctx, model),
-      ]);
-
-      const parseRole = (r: PromiseSettledResult<string>, fallback: object) => {
-        if (r.status === 'rejected') return { ...fallback, error: String(r.reason).slice(0, 200), model, cachedAt: ts };
-        try {
-          const match = r.value.match(/\{[\s\S]*\}/);
-          const parsed = JSON.parse(match ? match[0] : r.value);
-          return { ...parsed, model, cachedAt: ts };
-        } catch {
-          return { ...fallback, error: `JSON parse error: ${r.value.slice(0, 100)}`, model, cachedAt: ts };
-        }
+      const ctxBody = {
+        regime: engineResult.regime,
+        regimePenalty: engineResult.masterRegime.regimePenalty ?? 1,
+        probCrisis: (engineResult.masterRegime as any).crisisProb ?? 0,
+        vix, move: moveIndex, bond10y: manualBond10y, bond2y, creditSpread, m2Growth, dxy,
+        brent: wtiOil, btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price ?? 0,
+        btcRsi: btcRsiWeekly ?? 50, btcDominance, mvrv: mvrvRatio ?? 0,
+        fearGreed: fearGreedIndex?.value ?? 50, fearGreedLabel: fearGreedIndex?.label ?? 'N/D',
+        totalValue: totalPortfolioVal, portfolioVol: portfolioVol ?? 0.18, drawdown: portfolioDrawdown ?? 0,
+        muEffective: Math.min(0.15, expectedReturn),
+        contradictions,
       };
 
-      const geminiResult = parseRole(r1, { regimeNarrative: '', macroValidation: '', btcCycleSummary: '' });
-      const claudeResult = parseRole(r2, { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '' });
-      const grokResult = parseRole(r3, { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null });
+      const { data, error } = await supabase.functions.invoke('ai-intelligence', { body: ctxBody });
+
+      if (error || !data) {
+        throw new Error(typeof error === 'string' ? error : 'Edge Function returned no data');
+      }
 
       const output = {
-        gemini: geminiResult,
-        claude: claudeResult,
-        grok: grokResult,
+        gemini: data.gemini ?? null,
+        claude: data.claude ?? null,
+        grok: data.grok ?? null,
         fetchedAt: ts,
-        cacheHit: false,
-        ollamaModel: model,
+        cacheHit: data.cacheHit ?? false,
       };
 
-      aiCacheRef.current = { hash: ctxHash, result: output, expiresAt: now + CACHE_TTL };
       setAiIntelligence(output);
 
-      if (grokResult.blackSwanAlert && grokResult.blackSwanReason && !grokResult.error) {
+      if (data.grok?.blackSwanAlert && data.grok?.blackSwanReason && !data.grok?.error) {
         supabase.functions.invoke('telegram-alerts', {
           body: {
             type: 'black_swan',
-            blackSwanReason: grokResult.blackSwanReason,
+            blackSwanReason: data.grok.blackSwanReason,
             currentRegime: engineResult.regime,
             vix,
           },
@@ -647,18 +564,15 @@ ${contradictions.length > 0 ? 'CONTRADICCIONES: ' + contradictions.join(' | ') :
     } catch (e: any) {
       const errMsg = e?.message ?? String(e);
       const ts = new Date().toISOString();
-      const ollamaDown = errMsg.includes('fetch') || errMsg.includes('ECONNREFUSED') || errMsg.includes('Failed to fetch');
       const errResult = {
-        error: ollamaDown
-          ? 'Ollama no responde en localhost:11434. Verifica que esté corriendo con: $env:OLLAMA_ORIGINS="*"; ollama serve'
-          : errMsg.slice(0, 300),
-        model: ollamaModel, cachedAt: ts,
+        error: errMsg.slice(0, 300),
+        model: 'gemini', cachedAt: ts,
       };
       setAiIntelligence({
         gemini: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', ...errResult },
         claude: { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '', ...errResult },
         grok: { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, ...errResult },
-        fetchedAt: ts, cacheHit: false, ollamaModel,
+        fetchedAt: ts, cacheHit: false,
       });
     } finally {
       setAiLoading(false);
@@ -2025,7 +1939,7 @@ soxRsiWeekly,
             <span style={{ color: "#818cf8" }}>
               ✓ AI {aiIntelligence.cacheHit ? "(caché)" : ""}
               {" · "}{new Date(aiIntelligence.fetchedAt).toLocaleTimeString("es-ES")}
-              {" · 🦙 "}{aiIntelligence.ollamaModel ?? ollamaModel}
+              {" · ✦ "}{aiIntelligence.gemini?.model ?? 'Gemini Flash'}
             </span>
           )}
         </span>
@@ -2735,13 +2649,13 @@ soxRsiWeekly,
       {aiIntelligence && (
         <div style={{ ...styles.card, border: "1px solid #4c1d95", background: "linear-gradient(135deg, #0c0a1f 0%, #111827 100%)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <h2 style={{ color: "#a78bfa", margin: 0 }}>🧠 Motor Intelligence — Ollama Local</h2>
+            <h2 style={{ color: "#a78bfa", margin: 0 }}>🧠 Motor Intelligence — Gemini Flash</h2>
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
               {aiIntelligence.cacheHit && (
                 <span style={{ fontSize: "0.65rem", color: "#6b7280", background: "#1f2937", padding: "2px 8px", borderRadius: 4 }}>caché</span>
               )}
               <span style={{ fontSize: "0.65rem", color: "#6b7280", background: "#1f2937", padding: "2px 8px", borderRadius: 4 }}>
-                🦙 {aiIntelligence.ollamaModel ?? ollamaModel}
+                ✦ {aiIntelligence.gemini?.model ?? 'Gemini Flash'}
               </span>
               <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>
                 {new Date(aiIntelligence.fetchedAt).toLocaleString("es-ES")}
@@ -2758,7 +2672,7 @@ soxRsiWeekly,
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
                   <span>✦</span>
                   <span style={{ color: "#60a5fa", fontWeight: "bold", fontSize: "0.85rem" }}>Macro Strategist</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>🦙 {aiIntelligence.gemini.model}</span>
+                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.gemini.model}</span>
                 </div>
                 <div style={{ marginBottom: "0.75rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#3b82f6", fontWeight: "bold", marginBottom: "0.3rem" }}>RÉGIMEN ACTUAL</div>
@@ -2778,9 +2692,9 @@ soxRsiWeekly,
               <div style={{ background: "#1c0a0a", border: "1px solid #374151", borderRadius: 10, padding: "1rem" }}>
                 <span style={{ color: "#ef4444", fontSize: "0.8rem" }}>✦ Macro Strategist — Error</span>
                 <p style={{ color: "#9ca3af", fontSize: "0.75rem", marginTop: "0.5rem", lineHeight: 1.5 }}>{aiIntelligence.gemini.error}</p>
-                {aiIntelligence.gemini.error.includes('Ollama') && (
+                {aiIntelligence.gemini.error.includes('Edge Function') && (
                   <p style={{ color: "#6b7280", fontSize: "0.7rem", marginTop: "0.5rem", fontFamily: "monospace", background: "#0f172a", padding: "0.5rem", borderRadius: 4 }}>
-                    PowerShell: $env:OLLAMA_ORIGINS="*"; ollama serve
+                    Verificar GEMINI_API_KEY en Supabase Secrets
                   </p>
                 )}
               </div>
@@ -2791,7 +2705,7 @@ soxRsiWeekly,
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
                   <span>🛡</span>
                   <span style={{ color: "#d1d5db", fontWeight: "bold", fontSize: "0.85rem" }}>Market Sentinel</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>🦙 {aiIntelligence.grok.model}</span>
+                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.grok.model}</span>
                 </div>
                 {aiIntelligence.grok.blackSwanAlert && (
                   <div style={{ background: "#1c0a0a", border: "1px solid #ef4444", borderRadius: 6, padding: "0.5rem 0.75rem", marginBottom: "0.75rem", fontSize: "0.78rem", color: "#ef4444" }}>
@@ -2824,7 +2738,7 @@ soxRsiWeekly,
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
                   <span>📐</span>
                   <span style={{ color: "#f59e0b", fontWeight: "bold", fontSize: "0.85rem" }}>Elliott Wave Analyst</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>🦙 {aiIntelligence.claude.model}</span>
+                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.claude.model}</span>
                 </div>
                 <div style={{ marginBottom: "0.75rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#d97706", fontWeight: "bold", marginBottom: "0.3rem" }}>ELLIOTT WAVE</div>

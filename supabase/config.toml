@@ -1,4 +1,4 @@
-project_id = "hhzbjekmhpimalqnnpro"
+project_id = "yrirandgftnuvdzatwgc"
 [functions.yahoo-finance-tactical]
 enabled = true
 verify_jwt = true
