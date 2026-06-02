@@ -47,6 +47,7 @@ import {
   calcIndicators, generateSignals, calcTotalScore,
   calcStopLoss, calcTakeProfits,
   generateMacroSignal,
+  detectMomentumExhaustion,
 } from './tacticalSignals';
 import {
   CORE_TACTICAL_UNIVERSE,
@@ -116,11 +117,6 @@ interface RawTickerData {
 }
 
 // ── Ultra-fallback sectorial ──────────────────────────────────
-// CRÍTICO: los datos de estos tickers NO se usan para generar señales.
-// Se usan únicamente para que el asset aparezca en la lista con
-// el campo dataSource='ultra-fallback'. buildOpportunity los descarta.
-// Sin esto, el asset desaparecería completamente del resultado → no se
-// podría mostrar al usuario que el activo existe pero no tiene datos.
 const ULTRA_FALLBACK_MAP: Record<string, string> = {
   'Equity':         'IVV',
   'Technology':     'VOO',
@@ -138,6 +134,31 @@ const ULTRA_FALLBACK_MAP: Record<string, string> = {
   'Factor':         'QUAL',
   'Crypto':         'BTC-USD',
 };
+
+// ── REFUERZO #3: Sector → ETF de referencia para Strength vs Sector ──
+// Cada sector se compara contra su ETF benchmark.
+// Si el activo underperforma su sector, se rechaza.
+const SECTOR_TO_ETF: Record<string, string> = {
+  'Technology':      'XLK',
+  'Semiconductores': 'SMH',
+  'Finance':         'XLF',
+  'Healthcare':      'XLV',
+  'Energy':          'XLE',
+  'Consumer':        'XLP',
+  'Real Estate':     'XLRE',
+  'Industrials':     'XLI',
+  'Materials':       'XLB',
+  'Utilities':       'XLU',
+  'Commodities':     'GLD',
+  'Crypto':          'BTC-USD',
+  'Emerging':        'EEM',
+  'Equity':          'SPY',
+  'Small Cap':       'IWM',
+};
+
+// ── REFUERZO #2: Umbrales de filtro duro RS ─────────────────
+const MIN_RS_VS_SPY    = 0.85;  // RS vs SPY mínimo para ser tradeable
+const MIN_RS_VS_SECTOR = 0.90;  // RS vs sector mínimo
 
 // ── Fetch de un chunk individual ─────────────────────────────
 async function fetchSingleChunk(
@@ -431,6 +452,9 @@ export async function scanTacticalUniverse(
     oppScoreBajo:  0,
     oppRRBajo:     0,
     oppExecBajo:   0,  // FIX INSTITUCIONAL: executionScore < MIN_EXECUTION_SCORE
+    oppRSBajo:     0,  // v8: RS vs SPY < MIN_RS_VS_SPY
+    oppSectorBajo: 0,  // v8: RS vs sector < MIN_RS_VS_SECTOR
+    oppExhaustion: 0,  // v8: rally agotado
     oportunidades: 0,
   };
 
@@ -447,8 +471,11 @@ export async function scanTacticalUniverse(
     .filter(a => a.fallbackYahooSymbol)
     .map(a => a.fallbackYahooSymbol!);
 
-  // FIX INSTITUCIONAL: añadir SPY como benchmark para fuerza relativa
-  const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX', 'SPY'])];
+  // FIX INSTITUCIONAL: añadir SPY + sector ETFs como benchmarks
+  const sectorEtfTickers = [...new Set(
+    universe.map(a => SECTOR_TO_ETF[a.sector] || 'SPY')
+  )];
+  const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX', 'SPY', ...sectorEtfTickers])];
 
   // Paso 2: fetch batch de todos los símbolos
   let batchData = await fetchBatch(supabase, allSymbols, 'yahoo-finance-tactical');
@@ -509,6 +536,23 @@ export async function scanTacticalUniverse(
 
     const rs = getRS(252) ?? getRS(126) ?? getRS(Math.max(63, Math.min(assetCloses.length, spyCloses.length) - 1)) ?? 1.0;
     return parseFloat(Math.min(Math.max(rs, 0.1), 3.0).toFixed(3));
+  }
+
+  // ── REFUERZO #3: RS vs Sector ETF ─────────────────────────
+  function calcRSVsSector(assetCloses: number[], sector: string): number {
+    const sectorETF = SECTOR_TO_ETF[sector];
+    if (!sectorETF) return 1.0;
+    const sectorCloses = batchData[sectorETF]?.closes;
+    if (!sectorCloses || sectorCloses.length < 63) return 1.0;
+    
+    const window = Math.min(126, Math.min(assetCloses.length, sectorCloses.length) - 1);
+    if (window < 21) return 1.0;
+    
+    const aPerf = assetCloses[assetCloses.length - 1] / assetCloses[assetCloses.length - window];
+    const sPerf = sectorCloses[sectorCloses.length - 1] / sectorCloses[sectorCloses.length - window];
+    if (aPerf <= 0 || sPerf <= 0) return 1.0;
+    
+    return parseFloat(Math.min(Math.max(aPerf / sPerf, 0.1), 3.0).toFixed(3));
   }
 
   // Helper: calidad del activo (0-100)
@@ -590,6 +634,8 @@ export async function scanTacticalUniverse(
       // FIX INSTITUCIONAL: fuerza relativa + calidad
       const rs = calcRelativeStrength(built.closes);
       built.relativeStrength = rs;
+      // REFUERZO #3: RS vs sector ETF
+      built.rsVsSector = calcRSVsSector(built.closes, asset.sector);
       built.qualityScore = calcQualityScore(
         rs,
         built.indicators?.volumeRatio ?? 1,
@@ -731,6 +777,43 @@ export async function scanTacticalUniverse(
       continue;
     }
 
+    // ── REFUERZO #2: RS Hard Filter ──
+    // Si el activo underperforma SPY → no es tradeable
+    const rs = asset.relativeStrength ?? 1.0;
+    if (rs < MIN_RS_VS_SPY) {
+      diag.oppRSBajo++;
+      continue;
+    }
+
+    // ── REFUERZO #3: Strength vs Sector ──
+    // Si el activo underperforma su sector → no entres
+    const rsVsSector = asset.rsVsSector ?? 1.0;
+    if (rsVsSector < MIN_RS_VS_SECTOR) {
+      diag.oppSectorBajo++;
+      continue;
+    }
+
+    // ── REFUERZO #4: Exhaustion Detection ──
+    // Si el rally muestra signos de agotamiento → no entres
+    // Aplica a MOMENTUM_BREAKOUT y SECTOR_ROTATION (señales direccionales)
+    if ((opp.type === 'MOMENTUM_BREAKOUT' || opp.type === 'SECTOR_ROTATION') && asset.indicators) {
+      const exhaustion = detectMomentumExhaustion(
+        asset.closes,
+        asset.volumes ?? [],
+        asset.indicators.rsi14,
+        asset.indicators.macdHist,
+        asset.indicators.bbUpper,
+        asset.indicators.price,
+      );
+      if (exhaustion.exhausted) {
+        console.debug(
+          `[Screener] 🔥 ${asset.ticker}: Rally agotado — ${exhaustion.reasons.join(' | ')} (confianza: ${exhaustion.confidence}%)`
+        );
+        diag.oppExhaustion++;
+        continue;
+      }
+    }
+
     opportunities.push({ ...opp, score: adjustedScore });
     diag.oportunidades++;
   }
@@ -788,6 +871,9 @@ export async function scanTacticalUniverse(
     `  📉 Score < ${config.minScore}: -${diag.oppScoreBajo}\n` +
     `  📉 R:R < ${config.minRiskReward}: -${diag.oppRRBajo}\n` +
     `  📉 Execution < ${MIN_EXECUTION_SCORE}: -${diag.oppExecBajo}\n` +
+    `  📉 RS vs SPY < ${MIN_RS_VS_SPY}: -${diag.oppRSBajo}\n` +
+    `  📉 RS vs Sector < ${MIN_RS_VS_SECTOR}: -${diag.oppSectorBajo}\n` +
+    `  🔥 Rally agotado:    -${diag.oppExhaustion}\n` +
     `  🎯 Oportunidades:    ${diag.oportunidades}\n` +
     `  ─────────────────────────────────────`
   );
@@ -861,6 +947,9 @@ export async function scanTacticalUniverse(
       oppScoreBajo: diag.oppScoreBajo,
       oppRRBajo: diag.oppRRBajo,
       oppExecBajo: diag.oppExecBajo,
+      oppRSBajo: diag.oppRSBajo,
+      oppSectorBajo: diag.oppSectorBajo,
+      oppExhaustion: diag.oppExhaustion,
       oportunidades: diag.oportunidades,
       signalTypeCounts,
       totalActiveSignals,

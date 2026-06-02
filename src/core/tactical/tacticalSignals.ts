@@ -900,3 +900,99 @@ export function calcDaysToBreakeven(
   if (currentPrice >= entryPrice) return 0;
   return calcExpectedDays(currentPrice, entryPrice, atr, signalType);
 }
+
+// ════════════════════════════════════════════════════════════
+// MOMENTUM EXHAUSTION DETECTION (v8 — Refuerzo #4)
+//
+// Detecta si el rally está perdiendo fuel antes de llegar al
+// take profit. Señales:
+//   1. Precio cerca de resistencia (BB superior < 2%)
+//   2. Volumen decreciente en velas alcistas (rally débil)
+//   3. RSI(14) sobrecomprado > 70
+//   4. Precio estancado (3 velas en rango < 0.5%)
+//
+// Confianza ≥ 40 → rally agotado. No entres o cierra.
+// ════════════════════════════════════════════════════════════
+
+export interface ExhaustionResult {
+  exhausted:  boolean;
+  reasons:    string[];
+  confidence: number;  // 0-100
+}
+
+export function detectMomentumExhaustion(
+  closes:  number[],
+  volumes: number[],
+  rsi14:   number,
+  macdHist: number,
+  bbUpper: number,
+  price:   number,
+): ExhaustionResult {
+  const reasons: string[] = [];
+  let confidence = 0;
+
+  // 1. Precio cerca de resistencia (BB superior < 2%)
+  if (bbUpper > 0 && price / bbUpper > 0.98) {
+    reasons.push('Precio a <2% de BB superior (resistencia técnica)');
+    confidence += 25;
+  } else if (bbUpper > 0 && price / bbUpper > 0.95) {
+    reasons.push('Precio cerca de BB superior (zona de resistencia)');
+    confidence += 15;
+  }
+
+  // 2. Volumen decreciente en subidas (últimas 4 velas)
+  if (closes.length >= 5 && volumes.length >= 5) {
+    const c = closes.slice(-5);
+    const v = volumes.slice(-5);
+    let upBars = 0;
+    let volDeclining = true;
+    for (let i = 1; i < 5; i++) {
+      if (c[i] > c[i - 1]) upBars++;
+      if (v[i] >= v[i - 1]) volDeclining = false;
+    }
+    if (upBars >= 2 && volDeclining && v[4] < v[0] * 0.8) {
+      reasons.push('Volumen decreciente en rally (-20% vs media) — compra débil');
+      confidence += 20;
+    } else if (upBars >= 1 && v[4] < v[3] && v[3] < v[2]) {
+      reasons.push('Volumen bajando 3 velas seguidas — interés perdiendo');
+      confidence += 12;
+    }
+  }
+
+  // 3. RSI(14) sobrecomprado
+  if (rsi14 > 75) {
+    reasons.push(`RSI(14)=${rsi14.toFixed(0)} muy sobrecomprado — agotamiento inminente`);
+    confidence += 25;
+  } else if (rsi14 > 70) {
+    reasons.push(`RSI(14)=${rsi14.toFixed(0)} sobrecomprado`);
+    confidence += 15;
+  } else if (rsi14 > 65 && price / bbUpper > 0.95) {
+    reasons.push('RSI elevado + cerca de resistencia — doble confirmación');
+    confidence += 20;
+  }
+
+  // 4. Precio estancado (3 velas en rango < 0.5%)
+  if (closes.length >= 4) {
+    const recent3 = closes.slice(-4);
+    const max3 = Math.max(...recent3);
+    const min3 = Math.min(...recent3);
+    if (max3 > 0 && (max3 - min3) / max3 < 0.005) {
+      reasons.push('Precio estancado (3 velas en <0.5%) — sin momentum direccional');
+      confidence += 20;
+    }
+  }
+
+  // 5. MACD histogram perdiendo fuel (positivo pero encogiendo)
+  if (macdHist > 0 && macdHist < 0.5) {
+    reasons.push('MACD histogram casi plano — momentum agotándose');
+    confidence += 10;
+  }
+
+  const exhausted = confidence >= 40;
+
+  return {
+    exhausted,
+    reasons,
+    confidence: Math.min(100, confidence),
+  };
+}

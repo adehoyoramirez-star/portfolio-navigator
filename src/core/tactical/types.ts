@@ -106,6 +106,7 @@ export interface TacticalAsset {
   signals:     TacticalSignal[];
   totalScore:  number;
   relativeStrength?: number;     // NUEVO: RS vs SPY benchmark (1.0=igual, >1.0=supera). Opcional: se setea post-buildAsset
+  rsVsSector?: number;           // NUEVO v8: RS vs sector ETF. Opcional: se setea post-buildAsset
   qualityScore?: number;         // NUEVO: calidad compuesta (liquidez + tendencia + vol). Opcional: se setea post-buildAsset
   lastUpdated: string | null;
   dataSource:  DataSource;  // NUEVO: origen de los datos
@@ -272,6 +273,9 @@ export interface ScreenerResult {
     oppScoreBajo: number;
     oppRRBajo: number;
     oppExecBajo: number;
+    oppRSBajo: number;       // NUEVO v8: RS vs SPY < 0.85
+    oppSectorBajo: number;   // NUEVO v8: RS vs sector ETF < 0.90
+    oppExhaustion: number;   // NUEVO v8: rally agotado detectado
     oportunidades: number;
     signalTypeCounts: Record<string, number>;
     totalActiveSignals: number;
