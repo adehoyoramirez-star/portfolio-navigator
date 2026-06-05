@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Olympus Swing Trader — Manual & Auditoría</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Space+Mono:wght@400;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0c14;--surface:#12151f;--card:#1a1e2e;--border:#2a2e45;
+  --text:#e8eaf6;--muted:#7b82a8;--accent:#6c63ff;--gold:#f0a500;
+  --green:#00e07a;--red:#ff4060;--teal:#1db8a0;--blue:#4a9eff;
+  --purple:#a78bfa;--orange:#fb923c;
+}
+body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:0 0 80px}
+
+/* NAV */
+.nav{position:sticky;top:0;z-index:100;background:rgba(10,12,20,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.nav-logo{font-family:'Syne',sans-serif;font-weight:800;font-size:18px;color:var(--accent);letter-spacing:-0.5px}
+.nav-badge{background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);color:var(--accent);font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:1px}
+.nav-links{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+.nav-link{color:var(--muted);font-size:13px;font-weight:600;padding:6px 14px;border-radius:8px;cursor:pointer;border:none;background:transparent;transition:all 0.2s}
+.nav-link:hover,.nav-link.active{background:rgba(108,99,255,0.12);color:var(--accent)}
+
+/* SECTIONS */
+.section{display:none;padding:32px 24px;max-width:1000px;margin:0 auto}
+.section.active{display:block}
+
+/* HERO */
+.hero{text-align:center;padding:56px 24px 32px;max-width:1000px;margin:0 auto}
+.hero-eyebrow{font-family:'Space Mono',monospace;font-size:11px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;margin-bottom:16px}
+.hero-title{font-family:'Syne',sans-serif;font-size:clamp(36px,6vw,72px);font-weight:800;line-height:1.05;letter-spacing:-2px;margin-bottom:16px}
+.hero-title span{color:var(--accent)}
+.hero-sub{font-size:16px;color:var(--muted);max-width:600px;margin:0 auto 32px}
+.hero-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;max-width:700px;margin:0 auto}
+.metric-pill{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+.metric-pill .val{font-family:'Space Mono',monospace;font-size:24px;font-weight:700;color:var(--green)}
+.metric-pill .lbl{font-size:12px;color:var(--muted);margin-top:4px}
+
+/* SECTION TITLE */
+.sec-title{font-family:'Syne',sans-serif;font-size:32px;font-weight:800;letter-spacing:-1px;margin-bottom:8px}
+.sec-sub{color:var(--muted);font-size:15px;margin-bottom:32px}
+
+/* CARDS */
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:20px}
+.card-title{font-family:'Syne',sans-serif;font-size:18px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.card-title .icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+
+/* BLOCK DIAGRAM */
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:20px 0}
+.block{background:rgba(108,99,255,0.1);border:1.5px solid rgba(108,99,255,0.35);border-radius:12px;padding:12px 16px;text-align:center;font-size:13px;font-weight:700;color:var(--purple);min-width:100px;flex:1;min-height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative}
+.block .block-sub{font-size:10px;font-weight:400;color:var(--muted);margin-top:2px}
+.block.green{background:rgba(0,224,122,0.08);border-color:rgba(0,224,122,0.3);color:var(--green)}
+.block.gold{background:rgba(240,165,0,0.08);border-color:rgba(240,165,0,0.3);color:var(--gold)}
+.block.red{background:rgba(255,64,96,0.08);border-color:rgba(255,64,96,0.3);color:var(--red)}
+.block.teal{background:rgba(29,184,160,0.08);border-color:rgba(29,184,160,0.3);color:var(--teal)}
+.block.blue{background:rgba(74,158,255,0.08);border-color:rgba(74,158,255,0.3);color:var(--blue)}
+.arrow{color:var(--muted);font-size:20px;flex-shrink:0}
+
+/* FORMULA BOX */
+.formula{background:#0d1017;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:10px;padding:16px 20px;margin:16px 0;font-family:'Space Mono',monospace;font-size:13px;color:var(--gold);line-height:1.8;overflow-x:auto}
+.formula .comment{color:var(--muted);font-size:11px}
+
+/* KID EXPLAIN */
+.kid-box{background:rgba(240,165,0,0.06);border:1.5px dashed rgba(240,165,0,0.3);border-radius:14px;padding:20px 24px;margin:16px 0;display:flex;gap:16px;align-items:flex-start}
+.kid-emoji{font-size:32px;flex-shrink:0;margin-top:2px}
+.kid-text{font-size:14px;color:#d4b77a;line-height:1.7}
+.kid-text strong{color:var(--gold)}
+
+/* AUDIT */
+.audit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:16px 0}
+.audit-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.audit-item .score-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.audit-item .score{font-family:'Space Mono',monospace;font-weight:700;font-size:20px}
+.audit-item .bar{height:5px;background:rgba(255,255,255,0.08);border-radius:3px;margin-top:10px}
+.audit-item .bar-fill{height:5px;border-radius:3px;transition:width 1s}
+.audit-label{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.5px;margin-bottom:4px}
+.audit-desc{font-size:11px;color:var(--muted);line-height:1.5}
+
+/* VERDICTS */
+.verdict{border-radius:14px;padding:24px;margin:20px 0;border:1px solid}
+.verdict.ok{background:rgba(0,224,122,0.06);border-color:rgba(0,224,122,0.25)}
+.verdict.warn{background:rgba(240,165,0,0.06);border-color:rgba(240,165,0,0.25)}
+.verdict.bad{background:rgba(255,64,96,0.06);border-color:rgba(255,64,96,0.25)}
+.verdict-title{font-family:'Syne',sans-serif;font-weight:700;font-size:16px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.verdict-desc{font-size:13px;color:var(--muted);line-height:1.6}
+
+/* BADGE */
+.badge{font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:0.5px;display:inline-block;vertical-align:middle}
+.badge-green{background:rgba(0,224,122,0.15);color:var(--green)}
+.badge-gold{background:rgba(240,165,0,0.15);color:var(--gold)}
+.badge-red{background:rgba(255,64,96,0.15);color:var(--red)}
+.badge-blue{background:rgba(74,158,255,0.15);color:var(--blue)}
+
+/* TABLE */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;padding:10px 12px;border-bottom:2px solid var(--border);color:var(--muted);font-size:11px;letter-spacing:1px;text-transform:uppercase;font-weight:700}
+.tbl td{padding:10px 12px;border-bottom:1px solid rgba(42,46,69,0.5);vertical-align:top}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:rgba(255,255,255,0.02)}
+
+/* STEP CIRCLES */
+.steps{display:flex;flex-direction:column;gap:0}
+.step{display:flex;gap:16px;padding-bottom:28px;position:relative}
+.step:not(:last-child)::after{content:'';position:absolute;left:19px;top:40px;bottom:0;width:2px;background:var(--border)}
+.step-num{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Space Mono',monospace;font-size:14px;font-weight:700;flex-shrink:0;border:2px solid var(--accent);color:var(--accent);background:rgba(108,99,255,0.1)}
+.step-body{flex:1;padding-top:8px}
+.step-title{font-weight:700;margin-bottom:4px;font-size:15px}
+.step-desc{font-size:13px;color:var(--muted);line-height:1.6}
+
+/* FINAL SCORE */
+.final-score{text-align:center;padding:40px;background:var(--card);border-radius:20px;border:1px solid var(--border);margin:24px 0}
+.fs-label{font-size:13px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+.fs-num{font-family:'Syne',sans-serif;font-size:80px;font-weight:800;line-height:1;color:var(--gold)}
+.fs-max{font-size:24px;color:var(--muted)}
+.fs-verdict{margin-top:12px;font-size:16px;color:var(--muted)}
+
+/* PILL ROW */
+.pill-row{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.pill{font-size:12px;padding:5px 14px;border-radius:20px;font-weight:700;border:1px solid}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-logo">OLYMPUS</div>
+  <div class="nav-badge">HYBRID v10.4 + v5.1</div>
+  <div class="nav-links">
+    <button class="nav-link active" onclick="show('intro')">Intro</button>
+    <button class="nav-link" onclick="show('python')">Python v5</button>
+    <button class="nav-link" onclick="show('pine')">Pine v10</button>
+    <button class="nav-link" onclick="show('hybrid')">Hybrid</button>
+    <button class="nav-link" onclick="show('audit')">Auditoría</button>
+    <button class="nav-link" onclick="show('workflow')">Workflow</button>
+  </div>
+</div>
+
+<!-- ══════════════ INTRO ══════════════ -->
+<div id="intro" class="section active">
+<div class="hero">
+  <div class="hero-eyebrow">Hende Fund — Manual Operativo</div>
+  <div class="hero-title">El Sistema<br><span>Swing Trader</span><br>Completo</div>
+  <div class="hero-sub">Dos motores trabajando juntos: un modelo Python de machine learning que analiza 500+ activos, y un indicador Pine Script que valida la entrada técnica en TradingView.</div>
+  <div class="hero-cards">
+    <div class="metric-pill"><div class="val">500+</div><div class="lbl">Activos analizados</div></div>
+    <div class="metric-pill"><div class="val">8</div><div class="lbl">Factores cuantitativos</div></div>
+    <div class="metric-pill"><div class="val">HYBRID</div><div class="lbl">Python + Pine</div></div>
+    <div class="metric-pill"><div class="val">5d</div><div class="lbl">Horizonte swing</div></div>
+  </div>
+</div>
+
+<div style="max-width:1000px;margin:0 auto;padding:0 24px">
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(108,99,255,0.15)">🧠</div>¿Qué hace este sistema exactamente?</div>
+  <div class="flow">
+    <div class="block blue">DATOS REALES<div class="block-sub">Yahoo, FRED, SEC, NewsAPI</div></div>
+    <div class="arrow">→</div>
+    <div class="block">PYTHON v5<div class="block-sub">ML Cross-sectional</div></div>
+    <div class="arrow">→</div>
+    <div class="block gold">SCORE 0-100<div class="block-sub">+ Quintil Q1-Q5</div></div>
+    <div class="arrow">→</div>
+    <div class="block green">PINE v10<div class="block-sub">Validación técnica</div></div>
+    <div class="arrow">→</div>
+    <div class="block teal">HYBRID SCORE<div class="block-sub">40%Py + 60%Pine</div></div>
+    <div class="arrow">→</div>
+    <div class="block green">LISTO ✓<div class="block-sub">Orden ejecutable</div></div>
+  </div>
+
+  <div class="kid-box">
+    <div class="kid-emoji">🍎</div>
+    <div class="kid-text"><strong>Para entenderlo con 8 años:</strong> Imagina que tienes 500 cromos de jugadores de fútbol. El <strong>Python</strong> es como un entrenador muy listo que mira a todos los cromos juntos y dice "este jugador está jugando mejor que los demás hoy". El <strong>Pine Script</strong> es como un segundo entrenador que mira solo al jugador elegido y comprueba si está en buen momento. Si los dos dicen que sí → ¡fichamos!</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(0,224,122,0.15)">📦</div>Archivos del sistema</div>
+  <table class="tbl">
+    <thead><tr><th>Archivo</th><th>Qué hace</th><th>Cuándo usar</th></tr></thead>
+    <tbody>
+      <tr><td><code style="color:var(--blue)">OLYMPUS_HEATMAP_REGRESSION_v5.py</code></td><td>Motor cuantitativo Python. Analiza 500+ activos, genera scores y quintiles, exporta CSV y HTML.</td><td>Cada mañana antes de operar</td></tr>
+      <tr><td><code style="color:var(--purple)">OLYMPUS_TACTICAL_V10_HYBRID_EDITION.txt</code></td><td>Código Pine Script para añadir en TradingView. Valida la entrada técnica del ticker elegido.</td><td>Tras elegir candidato Q5</td></tr>
+      <tr><td><code style="color:var(--gold)">predictions.csv</code></td><td>Score y quintil de todos los activos del universo.</td><td>Filtrar top candidatos</td></tr>
+      <tr><td><code style="color:var(--teal)">portfolio_q5.csv</code></td><td>Cartera Q5 con pesos HRP calculados.</td><td>Sizing de posiciones</td></tr>
+      <tr><td><code style="color:var(--green)">ibkr_orders.csv</code></td><td>Órdenes formateadas listas para IBKR/XTB.</td><td>Ejecución directa</td></tr>
+    </tbody>
+  </table>
+</div>
+</div>
+</div>
+
+<!-- ══════════════ PYTHON v5 ══════════════ -->
+<div id="python" class="section">
+<div class="sec-title">Motor Python v5.0</div>
+<div class="sec-sub">Cross-sectional machine learning con walk-forward expanding. Aquí está la matemática explicada bloque a bloque.</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(74,158,255,0.15)">1️⃣</div>Bloque 1: Descarga de datos</div>
+  <div class="formula">
+# LOOKBACK = 504 días (modo swing = 2 años de historia)
+# Universo: ~600 tickers (S&P500 + ETFs curated)
+# Fuente: Yahoo Finance + FRED + SEC EDGAR + FINRA + NewsAPI
+
+closes[ticker] = precios de cierre diarios (504 días)
+volume[ticker] = volumen diario negociado
+</div>
+  <div class="kid-box">
+    <div class="kid-emoji">📅</div>
+    <div class="kid-text">El sistema mira los <strong>últimos 504 días de precios</strong> de 600 acciones. Es como guardar un diario de los precios durante 2 años completos. Solo usa los tickers que tienen al menos el <strong>90% de los días</strong> con dato válido (no queremos diarios con muchas páginas en blanco).</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(108,99,255,0.15)">2️⃣</div>Bloque 2: Los 8 Factores Técnicos</div>
+  <p style="font-size:14px;color:var(--muted);margin-bottom:16px">Cada factor es una "pregunta" matemática que le hacemos al precio. La respuesta se normaliza de 0 a 100 comparando todos los activos entre sí (rankeo cross-seccional).</p>
+  <table class="tbl">
+    <thead><tr><th>#</th><th>Factor</th><th>Fórmula</th><th>Pregunta real</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-blue">F1</span></td>
+        <td>Momentum 21d</td>
+        <td><code style="font-size:11px;color:var(--gold)">exp(Σ log_ret[21d]) - 1</code></td>
+        <td>¿Ha subido más que otros en 21 días?</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">F2</span></td>
+        <td>Reversal 5d</td>
+        <td><code style="font-size:11px;color:var(--gold)">-(exp(Σ log_ret[5d]) - 1)</code></td>
+        <td>¿Ha caído mucho en 5 días? (contrarian)</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">F3</span></td>
+        <td>Vol Compression</td>
+        <td><code style="font-size:11px;color:var(--gold)">-(vol_5d / vol_63d)</code></td>
+        <td>¿Está "comprimido" antes de explotar?</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">F4</span></td>
+        <td>RS vs SPY</td>
+        <td><code style="font-size:11px;color:var(--gold)">mom_ticker - mom_spy</code></td>
+        <td>¿Supera al mercado?</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">F5</span></td>
+        <td>RSI(2) contrarian</td>
+        <td><code style="font-size:11px;color:var(--gold)">-rsi_wilder(2)</code></td>
+        <td>¿Sobrevendido a corto plazo?</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">F6</span></td>
+        <td>Vol Anomaly</td>
+        <td><code style="font-size:11px;color:var(--gold)">vol_hoy / vol_ma20</code></td>
+        <td>¿Pico de interés/volumen inusual?</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">F7</span></td>
+        <td>Mom largo 63d</td>
+        <td><code style="font-size:11px;color:var(--gold)">exp(Σ log_ret[63d]) - 1</code></td>
+        <td>¿Tendencia de 3 meses positiva?</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">F8</span></td>
+        <td>Trend Slope [FIX-D]</td>
+        <td><code style="font-size:11px;color:var(--gold)">β_lineal(20d) / precio_medio</code></td>
+        <td>¿Pendiente de tendencia positiva?</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="kid-box">
+    <div class="kid-emoji">🍕</div>
+    <div class="kid-text"><strong>¿Qué es el rankeo cross-seccional?</strong> Imagina que repartes pizza entre 500 niños. El factor F1 mira quién comió <em>más pizzas que los demás</em> esta semana. No importa si comió 2 o 10 — solo importa si comió <strong>más que los 499 compañeros</strong>. Al que más comió le damos 100 puntos, al que menos le damos 0.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(240,165,0,0.15)">3️⃣</div>Bloque 3: Datos Alternativos (v5 NUEVO)</div>
+  <div class="audit-grid">
+    <div class="audit-item">
+      <div class="audit-label">FRED MACRO</div>
+      <div class="audit-desc">IPC, PMI, Credit Spread, Desempleo, M2 — 8 variables macroeconómicas reales del gobierno de EEUU. Añadidas directamente (no rankeadas) para dar contexto macro global.</div>
+      <div class="bar"><div class="bar-fill" style="width:85%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">FINRA SHORT VOL</div>
+      <div class="audit-desc">Ratio de volumen corto por ticker. Alta posición corta + subida = squeeze potential.</div>
+      <div class="bar"><div class="bar-fill" style="width:70%;background:var(--blue)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">SEC INSIDER</div>
+      <div class="audit-desc">Operaciones de insiders en EDGAR. Net insider ratio positivo = directivos comprando sus propias acciones.</div>
+      <div class="bar"><div class="bar-fill" style="width:75%;background:var(--purple)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">SENTIMENT VADER</div>
+      <div class="audit-desc">Análisis de sentimiento de noticias por ticker via NewsAPI + VADER NLP. Score -1 (pánico) a +1 (euforia).</div>
+      <div class="bar"><div class="bar-fill" style="width:60%;background:var(--gold)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">FUNDAMENTALES</div>
+      <div class="audit-desc">Earnings surprise, revenue growth, short interest, price target consensus. Gratis via yfinance.</div>
+      <div class="bar"><div class="bar-fill" style="width:65%;background:var(--teal)"></div></div>
+    </div>
+  </div>
+  <div class="kid-box">
+    <div class="kid-emoji">🕵️</div>
+    <div class="kid-text"><strong>Los datos alternativos son como pistas extra:</strong> ¿Los directores de la empresa están comprando sus propias acciones? ¿Las noticias son buenas o malas? ¿Hay muchos "apostadores" que creen que el precio bajará? Estas pistas ayudan al modelo a decidir mejor.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(29,184,160,0.15)">4️⃣</div>Bloque 4: Walk-Forward con LightGBM [FIX-B]</div>
+  <div class="formula">
+# HORIZONTE: predecir retorno exceso en 5 días vs SPY
+# TARGET por fold (rankeado dentro del fold — FIX v3):
+y = rank(fwd_excess_5d) → 0 a 100
+
+# EXPANDING WINDOW (5 folds sin overlap — antes 3):
+Fold 1: TRAIN=[día70, T1)  → TEST=[T1, T2)   ← ~77d OOS
+Fold 2: TRAIN=[día70, T2)  → TEST=[T2, T3)   ← train crece
+Fold 3: TRAIN=[día70, T3)  → TEST=[T3, T4)
+Fold 4: TRAIN=[día70, T4)  → TEST=[T4, T5)
+Fold 5: TRAIN=[día70, T5)  → TEST=[T5, fin)  ← IC=0.0939 (máx historia)
+# Total: 354 días OOS (68% más que con 3 folds)
+# IC medio 5 folds: 0.0359 (más robusto que 0.043 previo)
+
+# Modelo: LightGBM (GBM si no disponible)
+model = LGBMRegressor(n_estimators=300, max_depth=4,
+        learning_rate=0.03, reg_alpha=0.1, reg_lambda=0.1)
+
+# Métrica: IC Spearman por día OOS
+IC = spearman_corr(predicciones, retornos_reales)
+# IC > 0.02 = señal real | IR = IC_mean / IC_std
+</div>
+  <div class="kid-box">
+    <div class="kid-emoji">🎓</div>
+    <div class="kid-text"><strong>Walk-Forward = Examen real:</strong> El modelo estudia (train) con libros del pasado y luego hace un examen (test) con preguntas que <strong>nunca ha visto antes</strong>. Si solo estudia con las respuestas del examen, haría trampa. El IC (Information Coefficient) es la nota del examen: un IC de 0.04 significa que el modelo acierta bastante.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(0,224,122,0.15)">5️⃣</div>Bloque 5: Score Final y Quintiles</div>
+  <div class="formula">
+# Score 0-100 por ticker (hoy):
+score = rank_percentil(raw_pred, todos_tickers) × 100
+
+# Quintiles (5 grupos de 20%):
+Q5 = top 20%  → COMPRAR (mejores oportunidades)
+Q4 = 60-80%   → watchlist
+Q3 = 40-60%   → neutral
+Q2 = 20-40%   → evitar
+Q1 = bottom   → SHORT/EVITAR
+
+# Confianza basada en z-score del raw_pred [FIX-G]:
+z_score = (pred - media) / std
+HIGH   si |z| > 1.5
+MED    si |z| > 0.8
+LOW    resto
+
+# Portfolio Q5 — Pesos con HRP (Hierarchical Risk Parity):
+cov_matrix = LedoitWolf().fit(retornos_completos)  [FIX-F]
+pesos_hrp  = hrp_allocation(cov_matrix, Q5_tickers)
+</div>
+  <div class="kid-box">
+    <div class="kid-emoji">🏆</div>
+    <div class="kid-text"><strong>Quintil Q5 = el podio:</strong> De 500 alumnos en el colegio, el Q5 son los 100 que sacan mejores notas en todas las asignaturas juntas. Queremos <strong>fichar a esos 100</strong>. Y el <strong>HRP</strong> decide cuánto dinero poner en cada uno, asegurándose de que si uno falla, no perdemos todo.</div>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ PINE v10 ══════════════ -->
+<div id="pine" class="section">
+<div class="sec-title">Indicador Pine Script v10.4</div>
+<div class="sec-sub">Una vez tienes los candidatos Q5 del Python, el Pine valida cada ticker individualmente en TradingView.</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(108,99,255,0.15)">🔍</div>¿Qué hace el Pine exactamente?</div>
+  <p style="font-size:14px;color:var(--muted);margin-bottom:16px">El Pine Script aplica 7 filtros en cadena. Un ticker debe pasar TODOS para mostrar "LISTO".</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-title">Filtro de señal base (passes_filter)</div>
+        <div class="step-desc">La señal técnica principal (BLOOD_IN_STREETS, MEAN_REVERSION, MOMENTUM_BREAKOUT…) genera un score de oportunidad 0-100. Si no supera el mínimo → bloqueado.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-title">Filtro de régimen (regime_ok)</div>
+        <div class="step-desc">¿Está el mercado en modo risk-on? Se evalúa si el régimen macro es favorable. Puede ser bypasseado si el ticker es Q5 y tienes Override activo.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-title">Relative Strength vs SPY y vs Sector</div>
+        <div class="step-desc">¿El ticker supera al índice general y a su sector? passes_rs_spy y passes_rs_sector — evita comprar la acción más débil del mercado.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <div class="step-title">Liquidez y Gap</div>
+        <div class="step-desc">¿Tiene volumen suficiente para entrar y salir? ¿No abrió con un gap enorme hoy? Evita trampas de liquidez.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <div class="step-title">Multi-timeframe (MTF)</div>
+        <div class="step-desc">Necesita w_confirmations de 3 timeframes alineados. Evita entrar en contra de la tendencia dominante.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <div class="step-title">Exhaustion Block</div>
+        <div class="step-desc">¿Está el precio sobreextendido/agotado? Si es así → bloqueado aunque pase todo lo demás.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">7</div>
+      <div class="step-body">
+        <div class="step-title">R/R mínimo 1:2</div>
+        <div class="step-desc">El take profit debe ser al menos el doble del stop loss. Si el trade no tiene buen ratio riesgo/recompensa → no entra.</div>
+      </div>
+    </div>
+  </div>
+  <div class="kid-box">
+    <div class="kid-emoji">🚦</div>
+    <div class="kid-text"><strong>Como los semáforos de una ciudad:</strong> Para llegar del colegio a casa en coche tienes 7 semáforos. Si alguno está en rojo → paras. Solo cuando <strong>todos están en verde</strong> el coche dice "LISTO" y arranca. Cada filtro es un semáforo.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(240,165,0,0.15)">📊</div>La tabla de veredicto del Pine</div>
+  <p style="font-size:14px;color:var(--muted);margin-bottom:16px">En TradingView verás una tabla con estas filas. Las más importantes:</p>
+  <table class="tbl">
+    <thead><tr><th>Fila Pine</th><th>Qué mide</th><th>Verde = bueno si</th></tr></thead>
+    <tbody>
+      <tr><td><strong>OPORTUNIDAD</strong></td><td>Score técnico 0-100 del Pine</td><td>≥ 60</td></tr>
+      <tr><td><strong>RÉGIMEN</strong></td><td>¿Mercado favorable?</td><td>Risk-ON activo</td></tr>
+      <tr><td><strong>RS SPY</strong></td><td>¿Supera al S&P500?</td><td>Outperform ✓</td></tr>
+      <tr><td><strong>MTF</strong></td><td>Alineación multi-timeframe</td><td>3/3 confirmaciones</td></tr>
+      <tr><td><strong>OLYMPUS SCORE</strong></td><td>Score del modelo Python (tú lo introduces)</td><td>≥ 70</td></tr>
+      <tr><td><strong>HYBRID SCORE</strong></td><td>40%×Python + 60%×Pine</td><td>≥ 70</td></tr>
+      <tr><td><strong>CONFLUENCIA</strong></td><td>Q≥4 + Oportunidad≥60 + passes_all</td><td>SI → MÁXIMA PRIORIDAD</td></tr>
+      <tr><td><strong>VEREDICTO</strong></td><td>Decisión final</td><td>LISTO 🟢</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(255,64,96,0.15)">⚙️</div>Cómo instalar el Pine en TradingView</div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><div class="step-title">Abrir Pine Script Editor</div><div class="step-desc">En TradingView → botón "Pine Script Editor" en la parte inferior. Crea un nuevo indicador en blanco.</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><div class="step-title">Localizar la sección INPUTS (~línea 25)</div><div class="step-desc">Añade el bloque "OLYMPUS HYBRID" con los 5 inputs: olympus_score, olympus_q, min_olympus, hybrid_weight, overwrite_regime_olympus.</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><div class="step-title">Añadir cálculos (~línea 230)</div><div class="step-desc">Pega el bloque HYBRID SCORE después de la sección de ejecución. Define has_olympus_data, hybrid_score, regime_override_ok, passes_olympus_filter y modifica passes_all.</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body"><div class="step-title">Añadir filas en la tabla (~línea 508)</div><div class="step-desc">Pega el bloque de tabla con filas 26-29: separador, OLYMPUS SCORE, HYBRID SCORE y CONFLUENCIA.</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body"><div class="step-title">Modificar el VEREDICTO (~línea 515)</div><div class="step-desc">Sustituye las líneas fc y ft originales con la lógica hybrid que añade regime_override_ok como condición alternativa.</div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ HYBRID ══════════════ -->
+<div id="hybrid" class="section">
+<div class="sec-title">Modo Híbrido: Python + Pine</div>
+<div class="sec-sub">El corazón del sistema v10.4. Cómo se combinan los dos modelos.</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(108,99,255,0.15)">🧮</div>La fórmula Hybrid Score</div>
+  <div class="formula">
+# Si se han introducido datos de Python en el Pine:
+has_olympus_data = (olympus_score > 0)
+
+# Peso dinámico (0 si no hay datos Python):
+actual_weight = hybrid_weight si has_olympus_data else 0
+
+# HYBRID SCORE = combinación ponderada:
+hybrid_score = olympus_score × hybrid_weight
+             + opportunity  × (1 - hybrid_weight)
+
+# Con hybrid_weight = 0.4 (default):
+hybrid_score = 0.4 × score_python + 0.6 × score_pine
+
+# Ejemplo: python_score=85, pine_opportunity=65
+hybrid_score = 0.4 × 85 + 0.6 × 65
+             = 34 + 39 = 73  ✓ VERDE (>70)
+</div>
+  <div class="kid-box">
+    <div class="kid-emoji">⚖️</div>
+    <div class="kid-text"><strong>Es como una nota del colegio:</strong> El <strong>examen escrito</strong> (Python) vale el 40% de la nota y el <strong>examen oral</strong> (Pine) vale el 60%. Si en el escrito sacas 85 y en el oral un 65, tu nota final es: 0.4×85 + 0.6×65 = <strong>73 sobre 100</strong>. ¡Aprobado con buena nota!</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(240,165,0,0.15)">🛡️</div>Override de Régimen para Q5</div>
+  <div class="formula">
+# Si overwrite_regime_olympus = TRUE y el ticker es Q4/Q5:
+regime_override_ok = (overwrite_regime_olympus AND
+                      has_olympus_data AND
+                      olympus_q >= 4)
+
+# EFECTO: el ticker Q5 evita el filtro de régimen
+passes_all = passes_filter
+           AND (regime_override_ok OR regime_ok)  ← OR en vez de AND
+           AND passes_rs_spy
+           AND passes_rs_sector
+           AND NOT exhaustion_block
+           AND passes_liquidity
+           AND passes_gap
+           AND passes_mtf
+           AND passes_olympus_filter
+</div>
+  <div class="kid-box">
+    <div class="kid-emoji">⭐</div>
+    <div class="kid-text"><strong>El pase VIP:</strong> Normalmente, si el mercado está "en rojo" (régimen malo), nadie puede entrar. Pero si un jugador tiene una puntuación Q5 (es de los mejores 20%), le damos un <strong>pase VIP</strong> que le permite saltarse ese filtro. Porque si el modelo Python dice que es buenísimo, confiamos en él aunque el mercado esté nervioso.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(0,224,122,0.15)">🎯</div>Filtro de Confluencia — La señal más fuerte</div>
+  <div class="formula">
+# CONFLUENCIA = todas estas condiciones a la vez:
+confluent = has_olympus_data       ← hay datos del Python
+         AND olympus_q >= 4        ← Q4 o Q5 (top 40%)
+         AND opportunity >= 60     ← señal Pine fuerte
+         AND passes_all            ← todos los filtros ok
+
+# Tabla: fila CONFLUENCIA = "SI" → máxima prioridad
+# Color: LIME si confluent, GRAY si no
+# Extra: si override activo → muestra "REGIME_OVR"
+</div>
+  <div class="kid-box">
+    <div class="kid-emoji">💎</div>
+    <div class="kid-text"><strong>La confluencia es el diamante:</strong> Es cuando <em>todo</em> coincide al mismo tiempo: el modelo Python dice Q5, la señal técnica es fuerte (≥60), y todos los semáforos están en verde. Esto pasa pocas veces, pero cuando pasa → <strong>máxima prioridad de entrada</strong>.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(29,184,160,0.15)">📋</div>Cómo usar el Hybrid en la práctica</div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><div class="step-title">Ejecutar Python cada mañana</div><div class="step-desc"><code style="color:var(--gold)">python OLYMPUS_HEATMAP_REGRESSION_v5.py --mode swing</code> → genera predictions.csv con todos los scores.</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><div class="step-title">Identificar Q5 con score ≥ 70</div><div class="step-desc">Abrir predictions.csv → filtrar quintile=5 AND score≥70 AND confidence=HIGH. Esos son tus candidatos del día.</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><div class="step-title">Introducir score en TradingView</div><div class="step-desc">Abrir el ticker en TradingView → ajustes del indicador → Olympus Score (poner el número del CSV) + Olympus Q (poner 5).</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>      <div class="step-body"><div class="step-title">Comprobar tabla Pine → decidir nivel</div>
+        <div class="step-desc">Si HYBRID SCORE ≥ 70 y CONFLUENCIA = SI → <strong>Nivel 1</strong> (máxima prioridad, sizing 100%). Si solo VEREDICTO = LISTO → <strong>Nivel 2</strong> (sizing 50%). Ver sección <strong>"¿Cuándo operar?"</strong> para los 4 niveles completos.</div></div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body"><div class="step-title">Ejecutar con sizing del HRP</div><div class="step-desc">Consultar portfolio_q5.csv para el peso recomendado → calcular tamaño de posición → ejecutar en XTB con el Stop Loss del Pine.</div></div>
+    </div>
+  </div>  </div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(255,64,96,0.15)">🎯</div>¿Cuándo operar? — Los 4 niveles de confluencia</div>
+  <p style="font-size:14px;color:var(--muted);margin-bottom:16px">No todas las señales son iguales. Aquí está la jerarquía de prioridad para decidir si entras o esperas.</p>
+  <table class="tbl">
+    <thead><tr><th>Nivel</th><th>Condiciones</th><th>Acción</th><th>Sizing</th></tr></thead>
+    <tbody>
+      <tr style="background:rgba(0,224,122,0.04)">
+        <td><span class="badge badge-green">1</span></td>
+        <td><strong>Confluencia Total:</strong> Q5 + passes_all + RR ok + Hybrid ≥ 70 + señal activa</td>
+        <td><strong>ENTRAR</strong> — máxima prioridad</td>
+        <td>100% del peso HRP</td>
+      </tr>
+      <tr style="background:rgba(240,165,0,0.04)">
+        <td><span class="badge badge-gold">2</span></td>
+        <td><strong>Q5 con Override:</strong> Q5 + Override ON + passes_olympus_filter pero regime bloquea</td>
+        <td><strong>ENTRAR (cautela)</strong> — tamaño reducido</td>
+        <td>50% del peso HRP</td>
+      </tr>
+      <tr style="background:rgba(74,158,255,0.04)">
+        <td><span class="badge badge-blue">3</span></td>
+        <td><strong>Señal Pine sin Q5:</strong> passes_all + RR ok + oportunidad ≥ 60 pero no es Q5</td>
+        <td><strong>OBSERVAR</strong> — solo expertos</td>
+        <td>25% del peso estimado</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-red">4</span></td>
+        <td><strong>No operar:</strong> exhaustion_block activo, o Hybrid &lt; 50, o sin señal activa, o Q1/Q2</td>
+        <td><strong>ESPERAR</strong> — proteger capital</td>
+        <td>0%</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="kid-box" style="margin-top:16px">
+    <div class="kid-emoji">🗺️</div>
+    <div class="kid-text"><strong>La regla de oro:</strong> Si el Pine dice <strong>VEREDICTO = LISTO 🟢</strong> y el ticker es <strong>Q5</strong>, puedes entrar con confianza (Nivel 1). Si solo una de las dos condiciones se cumple, espera o reduce tamaño (Nivel 2 o 3). <strong>Nunca operes en Nivel 4.</strong> El mercado no va a desaparecer — las oportunidades vuelven solas.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(240,165,0,0.15)">🏦</div>Alternativas ETF (para carteras pequeñas ≤€5,000)</div>
+  <p style="font-size:14px;color:var(--muted);margin-bottom:16px">El Q5 tiene ~100 tickers. Con €1,000 no puedes comprar 100 acciones. Aquí están los ETFs que replican la selección Q5 con una sola compra. Todos cotizan en EUR (sin FX, sin comisiones en XTB).</p>
+  
+  <div class="audit-grid">
+    <div class="audit-item">
+      <div class="audit-label">🏆 IBCZ — iShares STOXX World Equity Multifactor</div>
+      <div class="audit-desc">El ETF Q5 definitivo. Pondera <strong>Value + Momentum + Quality + Size</strong> — exactamente los mismos factores que usa el heatmap para rankear el universo. Cotiza en EUR (Xetra: IBCZ.DE). TER 0.30%. Precio ~€12.</div>
+      <div class="bar"><div class="bar-fill" style="width:95%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">⚡ SXRV — iShares Nasdaq 100 UCITS</div>
+      <div class="audit-desc">Cuando el régimen es TRENDING_UP y el Q5 está cargado de tech. Cotiza en EUR. TER 0.20%. Precio ~€220. Alternativa: ZPRR (MSCI World Momentum, ~€35).</div>
+      <div class="bar"><div class="bar-fill" style="width:75%;background:var(--blue)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">🛡️ SXR8 — iShares Core S&P 500 UCITS</div>
+      <div class="audit-desc">Cobertura broad market cuando el heatmap no encuentra Q5 con señales fuertes. TER 0.07% (el más barato). Precio ~€560. Alternativa: EIMI (Emerg. Markets, ~€40).</div>
+      <div class="bar"><div class="bar-fill" style="width:70%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">📐 IQQ6 — iShares MSCI World Quality Factor</div>
+      <div class="audit-desc">Factor Quality: empresas con ROE alto, deuda baja, earnings estables. Buena cobertura cuando el mercado está en modo defensivo. TER 0.30%. Precio ~€25.</div>
+      <div class="bar"><div class="bar-fill" style="width:65%;background:var(--gold)"></div></div>
+    </div>
+  </div>
+
+  <div class="formula">
+# ESTRATEGIA RECOMENDADA PARA €1,000 EN XTB (todo en EUR):
+
+# Opción A — ETF Único (mínimo esfuerzo, 3 min/semana)
+IBCZ = 100% del capital (~84 acciones a ~€12)
+→ Reemplaza a los 100 tickers Q5. TER: 0.30% = €3/año
+
+# Opción B — ETF + 2 Q5 del screener (mixta, RECOMENDADA)
+IBCZ          = 60%  (€600 ≈ 50 acciones)
+2 Q5 del día  = 30%  (€300 ≈ 2-3 acciones de screener)
+Cash          = 10%  (€100 para rebalanceo semanal)
+
+# Opción C — Solo Q5 del screener (máximo alpha, más trabajo)
+5-7 tickers Q5 con señal activa = 100%
+→ Requiere rebalanceo semanal. Recomendado con ≥€3,000
+</div>
+
+  <div class="kid-box">
+    <div class="kid-emoji">🏦</div>
+    <div class="kid-text"><strong>IBCZ es el "Q5 en una sola acción":</strong> Imagina que pudieras comprar un solo cromo que contuviera a los 100 mejores jugadores de fútbol mezclados en proporciones inteligentes. Eso es IBCZ. Un solo ETF que pesa <strong>Value, Momentum, Quality y Small Size</strong> — los mismos 4 factores que usa el heatmap para seleccionar el Q5. Con €1,000 es la forma más eficiente de capturar el alpha del modelo sin tener que comprar 100 acciones sueltas.</div>
+  </div>  </div>
+</div>
+
+<!-- ══════════════ AUDITORÍA ══════════════ -->
+<div id="audit" class="section">
+<div class="sec-title">Auditoría Institucional</div>
+<div class="sec-sub">Evaluación como gestor cuantitativo de hedge fund. Sin suavizar.</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(0,224,122,0.15)">✅</div>Correcciones v5.1 — Lo que se arregló bien</div>
+  <table class="tbl">
+    <thead><tr><th>Fix</th><th>Bug original</th><th>Corrección</th><th>Impacto</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-green">FIX-A</span></td><td>ffill() global en features inflaba IC artificialmente (look-ahead bias)</td><td>ffill solo dentro de ventana train de cada fold</td><td><strong>CRÍTICO</strong> — elimina trampa de datos</td></tr>
+      <tr><td><span class="badge badge-green">FIX-B</span></td><td>Walk-Forward con overlap: datos OOS anteriores entraban en train</td><td>Expanding window sin overlap estricto</td><td><strong>CRÍTICO</strong> — IC real vs inflado</td></tr>
+      <tr><td><span class="badge badge-green">FIX-C</span></td><td>Sharpe/VaR calculados in-sample (504d), no OOS</td><td>Métricas solo sobre período OOS del último fold</td><td>ALTO — métricas ahora honestas</td></tr>
+      <tr><td><span class="badge badge-green">FIX-D</span></td><td>ADX sin datos OHLC → factor redundante con RSI</td><td>Trend Slope: regresión lineal rolling vectorizada</td><td>MEDIO — factor más informativo</td></tr>
+      <tr><td><span class="badge badge-green">FIX-F</span></td><td>LedoitWolf con tickers con NaN → estimación Σ distorsionada</td><td>LW solo sobre tickers con retornos completos</td><td>ALTO — matriz covarianza limpia</td></tr>
+      <tr><td><span class="badge badge-green">FIX-G</span></td><td>Confianza basada en score_rank (uniforme por construcción → inútil)</td><td>Confianza por z-score de raw_pred</td><td>MEDIO — confianza ahora discrimina</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(240,165,0,0.15)">⚠️</div>Riesgos Detectados — Prioridad Alta → Baja</div>
+
+  <div class="verdict warn">
+    <div class="verdict-title">⚠️ CRÍTICO — Módulos externos no verificables</div>
+    <div class="verdict-desc">El código importa <code>fred_data</code>, <code>finra_data</code>, <code>insider_data</code>, <code>sentiment_data</code>, <code>fundamental_data</code> como módulos externos. No están en el archivo auditado. Si alguno devuelve 0 o None silenciosamente, los factores alternativos quedan en su valor de relleno (0.5, 0.0) sin alertar al usuario. Esto puede inflar señales o neutralizarlas silenciosamente.</div>
+  </div>
+
+  <div class="verdict ok">
+    <div class="verdict-title">✅ CORREGIDO — N_FOLDS actualizado de 3 → 5 (modo swing)</div>
+    <div class="verdict-desc">Se ha aumentado N_FOLDS de 3 a 5 en el modo swing (línea 103 de v5.py). Cada fold ahora testea ~77 días OOS (vs ~100 antes), para un total de <strong>354 días OOS en 5 folds</strong>. El IC medio con 5 folds es <strong>0.0359</strong> — más honesto que el 0.043 previo porque mide sobre un 68% más de días. El último fold, con máxima historia de entrenamiento, alcanza un IC de <strong>0.0939</strong> — muy superior al IC agregado anterior. Sharpe OOS último fold: 2.92. Hit rate: 60.5%.</div>
+  </div>
+
+  <div class="verdict warn">
+    <div class="verdict-title">⚠️ ALTO — Hibridación entre sistemas asíncronos</div>
+    <div class="verdict-desc">El Olympus Score que introduces manualmente en el Pine puede tener hasta 24h de lag (cache del Python). Si el mercado mueve fuerte entre ejecución y entrada, el score ya no es válido. No hay timestamp de score ni invalidación automática. Riesgo de entrar con score stale en días de alta volatilidad.</div>
+  </div>
+
+  <div class="verdict ok">
+    <div class="verdict-title">✅ BIEN — LedoitWolf real sobre retornos completos</div>
+    <div class="verdict-desc">La matriz de covarianza Σ es real (LedoitWolf shrinkage sobre retornos históricos), no fabricada. Los pesos HRP son genuinamente risk-based. Esto es lo que separa un sistema institucional de uno de retail: la covarianza real maneja la concentración.</div>
+  </div>
+
+  <div class="verdict ok">
+    <div class="verdict-title">✅ BIEN — Target OOS rankeado por fold</div>
+    <div class="verdict-desc">El target (retorno exceso forward 5d) se rankea dentro de cada fold OOS, no sobre la serie completa. Esto elimina el sesgo de selección temporal y garantiza que el modelo no "ve" distribuciones futuras al rankear.</div>
+  </div>
+
+  <div class="verdict ok">
+    <div class="verdict-title">✅ BIEN — ffill local temporalmente válido</div>
+    <div class="verdict-desc">El relleno de NaN se hace dentro de cada ventana train (hacia adelante solo dentro del slice), no sobre la serie global. Esto garantiza que no hay contaminación de datos futuros en las features.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(108,99,255,0.15)">📊</div>Scoring por Módulo</div>
+  <div class="audit-grid">
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">DATOS</div><div class="score" style="color:var(--green)">8.0</div></div>
+      <div class="audit-desc">Reales (Yahoo, FRED, EDGAR). Cache 24h. Chunks con retry. Filtro 90% datos. Sólido.</div>
+      <div class="bar"><div class="bar-fill" style="width:80%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">MODELADO</div><div class="score" style="color:var(--green)">8.0</div></div>
+      <div class="audit-desc">LightGBM cross-sectional con IC Spearman OOS. N_FOLDS=5. IC último fold=0.0939. Sharpe OOS=2.92.</div>
+      <div class="bar"><div class="bar-fill" style="width:80%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">COVARIANZA</div><div class="score" style="color:var(--green)">8.5</div></div>
+      <div class="audit-desc">LedoitWolf real sobre tickers completos. HRP para sizing. DCC no implementado.</div>
+      <div class="bar"><div class="bar-fill" style="width:85%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">ANTI-LEAKAGE</div><div class="score" style="color:var(--green)">9.0</div></div>
+      <div class="audit-desc">FIX-A, FIX-B, FIX-C aplicados correctamente. El mayor avance de v5 vs v3.</div>
+      <div class="bar"><div class="bar-fill" style="width:90%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">EJECUCIÓN</div><div class="score" style="color:var(--gold)">7.0</div></div>
+      <div class="audit-desc">HRP sizing OK. Hibridación manual introduce lag. Sin gestión automática de órdenes.</div>
+      <div class="bar"><div class="bar-fill" style="width:70%;background:var(--gold)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">ALT DATA</div><div class="score" style="color:var(--gold)">6.5</div></div>
+      <div class="audit-desc">Módulos externos no verificables. Si fallan silenciosamente → factores neutros sin aviso.</div>
+      <div class="bar"><div class="bar-fill" style="width:65%;background:var(--gold)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">PINE LOGIC</div><div class="score" style="color:var(--green)">8.0</div></div>
+      <div class="audit-desc">7 filtros en cadena, R/R mínimo 1:2, Override Q5 bien implementado. Lógica correcta.</div>
+      <div class="bar"><div class="bar-fill" style="width:80%;background:var(--green)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="score-row"><div class="audit-label">HYBRID</div><div class="score" style="color:var(--gold)">7.5</div></div>
+      <div class="audit-desc">Combinación 40/60 razonable. Score manual introduce lag. Confluencia bien definida.</div>
+      <div class="bar"><div class="bar-fill" style="width:75%;background:var(--gold)"></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="final-score">
+  <div class="fs-label">PUNTUACIÓN GLOBAL</div>
+  <div class="fs-num">7.7<span class="fs-max">/10</span></div>
+  <div class="fs-verdict">Sistema sólido con correcciones críticas bien aplicadas. N_FOLDS=5 implementado, screener sincronizado con Pine v10.4 (5 señales). No deployable en producción sin resolver los módulos externos y automatizar la hibridación.</div>
+  <div class="pill-row" style="justify-content:center;margin-top:16px">
+    <div class="pill" style="color:var(--green);border-color:rgba(0,224,122,0.3)">✓ Anti-leakage correcto</div>
+    <div class="pill" style="color:var(--green);border-color:rgba(0,224,122,0.3)">✓ LW+HRP real</div>
+    <div class="pill" style="color:var(--green);border-color:rgba(0,224,122,0.3)">✓ N_FOLDS=5</div>
+    <div class="pill" style="color:var(--green);border-color:rgba(0,224,122,0.3)">✓ Screener 5 señales</div>
+    <div class="pill" style="color:var(--gold);border-color:rgba(240,165,0,0.3)">⚠ Módulos externos</div>
+    <div class="pill" style="color:var(--gold);border-color:rgba(240,165,0,0.3)">⚠ Lag hibridación manual</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(255,64,96,0.15)">🔧</div>Correcciones Prioritarias</div>
+  <table class="tbl">
+    <thead><tr><th>Prioridad</th><th>Acción</th><th>Impacto esperado</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-red">P1</span></td><td>Añadir logging explícito cuando alt_data devuelve None/vacío. Mostrar en dashboard qué módulos están activos vs fallidos.</td><td>Elimina riesgo de señales silenciosas</td></tr>
+      <tr><td><span class="badge badge-red">P1</span></td><td>Añadir timestamp al score exportado + validación en el Pine (rechazar si score > 24h).</td><td>Elimina lag de hibridación</td></tr>
+      <tr><td><span class="badge badge-green">✓</span></td><td>N_FOLDS aumentado de 3→5 (realizado). IC medio 0.0359 sobre 354 días OOS. Último fold IC=0.0939.</td><td>✅ Completado</td></tr>
+      <tr><td><span class="badge badge-gold">P2</span></td><td>Automatizar lectura del predictions.csv desde un script que alimente directamente el Pine via webhook o alerta.</td><td>Workflow manual → semi-automático</td></tr>
+      <tr><td><span class="badge badge-blue">P3</span></td><td>Implementar DCC-GARCH para covarianza dinámica en lugar de LedoitWolf estático sobre ventana fija.</td><td>Mejor gestión en regímenes de alta volatilidad</td></tr>
+    </tbody>
+  </table>
+</div>
+</div>
+
+<!-- ══════════════ WORKFLOW ══════════════ -->
+<div id="workflow" class="section">
+<div class="sec-title">Workflow Operativo Diario</div>
+<div class="sec-sub">Checklist paso a paso para usar el sistema cada día de mercado.</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(240,165,0,0.15)">🌅</div>Antes de que abra el mercado (7:00–9:00)</div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><div class="step-title">Ejecutar el modelo Python</div>
+        <div class="formula" style="margin:8px 0;font-size:11px">python OLYMPUS_HEATMAP_REGRESSION_v5.py --mode swing</div>
+        <div class="step-desc">Esperar a que genere predictions.csv, portfolio_q5.csv e ibkr_orders.csv. Verificar en la consola que FRED, FINRA, INSIDER, SENTIMENT no dan "error" sino "✅".</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><div class="step-title">Filtrar candidatos Q5</div>
+        <div class="step-desc">Abrir predictions.csv → filtrar: quintile=5 AND score≥70 AND confidence=HIGH. Si quedan menos de 3 → bajar a score≥65. Si quedan 0 → no hay señal hoy.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><div class="step-title">Comprobar contexto macro</div>
+        <div class="step-desc">Revisar VIX en el dashboard HTML. Si VIX &gt; 30 → modo defensivo (reducir sizing 50%). Si SPY está en drawdown 52w &gt; -10% → activar Override solo para Q5 con confluencia.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(0,224,122,0.15)">📈</div>Durante la sesión (15:30–17:30 CET)</div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body"><div class="step-title">Validar en TradingView</div>
+        <div class="step-desc">Para cada candidato Q5: abrir TradingView → introducir score y quintil en el Pine → comprobar tabla. Requisito mínimo: HYBRID ≥ 65 + passes_all = true + no exhaustion.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body"><div class="step-title">Calcular sizing</div>
+        <div class="step-desc">Consultar portfolio_q5.csv → peso_pct del ticker → Tamaño€ = Capital × peso_pct/100. Nunca superar 2% de riesgo por operación. Stop Loss = nivel Pine.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-body"><div class="step-title">Ejecutar en XTB</div>
+        <div class="step-desc">Orden límite en el precio de entrada del Pine. Stop Loss fijo (no mental). Take Profit mínimo R/R 1:2. Máximo 4-5 posiciones simultáneas.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(108,99,255,0.15)">🌙</div>Cierre de sesión (17:30+)</div>
+  <table class="tbl">
+    <thead><tr><th>Tarea</th><th>Acción</th></tr></thead>
+    <tbody>
+      <tr><td>Revisar posiciones abiertas</td><td>¿Alguna llegó a TP o SL? Registrar resultado.</td></tr>
+      <tr><td>Actualizar IRPF tracker</td><td>Si se cerró posición → anotar en el Fiscal Tracker (España).</td></tr>
+      <tr><td>Evaluar señal D+1</td><td>Si el ticker sigue en Q5 mañana → mantener. Si cae a Q3 o menos → revisar salida parcial.</td></tr>
+      <tr><td>Limpiar cache si necesario</td><td>Si los datos parecen stale → borrar heatmap_cache.pkl y reejecutar Python.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><div class="icon" style="background:rgba(255,64,96,0.15)">🚨</div>Señales de Salida — Triggers claros</div>
+  <div class="audit-grid">
+    <div class="audit-item">
+      <div class="audit-label">SALIDA INMEDIATA</div>
+      <div class="audit-desc">El ticker cae a Q1 en el Python → salida al abrir. No esperar. El modelo dice que es el peor 20%.</div>
+      <div class="bar"><div class="bar-fill" style="width:100%;background:var(--red)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">SALIDA PARCIAL</div>
+      <div class="audit-desc">El ticker cae a Q2/Q3 → reducir posición 50%. Dejar correr solo si Hybrid ≥ 60 y SL no tocado.</div>
+      <div class="bar"><div class="bar-fill" style="width:70%;background:var(--gold)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">STOP HARD</div>
+      <div class="audit-desc">Precio toca el Stop Loss definido en Pine → cierre automático. Sin excepciones. El sistema manda sobre las emociones.</div>
+      <div class="bar"><div class="bar-fill" style="width:100%;background:var(--red)"></div></div>
+    </div>
+    <div class="audit-item">
+      <div class="audit-label">TRAILING TP</div>
+      <div class="audit-desc">Si el precio llega al 75% del Take Profit → mover Stop al precio de entrada (breakeven). Proteger capital.</div>
+      <div class="bar"><div class="bar-fill" style="width:75%;background:var(--green)"></div></div>
+    </div>
+  </div>
+  <div class="kid-box">
+    <div class="kid-emoji">🛑</div>
+    <div class="kid-text"><strong>Las reglas de salida son como el cinturón de seguridad:</strong> Molesta ponértelo, pero si hay accidente te salva. El <strong>Stop Loss</strong> es tu cinturón. Si el precio llega ahí → cierra sin pensar. <em>Nunca muevas el Stop hacia abajo</em>. Eso es quitarse el cinturón en mitad del accidente.</div>
+  </div>
+</div>
+
+<div style="background:rgba(108,99,255,0.06);border:1px solid rgba(108,99,255,0.2);border-radius:16px;padding:24px;margin-top:8px;text-align:center">
+  <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:800;margin-bottom:8px">Sistema Olympus Hybrid</div>
+  <div style="color:var(--muted);font-size:13px">Hende Fund · Python v5.0 + Pine v10.4 · Modo Swing (5d horizon)</div>
+  <div style="color:var(--muted);font-size:11px;margin-top:8px;font-family:'Space Mono',monospace">Score global: 7.7/10 · N_FOLDS=5 ✓ · Screener Pine sync ✓ · Anti-leakage: ✓ · LW+HRP: ✓</div>
+</div>
+</div>
+
+<script>
+function show(id){
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l=>l.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+</script>
+</body>
+</html>

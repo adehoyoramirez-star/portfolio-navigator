@@ -1,0 +1,693 @@
+// ============================================================
+// OLYMPUS TACTICAL MOTOR — Pine Script v10 REAL POS
+// Hereda todas las correcciones de v9 Fixed (FIX-1 a FIX-5)
+// Añadido en v10:
+//   v10-A: Grupo "POSICION REAL" — override manual de posición abierta
+//           → el robot sabe qué tienes abierto de verdad en el broker
+//   v10-B: P&L en tiempo real vs precio actual
+//           → muestra ganancia/pérdida % y € de la posición viva
+//   v10-C: Distancia a SL y TP1/TP2 en % sobre entrada
+//           → siempre visible cuánto queda para cada nivel
+//   v10-D: Recomendación dinámica HOLD / HOLD→TP2 / CERCA TP1 / EXIT
+//           → gestión activa basada en señales actuales + estado real
+//   v10-E: Alertas EXIT vinculadas a posición real (no solo tracking auto)
+// FIX-6 (v10.1): BUG#1 real_rec en modo auto mostraba "CERCA TP1" falso
+//                BUG#2 eff_entry eliminado (dead code)
+//                BUG#3 color AUTO añadido a real_rec_col
+// v10.2: Filtro Multi-Timeframe — la vela semanal debe confirmar la diaria
+//        (2 de 3: tendencia > MA50, RSI > 50, MACD bullish)
+// v10.3: Cooldown configurable (default 5, era 2) — anti-whipsaw
+//        Sector Rotation ahora exige drawdown > -40% (no catching falling knives)
+// ============================================================
+//@version=6
+indicator("Olympus Tactical v10.4 Hybrid", overlay=true, max_lines_count=12, max_labels_count=50)
+
+// ── INPUTS ──────────────────────────────────────────────────
+show_blood     = input.bool(true,  "BLOOD IN STREETS",    group="SENALES")
+show_mean      = input.bool(true,  "MEAN REVERSION",      group="SENALES")
+show_momentum  = input.bool(true,  "MOMENTUM BREAKOUT",   group="SENALES")
+show_oversold  = input.bool(true,  "OVERSOLD BOUNCE",     group="SENALES")
+show_sector    = input.bool(true,  "SECTOR ROTATION",     group="SENALES")
+show_stops     = input.bool(true,  "Mostrar Stop Loss/TPs", group="NIVELES")
+show_entry     = input.bool(true,  "Zona entrada RSI(2)", group="NIVELES")
+min_exec_score = input.int(55, "Execution Score minimo", 0, 100, group="FILTROS")
+
+// ── OLYMPUS HYBRID (desde Python v5.1 Heatmap Regression) ────
+// Introduce el score cross-seccional del modelo Python para ver
+// la confluencia con la señaa técnica del Pine Script.
+olympus_score  = input.int(0,    "Olympus Score (0-100)",  0, 100,  group="OLYMPUS HYBRID",
+     tooltip="Score cross-seccional del modelo Python. 100=mejor, 0=peor")
+olympus_q     = input.int(0,    "Olympus Q (1-5)",        0, 5,    group="OLYMPUS HYBRID",
+     tooltip="Quintil del modelo Python. 5=comprar, 1=evitar")
+min_olympus   = input.int(70,   "Min Olympus Score",       0, 100,  group="OLYMPUS HYBRID",
+     tooltip="Filtro: solo mostrar si Olympus score >= este valor")
+hybrid_weight = input.float(0.4,"Peso Olympus (resto=Pine)",0,1,step=0.1,group="OLYMPUS HYBRID",
+     tooltip="0=solo Pine, 1=solo Python. 0.4=40% Python + 60% Pine")
+overwrite_regime_olympus = input.bool(false, "★ Override: Q5 evade filtro regimen", group="OLYMPUS HYBRID",
+     tooltip="Si activo, los tickers Q5 no son bloqueados por regimen ni zScore20")
+
+// ── REGIMEN FILTER ──────────────────────────────────────────
+spy_sym    = input.symbol("SPY", "Benchmark SPY", group="REGIMEN")
+vix_sym    = input.symbol("VIX", "VIX", group="REGIMEN")
+
+spy_close = request.security(spy_sym, timeframe.period, close)
+vix_close = request.security(vix_sym, timeframe.period, close)
+
+spy_ma200 = ta.sma(spy_close, 200)
+spy_ma50  = ta.sma(spy_close, 50)
+spy_mom4w = spy_close[20] > 0 ? (spy_close / spy_close[20]) - 1 : 0
+spy_above_ma200 = spy_close > spy_ma200
+spy_above_ma50  = spy_close > spy_ma50
+
+spy_er_num = math.abs(spy_close - spy_close[50])
+spy_er_den = 0.0
+for i = 0 to 49
+    spy_er_den += math.abs(spy_close[i] - spy_close[i+1])
+spy_er = spy_er_den > 0 ? spy_er_num / spy_er_den : 0
+
+// ── FIX-1: RÉGIMEN CALCULADO EN CADA BARRA (sin barstate.islast) ──
+// Original: if barstate.islast → forward-looking bias en backtesting.
+// Corregido: se recalcula en cada barra con valores contemporáneos.
+market_regime =
+     vix_close > 35                                                              ? "CRASH" :
+     not spy_above_ma200 and spy_mom4w < -0.05                                  ? "TRENDING_DOWN" :
+     spy_above_ma200 and spy_above_ma50 and spy_mom4w > 0.02 and spy_er > 0.40 ? "TRENDING_UP" :
+                                                                                  "RANGING"
+
+regime_mult =
+     market_regime == "CRASH"         ? 0.3 :
+     market_regime == "TRENDING_DOWN" ? 0.5 :
+     market_regime == "TRENDING_UP"   ? 1.0 : 0.8
+
+// ── STRENGTH VS SECTOR ──────────────────────────────────────
+sector_etf = input.symbol("XLK", "Sector ETF ref.", group="VS SECTOR",
+     tooltip="XLK=Tech XLF=Finance XLE=Energy XLV=Health")
+sector_close = request.security(sector_etf, timeframe.period, close)
+
+rs_vs_sector = (close[126] > 0 and sector_close[126] > 0) ?
+     (close / close[126]) / (sector_close / sector_close[126]) : 1.0
+
+// ── RS vs SPY HARD FILTER ───────────────────────────────────
+rs_vs_spy = (close[252] > 0 and spy_close[252] > 0) ?
+     (close / close[252]) / (spy_close / spy_close[252]) : 1.0
+
+min_rs_spy     = input.float(0.85, "RS vs SPY minimo",    0.5, 1.5, step=0.01, group="FILTROS")
+min_rs_sector  = input.float(0.90, "RS vs Sector minimo", 0.5, 1.5, step=0.01, group="FILTROS")
+min_dollar_vol = input.float(0, "Dollar Vol min (M)", 0, 10000, step=1, group="FILTROS", tooltip="0=sin filtro. Ej: 20 = 20M$")
+max_gap_pct    = input.float(5, "Max Gap % entrada", 0, 50, step=0.5, group="FILTROS", tooltip="0=sin filtro")
+use_mtf        = input.bool(true, "Filtro Multi-Timeframe (W)", group="FILTROS", tooltip="Exige que la vela semanal confirme tendencia antes de entrar")
+passes_rs_spy    = rs_vs_spy >= min_rs_spy
+passes_rs_sector = rs_vs_sector >= min_rs_sector
+
+// ── INDICADORES BASE ────────────────────────────────────────
+ma20   = ta.sma(close, 20)
+ma50   = ta.sma(close, 50)
+ma200  = ta.sma(close, 200)
+rsi2   = ta.rsi(close, 2)
+rsi14  = ta.rsi(close, 14)
+[bbMiddle, bbUpper, bbLower] = ta.bb(close, 20, 2)
+sd20     = ta.stdev(close, 20)
+zScore20 = sd20 > 0 ? (close - ma20) / sd20 : 0
+sd50     = ta.stdev(close, 50)
+zScore50 = sd50 > 0 ? (close - ma50) / sd50 : 0
+atr14  = ta.atr(14)
+atrPct = close > 0 ? atr14 / close : 0.02
+
+er_num = math.abs(close - close[20])
+er_den = 0.0
+for i = 1 to 20
+    er_den += math.abs(close[i-1] - close[i])
+trend_eff = er_den > 0 ? (er_num / er_den) * 100 : 0
+[_, _, real_adx] = ta.dmi(14, 14)
+
+atr_high     = ta.highest(atrPct, 252)
+atr_low      = ta.lowest(atrPct, 252)
+atr_pct_rank = atr_high > atr_low ? math.round((atrPct - atr_low) / (atr_high - atr_low) * 100) : 50
+
+volAvg20 = ta.sma(volume, 20)
+volRatio = volAvg20 > 0 ? volume / volAvg20 : 1.0
+high52w     = ta.highest(close, 252)
+drawdown52w = high52w > 0 ? (close / high52w) - 1 : 0
+aboveMA200 = close > ma200
+aboveMA50  = close > ma50
+trend_up   = close > ma50 and ma50 > ma200
+trend_down = close < ma50 and ma50 < ma200
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+
+// ── v10.2: MULTI-TIMEFRAME WEEKLY CONFIRMATION ──────────────
+// Institucional: la vela semanal debe confirmar la señal diaria.
+// Se piden 2 de 3 condiciones para evitar sobreoptimizar una sola métrica.
+w_close      = request.security(syminfo.tickerid, "W", close, barmerge.gaps_off, barmerge.lookahead_off)
+w_ma50       = request.security(syminfo.tickerid, "W", ta.sma(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
+w_rsi14      = request.security(syminfo.tickerid, "W", ta.rsi(close, 14), barmerge.gaps_off, barmerge.lookahead_off)
+[w_macd_l, w_macd_s, _] = request.security(syminfo.tickerid, "W", ta.macd(close, 12, 26, 9), barmerge.gaps_off, barmerge.lookahead_off)
+
+w_trend_ok  = w_close > w_ma50
+w_rsi_ok    = w_rsi14 > 50
+w_macd_ok   = w_macd_l > w_macd_s
+w_confirmations = (w_trend_ok ? 1 : 0) + (w_rsi_ok ? 1 : 0) + (w_macd_ok ? 1 : 0)
+w_confirmed     = w_confirmations >= 2
+passes_mtf      = not use_mtf or w_confirmed
+
+// ── 5 SEÑALES ───────────────────────────────────────────────
+inExtremeCrash  = drawdown52w < -0.35
+has_olympus_data = olympus_score > 0
+olympus_override = overwrite_regime_olympus and has_olympus_data and olympus_q >= 4
+blood_override   = olympus_override and rsi2 < 10
+blood_active    = (rsi2 < 10 and zScore20 < -1.5 and (aboveMA200 or inExtremeCrash)) or blood_override
+blood_score_raw = blood_active ? math.min(100, 45 + (10 - math.min(10, rsi2)) * 4 +
+     (math.abs(zScore20) - 1.5) * 5 + (volRatio > 1.5 ? 8 : 0) + (aboveMA200 ? 0 : -15)) : 0
+
+mean_active    = rsi2 < 15 and close < bbLower * 1.02
+mean_score_raw = mean_active ? math.min(100, 40 + (15 - math.min(15, rsi2)) * 2 +
+     (close < bbLower ? 12 : 4) + (zScore20 < -1.5 ? 8 : 0)) : 0
+
+mom_active    = trend_eff > 30 and close > bbUpper * 0.995 and aboveMA50
+mom_score_raw = mom_active ? math.min(100, 45 + math.min(20, (trend_eff - 30) * 1.2) +
+     (volRatio > 1.5 ? 20 : 0) + (close > bbUpper ? 15 : 5)) : 0
+
+ov_active    = rsi14 < 35 and (aboveMA200 or close > ma50 * 0.95)
+ov_score_raw = ov_active ? math.min(100, 42 + (35 - math.min(35, rsi14)) * 1.8 +
+     (aboveMA200 ? 18 : 6) + (zScore50 < -1 ? 8 : 0)) : 0
+
+// FIX-2: SECTOR ROTATION — eliminado +15 incondicional ────
+// Original: … + (aboveMA200 ? 20 : 5) + 15   ← +15 siempre activo
+// Corregido: bonus de +15 solo si volRatio > 1.2 (confirmación de volumen sectorial)
+sec_active    = drawdown52w < -0.20 and drawdown52w > -0.40 and rsi14 > 40 and rsi14 < 55 and (aboveMA200 or aboveMA50)
+sec_score_raw = sec_active ? math.min(100, 40 + math.min(25, (math.abs(drawdown52w) - 0.20) * 100) +
+     (aboveMA200 ? 20 : 5) + (volRatio > 1.2 ? 15 : 0)) : 0
+
+// ── EXHAUSTION DETECTION ─────────────────────────────────────
+price_near_bb  = bbUpper > 0 and close / bbUpper > 0.98
+vol_decl_3bars = volume < volume[1] and volume[1] < volume[2] and volume[2] < volume[3]
+weak_rally     = (close > close[1] or close[1] > close[2]) and vol_decl_3bars
+rsi_overbought = rsi14 > 75
+rsi_stretched  = rsi14 > 70
+macd_weakening = macdHist > 0 and macdHist < macdHist[1] and macdHist < 0.5
+price_stalling = math.abs(close - close[2]) / close < 0.005 and math.abs(close - close[1]) / close < 0.003
+
+exhaust_conf = 0.0
+if price_near_bb
+    exhaust_conf += 25
+if weak_rally
+    exhaust_conf += 20
+if rsi_overbought
+    exhaust_conf += 25
+else if rsi_stretched and (bbUpper > 0 and close / bbUpper > 0.95)
+    exhaust_conf += 20
+if price_stalling
+    exhaust_conf += 20
+if macd_weakening
+    exhaust_conf += 10
+rally_exhausted = exhaust_conf >= 40
+
+// ── SCORES PONDERADOS ────────────────────────────────────────
+w_blood = 1.0
+w_mom   = 0.8
+w_mean  = 0.7
+w_over  = 0.5
+w_sec   = 0.4
+
+weighted_sum = 0.0
+total_weight = 0.0
+n_active     = 0
+
+if blood_active
+    weighted_sum += blood_score_raw * w_blood
+    total_weight += w_blood
+    n_active     += 1
+if mom_active
+    weighted_sum += mom_score_raw * w_mom
+    total_weight += w_mom
+    n_active     += 1
+if mean_active
+    weighted_sum += mean_score_raw * w_mean
+    total_weight += w_mean
+    n_active     += 1
+if ov_active
+    weighted_sum += ov_score_raw * w_over
+    total_weight += w_over
+    n_active     += 1
+if sec_active
+    weighted_sum += sec_score_raw * w_sec
+    total_weight += w_sec
+    n_active     += 1
+
+confluence   = n_active >= 3 ? 10 : n_active == 2 ? 5 : 0
+opp_raw      = total_weight > 0 ? weighted_sum / total_weight : 0
+opportunity  = math.min(100, math.round(opp_raw + confluence))
+
+// ── QUALITY SCORE ────────────────────────────────────────────
+q_rs    = rs_vs_spy > 1.15 ? 35 : rs_vs_spy > 1.05 ? 25 : rs_vs_spy > 0.95 ? 15 : rs_vs_spy > 0.85 ? 5 : 0
+q_vol   = volRatio > 2.0 ? 20 : volRatio > 1.5 ? 15 : volRatio > 1.0 ? 10 : volRatio >= 0.5 ? 5 : 0
+q_trend = trend_up ? 25 : not trend_down and not trend_up ? 10 : 0
+q_atr   = atrPct < 0.03 ? 20 : atrPct < 0.05 ? 15 : atrPct < 0.08 ? 8 : 0
+q_adx   = real_adx > 25 ? 10 : real_adx > 20 ? 5 : 0
+quality = math.min(100, q_rs + q_vol + q_trend + q_atr + q_adx)
+
+execution = math.min(100, math.round(opportunity * 0.6 + quality * 0.4))
+
+// ── HYBRID SCORE (Python + Pine combinado) ─────────────────
+hybrid_score = has_olympus_data ?
+     math.min(100, olympus_score * hybrid_weight + opportunity * (1 - hybrid_weight)) : opportunity
+olympus_q_label = has_olympus_data ?
+     (olympus_q == 5 ? "Q5" : olympus_q == 4 ? "Q4" : olympus_q == 3 ? "Q3" : olympus_q == 2 ? "Q2" : "Q1") : "--"
+passes_olympus_filter = not has_olympus_data or olympus_score >= min_olympus
+
+// ── FIX-4: SIGNAL_TYPE POR MAYOR SCORE PONDERADO ────────────
+// Original: prioridad fija blood > mom > mean > ov > sec
+// Corregido: gana la señal activa con mayor score×peso
+best_score   = 0.0
+signal_type  = "NONE"
+if blood_active and blood_score_raw * w_blood > best_score
+    best_score  := blood_score_raw * w_blood
+    signal_type := "BLOOD"
+if mom_active   and mom_score_raw   * w_mom   > best_score
+    best_score  := mom_score_raw * w_mom
+    signal_type := "MOMENTUM"
+if mean_active  and mean_score_raw  * w_mean  > best_score
+    best_score  := mean_score_raw * w_mean
+    signal_type := "MEAN_REV"
+if ov_active    and ov_score_raw    * w_over  > best_score
+    best_score  := ov_score_raw * w_over
+    signal_type := "OVERSOLD"
+if sec_active   and sec_score_raw   * w_sec   > best_score
+    best_score  := sec_score_raw * w_sec
+    signal_type := "SECTOR_ROT"
+
+// ── FIX-5: RÉGIMEN — RANGING bloquea SECTOR_ROT ─────────────
+// Original: RANGING permitía todas las señales incluyendo SECTOR_ROT
+// Corregido: SECTOR_ROT requiere tendencia (TRENDING_UP o TRENDING_DOWN)
+regime_override_ok = olympus_override
+
+regime_ok =
+     (market_regime == "CRASH"         and signal_type == "BLOOD") or
+     (market_regime == "TRENDING_DOWN" and (signal_type == "BLOOD" or signal_type == "OVERSOLD")) or
+     (market_regime == "TRENDING_UP"   and (signal_type == "MOMENTUM" or signal_type == "SECTOR_ROT" or signal_type == "OVERSOLD")) or
+     (market_regime == "RANGING"       and signal_type != "SECTOR_ROT")
+
+exhaustion_block = (signal_type == "MOMENTUM" or signal_type == "SECTOR_ROT") and rally_exhausted
+passes_filter    = execution >= min_exec_score and n_active > 0
+dollar_vol_m     = close * volume / 1000000
+passes_liquidity = dollar_vol_m >= min_dollar_vol or min_dollar_vol <= 0
+gap_pct          = close[1] > 0 ? math.max(0, (open - close[1]) / close[1] * 100) : 0
+passes_gap       = gap_pct <= max_gap_pct or max_gap_pct <= 0
+passes_all       = passes_filter and (regime_override_ok or regime_ok) and passes_rs_spy and passes_rs_sector and not exhaustion_block and passes_liquidity and passes_gap and passes_mtf and passes_olympus_filter
+
+// ── STOP LOSS / TAKE PROFITS ─────────────────────────────────
+stop_loss  = close - atr14 * 2.0
+
+min_rr     = (blood_active or mean_active or ov_active) ? 1.5 : 2.0
+tp1_mult   = atrPct >= 0.04 ? 2.0 : atrPct >= 0.02 ? 2.0 : atrPct >= 0.008 ? 1.8 : 1.5
+tp2_mult   = atrPct >= 0.04 ? 4.5 : atrPct >= 0.02 ? 3.2 : atrPct >= 0.008 ? 2.8 : 2.2
+
+// FIX-3 + FIX-5 (sizing): consolidada en una sola variable `risk`
+// Original: existían `risk` y `trade_risk` calculando lo mismo
+// Corregido: todo usa `risk`. R:R compuesto: 60% peso TP1 + 40% peso TP2
+risk = math.max(close * 0.01, close - stop_loss)
+tp1  = close + risk * tp1_mult
+tp2  = close + risk * tp2_mult
+
+// FIX-3: R:R compuesto ponderado — expectativa real del trade
+rr_tp1 = risk > 0 ? (tp1 - close) / risk : 0
+rr_tp2 = risk > 0 ? (tp2 - close) / risk : 0
+rr     = rr_tp1 * 0.6 + rr_tp2 * 0.4
+rr_ok  = n_active > 0 and passes_all and rr >= min_rr
+
+// ── ENTRY TIMING ─────────────────────────────────────────────
+entry_go    = rsi2 >= 60 and rsi2 <= 75
+entry_hot   = rsi2 > 75 and rsi2 <= 85
+entry_ext   = rsi2 > 85
+entry_cold  = rsi2 < 60
+
+// ── POSITION SIZING ──────────────────────────────────────────
+account_size = input.float(10000, "Capital (€)", 100, 10000000, step=100, group="POSICION")
+risk_pct_in  = input.float(1.0, "Riesgo % por trade", 0.1, 10, step=0.1, group="POSICION")
+risk_eur     = account_size * risk_pct_in / 100
+sug_shares   = (passes_all and rr_ok and risk > 0) ? math.floor(risk_eur / risk) : 0
+
+// ── POSICION REAL (OVERRIDE MANUAL) ─────────────────────────
+// Si activas "Tengo posición abierta", el tablero muestra P&L,
+// distancias a niveles y recomendación basada en tu posición real.
+// El tracking automático sigue en paralelo (útil para backtesting).
+pos_real_active  = input.bool(false,   "★ Tengo posición abierta",  group="POSICION REAL")
+pos_real_entry   = input.float(100.0,  "Precio entrada",  step=0.01, group="POSICION REAL")
+pos_real_sl      = input.float(95.0,   "Mi Stop Loss",    step=0.01, group="POSICION REAL")
+pos_real_tp1     = input.float(110.0,  "Mi TP1",          step=0.01, group="POSICION REAL")
+pos_real_tp2     = input.float(120.0,  "Mi TP2",          step=0.01, group="POSICION REAL")
+pos_real_tp1_hit = input.bool(false,   "¿TP1 ya alcanzado?",         group="POSICION REAL")
+pos_real_bars    = input.int(1,        "Velas en posición", 1, 200,  group="POSICION REAL")
+
+// ── INPUTS SALIDAS ───────────────────────────────────────────
+show_exit_exhaust = input.bool(true, "Exit Exhaustion",  group="SALIDAS")
+show_exit_time    = input.bool(true, "Exit Time Stop",   group="SALIDAS")
+show_exit_rsi     = input.bool(true, "Exit RSI Extreme", group="SALIDAS")
+time_stop_bars    = input.int(10, "Time Stop (velas)", 3, 30, group="SALIDAS")
+cooldown_bars    = input.int(5,  "Cooldown tras stop (velas)", 2, 15, group="SALIDAS", tooltip="Velas de espera tras stop/TP2 antes de re-entrar. 2=agresivo, 5=estándar, 10=conservador")
+
+// ── POSITION TRACKING ────────────────────────────────────────
+var bool  in_pos     = false
+var int   pos_bars   = 0
+var bool  tp1_hit    = false
+var int   cooldown   = 0
+var float entry_stop = 0.0
+var float entry_tp1  = 0.0
+var float entry_tp2  = 0.0
+
+cooldown := math.max(0, cooldown - 1)
+entry_trigger = n_active > 0 and passes_all and rr_ok and cooldown <= 0
+
+if entry_trigger and not in_pos
+    in_pos     := true
+    pos_bars   := 0
+    tp1_hit    := false
+    entry_stop := stop_loss
+    entry_tp1  := tp1
+    entry_tp2  := tp2
+
+if in_pos
+    pos_bars += 1
+    if low <= entry_stop
+        in_pos   := false
+        cooldown := cooldown_bars
+    if not tp1_hit and high >= entry_tp1
+        tp1_hit := true
+    if tp1_hit and high >= entry_tp2
+        in_pos   := false
+        cooldown := cooldown_bars
+
+exit_exhaust = in_pos and exhaust_conf >= 40
+exit_time    = in_pos and pos_bars >= time_stop_bars and not tp1_hit
+exit_rsi     = in_pos and rsi2 > 85
+
+// ── v10: POSICION REAL — override y cálculos derivados ───────
+// eff_* = "efectivo": usa valores reales si pos_real_active, si no el tracking auto.
+eff_in_pos    = pos_real_active ? true              : in_pos
+eff_pos_bars  = pos_real_active ? pos_real_bars     : pos_bars
+eff_tp1_hit   = pos_real_active ? pos_real_tp1_hit  : tp1_hit
+eff_sl        = pos_real_active ? pos_real_sl        : entry_stop
+eff_tp1       = pos_real_active ? pos_real_tp1       : entry_tp1
+eff_tp2       = pos_real_active ? pos_real_tp2       : entry_tp2
+// FIX-6: eff_entry eliminado — era dead code no referenciado en ningún sitio
+
+// P&L y distancias (solo cuando hay posición real activa)
+real_pnl_pct  = (pos_real_active and pos_real_entry > 0) ? (close - pos_real_entry) / pos_real_entry * 100 : 0.0
+real_dist_sl  = (pos_real_active and pos_real_entry > 0) ? (close - pos_real_sl)    / pos_real_entry * 100 : 0.0
+real_dist_tp1 = (pos_real_active and pos_real_entry > 0) ? (pos_real_tp1 - close)   / pos_real_entry * 100 : 0.0
+real_dist_tp2 = (pos_real_active and pos_real_entry > 0) ? (pos_real_tp2 - close)   / pos_real_entry * 100 : 0.0
+
+// Señales de salida vinculadas a la posición efectiva
+exit_exhaust_eff = eff_in_pos and exhaust_conf >= 40
+exit_time_eff    = eff_in_pos and eff_pos_bars >= time_stop_bars and not eff_tp1_hit
+exit_rsi_eff     = eff_in_pos and rsi2 > 85
+
+// Recomendación de gestión de la posición viva
+// FIX-6: ahora diferencia tracking automático ("AUTO") de posición real.
+// En modo auto no se muestran distancias porque el tracking no conoce los TPs reales.
+real_rec =
+     not eff_in_pos                ? "SIN POS"    :
+     exit_exhaust_eff              ? "EXIT EXH"   :
+     exit_time_eff                 ? "EXIT TIME"  :
+     exit_rsi_eff                  ? "EXIT RSI"   :
+     not pos_real_active           ? "AUTO"       :
+     (eff_tp1_hit and real_dist_tp2 <= 0) ? "TP2 HIT"    :
+     eff_tp1_hit                   ? "HOLD→TP2"  :
+     real_dist_tp1 <= 1.0          ? "CERCA TP1"  : "HOLD"
+
+real_rec_col =
+     str.contains(real_rec, "EXIT") or real_rec == "TP2 HIT" ? color.red    :
+     real_rec == "CERCA TP1"                                  ? color.lime   :
+     real_rec == "HOLD→TP2"                                   ? color.green  :
+     real_rec == "HOLD"                                       ? color.aqua   :
+     real_rec == "AUTO"                                       ? color.blue   : color.gray
+
+// ══════════════════════════════════════════════════════════════
+// VISUALIZACION
+// ══════════════════════════════════════════════════════════════
+
+plot(ma20,  "MA20",  color=color.new(color.yellow, 60), linewidth=1)
+plot(ma50,  "MA50",  color=color.new(color.orange, 40), linewidth=2)
+plot(ma200, "MA200", color=color.new(color.red,    30), linewidth=2)
+
+bbU = plot(bbUpper, "BB Sup", color=color.new(color.blue, 70), linewidth=1)
+bbL = plot(bbLower, "BB Inf", color=color.new(color.blue, 70), linewidth=1)
+fill(bbU, bbL, color=color.new(color.blue, 93))
+
+plotshape(show_blood    and blood_active and passes_all, "BLOOD", style=shape.triangleup, location=location.belowbar, color=color.rgb(220,38,38), size=size.normal, text="BLOOD")
+plotshape(show_blood    and blood_active and not passes_all, "", style=shape.triangleup, location=location.belowbar, color=color.new(color.red, 80), size=size.tiny, text="x")
+plotshape(show_mean     and mean_active  and passes_all, "MR",   style=shape.circle,     location=location.belowbar, color=color.rgb(234,88,12), size=size.normal, text="MR")
+plotshape(show_momentum and mom_active   and passes_all, "MOM",  style=shape.arrowup,    location=location.abovebar, color=color.rgb(34,197,94), size=size.normal, text="MOM")
+plotshape(show_momentum and mom_active   and rally_exhausted, "AGOT", style=shape.triangledown, location=location.abovebar, color=color.rgb(234,179,8), size=size.small, text="AGOT")
+plotshape(show_oversold and ov_active    and passes_all, "OB",   style=shape.diamond,    location=location.belowbar, color=color.rgb(6,182,212), size=size.small, text="OB")
+plotshape(show_sector   and sec_active   and passes_all, "SR",   style=shape.square,     location=location.belowbar, color=color.rgb(59,130,246), size=size.small, text="SR")
+
+any_signal = n_active > 0 and passes_all
+
+plot(show_stops and any_signal ? stop_loss : na, "Stop", color=color.new(color.red,   20), style=plot.style_linebr, linewidth=2)
+plot(show_stops and any_signal and rr_ok ? tp1 : na, "TP1", color=color.new(color.green, 20), style=plot.style_linebr, linewidth=1)
+plot(show_stops and any_signal and rr_ok ? tp2 : na, "TP2", color=color.new(color.green, 40), style=plot.style_linebr, linewidth=1)
+
+bgcolor(show_entry and entry_go and mom_active and not exhaustion_block ? color.new(color.green, 88) : na, title="Entrada optima")
+bgcolor(show_entry and (entry_hot or entry_ext) and mom_active ? color.new(color.red, 90) : na, title="RSI caliente")
+bgcolor(show_entry and rally_exhausted and mom_active ? color.new(color.yellow, 85) : na, title="Rally agotado")
+
+bgcolor(show_exit_exhaust and exit_exhaust_eff ? color.new(color.red, 85) : na, title="Exit Exhaustion")
+bgcolor(show_exit_time    and exit_time_eff    ? color.new(color.orange, 85) : na, title="Exit Time Stop")
+bgcolor(show_exit_rsi     and exit_rsi_eff     ? color.new(color.fuchsia, 85) : na, title="Exit RSI Extreme")
+
+plotshape(show_exit_exhaust and exit_exhaust_eff, "EXIT EXH", style=shape.triangledown, location=location.abovebar, color=color.red,    size=size.normal, text="EXH")
+plotshape(show_exit_time    and exit_time_eff,    "EXIT TIME", style=shape.xcross,       location=location.abovebar, color=color.orange, size=size.normal, text="TIME")
+plotshape(show_exit_rsi     and exit_rsi_eff,     "EXIT RSI",  style=shape.triangledown, location=location.abovebar, color=color.fuchsia, size=size.normal, text="RSI")
+
+// ══════════════════════════════════════════════════════════════
+// TABLA DE SCORES
+// ══════════════════════════════════════════════════════════════
+var t = table.new(position.top_right, 3, 30,
+     bgcolor=color.new(color.black, 20),
+     border_color=color.new(color.gray, 60), border_width=1,
+     frame_color=color.new(color.gray, 40), frame_width=1)
+
+if barstate.islast
+    // Header
+    table.cell(t,0,0,"OLYMPUS v10 RealPos", text_color=color.white, bgcolor=color.new(color.navy,20))
+    table.cell(t,1,0,"SCORE",            text_color=color.white, bgcolor=color.new(color.navy,20))
+    table.cell(t,2,0,"FILTRO",           text_color=color.white, bgcolor=color.new(color.navy,20))
+
+    // Regimen
+    rc = market_regime=="TRENDING_UP"?color.green:market_regime=="CRASH"?color.red:market_regime=="TRENDING_DOWN"?color.orange:color.yellow
+    table.cell(t,0,1,"REGIMEN: "+market_regime, text_color=rc, bgcolor=color.new(rc,85))
+    table.cell(t,1,1,"VIX "+str.tostring(vix_close,"#.#"), text_color=color.white)
+    table.cell(t,2,1,"x"+str.tostring(regime_mult,"#.#"), text_color=color.white)
+
+    // Blood
+    bc = blood_active ? color.red : color.gray
+    bf = blood_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,2,"BLOOD",   text_color=bc)
+    table.cell(t,1,2,str.tostring(math.round(blood_score_raw)), text_color=bc, bgcolor=blood_active?color.new(color.red,80):na)
+    table.cell(t,2,2,bf, text_color=blood_active?(passes_all?color.green:color.red):color.gray)
+
+    // Mean Reversion
+    mc = mean_active ? color.orange : color.gray
+    mf = mean_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,3,"MEAN REV",text_color=mc)
+    table.cell(t,1,3,str.tostring(math.round(mean_score_raw)), text_color=mc, bgcolor=mean_active?color.new(color.orange,80):na)
+    table.cell(t,2,3,mf, text_color=mean_active?(passes_all?color.green:color.red):color.gray)
+
+    // Momentum
+    mc2 = mom_active ? color.lime : color.gray
+    mf2 = mom_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,4,"MOMENTUM",text_color=mc2)
+    table.cell(t,1,4,str.tostring(math.round(mom_score_raw)), text_color=mc2, bgcolor=mom_active?color.new(color.lime,80):na)
+    table.cell(t,2,4,mf2, text_color=mom_active?(passes_all?color.green:color.red):color.gray)
+
+    // Oversold
+    oc = ov_active ? color.aqua : color.gray
+    of2 = ov_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,5,"OVERSOLD",text_color=oc)
+    table.cell(t,1,5,str.tostring(math.round(ov_score_raw)), text_color=oc, bgcolor=ov_active?color.new(color.aqua,80):na)
+    table.cell(t,2,5,of2, text_color=ov_active?(passes_all?color.green:color.red):color.gray)
+
+    // Sector Rotation
+    sc = sec_active ? color.blue : color.gray
+    sf2 = sec_active ? (passes_all ? "OK" : "NO") : "-"
+    table.cell(t,0,6,"SECTOR ROT",text_color=sc)
+    table.cell(t,1,6,str.tostring(math.round(sec_score_raw)), text_color=sc, bgcolor=sec_active?color.new(color.blue,80):na)
+    table.cell(t,2,6,sf2, text_color=sec_active?(passes_all?color.green:color.red):color.gray)
+
+    // Separador
+    table.cell(t,0,7,"────", text_color=color.gray)
+    table.cell(t,1,7,"────", text_color=color.gray)
+    table.cell(t,2,7,"",     text_color=color.gray)
+
+    // Opportunity
+    oc2 = opportunity>=70?color.green:opportunity>=50?color.yellow:color.gray
+    table.cell(t,0,8,"OPPORTUNITY", text_color=oc2)
+    table.cell(t,1,8,str.tostring(opportunity), text_color=oc2, bgcolor=color.new(oc2,70))
+    table.cell(t,2,8,"", text_color=color.gray)
+
+    // Quality
+    table.cell(t,0,9,"QUALITY",  text_color=color.silver)
+    table.cell(t,1,9,str.tostring(quality), text_color=color.silver)
+    table.cell(t,2,9,"", text_color=color.gray)
+
+    // Execution
+    ec2 = execution>=min_exec_score?color.green:color.red
+    table.cell(t,0,10,"EXECUTION", text_color=ec2)
+    table.cell(t,1,10,str.tostring(execution)+(passes_filter?" OK":" NO"), text_color=ec2, bgcolor=color.new(ec2,70))
+    table.cell(t,2,10,passes_filter?"OK":"NO", text_color=ec2)
+
+    // RS vs SPY
+    rs1c = rs_vs_spy>1.05?color.green:rs_vs_spy>min_rs_spy?color.yellow:color.red
+    table.cell(t,0,11,"RS vs SPY", text_color=rs1c)
+    table.cell(t,1,11,str.tostring(math.round(rs_vs_spy*100)/100), text_color=rs1c)
+    table.cell(t,2,11,passes_rs_spy?"OK":"<"+str.tostring(min_rs_spy), text_color=passes_rs_spy?color.green:color.red)
+
+    // RS vs Sector
+    rs2c = rs_vs_sector>1.05?color.green:rs_vs_sector>min_rs_sector?color.yellow:color.red
+    table.cell(t,0,12,"RS vs Sector", text_color=rs2c)
+    table.cell(t,1,12,str.tostring(math.round(rs_vs_sector*100)/100), text_color=rs2c)
+    table.cell(t,2,12,passes_rs_sector?"OK":"<"+str.tostring(min_rs_sector), text_color=passes_rs_sector?color.green:color.red)
+
+    // R:R compuesto
+    rrc = rr>=min_rr?color.green:rr>=1.2?color.yellow:color.red
+    table.cell(t,0,13,"R:R (comp.)", text_color=rrc)
+    table.cell(t,1,13,str.tostring(math.round(rr*10)/10), text_color=rrc)
+    table.cell(t,2,13,rr_ok?"OK":"NO", text_color=rr_ok?color.green:color.red)
+
+    // Exhaustion
+    exc = exhaust_conf>=40?color.red:exhaust_conf>=25?color.yellow:color.green
+    table.cell(t,0,14,"EXHAUSTION", text_color=exc)
+    table.cell(t,1,14,str.tostring(math.round(exhaust_conf))+"%", text_color=exc)
+    table.cell(t,2,14,rally_exhausted?"BLOQ":"OK", text_color=rally_exhausted?color.red:color.green)
+
+    // RSI(2) Entry
+    etxt = entry_ext?"EXTREME":entry_hot?"TOO HOT":entry_go?"CONFIRMED":"EARLY"
+    ecol = entry_go?color.green:entry_hot or entry_ext?color.red:color.yellow
+    table.cell(t,0,15,"RSI(2)", text_color=ecol)
+    table.cell(t,1,15,str.tostring(math.round(rsi2)), text_color=ecol)
+    table.cell(t,2,15,etxt, text_color=ecol)
+
+    // Posicion (usa valores efectivos: real si activo, auto si no)
+    pc  = eff_in_pos ? color.green : color.gray
+    pt  = eff_in_pos ? (eff_tp1_hit ? "TP1 v"+str.tostring(eff_pos_bars) : "v"+str.tostring(eff_pos_bars)) : "-"
+    pf  = exit_exhaust_eff ? "EXH▼" : exit_time_eff ? "TIME⏰" : exit_rsi_eff ? "RSI⚡" : eff_in_pos ? "OK" : "-"
+    pfc = eff_in_pos ? (exit_exhaust_eff or exit_time_eff or exit_rsi_eff ? color.red : color.green) : color.gray
+    table.cell(t,0,16,"POSICION",   text_color=pc)
+    table.cell(t,1,16,pt,           text_color=pc)
+    table.cell(t,2,16,pf,           text_color=pfc)
+
+    // P&L REAL
+    pnl_col  = real_pnl_pct > 0 ? color.green : real_pnl_pct < 0 ? color.red : color.gray
+    pnl_txt  = pos_real_active ? (real_pnl_pct >= 0 ? "+" : "") + str.tostring(math.round(real_pnl_pct*10)/10) + "%" : "-"
+    table.cell(t,0,17,"P&L",        text_color=pnl_col)
+    table.cell(t,1,17,pnl_txt,      text_color=pnl_col, bgcolor=pos_real_active?color.new(pnl_col,80):na)
+    table.cell(t,2,17,pos_real_active ? "REAL" : "-", text_color=color.gray)
+
+    // DISTANCIAS SL / TP1 / TP2
+    d_sl_txt  = pos_real_active ? str.tostring(math.round(real_dist_sl*10)/10)+"%" : "-"
+    d_tp1_txt = pos_real_active ? str.tostring(math.round(real_dist_tp1*10)/10)+"%" : "-"
+    d_sl_col  = pos_real_active ? (real_dist_sl < 1.0 ? color.red : color.green) : color.gray
+    d_tp1_col = pos_real_active ? (real_dist_tp1 <= 1.0 ? color.lime : color.yellow) : color.gray
+    table.cell(t,0,18,"DIST SL",    text_color=d_sl_col)
+    table.cell(t,1,18,d_sl_txt,     text_color=d_sl_col)
+    table.cell(t,2,18,"TP1: "+d_tp1_txt, text_color=d_tp1_col)
+
+    // TP2 distancia
+    d_tp2_txt = pos_real_active ? str.tostring(math.round(real_dist_tp2*10)/10)+"%" : "-"
+    d_tp2_col = pos_real_active ? (real_dist_tp2 <= 1.0 ? color.lime : color.silver) : color.gray
+    table.cell(t,0,19,"DIST TP2",   text_color=d_tp2_col)
+    table.cell(t,1,19,d_tp2_txt,    text_color=d_tp2_col)
+    table.cell(t,2,19,eff_tp1_hit ? "✓TP1" : "TP1 pend", text_color=eff_tp1_hit?color.green:color.gray)
+
+    // RECOMENDACION
+    table.cell(t,0,20,"RECOMEND",   text_color=real_rec_col, bgcolor=color.new(real_rec_col,80))
+    table.cell(t,1,20,real_rec,     text_color=real_rec_col, bgcolor=color.new(real_rec_col,80))
+    table.cell(t,2,20,"",           text_color=color.gray)
+
+    // Liquidez
+    lc = passes_liquidity ? color.green : color.red
+    table.cell(t,0,21,"LIQUIDEZ", text_color=lc)
+    table.cell(t,1,21,(dollar_vol_m >= 1000 ? str.tostring(math.round(dollar_vol_m/1000*10)/10)+"B" : str.tostring(math.round(dollar_vol_m))+"M"), text_color=lc)
+    table.cell(t,2,21,passes_liquidity?"OK":"<"+str.tostring(min_dollar_vol)+"M", text_color=lc)
+
+    // ATR Percentile
+    atrc = atr_pct_rank > 80 ? color.red : atr_pct_rank > 50 ? color.yellow : color.green
+    table.cell(t,0,22,"ATR %ile", text_color=atrc)
+    table.cell(t,1,22,str.tostring(atr_pct_rank)+"% "+str.tostring(math.round(atrPct*1000)/10)+"%p", text_color=atrc)
+    table.cell(t,2,22,atr_pct_rank>80?"ALTO":atr_pct_rank>50?"MED":"BAJO", text_color=atrc)
+
+    // MTF Weekly
+    mtfc = use_mtf ? (w_confirmed ? color.green : color.red) : color.gray
+    mtfs = use_mtf ? (w_confirmed ? str.tostring(w_confirmations)+"/3 OK" : str.tostring(w_confirmations)+"/3") : "OFF"
+    table.cell(t,0,23,"MTF WEEKLY", text_color=mtfc)
+    table.cell(t,1,23,mtfs,          text_color=mtfc)
+    table.cell(t,2,23,w_confirmed or not use_mtf ? "OK" : "NO", text_color=mtfc)
+
+    // Tamaño sugerido
+    szc = sug_shares > 0 ? color.green : color.gray
+    table.cell(t,0,24,"TAMAÑO", text_color=szc)
+    table.cell(t,1,24,str.tostring(sug_shares)+" acc", text_color=szc)
+    table.cell(t,2,24,"R:"+str.tostring(math.round(risk_eur))+"€", text_color=szc)
+
+    // Veredicto final
+    fc = (passes_all or (olympus_override and passes_olympus_filter)) and rr_ok ? color.green : color.red
+    ft = (passes_all or (olympus_override and passes_olympus_filter)) and rr_ok ? "LISTO" :
+         not regime_ok and not olympus_override ? "Regimen" :
+         not passes_olympus_filter ? "Olympus<"+str.tostring(min_olympus) :
+         not passes_rs_spy    ? "RS SPY" :
+         not passes_rs_sector ? "RS Sector" :
+         not passes_liquidity ? "Liquidez" :
+         not passes_gap       ? "Gap +"+str.tostring(math.round(gap_pct*10)/10)+"%" :
+         not passes_mtf       ? "MTF "+str.tostring(w_confirmations)+"/3" :
+         exhaustion_block     ? "Agotado" : "Filtros"
+    table.cell(t,0,25,"VEREDICTO", text_color=fc, bgcolor=color.new(fc,85))
+    table.cell(t,1,25,ft,          text_color=fc, bgcolor=color.new(fc,85))
+    table.cell(t,2,25,"",          text_color=color.gray)
+
+    // Olympus Score
+    osc = has_olympus_data ? color.aqua : color.gray
+    os_label = has_olympus_data ? str.tostring(olympus_score) + " (" + olympus_q_label + ")" : "NO DATA"
+    table.cell(t,0,26,"OLYMPUS SCORE", text_color=osc)
+    table.cell(t,1,26,os_label,         text_color=osc, bgcolor=has_olympus_data?color.new(color.aqua,85):na)
+    table.cell(t,2,26,olympus_q_label,  text_color=osc)
+
+    // Hybrid Score
+    hc = hybrid_score >= 70 ? color.green : hybrid_score >= 50 ? color.yellow : color.gray
+    hb = color.new(hc, 80)
+    hw_str = str.tostring(math.round(hybrid_weight*100)) + "%P+" + str.tostring(math.round((1-hybrid_weight)*100)) + "%T"
+    table.cell(t,0,27,"HYBRID SCORE", text_color=hc)
+    table.cell(t,1,27,str.tostring(math.round(hybrid_score)), text_color=hc, bgcolor=hb)
+    table.cell(t,2,27,hw_str, text_color=hc)
+
+    // Confluencia
+    confluent = has_olympus_data and olympus_q >= 4 and opportunity >= 60 and passes_all
+    con_color = confluent ? color.lime : color.gray
+    con_text = confluent ? "SI" : "NO"
+    reg_ovr_text = olympus_override ? "OVERRIDE" : "STD"
+    table.cell(t,0,28,"CONFLUENCIA", text_color=con_color)
+    table.cell(t,1,28,con_text,      text_color=con_color, bgcolor=confluent?color.new(color.lime,85):na)
+    table.cell(t,2,28,reg_ovr_text,   text_color=confluent?color.lime:color.gray)
+
+// ══════════════════════════════════════════════════════════════
+// ALERTAS
+// ══════════════════════════════════════════════════════════════
+if blood_active and passes_all
+    alert("BLOOD IN STREETS. " + str.tostring(market_regime), alert.freq_once_per_bar)
+if mom_active and passes_all and entry_go
+    alert("MOM confirmado. RS=" + str.tostring(math.round(rs_vs_spy*100)/100), alert.freq_once_per_bar)
+if mom_active and rally_exhausted
+    alert("MOM agotado (" + str.tostring(math.round(exhaust_conf)) + "%)", alert.freq_once_per_bar)
+if ov_active and passes_all
+    alert("OVERSOLD. " + str.tostring(market_regime), alert.freq_once_per_bar)
+if passes_all and rr_ok and n_active>=2
+    alert("CONFLUENCIA: " + str.tostring(n_active) + " senales", alert.freq_once_per_bar)
+if exit_exhaust_eff
+    alert("EXIT: Exhaustion " + str.tostring(math.round(exhaust_conf)) + "%", alert.freq_once_per_bar)
+if exit_time_eff
+    alert("EXIT: Time Stop " + str.tostring(eff_pos_bars) + " velas sin TP1", alert.freq_once_per_bar)
+if exit_rsi_eff
+    alert("EXIT: RSI(2) " + str.tostring(math.round(rsi2)) + " extremo", alert.freq_once_per_bar)
+if pos_real_active and real_dist_tp1 <= 1.0 and not eff_tp1_hit
+    alert("CERCA TP1: quedan " + str.tostring(math.round(real_dist_tp1*10)/10) + "% para TP1", alert.freq_once_per_bar)
+if pos_real_active and eff_tp1_hit and real_dist_tp2 <= 1.0
+    alert("CERCA TP2: quedan " + str.tostring(math.round(real_dist_tp2*10)/10) + "% para TP2 (TP1 ya cobrado)", alert.freq_once_per_bar)

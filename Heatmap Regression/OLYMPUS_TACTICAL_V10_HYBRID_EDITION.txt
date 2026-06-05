@@ -1,0 +1,103 @@
+// ============================================================
+// OLYMPUS TACTICAL v10.4 — HYBRID EDITION (+Olympus Cross-Score)
+// ============================================================
+// AÑADIR EN LA SECCION DE INPUTS (linea ~25):
+// ============================================================
+
+// ── OLYMPUS CROSS-SECTIONAL SCORE (desde Python v5.1) ─────
+// Introduce el score (0-100) y quintil del modelo Python Heatmap
+// para ver la confluencia con la señal técnica del Pine Script.
+// Q5 = mejores 20%, Q1 = peores 20%.
+olympus_score  = input.int(0,    "Olympus Score (0-100)",  0, 100,  group="OLYMPUS HYBRID",
+     tooltip="Score cross-seccional del modelo Python. 100=mejor, 0=peor")
+olympus_q     = input.int(0,    "Olympus Q (1-5)",        0, 5,    group="OLYMPUS HYBRID",
+     tooltip="Quintil del modelo Python. 5=comprar, 1=evitar")
+min_olympus   = input.int(70,   "Min Olympus Score",       0, 100,  group="OLYMPUS HYBRID",
+     tooltip="Filtro: solo mostrar oportunidad si Olympus score >= este valor")
+hybrid_weight = input.float(0.4,"Peso Olympus (resto=Pine)",0,1,step=0.1,group="OLYMPUS HYBRID",
+     tooltip="0=solo Pine, 1=solo Python. 0.4=40% Python + 60% Pine")
+overwrite_regime_olympus = input.bool(false, "★ Override: Q5 evade filtro regimen", group="OLYMPUS HYBRID",
+     tooltip="Si activo, los tickers Q5 (Olympus Q=5) no son bloqueados por regimen")
+
+// ============================================================
+// AÑADIR EN LA SECCION DE CALCULOS (despues de execution, ~linea 230):
+// ============================================================
+
+// ── HYBRID SCORE ────────────────────────────────────────────
+// Combina el score cross-seccional del modelo Python (30-40%)
+// con la oportunidad técnica del Pine Script (60-70%)
+has_olympus_data = olympus_score > 0
+olympus_q_label = has_olympus_data ? 
+     (olympus_q == 5 ? "Q5" : olympus_q == 4 ? "Q4" : olympus_q == 3 ? "Q3" : olympus_q == 2 ? "Q2" : "Q1") : "--"
+
+// Peso dinámico: si user puso score, usar hybrid_weight, si no 0
+actual_hybrid_weight = has_olympus_data ? hybrid_weight : 0
+
+// Hybrid = Python score * peso + Pine opportunity * (1-peso)
+hybrid_score = has_olympus_data ? 
+     math.min(100, olympus_score * hybrid_weight + opportunity * (1 - hybrid_weight)) : opportunity
+
+// Override: si Q5 y overwrite activo, saltar filtro de regimen
+regime_override_ok = overwrite_regime_olympus and has_olympus_data and olympus_q >= 4
+passes_olympus_filter = not has_olympus_data or olympus_score >= min_olympus
+
+// Modificar passes_all para incluir override
+// CAMBIAR la linea original:
+// passes_all = passes_filter and regime_ok and passes_rs_spy and passes_rs_sector and not exhaustion_block and passes_liquidity and passes_gap and passes_mtf
+// POR:
+passes_all = passes_filter and (regime_override_ok or regime_ok) and passes_rs_spy and passes_rs_sector and not exhaustion_block and passes_liquidity and passes_gap and passes_mtf and passes_olympus_filter
+// (en la linea original, cambiar: passes_all = ... )
+// NUEVA: passes_all = ... and passes_olympus_filter and (regime_override_ok or regime_ok)
+
+// Hybrid ya se calcul� arriba como hybrid_score
+
+// ============================================================
+// AÑADIR EN LA TABLA (despues de la linea "VEREDICTO", ~linea 508):
+// ============================================================
+
+    // Separador
+    table.cell(t,0,26,"────", text_color=color.gray)
+    table.cell(t,1,26,"────", text_color=color.gray)
+    table.cell(t,2,26,"",     text_color=color.gray)
+
+    // Olympus Score
+    osc = has_olympus_data ? color.aqua : color.gray
+    os_label = has_olympus_data ? str.tostring(olympus_score) + " (" + olympus_q_label + ")" : "NO DATA"
+    table.cell(t,0,27,"OLYMPUS SCORE", text_color=osc)
+    table.cell(t,1,27,os_label,         text_color=osc, bgcolor=has_olympus_data?color.new(color.aqua,85):na)
+    table.cell(t,2,27,olympus_q_label,  text_color=osc)
+
+    // Hybrid Score
+    hc2 = hybrid_score >= 70 ? color.green : hybrid_score >= 50 ? color.yellow : color.gray
+    hb2 = color.new(hc2, 80)
+    table.cell(t,0,28,"HYBRID SCORE", text_color=hc2)
+    table.cell(t,1,28,str.tostring(math.round(hybrid_score)), text_color=hc2, bgcolor=hb2)
+    hw_str = str.tostring(math.round(hybrid_weight*100)) + "%P+" + str.tostring(math.round((1-hybrid_weight)*100)) + "%T"
+    table.cell(t,2,28,hw_str, text_color=hc2)
+
+    // Confluencia
+    confluent = has_olympus_data and olympus_q >= 4 and opportunity >= 60 and passes_all
+    con_color = confluent ? color.lime : color.gray
+    con_text = confluent ? "SI" : "NO"
+    table.cell(t,0,29,"CONFLUENCIA", text_color=con_color)
+    table.cell(t,1,29,con_text,      text_color=con_color, bgcolor=confluent?color.new(color.lime,85):na)
+    regime_ovr_text = overwrite_regime_olympus and has_olympus_data and olympus_q >= 4 ? "REGIME_OVR" : "STD"
+    table.cell(t,2,29,regime_ovr_text, text_color=confluent?color.green:color.gray)
+
+// ============================================================
+// MODIFICAR LA LINEA DE VEREDICTO (original ~linea 515-517):
+// ============================================================
+// CAMBIAR las lineas originales:
+// fc = passes_all and rr_ok ? color.green : color.red
+// ft = passes_all and rr_ok ? "LISTO" : ...
+//
+// POR:
+fc = (passes_all or (regime_override_ok and passes_olympus_filter)) and rr_ok ? color.green : color.red
+ft = (passes_all or (regime_override_ok and passes_olympus_filter)) and rr_ok ? "LISTO" :
+     not regime_ok and not regime_override_ok ? "Regimen" :
+     not passes_rs_spy ? "RS SPY" :
+     not passes_rs_sector ? "RS Sector" :
+     not passes_liquidity ? "Liquidez" :
+     not passes_gap ? "Gap" :
+     not passes_mtf ? "MTF "+str.tostring(w_confirmations)+"/3" :
+     exhaustion_block ? "Agotado" : "Filtros

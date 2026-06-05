@@ -64,6 +64,7 @@ import {
 import { fetchFxRates, toEur, normalizeGbxToGbp, getCachedFxRates } from './fxConverter';
 import { integratedOverfittingMetric } from '../risk/overfittingMetric';
 import { fetchSectorNarrative, applyNarrativeBias } from './aiNarrative';
+import { fetchQ5Scores, applyQ5Boost, calcExecutionScoreWithQ5 } from './bridgeQ5Scores';
 
 export { CORE_TACTICAL_UNIVERSE, FULL_TACTICAL_UNIVERSE, VOLATILE_UNIVERSE };
 
@@ -512,6 +513,12 @@ export async function scanTacticalUniverse(
     }
   }
 
+  // ── BRIDGE Q5: cargar scores ML del Python ──────────────────────────
+  const q5Data = await fetchQ5Scores();
+  if (q5Data) {
+    console.log(`[Screener] 🤖 Q5 ML Bridge activo: ${q5Data.q5Tickers.length} tickers Q5`);
+  }
+
   // Paso 4: VIX real + benchmark SPY
   const vixPrice    = batchData['^VIX']?.price ?? 20;
   const spyCloses   = batchData['SPY']?.closes ?? [];
@@ -644,6 +651,13 @@ export async function scanTacticalUniverse(
         built.price,
       );
 
+      // ── Q5 BOOST: si el ticker está en Q5 del modelo ML Python ──
+      const origQ = built.qualityScore;
+      built.qualityScore = applyQ5Boost(built.qualityScore, built.ticker, q5Data);
+      if (built.qualityScore !== origQ) {
+        console.debug(`[Screener] 🤖 ${built.ticker}: qualityScore ${origQ} → ${built.qualityScore} (Q5 boost)`);
+      }
+
       assets.push(built);
       if (!built.hasRealOHLC && dataSource === 'primary') {
         diag.sinOhlc++;
@@ -770,8 +784,13 @@ export async function scanTacticalUniverse(
       diag.oppRRBajo++;
       continue;
     }
-    // FIX INSTITUCIONAL: executionScore mínimo (55 inicial, subir a 65 tras validar)
-    const execScore = opp.executionScore ?? 0;
+    // FIX INSTITUCIONAL: executionScore (con Q5 boost si disponible)
+    const execScore = calcExecutionScoreWithQ5(
+      opp.score,
+      opp.qualityScore ?? 50,
+      opp.asset.ticker,
+      q5Data,
+    );
     if (execScore < MIN_EXECUTION_SCORE) {
       diag.oppExecBajo++;
       continue;
