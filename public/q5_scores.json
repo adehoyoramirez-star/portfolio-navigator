@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-05T10:26:20.866863",
+  "generatedAt": "2026-06-05T13:47:50.548471",
   "mode": "swing",
   "modelMetrics": {
     "ic": 0.0,
@@ -9,58 +9,495 @@
   "q5Tickers": [
     "WDC",
     "STX",
-    "DELL",
     "CIEN",
-    "AMD",
-    "KEYS",
     "NTAP",
     "DDOG",
-    "HPE",
     "FSLR",
     "F",
-    "LOW",
+    "HPE",
     "AVGO",
-    "JBL",
+    "LITE",
     "MU",
-    "GS",
-    "WMT",
+    "LOW",
     "COHR",
     "CRWD",
-    "MS",
-    "LITE",
+    "JBL",
+    "GS",
+    "CSCO",
     "TER",
-    "GOOG",
-    "A",
-    "INTC",
-    "LRCX",
-    "CDNS",
+    "DELL",
     "JBHT",
-    "PODD",
-    "NDSN",
-    "VLO",
-    "STT",
-    "FCX",
+    "MS",
+    "KEYS",
     "HD",
-    "TGT",
-    "MNST",
-    "ANET",
-    "MPC",
-    "TJX",
-    "IBM",
-    "ALB",
-    "EXPD",
-    "PWR",
-    "TXN",
-    "CFG",
-    "HUM",
     "EME",
-    "PANW"
+    "GOOG",
+    "LRCX",
+    "STT",
+    "CDNS",
+    "MPC",
+    "VLO",
+    "A",
+    "EXPD",
+    "TJX",
+    "FCX",
+    "NTRS",
+    "ORCL",
+    "TXN",
+    "STLD",
+    "IBM",
+    "NDSN",
+    "AMAT",
+    "ALB",
+    "MAR",
+    "EWZ",
+    "SMCI",
+    "PPRUY",
+    "PPFB.DE",
+    "QGEN",
+    "QUAL",
+    "QGEN.DE",
+    "ARKK",
+    "AZN.L",
+    "TTE",
+    "TTE.PA",
+    "ULVR.L",
+    "UL",
+    "UAL",
+    "BAC",
+    "BARC.L",
+    "LRLCY",
+    "LITG.DE",
+    "BASF.DE",
+    "LLOY.L",
+    "LNGG.DE",
+    "LVMUY",
+    "LIT",
+    "ALUM.DE",
+    "ALIZY",
+    "AMT",
+    "ALV.DE",
+    "AMS.MC",
+    "AXA.PA",
+    "ARKY.DE",
+    "AVUV",
+    "AZN",
+    "AXAHY",
+    "VEOEY",
+    "BASFY",
+    "BAYRY",
+    "BAYN.DE",
+    "BCS",
+    "BBVA.MC",
+    "BBVA",
+    "BKT.MC",
+    "BMWYY",
+    "BMW.DE",
+    "BNDX",
+    "BNP.PA",
+    "BNPQY",
+    "BP.L",
+    "BP",
+    "BOTZ",
+    "BTC-EUR",
+    "BT",
+    "C",
+    "BT-A.L",
+    "BTC-USD",
+    "CABK.MC",
+    "CLNX.MC",
+    "CGEMY",
+    "CIBR",
+    "CLOU",
+    "CAT",
+    "CAP.PA",
+    "CNYA.AS",
+    "COPP.DE",
+    "CNDX.AS",
+    "CLOU.DE",
+    "COL.MC",
+    "COIN",
+    "CSP1.L",
+    "COPX",
+    "CS51.DE",
+    "COPX.DE",
+    "DAL",
+    "CVX",
+    "DB",
+    "CSPX.AS",
+    "DASTY",
+    "DBB",
+    "DBK.DE",
+    "DHER.DE",
+    "DBXD.DE",
+    "DGE.L",
+    "DEO",
+    "DRIV",
+    "DTE.DE",
+    "DTLA.DE",
+    "DSY.PA",
+    "DTEGY",
+    "EIMI.AS",
+    "EADSY",
+    "ECAR.DE",
+    "EMB",
+    "EMBE.AS",
+    "EMUE.DE",
+    "ENG.MC",
+    "EMXC.DE",
+    "EN.PA",
+    "EMIN.AS",
+    "EPI",
+    "EPP",
+    "ESGB.DE",
+    "EONGY",
+    "EOAN.DE",
+    "CPER",
+    "EWY",
+    "EXH3.DE",
+    "EXSA.DE",
+    "EXV1.DE",
+    "EXV2.DE",
+    "EXV3.DE",
+    "EXV4.DE",
+    "EXV5.DE",
+    "ESPO",
+    "EXV6.DE",
+    "EXV9.DE",
+    "EWG",
+    "EXV8.DE",
+    "ETHE",
+    "EWT",
+    "EWW",
+    "FINX.DE",
+    "FINX",
+    "FER",
+    "GDX",
+    "FEZ",
+    "FER.MC",
+    "GDXJ",
+    "GLTL.AS",
+    "GLEN.L",
+    "GOOGL",
+    "GLNCY",
+    "GDX.DE",
+    "GRFS",
+    "GSK",
+    "HENKY",
+    "GRF.MC",
+    "HEN3.DE",
+    "GSK.L",
+    "HSBC",
+    "HO.PA",
+    "HSBA.L",
+    "IBB",
+    "IAPDM.XD",
+    "IAG.MC",
+    "IBE.MC",
+    "IEGA.DE",
+    "IBTU.DE",
+    "IBDRY",
+    "ICLN",
+    "IFNNY",
+    "INRG.DE",
+    "IFX.DE",
+    "IQHI.DE",
+    "IMEA.AS",
+    "IQQH.DE",
+    "IHI",
+    "IWDA.AS",
+    "IS3Q.DE",
+    "IUSN.DE",
+    "ITX.MC",
+    "ITA",
+    "ISPY.DE",
+    "IWDA.L",
+    "IXJ",
+    "IXP",
+    "KER.PA",
+    "JPM",
+    "KRE",
+    "JNJ",
+    "VIE.PA",
+    "XNAS.DE",
+    "TEF.MC",
+    "SU.PA",
+    "TEF",
+    "SSLN.DE",
+    "MAP.MC",
+    "MBGYY",
+    "LYG",
+    "MBG.DE",
+    "MA",
+    "MC.PA",
+    "MERCK.DE",
+    "MRL.MC",
+    "MCHI",
+    "MEUD.PA",
+    "META",
+    "MKKGY",
+    "MT",
+    "MURGY",
+    "MTS.MC",
+    "MSFT",
+    "UNG",
+    "MUV2.DE",
+    "NEE",
+    "NTGY.MC",
+    "NXT.L",
+    "NVDA",
+    "OR.PA",
+    "PLD",
+    "OILG.DE",
+    "O",
+    "PLTR",
+    "V",
+    "USMV",
+    "URNU.DE",
+    "URA",
+    "URTH",
+    "MSTR",
+    "RED.MC",
+    "RBOT.DE",
+    "RIO.L",
+    "REPYY",
+    "RIO",
+    "REP.MC",
+    "SAN",
+    "RWEOY",
+    "SAB.MC",
+    "RWE.DE",
+    "RYCEY",
+    "RR.L",
+    "SAN.PA",
+    "SAP",
+    "SAN.MC",
+    "SHEL.L",
+    "SIE.DE",
+    "SIEGY",
+    "SAP.DE",
+    "SHEL",
+    "SPG",
+    "MTUM",
+    "SOXX",
+    "SMH",
+    "SLYV",
+    "SNY",
+    "TSLA",
+    "TIP",
+    "TGT",
+    "VOD",
+    "VIS.MC",
+    "VOW3.DE",
+    "VDE",
+    "VOD.L",
+    "VWAGY",
+    "XD9U.DE",
+    "VVSM.DE",
+    "VLUE",
+    "WFH.DE",
+    "WELL",
+    "XOM",
+    "XESX.DE",
+    "ZINC.DE",
+    "AMZN",
+    "ADDYY",
+    "4GLD.DE",
+    "ACX.MC",
+    "ACS.MC",
+    "AAPL",
+    "AMD",
+    "AI.PA",
+    "AENA.MC",
+    "WMT",
+    "ADS.DE",
+    "INTC",
+    "AIQUY",
+    "AI.DE",
+    "AIR.PA",
+    "AMADY",
+    "SBGSY"
   ],
   "allScores": {
-    "NDSN": {
+    "KEYS": {
+      "score": 95.5,
+      "quintile": 5,
+      "hybrid": 89.2,
+      "signal": "OB",
+      "passes": true
+    },
+    "EME": {
+      "score": 95.0,
+      "quintile": 5,
+      "hybrid": 89.0,
+      "signal": "OB",
+      "passes": true
+    },
+    "GOOG": {
+      "score": 94.8,
+      "quintile": 5,
+      "hybrid": 88.9,
+      "signal": "OB",
+      "passes": true
+    },
+    "LRCX": {
       "score": 94.6,
       "quintile": 5,
       "hybrid": 88.8,
+      "signal": "OB",
+      "passes": true
+    },
+    "SMCI": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 71.0,
+      "signal": "OB",
+      "passes": true
+    },
+    "PPRUY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 70.4,
+      "signal": "OB",
+      "passes": true
+    },
+    "PPFB.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 70.4,
+      "signal": "OB",
+      "passes": true
+    },
+    "QGEN": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 70.4,
+      "signal": "OB",
+      "passes": true
+    },
+    "QUAL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 70.4,
+      "signal": "OB",
+      "passes": true
+    },
+    "QGEN.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 70.4,
+      "signal": "OB",
+      "passes": true
+    },
+    "ARKK": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 62.6,
+      "signal": "MR",
+      "passes": true
+    },
+    "AZN.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 59.0,
+      "signal": "MOMENTUM",
+      "passes": true
+    },
+    "TTE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 58.4,
+      "signal": "MR",
+      "passes": true
+    },
+    "TTE.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 58.4,
+      "signal": "MR",
+      "passes": true
+    },
+    "ULVR.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 58.4,
+      "signal": "MR",
+      "passes": true
+    },
+    "UL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 58.4,
+      "signal": "MR",
+      "passes": true
+    },
+    "UAL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 58.4,
+      "signal": "MR",
+      "passes": true
+    },
+    "BAC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "MOMENTUM",
+      "passes": true
+    },
+    "BARC.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "MOMENTUM",
+      "passes": true
+    },
+    "LRLCY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "OB",
+      "passes": true
+    },
+    "LITG.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "OB",
+      "passes": true
+    },
+    "BASF.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "MOMENTUM",
+      "passes": true
+    },
+    "LLOY.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "OB",
+      "passes": true
+    },
+    "LNGG.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "OB",
+      "passes": true
+    },
+    "LVMUY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
+      "signal": "OB",
+      "passes": true
+    },
+    "LIT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 57.8,
       "signal": "OB",
       "passes": true
     },
@@ -78,45 +515,38 @@
       "signal": "NONE",
       "passes": false
     },
-    "CIEN": {
+    "NTAP": {
       "score": 99.4,
       "quintile": 5,
       "hybrid": 39.8,
       "signal": "NONE",
       "passes": false
     },
-    "DELL": {
+    "CIEN": {
       "score": 99.6,
       "quintile": 5,
       "hybrid": 39.8,
       "signal": "NONE",
       "passes": false
     },
-    "AMD": {
+    "DDOG": {
       "score": 99.3,
       "quintile": 5,
       "hybrid": 39.7,
       "signal": "NONE",
       "passes": false
     },
-    "NTAP": {
-      "score": 98.9,
-      "quintile": 5,
-      "hybrid": 39.6,
-      "signal": "NONE",
-      "passes": false
-    },
-    "KEYS": {
+    "FSLR": {
       "score": 99.1,
       "quintile": 5,
       "hybrid": 39.6,
       "signal": "NONE",
       "passes": false
     },
-    "DDOG": {
-      "score": 98.7,
+    "F": {
+      "score": 98.9,
       "quintile": 5,
-      "hybrid": 39.5,
+      "hybrid": 39.6,
       "signal": "NONE",
       "passes": false
     },
@@ -127,269 +557,1935 @@
       "signal": "NONE",
       "passes": false
     },
-    "FSLR": {
+    "AVGO": {
       "score": 98.3,
       "quintile": 5,
       "hybrid": 39.3,
       "signal": "NONE",
       "passes": false
     },
-    "LOW": {
-      "score": 97.9,
-      "quintile": 5,
-      "hybrid": 39.2,
-      "signal": "NONE",
-      "passes": false
-    },
-    "F": {
+    "LITE": {
       "score": 98.1,
       "quintile": 5,
       "hybrid": 39.2,
       "signal": "NONE",
       "passes": false
     },
-    "AVGO": {
-      "score": 97.8,
-      "quintile": 5,
-      "hybrid": 39.1,
-      "signal": "NONE",
-      "passes": false
-    },
-    "JBL": {
-      "score": 97.6,
-      "quintile": 5,
-      "hybrid": 39.0,
-      "signal": "NONE",
-      "passes": false
-    },
     "MU": {
+      "score": 97.9,
+      "quintile": 5,
+      "hybrid": 39.2,
+      "signal": "NONE",
+      "passes": false
+    },
+    "LOW": {
       "score": 97.4,
       "quintile": 5,
       "hybrid": 39.0,
       "signal": "NONE",
       "passes": false
     },
-    "GS": {
+    "COHR": {
       "score": 97.2,
       "quintile": 5,
       "hybrid": 38.9,
       "signal": "NONE",
       "passes": false
     },
-    "WMT": {
+    "CRWD": {
       "score": 97.0,
       "quintile": 5,
       "hybrid": 38.8,
       "signal": "NONE",
       "passes": false
     },
-    "COHR": {
+    "JBL": {
       "score": 96.8,
       "quintile": 5,
       "hybrid": 38.7,
       "signal": "NONE",
       "passes": false
     },
-    "MS": {
+    "CSCO": {
       "score": 96.5,
       "quintile": 5,
       "hybrid": 38.6,
       "signal": "NONE",
       "passes": false
     },
-    "CRWD": {
+    "GS": {
       "score": 96.6,
       "quintile": 5,
       "hybrid": 38.6,
       "signal": "NONE",
       "passes": false
     },
-    "LITE": {
+    "TER": {
       "score": 96.3,
       "quintile": 5,
       "hybrid": 38.5,
       "signal": "NONE",
       "passes": false
     },
-    "TER": {
-      "score": 96.1,
-      "quintile": 5,
-      "hybrid": 38.4,
-      "signal": "NONE",
-      "passes": false
-    },
-    "GOOG": {
+    "JBHT": {
       "score": 95.9,
       "quintile": 5,
       "hybrid": 38.4,
       "signal": "NONE",
       "passes": false
     },
-    "A": {
+    "DELL": {
+      "score": 96.1,
+      "quintile": 5,
+      "hybrid": 38.4,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MS": {
       "score": 95.7,
       "quintile": 5,
       "hybrid": 38.3,
       "signal": "NONE",
       "passes": false
     },
-    "INTC": {
-      "score": 95.5,
-      "quintile": 5,
-      "hybrid": 38.2,
-      "signal": "NONE",
-      "passes": false
-    },
-    "LRCX": {
-      "score": 95.3,
-      "quintile": 5,
-      "hybrid": 38.1,
-      "signal": "NONE",
-      "passes": false
-    },
-    "CDNS": {
+    "HD": {
       "score": 95.1,
       "quintile": 5,
       "hybrid": 38.0,
       "signal": "NONE",
       "passes": false
     },
-    "JBHT": {
-      "score": 95.0,
-      "quintile": 5,
-      "hybrid": 38.0,
-      "signal": "NONE",
-      "passes": false
-    },
-    "PODD": {
-      "score": 94.8,
-      "quintile": 5,
-      "hybrid": 37.9,
-      "signal": "NONE",
-      "passes": false
-    },
-    "VLO": {
+    "STT": {
       "score": 94.4,
       "quintile": 5,
       "hybrid": 37.8,
       "signal": "NONE",
       "passes": false
     },
-    "STT": {
+    "CDNS": {
       "score": 94.2,
       "quintile": 5,
       "hybrid": 37.7,
       "signal": "NONE",
       "passes": false
     },
-    "FCX": {
+    "MPC": {
       "score": 94.0,
       "quintile": 5,
       "hybrid": 37.6,
       "signal": "NONE",
       "passes": false
     },
-    "TGT": {
+    "A": {
       "score": 93.7,
       "quintile": 5,
       "hybrid": 37.5,
       "signal": "NONE",
       "passes": false
     },
-    "HD": {
+    "VLO": {
       "score": 93.8,
       "quintile": 5,
       "hybrid": 37.5,
       "signal": "NONE",
       "passes": false
     },
-    "MNST": {
+    "EXPD": {
       "score": 93.5,
       "quintile": 5,
       "hybrid": 37.4,
       "signal": "NONE",
       "passes": false
     },
-    "ANET": {
+    "TJX": {
       "score": 93.3,
       "quintile": 5,
       "hybrid": 37.3,
       "signal": "NONE",
       "passes": false
     },
-    "TJX": {
-      "score": 92.9,
-      "quintile": 5,
-      "hybrid": 37.2,
-      "signal": "NONE",
-      "passes": false
-    },
-    "MPC": {
+    "FCX": {
       "score": 93.1,
       "quintile": 5,
       "hybrid": 37.2,
       "signal": "NONE",
       "passes": false
     },
-    "IBM": {
-      "score": 92.7,
+    "NTRS": {
+      "score": 92.9,
       "quintile": 5,
-      "hybrid": 37.1,
+      "hybrid": 37.2,
       "signal": "NONE",
       "passes": false
     },
-    "ALB": {
+    "TXN": {
+      "score": 92.4,
+      "quintile": 5,
+      "hybrid": 37.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ORCL": {
       "score": 92.5,
       "quintile": 5,
       "hybrid": 37.0,
       "signal": "NONE",
       "passes": false
     },
-    "EXPD": {
+    "STLD": {
       "score": 92.2,
       "quintile": 5,
       "hybrid": 36.9,
       "signal": "NONE",
       "passes": false
     },
-    "PWR": {
+    "IBM": {
+      "score": 92.0,
+      "quintile": 5,
+      "hybrid": 36.8,
+      "signal": "NONE",
+      "passes": false
+    },
+    "NDSN": {
       "score": 91.8,
       "quintile": 5,
       "hybrid": 36.7,
       "signal": "NONE",
       "passes": false
     },
-    "TXN": {
-      "score": 91.6,
-      "quintile": 5,
-      "hybrid": 36.6,
-      "signal": "NONE",
-      "passes": false
-    },
-    "CFG": {
+    "ALB": {
       "score": 91.4,
       "quintile": 5,
       "hybrid": 36.6,
       "signal": "NONE",
       "passes": false
     },
-    "HUM": {
+    "AMAT": {
+      "score": 91.6,
+      "quintile": 5,
+      "hybrid": 36.6,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MAR": {
       "score": 91.2,
       "quintile": 5,
       "hybrid": 36.5,
       "signal": "NONE",
       "passes": false
     },
-    "EME": {
-      "score": 91.0,
+    "EWZ": {
+      "score": 90.9,
       "quintile": 5,
       "hybrid": 36.4,
       "signal": "NONE",
       "passes": false
     },
-    "PANW": {
-      "score": 90.9,
+    "ALUM.DE": {
+      "score": 50.0,
       "quintile": 5,
-      "hybrid": 36.4,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ALIZY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AMT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ALV.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AMS.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AXA.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ARKY.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AVUV": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AZN": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AXAHY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VEOEY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BASFY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BAYRY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BAYN.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BCS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BBVA.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BBVA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BKT.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BMWYY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BMW.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BNDX": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BNP.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BNPQY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BP.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BP": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BOTZ": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BTC-EUR": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "C": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BT-A.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "BTC-USD": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CABK.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CLNX.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CGEMY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CIBR": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CLOU": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CAT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CAP.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CNYA.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "COPP.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CNDX.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CLOU.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "COL.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "COIN": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CSP1.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "COPX": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CS51.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "COPX.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DAL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CVX": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DB": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CSPX.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DASTY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DBB": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DBK.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DHER.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DBXD.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DGE.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DEO": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DRIV": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DTE.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DTLA.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DSY.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "DTEGY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EIMI.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EADSY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ECAR.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EMB": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EMBE.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EMUE.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ENG.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EMXC.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EN.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EMIN.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EPI": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EPP": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ESGB.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EONGY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EOAN.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "CPER": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EWY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXH3.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXSA.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV1.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV2.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV3.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV4.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV5.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ESPO": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV6.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV9.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EWG": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EXV8.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ETHE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EWT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "EWW": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "FINX.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "FINX": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "FER": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GDX": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "FEZ": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "FER.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GDXJ": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GLTL.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GLEN.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GOOGL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GLNCY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GDX.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GRFS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GSK": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "HENKY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GRF.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "HEN3.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "GSK.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "HSBC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "HO.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "HSBA.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IBB": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IAPDM.XD": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IAG.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IBE.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IEGA.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IBTU.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IBDRY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ICLN": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IFNNY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "INRG.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IFX.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IQHI.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IMEA.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IQQH.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IHI": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IWDA.AS": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IS3Q.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IUSN.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ITX.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ITA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ISPY.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IWDA.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IXJ": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "IXP": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "KER.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "JPM": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "KRE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "JNJ": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VIE.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "XNAS.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "TEF.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SU.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "TEF": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SSLN.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MAP.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MBGYY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "LYG": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MBG.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MC.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MERCK.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MRL.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MCHI": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MEUD.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "META": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MKKGY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MURGY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MTS.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MSFT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "UNG": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MUV2.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "NEE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "NTGY.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "NXT.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "NVDA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "OR.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "PLD": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "OILG.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "O": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "PLTR": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "V": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "USMV": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "URNU.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "URA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "URTH": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MSTR": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RED.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RBOT.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RIO.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "REPYY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RIO": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "REP.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SAN": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RWEOY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SAB.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RWE.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RYCEY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "RR.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SAN.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SAP": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SAN.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SHEL.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SIE.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SIEGY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SAP.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SHEL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SPG": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "MTUM": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SOXX": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SMH": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SLYV": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SNY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "TSLA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "TIP": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "TGT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VOD": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VIS.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VOW3.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VDE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VOD.L": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VWAGY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "XD9U.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VVSM.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "VLUE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "WFH.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "WELL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "XOM": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "XESX.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ZINC.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AMZN": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ADDYY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "4GLD.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ACX.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ACS.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AAPL": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AMD": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AI.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AENA.MC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "WMT": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "ADS.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "INTC": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AIQUY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AI.DE": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AIR.PA": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "AMADY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
+      "signal": "NONE",
+      "passes": false
+    },
+    "SBGSY": {
+      "score": 50.0,
+      "quintile": 5,
+      "hybrid": 20.0,
       "signal": "NONE",
       "passes": false
     }

@@ -16,6 +16,10 @@ MAX_WORKERS = 6
 
 ETFS = {"TLT","AGG","LQD","HYG","SPY","QQQ","IWM","DIA","EFA","EEM","EWJ","EWZ","FXI","VGK","IEUR","MDY","XLI","XLK","XLY","XLE","XLB","XLF","XLV","XLU","XLP","XLRE","XLC","DBC","USO","SLV","GLD"}
 
+import json
+
+TACTICAL_SYMBOLS_PATH = os.path.normpath(os.path.join(CWD, "..", "public", "tactical_universe_symbols.json"))
+
 def load_q5():
     pred = pd.read_csv(PRED_PATH)
     tc = pred.columns[0]
@@ -25,6 +29,23 @@ def load_q5():
     tickers = q5[tc].tolist()[:50]
     scores = dict(zip(q5[tc], q5[sc]))
     return tickers, scores
+
+def load_tactical_symbols():
+    """Carga símbolos del universo táctico para que el screener los revise."""
+    if not os.path.exists(TACTICAL_SYMBOLS_PATH):
+        print("   ⚠️ tactical_universe_symbols.json no encontrado")
+        return [], {}
+    try:
+        with open(TACTICAL_SYMBOLS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        symbols = data.get("yahooSymbols", [])
+        # Score por defecto 50.0 para tickers tácticos sin score ML
+        scores = {s: 50.0 for s in symbols}
+        print(f"   ✅ {len(symbols)} símbolos del universo táctico cargados")
+        return symbols, scores
+    except Exception as e:
+        print(f"   ⚠️ Error cargando universo táctico: {e}")
+        return [], {}
 
 def dl_with_retry(ticker, max_retries=3):
     for attempt in range(max_retries):
@@ -558,14 +579,21 @@ def main():
         df = cached
     else:
         q5_tickers, q5_scores = load_q5()
-        check_list = [t for t in q5_tickers if t.upper() not in ETFS and t != "^VIX"]
+        tactical_syms, tactical_scores = load_tactical_symbols()
+        
+        # Merge Q5 + táctico, sin duplicar tickers ya en Q5
+        q5_set = set(q5_tickers)
+        extra_syms = [s for s in tactical_syms if s not in q5_set and s not in ETFS and s != "^VIX"]
+        
+        all_scores = {**q5_scores, **tactical_scores}
+        check_list = [t for t in q5_tickers[:50] if t.upper() not in ETFS and t != "^VIX"] + extra_syms
         n_check = len(check_list)
-        print(f"Checking {n_check} Q5 tickers...")
+        print(f"Checking {len(q5_tickers)} Q5 + {len(extra_syms)} tácticos = {n_check} total...")
         results = []
         def dl_task(t):
             d = dl_with_retry(t)
             if d is None: return None
-            return check(t, q5_scores.get(t, 50.0), d)
+            return check(t, all_scores.get(t, 50.0), d)
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
             fs = {ex.submit(dl_task, t): t for t in check_list}
             done = 0
@@ -638,7 +666,6 @@ def main():
             "allScores": all_scores
         }
 
-        import json
         with open(q5_path, "w", encoding="utf-8") as f:
             json.dump(q5_export, f, indent=2, ensure_ascii=False)
         print(f"   ✅ Q5 scores exportados: {q5_path} ({len(all_scores)} tickers)")
