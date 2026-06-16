@@ -216,7 +216,9 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   }
 
   // ── BLOQUEOS ─────────────────────────────────────────────────────────
-  if (tailRiskActive && tailRiskOverlay < 0.7) return emptyOutput("BLOCK_TAIL_RISK", "Tail Risk activo.", attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  // [FIX-KILLSWITCH] Umbral subido de 0.70 a 0.85 para que Kill Switch L1
+  // (×0.80, DD -10.5%) también bloquee compras. Antes solo L2+ bloqueaba.
+  if (tailRiskActive && tailRiskOverlay < 0.85) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   if (regime === "CRISIS" || regimePenalty <= 0.45) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   if (volTargetMultiplier < 0.60) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
 
@@ -242,12 +244,14 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     ? motorAllocations.filter(a => a.ticker === "BTC-EUR")
     : motorAllocations;
   // En modo DCA normal: usar drift-aware (solo comprar infraponderados).
-  // En modo ATAQUE: pasar mapa vacío → ignorar drift, comprar por target (la oportunidad prima sobre la sobreponderación).
-  const currentAllocMap = canAttack
-    ? new Map<string, number>()  // ataque: sin filtro de drift
-    : new Map<string, number>(
-        (input.currentAllocations ?? []).map(ca => [ca.ticker, ca.currentWeight])
-      );
+  // En modo ATAQUE: también drift-aware — solo comprar infraponderados.
+  // [FIX-ATTACK-DRIFT] Antes el modo ataque pasaba mapa vacío ignorando
+  // posiciones reales, comprando activos ya sobreponderados (ej: IS3Q al 38%
+  // con target 10.5% recibía €1,591). Ahora siempre se respetan las posiciones
+  // actuales. El ataque despliega más cash pero solo en activos con drift > 0.
+  const currentAllocMap = new Map<string, number>(
+    (input.currentAllocations ?? []).map(ca => [ca.ticker, ca.currentWeight])
+  );
   const allocs = totalCash > 0
     ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap)
     : [];

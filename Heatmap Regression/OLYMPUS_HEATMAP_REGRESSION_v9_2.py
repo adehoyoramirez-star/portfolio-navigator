@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
 '''
-OLYMPUS HEATMAP REGRESSION v9.2 - FACTOR LABORATORY
-====================================================
+OLYMPUS HEATMAP REGRESSION v9.3 - FACTOR LABORATORY (AUDITADO)
+==============================================================
 Genera ~25 factores candidatos, mide IC individual de cada uno,
 construye composite solo con factores que tienen senal real (IC > 0.01).
 Incluye FINRA short volume (datos diarios genuinos, sin look-forward bias).
 Sin ML, sin hyperopt. Solo matematicas y seleccion basada en evidencia.
+
+CAMBIOS v9.3 vs v9.2 (AUDITORÍA — Correcciones para trading real):
+  - [FIX-LOOKAHEAD] Portfolio Q5 OOS: pesos derivados del boundary day
+      (ultimo dia in-sample) en lugar del score de hoy. Elimina el
+      look-ahead bias que inflaba artificialmente Sharpe/MaxDD OOS.
+  - [FIX-OVERLAP] Muestreo IC cada HORIZON=5 dias en lugar de diario.
+      Elimina la autocorrelacion por overlapping returns que inflaba
+      el Information Ratio (IC_std artificialmente bajo).
+  - [FIX-ATR] Fallback close-to-close ahora incluye suelo minimo del
+      50% del rango diario promedio para compensar gaps nocturnos.
+  - [FIX-FINRA] Tickers sin cobertura FINRA quedan NaN en lugar de
+      fillna(0.5). IC mas honesto sin ruido estatico.
+  - IBKR orders usan scores de HOY (composite_global) para ejecucion.
+      Separacion clara: OOS = validacion, HOY = ejecucion.
+
+LIMITACIONES CONOCIDAS (documentadas, no bugs):
+  - factor_ic_report.csv muestra IC sobre dataset completo (IS+OOS).
+    El IC OOS real esta en la seccion Walk-Forward del log.
+  - Modulos fred/insider/sentiment/whale existen pero NO estan
+    integrados al factor catalog de v9.3. Si se integran, requieren
+    datos historicos genuinos (no snapshot propagation).
 
 CAMBIOS v9.2 vs v9.1:
   - FACTOR SELECTION SIN LEAKAGE: seleccion de factores dentro de cada fold
@@ -20,7 +41,7 @@ CAMBIOS v9.1 vs v9.0:
       TR = max(H-L, |H-Cprev|, |L-Cprev|)
   - Fallback automatico a close-to-close si la cache no tiene OHLC
 
-Uso: python OLYMPUS_HEATMAP_REGRESSION_v9.py [--capital CAPITAL_EUR]
+Uso: python OLYMPUS_HEATMAP_REGRESSION_v9_2.py [--capital CAPITAL_EUR]
 Output: heatmap_dashboard.html, predictions.csv, factor_ic_report.csv, portfolio_q5.csv
 '''
 import os, sys, time, logging, warnings, argparse, json, pickle
@@ -49,8 +70,8 @@ import pandas as pd; import numpy as np
 from scipy.stats import spearmanr
 from sklearn.covariance import LedoitWolf
 
-print('OLYMPUS HEATMAP REGRESSION v9.2 - FACTOR LABORATORY')
-print(f'~25 factores | IC sin leakage | Composite con IC > {MIN_IC_FOR_FACTOR} | FINRA | ATR REAL H/L | LW pre-OOS')
+print('OLYMPUS HEATMAP REGRESSION v9.3 - FACTOR LABORATORY (AUDITADO)')
+print(f'~25 factores | IC sin leakage | OOS honesto | Composite con IC > {MIN_IC_FOR_FACTOR} | FINRA | ATR+H/L | LW pre-OOS')
 print('=' * 70)
 
 # --- Cache (compartido con v7) ---
@@ -150,7 +171,15 @@ for ti, t in enumerate(available):
             tr_arr[_i] = max(hl, hc, lc) if not np.isnan(hl + hc + lc) else abs(c[_i] - c[_i - 1])
     else:
         # Fallback: solo close-to-close (peor precisión en stop-loss)
+        # [FIX-ATR] Añadir suelo mínimo basado en rango diario promedio (50%)
+        # para compensar gaps nocturnos no observables en close-to-close
         tr_arr = np.concatenate([[0], np.abs(np.diff(c))])
+        if len(c) >= 60:
+            avg_daily_range = np.mean(np.abs(np.diff(c[-60:])))
+        else:
+            avg_daily_range = np.mean(np.abs(np.diff(c))) if len(c) > 1 else tr_arr[1] if len(tr_arr) > 1 else 0.01 * c[-1]
+        floor_val = avg_daily_range * 0.5
+        tr_arr = np.maximum(tr_arr, floor_val)
     atr14 = pd.Series(tr_arr).ewm(alpha=1/14, adjust=False).mean().values
     atr_pct = np.divide(atr14, c, out=np.zeros_like(atr14), where=c > 0)
     # atr14_usd: ATR en USD absolutos (para stop-loss en ibkr_orders — NO usar atr_pct)
@@ -193,10 +222,12 @@ def cs_rank(df):
     return df[tickers_panel].rank(axis=1, pct=True) * 100
 
 def measure_ic(factor_df, label):
-    """Measure daily Spearman IC of a factor vs forward excess returns"""
+    """Measure Spearman IC of a factor vs forward excess returns.
+    [FIX-OVERLAP] Muestreo cada HORIZON días para evitar observaciones solapadas
+    que inflan el IR artificialmente (autocorrelación por overlapping returns)."""
     fac = factor_df[tickers_panel].values; fwd = fwd_excess[tickers_panel].values
     ics = []
-    for day_i in range(70, n_days - HORIZON):
+    for day_i in range(70, n_days - HORIZON, HORIZON):
         f_row = fac[day_i]; y_row = fwd[day_i]
         valid = ~(np.isnan(f_row) | np.isnan(y_row))
         if valid.sum() < 20: continue
@@ -327,7 +358,9 @@ if finra_df is not None and len(finra_common) >= 50:
         for lb in [5, 21]:
             fs = finra_aligned[finra_cp].rolling(lb).mean()
             ff = pd.DataFrame(np.nan, index=fs.index, columns=tickers_panel)
-            ff[finra_cp] = fs; ff = ff.fillna(0.5)
+            ff[finra_cp] = fs
+            # [FIX-FINRA] No fillna(0.5): tickers sin cobertura FINRA quedan NaN
+            # y son excluidos del ranking CS → IC más honesto (sin ruido estático)
             f_ranked = cs_rank(-ff)
             r = measure_ic(f_ranked, f'finra_{lb}d')
             factor_catalog[f'finra_{lb}d'] = {'df': f_ranked, 'result': r}
@@ -397,7 +430,7 @@ for fold_i in range(N_FOLDS):
         fac_np = fentry['df'][tickers_panel].values
         fwd_is = fwd_np  # target siempre hacia adelante; IC se mide día a día in-sample
         is_ics = []
-        for day_i in range(START_DAY, tr_end):
+        for day_i in range(START_DAY, tr_end, HORIZON):
             f_row = fac_np[day_i]; y_row = fwd_is[day_i]
             valid = ~(np.isnan(f_row) | np.isnan(y_row))
             if valid.sum() < 20: continue
@@ -419,14 +452,20 @@ for fold_i in range(N_FOLDS):
         fold_comp = df.copy() if fold_comp is None else fold_comp + df
     fold_comp = fold_comp / len(fold_sel) if fold_sel else np.full_like(fwd_np, 50.0)
 
-    # 4. Medir IC OOS con composite fold-específico
+    # 4. Medir IC OOS con composite fold-específico (muestreo sin overlap)
     fold_ics = []
-    for day_i in range(te_start, te_end):
+    for day_i in range(te_start, te_end, HORIZON):
         comp_day = fold_comp[day_i]; fwd_day = fwd_np[day_i]
         valid = ~(np.isnan(comp_day) | np.isnan(fwd_day))
         if valid.sum() < 20: continue
         ic, _ = spearmanr(comp_day[valid], fwd_day[valid])
         if not np.isnan(ic): all_ic_scores.append(ic); fold_ics.append(ic)
+
+    # [FIX-LOOKAHEAD] Guardar composite del último fold para OOS portfolio honesto
+    if fold_i == N_FOLDS - 1:
+        last_fold_comp_oos = fold_comp.copy()
+        last_fold_start_oos = te_start
+        last_fold_end_oos = te_end
 
     fold_ic = float(np.mean(fold_ics)) if fold_ics else 0.0
     fold_ic_means.append(fold_ic)
@@ -513,97 +552,135 @@ heatmap_display = [t for t in heatmap_tickers if t in all_ind and t in corr_lw.c
 corr_hm = corr_lw.loc[heatmap_display, heatmap_display] if heatmap_display else pd.DataFrame()
 print(f'   LW: {len(complete_tickers)} tickers | {lw_cutoff}d pre-OOS (de {len(rdf_complete)}d totales)')
 
-# --- Portfolio Q5 (SxIV) ---
-print('Portfolio Construction Q5 (SxIV)...')
+# --- Portfolio Q5 OOS (SxIV) — SIN LOOK-AHEAD ---
+# [FIX-LOOKAHEAD v9.3] Los pesos OOS se derivan del composite en el boundary day
+# (último día in-sample del último fold), NO del score de hoy.
+# Las métricas OOS aplican esos pesos SOLO a retornos futuros (el fold OOS).
+# Esto elimina el look-ahead bias que inflaba artificialmente Sharpe/MaxDD.
+print('Portfolio Construction Q5 (OOS honesto — sin look-ahead)...')
 
 EQUIV_GROUPS = [{'GOOG','GOOGL'}, {'BRK-A','BRK-B'}, {'IBIT','FBTC','BITO'}, {'GLD','PPFB.DE'}]
 
-q5_tickers = [t for t, r in results.items() if r['quintile'] == 5 and t in all_ind and t not in BENCH_TICKERS]
-for group in EQUIV_GROUPS:
-    overlap = [t for t in q5_tickers if t in group]
-    if len(overlap) > 1:
-        best = max(overlap, key=lambda t: results[t]['score'])
-        for t in overlap:
-            if t != best: q5_tickers.remove(t)
-
+# --- OOS validation: pesos desde boundary day (in-sample) ---
 portfolio_weights = {}; portfolio_metrics = {}; greedy_order = []
+q5_today_order = []  # para exportar al frontend (results de hoy)
 
-if len(q5_tickers) >= 2:
-    q5_complete = [t for t in q5_tickers if np.isnan(all_ind[t]['ret']).sum() == 0]
-    if len(q5_complete) < 2: q5_complete = q5_tickers
-    q5_ret = pd.DataFrame({t: all_ind[t]['ret'] for t in q5_complete})
-    last_fold_start = fold_test_starts[-1]; last_fold_end = fold_test_ends[-1]
-    q5_ret_pre_oos = q5_ret.iloc[:last_fold_start]
-    if len(q5_ret_pre_oos) < 20: q5_ret_pre_oos = q5_ret
-    
-    lw_q5 = LedoitWolf().fit(q5_ret_pre_oos.values)
-    cov_q5_arr = lw_q5.covariance_
-    vol_q5 = np.sqrt(np.diag(cov_q5_arr))
-    scores_arr = np.array([results.get(t, {}).get('score', 50.0) for t in q5_complete])
-    
-    w_raw = scores_arr / np.maximum(vol_q5, 0.005)
-    w_raw = w_raw / w_raw.sum()
-    w_cap = np.minimum(w_raw, 0.25)
-    w_final = w_cap / w_cap.sum()
-    
-    portfolio_weights = {t: round(float(w), 4) for t, w in zip(q5_complete, w_final)}
-    portfolio_hhi = float(np.sum(w_final ** 2))
-    
-    # OOS metrics
-    q5_ret_oos = q5_ret.iloc[last_fold_start:last_fold_end].values
-    if len(q5_ret_oos) < 20: q5_ret_oos = q5_ret.values[-60:]
-    port_ret_oos = q5_ret_oos @ w_final
-    
-    port_vol_oos = float(np.std(port_ret_oos)) * np.sqrt(252)
-    port_ret_ann = float(np.mean(port_ret_oos)) * 252
-    port_sharpe = port_ret_ann / port_vol_oos if port_vol_oos > 0 else 0.0
-    port_var95 = float(np.percentile(port_ret_oos, 5)) * 100
-    cumret = np.cumprod(1 + port_ret_oos)
-    max_dd = float(np.min((cumret - np.maximum.accumulate(cumret)) / np.maximum.accumulate(cumret))) * 100
-    
-    # Costes
-    COST_PER_DAY = 0.00036 / max(HORIZON, 1)
-    port_ret_net = port_ret_oos - COST_PER_DAY
-    port_sharpe_net = (float(np.mean(port_ret_net)) * 252) / port_vol_oos if port_vol_oos > 0 else 0.0
-    
-    # Benchmarks
-    ew_ret = np.mean(q5_ret_oos, axis=1)
-    ew_sharpe = (np.mean(ew_ret)*252)/(np.std(ew_ret)*np.sqrt(252)) if np.std(ew_ret)>0 else 0.0
-    bh_sharpe = 0.0
-    if 'SPY' in all_ind:
-        spy_ret_oos = all_ind['SPY']['ret'][last_fold_start:last_fold_end]
-        bh_sharpe = (np.mean(spy_ret_oos)*252)/(np.std(spy_ret_oos)*np.sqrt(252)) if np.std(spy_ret_oos)>0 else 0.0
-    
-    portfolio_metrics = {'sharpe':round(port_sharpe,2),'sharpe_net':round(port_sharpe_net,2),
-        'var95':round(port_var95,2),'max_dd':round(max_dd,2),'hhi':round(portfolio_hhi,4),
-        'vol_ann':round(port_vol_oos*100,1),'ew_sharpe':round(ew_sharpe,2),'bh_sharpe':round(bh_sharpe,2),
-        'n_assets':len(q5_complete),'oos_days':len(q5_ret_oos)}
-    
-    greedy_order = sorted(q5_complete, key=lambda t: results.get(t,{}).get('score',0), reverse=True)
-    print(f'   Q5 OOS ({len(q5_ret_oos)}d): Sharpe={port_sharpe:.2f} | Net={port_sharpe_net:.2f} | EW={ew_sharpe:.2f} | SPY={bh_sharpe:.2f}')
-    print(f'   Alpha vs SPY: {port_sharpe-bh_sharpe:+.2f} | MaxDD={max_dd:.1f}% | HHI={portfolio_hhi:.4f}')
+if 'last_fold_comp_oos' in dir() and last_fold_comp_oos is not None:
+    boundary_day = last_fold_start_oos - 1
+    boundary_comp = last_fold_comp_oos[boundary_day]
 
-# --- IBKR Orders ---
+    valid_b = ~np.isnan(boundary_comp)
+    if valid_b.sum() >= 10:
+        vals_b = boundary_comp[valid_b]
+        ranks_b = (np.argsort(np.argsort(vals_b)) + 1) / len(vals_b) * 100
+        quintiles_b = pd.qcut(ranks_b, 5, labels=[1, 2, 3, 4, 5])
+
+        boundary_scores = {}
+        for j, t_idx in enumerate(np.where(valid_b)[0]):
+            t = tickers_panel[t_idx]
+            boundary_scores[t] = {'score': float(np.clip(ranks_b[j], 0, 100)),
+                                  'quintile': int(quintiles_b[j])}
+
+        q5_tickers_oos = [t for t, r in boundary_scores.items()
+                          if r['quintile'] == 5 and t in all_ind and t not in BENCH_TICKERS]
+        for group in EQUIV_GROUPS:
+            overlap = [t for t in q5_tickers_oos if t in group]
+            if len(overlap) > 1:
+                best = max(overlap, key=lambda t: boundary_scores[t]['score'])
+                for t in overlap:
+                    if t != best: q5_tickers_oos.remove(t)
+
+        if len(q5_tickers_oos) >= 2:
+            q5_complete = [t for t in q5_tickers_oos if np.isnan(all_ind[t]['ret']).sum() == 0]
+            if len(q5_complete) < 2: q5_complete = q5_tickers_oos
+            q5_ret = pd.DataFrame({t: all_ind[t]['ret'] for t in q5_complete})
+
+            # Covarianza SOLO con datos in-sample (pre-boundary)
+            q5_ret_pre_oos = q5_ret.iloc[:last_fold_start_oos]
+            if len(q5_ret_pre_oos) < 20: q5_ret_pre_oos = q5_ret
+
+            lw_q5 = LedoitWolf().fit(q5_ret_pre_oos.values)
+            cov_q5_arr = lw_q5.covariance_
+            vol_q5 = np.sqrt(np.diag(cov_q5_arr))
+
+            # Pesos usando scores del boundary (información CONOCIDA antes del OOS)
+            scores_arr = np.array([boundary_scores.get(t, {}).get('score', 50.0) for t in q5_complete])
+
+            w_raw = scores_arr / np.maximum(vol_q5, 0.005)
+            w_raw = w_raw / w_raw.sum()
+            w_cap = np.minimum(w_raw, 0.25)
+            w_final = w_cap / w_cap.sum()
+
+            portfolio_weights = {t: round(float(w), 4) for t, w in zip(q5_complete, w_final)}
+            portfolio_hhi = float(np.sum(w_final ** 2))
+
+            # OOS returns: pesos del boundary aplicados SOLO a retornos futuros
+            q5_ret_oos = q5_ret.iloc[last_fold_start_oos:last_fold_end_oos].values
+            if len(q5_ret_oos) < 5: q5_ret_oos = q5_ret.values[-20:]
+            port_ret_oos = q5_ret_oos @ w_final
+
+            port_vol_oos = float(np.std(port_ret_oos)) * np.sqrt(252)
+            port_ret_ann = float(np.mean(port_ret_oos)) * 252
+            port_sharpe = port_ret_ann / port_vol_oos if port_vol_oos > 0 else 0.0
+            port_var95 = float(np.percentile(port_ret_oos, 5)) * 100
+            cumret = np.cumprod(1 + port_ret_oos)
+            max_dd = float(np.min((cumret - np.maximum.accumulate(cumret)) / np.maximum.accumulate(cumret))) * 100
+
+            COST_PER_DAY = 0.00036 / max(HORIZON, 1)
+            port_ret_net = port_ret_oos - COST_PER_DAY
+            port_sharpe_net = (float(np.mean(port_ret_net)) * 252) / port_vol_oos if port_vol_oos > 0 else 0.0
+
+            ew_ret = np.mean(q5_ret_oos, axis=1)
+            ew_sharpe = (np.mean(ew_ret)*252)/(np.std(ew_ret)*np.sqrt(252)) if np.std(ew_ret)>0 else 0.0
+            bh_sharpe = 0.0
+            if 'SPY' in all_ind:
+                spy_ret_oos = all_ind['SPY']['ret'][last_fold_start_oos:last_fold_end_oos]
+                bh_sharpe = (np.mean(spy_ret_oos)*252)/(np.std(spy_ret_oos)*np.sqrt(252)) if np.std(spy_ret_oos)>0 else 0.0
+
+            portfolio_metrics = {'sharpe':round(port_sharpe,2),'sharpe_net':round(port_sharpe_net,2),
+                'var95':round(port_var95,2),'max_dd':round(max_dd,2),'hhi':round(portfolio_hhi,4),
+                'vol_ann':round(port_vol_oos*100,1),'ew_sharpe':round(ew_sharpe,2),'bh_sharpe':round(bh_sharpe,2),
+                'n_assets':len(q5_complete),'oos_days':len(q5_ret_oos),
+                'boundary_day':int(boundary_day)}
+
+            greedy_order = sorted(q5_complete, key=lambda t: boundary_scores.get(t,{}).get('score',0), reverse=True)
+            # q5_today_order: orden de hoy para frontend (results, NO boundary)
+            q5_today_order = sorted(
+                [t for t, r in results.items() if r['quintile'] == 5 and t in all_ind and t not in BENCH_TICKERS],
+                key=lambda t: results.get(t, {}).get('score', 0), reverse=True
+            ) if results else []
+            print(f'   Q5 OOS ({len(q5_ret_oos)}d): Sharpe={port_sharpe:.2f} | Net={port_sharpe_net:.2f} | EW={ew_sharpe:.2f} | SPY={bh_sharpe:.2f}')
+            print(f'   Alpha vs SPY: {port_sharpe-bh_sharpe:+.2f} | MaxDD={max_dd:.1f}% | HHI={portfolio_hhi:.4f}')
+            print(f'   ✅ Pesos del boundary day {boundary_day} (in-sample) — OOS honesto')
+else:
+    print('   ⚠️ No hay composite OOS disponible — saltando portfolio Q5')
+
+# --- IBKR Orders (usan scores de HOY para ejecución real) ---
+# [FIX-LOOKAHEAD v9.3] Órdenes de ejecución usan results (composite_global de hoy),
+# NO los boundary_scores del OOS. Separación: OOS = validación, HOY = ejecución.
 RISK_PER_TRADE = 0.02; RR_RATIO = 2.0
 ibkr_rows = []
-if portfolio_weights:
+# Derivar Q5 desde results (hoy) para órdenes de ejecución
+q5_today_tickers = [t for t, r in results.items() if r['quintile'] == 5 and t in all_ind and t not in BENCH_TICKERS]
+# Usar portfolio_weights OOS si el ticker está, sino score/vol simple
+if q5_today_tickers:
     remaining = CAPITAL_EUR
-    sorted_items = [(t, portfolio_weights[t]) for t in greedy_order if t in portfolio_weights]
+    # Ordenar por score de hoy descendente
+    sorted_items = sorted(q5_today_tickers, key=lambda t: results.get(t, {}).get('score', 0), reverse=True)
     MIN_PER_POS = 100.0 if CAPITAL_EUR < 1000 else 200.0 if CAPITAL_EUR < 10000 else 500.0
     dyn_max = max(1, min(len(sorted_items), int(CAPITAL_EUR / MIN_PER_POS)))
     if dyn_max < len(sorted_items):
         sorted_items = sorted_items[:dyn_max]
-        tw = sum(w for _, w in sorted_items)
-        if tw > 0: sorted_items = [(t, w/tw) for t, w in sorted_items]
-    for t, w in sorted_items:
+    for t in sorted_items:
         r = results.get(t, {})
+        # Peso: usar OOS si disponible, sino score/vol simple
+        w = portfolio_weights.get(t, r.get('score', 50.0) / 100.0)
         entry_raw = closes[t].dropna()
         entry = float(entry_raw.iloc[-1]) if len(entry_raw) > 0 else 0.0
         if entry <= 0 or np.isnan(entry): continue
         atr_usd_arr = all_ind[t]['atr14_usd'] if t in all_ind else np.array([entry * 0.02])
         atr_usd_clean = atr_usd_arr[~np.isnan(atr_usd_arr)]
         atr_usd = float(atr_usd_clean[-1]) if len(atr_usd_clean) > 0 else entry * 0.02
-        # sl_dist en USD absolutos (mínimo 1% del precio como suelo de seguridad)
         sl_dist = max(atr_usd * 2.5, entry * 0.01)
         tp_dist = sl_dist * RR_RATIO
         sl = round(entry - sl_dist, 4); tp = round(entry + tp_dist, 4)
@@ -621,7 +698,14 @@ if portfolio_weights:
             'viable':viable,'sector':get_sector(t)})
     n_viable = sum(1 for r in ibkr_rows if r['viable'])
     total_inv = sum(r['size_eur'] for r in ibkr_rows if r['viable'])
-    print(f'   [CASH] {n_viable} posiciones | EUR{total_inv:.0f} / EUR{CAPITAL_EUR:.0f}')
+    # Normalizar weight_pct para que sume ~100% en órdenes viables
+    if n_viable > 0:
+        total_w = sum(r['weight_pct'] for r in ibkr_rows if r['viable'])
+        if total_w > 0:
+            for r in ibkr_rows:
+                if r['viable']:
+                    r['weight_pct'] = round(r['weight_pct'] / total_w * 100, 2)
+    print(f'   [CASH] {n_viable} posiciones (scores de HOY) | EUR{total_inv:.0f} / EUR{CAPITAL_EUR:.0f}')
 
 # --- Guardar CSVs ---
 print('Guardando outputs...')
@@ -734,7 +818,7 @@ for t in sorted(results.keys(), key=lambda t:results[t]['score'], reverse=True)[
     html += f'<tr><td><strong>{t}</strong></td><td style=color:{qc};font-weight:700>{r["score"]:.1f}</td><td style=color:{qc}>Q{q}</td><td style=color:{badge}>{r["confidence"]}</td><td>{r["pred_z"]:.1f}</td><td>{get_sector(t)}</td></tr>'
 html += '</table>'
 
-html += f'<div class=footer>OLYMPUS v9.2 FACTOR LAB | ATR REAL H/L | IC sin leakage | LW pre-OOS | {len(factor_catalog)} factores | {len(selected_names)} seleccionados | IC_OOS={mean_ic:.4f} | IR={ir:.2f} | {len(all_ic_scores)}d OOS</div></body></html>'
+html += f'<div class=footer>OLYMPUS v9.3 FACTOR LAB (AUDITADO) | OOS honesto ✅ | ATR H/L | IC sin leakage | LW pre-OOS | {len(factor_catalog)} factores | {len(selected_names)} seleccionados | IC_OOS={mean_ic:.4f} | IR={ir:.2f} | {len(all_ic_scores)}d OOS</div></body></html>'
 
 html_path = os.path.join(BASE_DIR,'heatmap_dashboard.html')
 with open(html_path,'w',encoding='utf-8') as f: f.write(html)
@@ -746,7 +830,7 @@ try:
     os.makedirs(public_dir, exist_ok=True)
     q5_export = {'generatedAt':datetime.now().isoformat(),'mode':'v9_factorlab',
         'modelMetrics':{'ic':mean_ic,'ir':ir,'hitRate':hit_rate,'nFactors':len(selected_names)},
-        'q5Tickers':list(greedy_order) if greedy_order else [],
+        'q5Tickers':list(q5_today_order) if q5_today_order else [],
         'topFactors':[(name, round(r['ic_mean'],5)) for name, r in all_factors_sorted[:10]],
         'allScores':{t:{'score':r['score'],'quintile':r['quintile'],'hybrid':r['score'],'signal':'NONE','passes':False} for t,r in results.items()}}
     with open(os.path.join(public_dir,'q5_scores.json'),'w',encoding='utf-8') as f:

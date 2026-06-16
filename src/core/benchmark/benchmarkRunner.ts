@@ -183,7 +183,13 @@ export function recordBenchmarkSnapshot(input: {
     : 0;
 
   // ── Calcular retorno del benchmark 60/40 ─────────────────────
-  // Precio relativo de cada activo desde la última snapshot
+  // Precio relativo de cada activo desde la última snapshot.
+  // [FIX-BENCH-SANITY] Sanity checks para evitar explosiones:
+  //   - Cap ±50% por activo (ningún activo se mueve >50% entre snapshots de ~60s)
+  //   - Cap ±20% retorno total del benchmark
+  //   Sin esto, un precio corrupto (ej: 0.01 en vez de 100) causaba CAGR 1080%.
+  const MAX_ASSET_RETURN = 0.50;
+  const MAX_BENCH_RETURN = 0.20;
   let benchmarkReturn = 0;
   for (const ticker of ASSETS) {
     const oldPrice = prev.prices[ticker] ?? 0;
@@ -192,9 +198,13 @@ export function recordBenchmarkSnapshot(input: {
 
     if (oldPrice > 0 && weight > 0) {
       const assetReturn = (newPrice - oldPrice) / oldPrice;
-      benchmarkReturn += weight * assetReturn;
+      // Cap individual: ningún activo sube/baja >50% en un intervalo de snapshot
+      const cappedAssetReturn = Math.max(-MAX_ASSET_RETURN, Math.min(MAX_ASSET_RETURN, assetReturn));
+      benchmarkReturn += weight * cappedAssetReturn;
     }
   }
+  // Cap total: el benchmark completo no puede moverse >20% en un snapshot
+  benchmarkReturn = Math.max(-MAX_BENCH_RETURN, Math.min(MAX_BENCH_RETURN, benchmarkReturn));
 
   // Guardar solo si los retornos son finitos
   const cleanEngineReturn = isFinite(engineReturn) ? engineReturn : 0;
