@@ -24,7 +24,13 @@ export function detectCrisis(
   // Confirmado: los umbrales de globalStress usan >3, >5 — consistente con porcentaje.
   // ADVERTENCIA: nunca normalizar a decimal antes de pasar a esta función.
   const creditComponent = creditSpread * 3;
-  const curveComponent = Math.max(0, -yieldSpread) * 100;
+  // FIX-CURVE-01: yieldSpread está en puntos porcentuales (ej: -0.50 para -50bp).
+  // El *100 original normalizaba al rango de VIX (10-50), pero era demasiado agresivo:
+  //   -50bp → curveComponent=50 → crisisScore +10pts (equivalente a VIX=26).
+  // Sin escalar, la curva era irrelevante (contribución <0.5pts incluso a -200bp).
+  // CORRECCIÓN: *10 como compromiso — inversión severa (-200bp) contribuye 4pts.
+  //   -50bp → 0.5pts | -100bp → 2.0pts | -200bp → 4.0pts (señal real, no falso positivo).
+  const curveComponent = Math.max(0, -yieldSpread) * 10;
 
   const crisisScore = vixComponent * 0.4 + creditComponent * 0.4 + curveComponent * 0.2;
 

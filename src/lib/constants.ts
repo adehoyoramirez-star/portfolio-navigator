@@ -26,7 +26,7 @@ export const SECTOR_MAP: Record<Asset, string> = {
   "URNU.DE":  "uranium",
   "VVSM.DE":  "semis",
   // XNAS.DE = iShares NASDAQ 100 UCITS ETF → Technology
-  "XNAS.DE":  "semis",   // agrupado con tech/semis para el SECTOR_CAP  // Sector: healthcare — no computa hacia el SECTOR_CAP de tech/equity
+  "XNAS.DE":  "technology",  // NASDAQ 100 — sector propio, no agrupado con semis
 };
 
 // Cap máximo por sector — si IS3Q + VVSM + XNAS superan 35%, el motor limita.

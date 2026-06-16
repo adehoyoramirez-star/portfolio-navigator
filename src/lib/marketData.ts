@@ -161,7 +161,7 @@ const PROXY_FALLBACK: Partial<Record<string, string>> = {
 // ASSETS en constants.ts es 'readonly ["BTC-EUR", ...]' — TypeScript no permite
 // asignar un tipo readonly a un parámetro mutable string[].
 // Solución: usar 'readonly string[]' que es compatible con ambos.
-function covarianceMatrix(returnsSeries: number[][], assetTickers?: readonly string[]): number[][] {
+export function covarianceMatrix(returnsSeries: number[][], assetTickers?: readonly string[]): number[][] {
   const n = returnsSeries.length;
 
   // ── FIX NaN: necesitamos al menos 2 observaciones para covarianza ──────
@@ -443,13 +443,18 @@ function calculatePiCycleMAs(closes: number[]): { ma111: number; ma350x2: number
   };
 }
 
-// Jump parameters: calibrate from historical daily returns
-// Returns annualized intensity, mean jump size, std of jumps
-function calibrateJumps(dailyRets: number[]): { intensity: number; mean: number; stdDev: number } {
+// Jump parameters: calibrate from historical daily returns.
+// Returns annualized intensity, mean jump size, std of jumps.
+// FIX-JUMP-01: ahora acepta un threshold personalizado por clase de activo.
+// BTC con vol ~60% → threshold 4%. Equity con vol ~18% → threshold 2.5%.
+// Sin esto, los saltos de equity (más pequeños pero más frecuentes) eran ignorados.
+function calibrateJumps(dailyRets: number[], thresholdOverride?: number): { intensity: number; mean: number; stdDev: number } {
   if (dailyRets.length < 60) return { intensity: 0.15, mean: -0.12, stdDev: 0.05 };
-  const threshold = 0.04; // moves > 4% in a day = jump
+  // FIX-JUMP-01: threshold adaptativo por volatilidad del activo
+  // BTC: 4% → captura saltos de cola gorda. Equity: 2.5% → captura eventos de estrés.
+  const threshold = thresholdOverride ?? 0.04;
   const jumps = dailyRets.filter(r => Math.abs(r) > threshold);
-  const intensity = (jumps.length / dailyRets.length) * 252; // annualized
+  const intensity = (jumps.length / dailyRets.length) * 252;
   const jumpMean  = jumps.length > 0 ? jumps.reduce((a, b) => a + b, 0) / jumps.length : -0.05;
   const jumpStdDev = jumps.length > 1
     ? Math.sqrt(jumps.reduce((s, v) => s + (v - jumpMean) ** 2, 0) / (jumps.length - 1))

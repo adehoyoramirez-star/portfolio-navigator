@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-06-05T13:20:53.126770",
-  "totalSymbols": 266,
+  "totalSymbols": 230,
   "yahooSymbols": [
     "4GLD.DE",
     "AAPL",
@@ -9,12 +9,12 @@
     "ADDYY",
     "ADS.DE",
     "AENA.MC",
-    "AI.DE",
+
     "AI.PA",
     "AIQUY",
     "AIR.PA",
     "ALIZY",
-    "ALUM.DE",
+
     "ALV.DE",
     "AMADY",
     "AMD",
@@ -22,15 +22,15 @@
     "AMT",
     "AMZN",
     "ARKK",
-    "ARKY.DE",
+
     "AVUV",
-    "AXA.PA",
+
     "AXAHY",
     "AZN",
     "AZN.L",
     "BAC",
     "BARC.L",
-    "BASF.DE",
+
     "BASFY",
     "BAYN.DE",
     "BAYRY",
@@ -39,14 +39,14 @@
     "BCS",
     "BKT.MC",
     "BMW.DE",
-    "BMWYY",
+
     "BNDX",
     "BNP.PA",
     "BNPQY",
     "BOTZ",
     "BP",
     "BP.L",
-    "BT",
+
     "BT-A.L",
     "BTC-EUR",
     "BTC-USD",
@@ -58,16 +58,16 @@
     "CIBR",
     "CLNX.MC",
     "CLOU",
-    "CLOU.DE",
+
     "CNDX.AS",
     "CNYA.AS",
     "COIN",
     "COL.MC",
-    "COPP.DE",
+
     "COPX",
-    "COPX.DE",
+
     "CPER",
-    "CS51.DE",
+
     "CSP1.L",
     "CSPX.AS",
     "CVX",
@@ -84,14 +84,14 @@
     "DSY.PA",
     "DTE.DE",
     "DTEGY",
-    "DTLA.DE",
+
     "EADSY",
-    "ECAR.DE",
-    "EIMI.AS",
+
+
     "EMB",
-    "EMBE.AS",
-    "EMIN.AS",
-    "EMUE.DE",
+
+
+
     "EMXC.DE",
     "EN.PA",
     "ENG.MC",
@@ -99,7 +99,7 @@
     "EONGY",
     "EPI",
     "EPP",
-    "ESGB.DE",
+
     "ESPO",
     "ETHE",
     "EWG",
@@ -120,13 +120,13 @@
     "FER.MC",
     "FEZ",
     "FINX",
-    "FINX.DE",
+
     "GDX",
     "GDX.DE",
     "GDXJ",
     "GLEN.L",
     "GLNCY",
-    "GLTL.AS",
+
     "GOOGL",
     "GRF.MC",
     "GRFS",
@@ -142,19 +142,19 @@
     "IBB",
     "IBDRY",
     "IBE.MC",
-    "IBTU.DE",
+
     "ICLN",
-    "IEGA.DE",
+
     "IFNNY",
     "IFX.DE",
     "IHI",
-    "IMEA.AS",
-    "INRG.DE",
+
+
     "INTC",
-    "IQHI.DE",
+
     "IQQH.DE",
     "IS3Q.DE",
-    "ISPY.DE",
+
     "ITA",
     "ITX.MC",
     "IUSN.DE",
@@ -167,9 +167,9 @@
     "KER.PA",
     "KRE",
     "LIT",
-    "LITG.DE",
+
     "LLOY.L",
-    "LNGG.DE",
+
     "LRLCY",
     "LVMUY",
     "LYG",
@@ -179,7 +179,7 @@
     "MBGYY",
     "MC.PA",
     "MCHI",
-    "MERCK.DE",
+
     "META",
     "MEUD.PA",
     "MKKGY",
@@ -196,16 +196,16 @@
     "NVDA",
     "NXT.L",
     "O",
-    "OILG.DE",
+
     "OR.PA",
     "PLD",
     "PLTR",
     "PPFB.DE",
     "PPRUY",
     "QGEN",
-    "QGEN.DE",
+
     "QUAL",
-    "RBOT.DE",
+
     "RED.MC",
     "REP.MC",
     "REPYY",
@@ -232,9 +232,9 @@
     "SNY",
     "SOXX",
     "SPG",
-    "SSLN.DE",
+
     "SU.PA",
-    "TEF",
+
     "TEF.MC",
     "TGT",
     "TIP",
@@ -261,12 +261,11 @@
     "VVSM.DE",
     "VWAGY",
     "WELL",
-    "WFH.DE",
+
     "WMT",
     "XD9U.DE",
     "XESX.DE",
     "XNAS.DE",
-    "XOM",
-    "ZINC.DE"
+    "XOM"
   ]
 }

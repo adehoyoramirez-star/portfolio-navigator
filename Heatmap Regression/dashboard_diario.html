@@ -1,0 +1,127 @@
+<!DOCTYPE html><html lang=es><head><meta charset=UTF-8>
+<title>Dashboard Diario - Olympus Capital</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Segoe UI,sans-serif;background:#0a0a1a;color:#e0e0e0;padding:24px;max-width:1200px;margin:0 auto}
+h1{font-size:1.5rem;color:#fff;margin-bottom:4px}
+.sub{color:#888;font-size:0.85rem;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px}
+.card{background:#111128;border:1px solid #2a2a5a;border-radius:12px;padding:14px}
+.card .l{font-size:0.7rem;text-transform:uppercase;color:#666;margin-bottom:4px}
+.card .v{font-size:1.1rem;font-weight:600}
+.green{color:#4ade80}
+.sec-badge{display:inline-block;background:#1a2a3a;color:#60a5fa;font-size:0.65rem;padding:2px 8px;border-radius:4px;margin-left:4px;font-weight:600}
+.capbox{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#0d1a2d;border:1px solid #1a3a5a;border-radius:12px;padding:16px;margin-bottom:20px}
+.capbox input{background:#0d0d2b;border:1px solid #333;border-radius:8px;color:#fff;font-size:1.3rem;font-weight:600;padding:8px 14px;width:160px}
+.capbox .tot{color:#888;font-size:0.85rem;margin-left:auto}
+table{width:100%;border-collapse:collapse;background:#0d0d1f;border-radius:12px;border:1px solid #1a1a3a;font-size:0.8rem}
+th{background:#1a1a3a;color:#888;font-size:0.7rem;text-transform:uppercase;padding:8px 10px;text-align:left}
+td{padding:8px 10px;border-bottom:1px solid #1a1a2a}
+.mo{font-family:monospace;font-weight:600}
+.sl{color:#ef4444;font-family:monospace;font-weight:600}
+.tp{color:#4ade80;font-family:monospace;font-weight:600}
+.c-high{color:#4ade80;font-weight:700}.c-med{color:#fb923c;font-weight:700}.c-low{color:#666;font-weight:400}
+.c-badge{display:inline-block;font-size:0.6rem;padding:1px 6px;border-radius:3px;margin-left:4px}
+.c-badge-h{background:rgba(74,222,128,0.2);color:#4ade80}.c-badge-m{background:rgba(251,146,60,0.2);color:#fb923c}.c-badge-l{background:rgba(102,102,102,0.2);color:#999}
+.alert{background:rgba(255,64,96,0.08);border:1px solid #ff4060;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.8rem;color:#ff8080}
+.summary{display:flex;gap:16px;flex-wrap:wrap;font-size:0.85rem}
+.summary-item{padding:6px 14px;background:#0d0d1f;border-radius:8px;border:1px solid #1a1a3a}
+.footer{font-size:0.7rem;color:#444;text-align:center;margin-top:24px;padding:16px;border-top:1px solid #1a1a2a}
+</style></head><body>
+<h1>Dashboard Diario - Olympus Capital</h1>
+<p class=sub>Ordenes IBKR reales (SxIV) - 11/06/2026 17:29 - 20 posiciones viables - Slider interactivo</p>
+<div class=alert>Estas son las mismas ordenes de ibkr_orders.csv generadas por OLYMPUS HEATMAP REGRESSION v7. Los tickers coinciden 1:1.</div>
+<div style="background:#ff406015;border:2px solid #ff4060;border-radius:12px;padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+<span style="font-size:28px">🔴</span>
+<div><div style="font-size:0.7rem;text-transform:uppercase;color:#888;font-family:monospace">SEMAFORO IC — CALIDAD DE SEÑAL</div>
+<div style="display:flex;gap:16px;margin-top:2px"><span style="font-weight:700;font-size:1rem;color:#ff4060">IC_20d=+0.0262</span>
+<span style="color:#888">IC_60d=+0.0574</span></div></div>
+<div style="flex:1;min-width:200px;font-size:0.85rem;color:#ff4060">ALARMA: IC_20d=0.0262 < 0.03 — señal demasiado débil. NO OPERAR.</div>
+</div>
+<div class=grid>
+<div class=card><div class=l>Ordenes BUY viables</div><div class='v green'>20</div></div>
+<div class=card><div class=l>Capital actual</div><div class=v id=capDisplay>100 EUR</div></div>
+<div class=card><div class=l>Max posiciones</div><div class=v style=color:#fb923c>5</div></div>
+</div>
+<div class=capbox>
+<label for=cap style='font-weight:700;font-size:0.9rem'>Capital (EUR):</label>
+<input type=range id=cap min=50 max=100000 step=10 value=100 style='flex:1;min-width:200px;max-width:500px;accent-color:#4ade80'>
+<input type=number id=capInput value=100 step=1 min=0 max=1000000 style='width:110px;background:#0d0d2b;border:1px solid #4ade80;border-radius:8px;color:#4ade80;font-size:1.2rem;font-weight:700;padding:6px 10px;text-align:right'>
+<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center'>
+<button onclick="setCap(100)" style='background:#1a2a3a;border:1px solid #2a3a5a;color:#60a5fa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.75rem;font-weight:600;transition:all 0.15s' onmouseover="this.style.background='#2a3a5a'" onmouseout="this.style.background='#1a2a3a'">100€</button>
+<button onclick="setCap(500)" style='background:#1a2a3a;border:1px solid #2a3a5a;color:#60a5fa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.75rem;font-weight:600;transition:all 0.15s' onmouseover="this.style.background='#2a3a5a'" onmouseout="this.style.background='#1a2a3a'">500€</button>
+<button onclick="setCap(1000)" style='background:#1a2a3a;border:1px solid #2a3a5a;color:#60a5fa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.75rem;font-weight:600;transition:all 0.15s' onmouseover="this.style.background='#2a3a5a'" onmouseout="this.style.background='#1a2a3a'">1000€</button>
+<button onclick="setCap(5000)" style='background:#1a2a3a;border:1px solid #2a3a5a;color:#60a5fa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.75rem;font-weight:600;transition:all 0.15s' onmouseover="this.style.background='#2a3a5a'" onmouseout="this.style.background='#1a2a3a'">5000€</button>
+<button onclick="setCap(10000)" style='background:#1a2a3a;border:1px solid #2a3a5a;color:#60a5fa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.75rem;font-weight:600;transition:all 0.15s' onmouseover="this.style.background='#2a3a5a'" onmouseout="this.style.background='#1a2a3a'">10000€</button>
+<button onclick="setCap(50000)" style='background:#1a2a3a;border:1px solid #2a3a5a;color:#60a5fa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.75rem;font-weight:600;transition:all 0.15s' onmouseover="this.style.background='#2a3a5a'" onmouseout="this.style.background='#1a2a3a'">50000€</button>
+</div>
+</div><!-- cierra capbox -->
+<div id=summaryBar class=summary style=margin-bottom:16px></div>
+<div style=overflow-x:auto><table><thead><tr><th>#</th><th>Ticker</th><th>Sector</th><th>Score</th><th>z</th><th>Peso</th><th>Precio</th><th>SL</th><th>TP</th><th>Acc</th><th>Inv</th><th>Risk</th><th>Benef</th><th>Conf</th></tr></thead><tbody id=tb></tbody></table></div>
+<div class=footer>Olympus Capital - Portfolio Navigator - Fuente: ibkr_orders.csv | Slider recalcula cartera en vivo | Max 5 posiciones</div>
+<script>
+var D=[{"t": "DELL", "s": 100.0, "z": 3.33, "w": 4.32, "e": 381.78, "sec": "Other", "conf": "HIGH", "sl": 377.9622, "tp": 389.4156}, {"t": "AMD", "s": 99.8, "z": 3.32, "w": 3.86, "e": 475.51, "sec": "Tech", "conf": "HIGH", "sl": 470.7549, "tp": 485.0202}, {"t": "MU", "s": 99.6, "z": 3.31, "w": 3.57, "e": 935.89, "sec": "Other", "conf": "HIGH", "sl": 926.5311, "tp": 954.6078}, {"t": "HPE", "s": 99.4, "z": 3.3, "w": 4.97, "e": 48.27, "sec": "Other", "conf": "HIGH", "sl": 47.7873, "tp": 49.2354}, {"t": "STX", "s": 99.3, "z": 3.28, "w": 4.62, "e": 846.01, "sec": "Other", "conf": "HIGH", "sl": 837.5499, "tp": 862.9302}, {"t": "INTC", "s": 99.1, "z": 3.27, "w": 3.45, "e": 107.92, "sec": "Other", "conf": "HIGH", "sl": 106.8408, "tp": 110.0784}, {"t": "ON", "s": 98.9, "z": 3.26, "w": 3.86, "e": 117.0, "sec": "Other", "conf": "HIGH", "sl": 115.83, "tp": 119.34}, {"t": "WDC", "s": 98.7, "z": 3.25, "w": 4.21, "e": 517.72, "sec": "Other", "conf": "HIGH", "sl": 512.5428, "tp": 528.0744}, {"t": "CNC", "s": 98.5, "z": 3.23, "w": 4.15, "e": 66.21, "sec": "Other", "conf": "HIGH", "sl": 65.5479, "tp": 67.5342}, {"t": "HUM", "s": 98.3, "z": 3.22, "w": 4.79, "e": 363.18, "sec": "Other", "conf": "HIGH", "sl": 359.5482, "tp": 370.4436}, {"t": "FTNT", "s": 98.1, "z": 3.21, "w": 4.97, "e": 138.39, "sec": "Other", "conf": "HIGH", "sl": 137.0061, "tp": 141.1578}, {"t": "NUE", "s": 97.9, "z": 3.2, "w": 5.61, "e": 254.32, "sec": "Other", "conf": "HIGH", "sl": 251.7768, "tp": 259.4064}, {"t": "CSCO", "s": 97.8, "z": 3.18, "w": 8.88, "e": 120.36, "sec": "Other", "conf": "HIGH", "sl": 119.1564, "tp": 122.7672}, {"t": "STLD", "s": 97.6, "z": 3.17, "w": 5.73, "e": 269.8, "sec": "Other", "conf": "HIGH", "sl": 267.102, "tp": 275.196}, {"t": "DDOG", "s": 97.4, "z": 3.16, "w": 4.62, "e": 227.34, "sec": "Other", "conf": "HIGH", "sl": 225.0666, "tp": 231.8868}, {"t": "NTAP", "s": 97.2, "z": 3.15, "w": 6.02, "e": 165.0, "sec": "Other", "conf": "HIGH", "sl": 163.35, "tp": 168.3}, {"t": "PANW", "s": 97.0, "z": 3.13, "w": 6.02, "e": 260.52, "sec": "Other", "conf": "HIGH", "sl": 257.9148, "tp": 265.7304}, {"t": "TXN", "s": 96.8, "z": 3.12, "w": 5.61, "e": 288.63, "sec": "Other", "conf": "HIGH", "sl": 285.7437, "tp": 294.4026}, {"t": "LRCX", "s": 96.6, "z": 3.11, "w": 4.27, "e": 327.16, "sec": "Other", "conf": "HIGH", "sl": 323.8884, "tp": 333.7032}, {"t": "FFIV", "s": 96.4, "z": 3.1, "w": 6.49, "e": 395.23, "sec": "Other", "conf": "HIGH", "sl": 391.2777, "tp": 403.1346}];
+function f(v){return Number(v).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' EUR';}
+var cr={'HIGH':0,'MED':1,'LOW':2};
+var cl={'HIGH':'c-high','MED':'c-med','LOW':'c-low'};
+var cb={'HIGH':'c-badge-h','MED':'c-badge-m','LOW':'c-badge-l'};
+var MAX_POS=5;
+function c(){
+var cap=parseFloat(document.getElementById('cap').value)||0;
+document.getElementById('capDisplay').textContent=cap.toLocaleString('es-ES')+' EUR';
+document.getElementById('capInput').value=cap;
+if(cap<=0){document.getElementById('tb').innerHTML='';document.getElementById('summaryBar').innerHTML='';return;}
+// Use orders AS-IS from ibkr_orders.csv (already GREEDY-SHARPE ordered)
+var S=D.slice();
+// Limit to MAX_POS, reallocate weights proportionally
+if(S.length>MAX_POS){
+var topN=S.slice(0,MAX_POS);
+var totalW=topN.reduce(function(s,d){return s+d.w;},0);
+if(totalW>0){topN.forEach(function(d){d.w=d.w/totalW*100;});}
+S=topN;
+}
+var rem=cap;var hh='';var i=0;var ti=0,tr=0,tb2=0;
+S.forEach(function(d){
+if(d.e<=0)return;
+// Use the actual SL/TP from ibkr_orders.csv if available
+var slDist=d.sl>0?(d.e-d.sl):Math.max(d.e*0.015,d.e*0.01);
+var tpDist=d.tp>0?(d.tp-d.e):slDist*2;
+var sl=+(d.e-slDist).toFixed(2);
+var tp=+(d.e+tpDist).toFixed(2);
+var ideal=cap*d.w/100;
+var size=Math.min(ideal,rem,cap*0.30);
+var maxRisk=cap*0.02*d.e/slDist;
+size=Math.min(size,maxRisk);
+if(size<0.01)return;
+var sh=+(size/d.e).toFixed(6);
+var inv=size;
+var risk=size*slDist/d.e;
+var benef=size*tpDist/d.e;
+rem-=inv;ti+=inv;tr+=risk;tb2+=benef;i++;
+hh+='<tr><td>'+i+'</td><td><strong>'+d.t+'</strong></td>'
++'<td><span class=sec-badge>'+d.sec+'</span></td>'
++'<td class=mo>'+d.s.toFixed(1)+'</td><td class=mo>'+d.z.toFixed(2)+'</td>'
++'<td class=mo>'+d.w.toFixed(1)+'%</td>'
++'<td class=mo>'+f(d.e)+'</td><td class=sl>'+f(sl)+'</td><td class=tp>'+f(tp)+'</td>'
++'<td>'+sh+'</td><td class=mo style=color:#60a5fa>'+f(inv)+'</td>'
++'<td class=mo style=color:#ef4444>'+f(risk)+'</td>'
++'<td class=mo style=color:#4ade80>'+f(benef)+'</td>'
++'<td><span class="c-badge '+cb[d.conf]+'">'+d.conf+'</span></td></tr>';
+});
+document.getElementById('tb').innerHTML=hh||'<tr><td colspan=14 style=text-align:center;color:#666>Capital insuficiente para cualquier posicion</td></tr>';
+document.getElementById('summaryBar').innerHTML=
+'<span class=summary-item>Capital: <strong>'+f(cap)+'</strong></span>'
++'<span class=summary-item>Invertido: <strong style=color:#60a5fa>'+f(ti)+'</strong></span>'
++'<span class=summary-item>Riesgo: <strong style=color:#ef4444>'+f(tr)+'</strong></span>'
++'<span class=summary-item>Benef: <strong style=color:#4ade80>'+f(tb2)+'</strong></span>'
++'<span class=summary-item>Posiciones: <strong>'+i+'</strong></span>'
++'<span class=summary-item>Restante: <strong>'+(rem>0?f(rem):'0,00 EUR')+'</strong></span>';
+}
+document.getElementById('cap').addEventListener('input',c);
+document.getElementById('capInput').addEventListener('input',function(){
+var v=parseFloat(this.value)||0;
+if(v<0)v=0;if(v>1000000)v=1000000;
+document.getElementById('cap').value=v;c();
+});
+function setCap(v){document.getElementById('cap').value=v;document.getElementById('capInput').value=v;c();}
+window.addEventListener('load',c);
+</script></body></html>

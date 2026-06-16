@@ -1,2 +1,190 @@
-<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Guia Trading Plan</title><style>body{font-family:Segoe UI,sans-serif;color:#1a1a2e;padding:40px;max-width:900px;margin:0 auto}h1{color:#0f3460;border-bottom:3px solid #e94560}.cover{text-align:center;padding:40px;background:linear-gradient(135deg,#0f3460,#16213e);color:white;border-radius:12px;margin-bottom:30px}.box{background:#f8f9fa;border-radius:8px;padding:15px;margin:10px 0;border-left:4px solid #0f3460}.g{border-left-color:#2ecc71}.r{border-left-color:#e74c3c}table{width:100%;border-collapse:collapse;margin:10px 0}th{background:#0f3460;color:white;padding:8px;text-align:left}td{padding:8px;border-bottom:1px solid #ddd}pre{background:#1a1a2e;color:#e0e6ed;padding:10px;border-radius:5px}.footer{text-align:center;margin-top:40px;padding:20px;border-top:1px solid #ddd;font-size:12px;color:#95a5a6}@media print{body{padding:20px;font-size:12px}}</style></head><body><div class="cover"><h1>Olympus Tactical - Plan de Trading</h1><p style="font-size:18px;opacity:0.8">Sistema Hibrido Python + Pine Script</p><p style="font-size:14px;opacity:0.6">Version 1.0 - Junio 2026</p></div><h2>Indice</h2><ol><li>Resumen del Sistema</li><li>Paso 1: Ejecutar el Modelo Python</li><li>Paso 2: Interpretar el Pine Script Hybrid</li><li>Paso 3: Reglas de Entrada</li><li>Paso 4: Reglas de Salida</li><li>Gestion de Riesgo</li><li>Ejemplo: DELL</li><li>Checklist Semanal</li></ol><h2>1. Resumen del Sistema</h2><p>El sistema combina dos motores independientes: Python para seleccion (QUE comprar, Q5) y Pine Script para timing (CUANDO comprar).</p><table><tr><th>Motor</th><th>Que hace</th><th>Output</th></tr><tr><td>Python v5.1</td><td>Selecciona Q5 basado en fundamentales+tecnicos. IC=+0.043</td><td>predictions.csv, portfolio_q5.csv</td></tr><tr><td>Pine v10.4 Hybrid</td><td>Analiza timing: RSI, BB, regimen, MTF, R:R</td><td>Tabla en TradingView</td></tr></table><div class="box g"><b>Clave:</b> El Pine ahora acepta el score Python como input. Cuando ambos coinciden, CONFLUENCIA=SI.</div><h2>2. Paso 1: Ejecutar Modelo Python</h2><p>Cada lunes:</p><pre>cd "Heatmap Regression"
-python -X utf8 OLYMPUS_HEATMAP_REGRESSION_v5.py --mode swing</pre><p>Outputs: predictions.csv (scores Q5/Q1), portfolio_q5.csv (pesos HRP), ibkr_orders.csv (ordenes IBKR).</p><p>Luego: <code>python olympus_screener.py</code> para cruzar Q5 con senales tecnicas.</p><h2>3. Paso 2: Interpretar Pine Script Hybrid</h2><p>Abrir ticker Q5 en TradingView -> aplicar "Olympus Tactical v10.4 Hybrid".</p><p><b>Inputs a configurar:</b> Olympus Score (score del modelo), Olympus Q (5), Override Q5 (ON).</p><p><b>Filas clave de la tabla:</b></p><table><tr><th>Fila</th><th>Verde</th><th>Rojo</th></tr><tr><td>HYBRID SCORE</td><td>>=70 - BUENA OPORTUNIDAD</td><td><50</td></tr><tr><td>CONFLUENCIA</td><td>SI - ambos sistemas alineados</td><td>NO</td></tr><tr><td>OPPORTUNITY</td><td>>=70</td><td><50</td></tr><tr><td>R:R</td><td>>=1.5</td><td><1.5</td></tr><tr><td>VEREDICTO</td><td>LISTO</td><td>Motivo del bloqueo</td></tr></table><div class="box g"><b>Regla de oro:</b> Solo operar cuando HYBRID >= 70 y CONFLUENCIA = SI.</div><h2>4. Paso 3: Reglas de Entrada</h2><div class="box g">7 condiciones: Q5 (score>=70), HYBRID>=70, CONFLUENCIA=SI, senial activa, R:R>=1.5, Entry Zone CONFIRMED, VEREDICTO=LISTO.</div><h2>5. Paso 4: Reglas de Salida</h2><table><tr><th>Tipo</th><th>Condicion</th><th>Accion</th></tr><tr><td>TP1</td><td>Entry + risk*2</td><td>Vender 60%, SL a breakeven</td></tr><tr><td>TP2</td><td>Entry + risk*3.2</td><td>Vender 40%</td></tr><tr><td>Stop Loss</td><td>Entry - atr14*2</td><td>Vender todo</td></tr><tr><td>Exhaustion</td><td>Volumen cae, RSI>75</td><td>Vender todo</td></tr><tr><td>Time Stop</td><td>10 velas sin TP1</td><td>Vender todo</td></tr></table><h2>6. Gestion de Riesgo</h2><div class="box"><b>Reglas:</b> 1% riesgo por trade, 3% diario, 5% semanal. Max drawdown -10%. Sin apalancamiento. Max 3 posiciones mismo sector.</div><div class="box r"><b>No operar cuando:</b> VIX>35, IC<0, 2 perdidas consecutivas, viernes tarde, semana FED.</div><h2>7. Ejemplo: DELL</h2><div class="box g">Paso 1: Modelo Python -> DELL Q5 score 100.</div><div class="box">Paso 2: TradingView -> Inputs Score=100, Q=5, Override=ON.</div><div class="box g">Paso 3: Tabla: BLOOD activo (RSI2=6.4), HYBRID=82, CONFLUENCIA=SI, VEREDICTO=LISTO.</div><div class="box">Paso 4: Con 10.000EUR: 3 acciones DELL a 422EUR. SL=392EUR. TP1=482EUR. TP2=518EUR. R:R=2.5.</div><h2>8. Checklist Semanal</h2><table><tr><th>Dia</th><th>Tarea</th><th>Duracion</th></tr><tr><td>Lunes</td><td>Ejecutar modelo + screener + revisar oportunidades</td><td>10min</td></tr><tr><td>Lunes</td><td>Abrir Q5 confluentes en TradingView con Hybrid</td><td>15min</td></tr><tr><td>Lunes</td><td>Ejecutar ordenes en IBKR</td><td>10min</td></tr><tr><td>Mar-Jue</td><td>Revisar senales en Q5 monitorizados</td><td>10min</td></tr><tr><td>Viernes</td><td>Cerrar posiciones debiles. Evaluar P&amp;L.</td><td>10min</td></tr></table><div class="footer"><p>Olympus Capital - Portfolio Navigator v1.0</p><p>Modelo Python v5.1 (IC=+0.043) + Pine Script v10.4 Hybrid</p><p>Junio 2026</p></div></body></html>
+<!DOCTYPE html><html lang=es><head><meta charset=UTF-8>
+<meta name=viewport content="width=device-width,initial-scale=1.0">
+<title>Guia de Trading - Olympus v7.0</title>
+<style>
+:root{--bg:#080c12;--surface:#0d1420;--card:#111927;--border:#1e2d40;
+--text:#c8d8e8;--muted:#5a7a96;--accent:#00c2ff;--gold:#f0a500;
+--green:#00e07a;--red:#ff4060;--mono:Consolas,monospace;--sans:Segoe UI,sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);padding:32px;max-width:1100px;margin:0 auto}
+.hdr{text-align:center;margin-bottom:40px;padding-bottom:20px;border-bottom:2px solid var(--border)}
+.hdr h1{font-family:var(--mono);font-size:28px;color:#fff}
+.hdr span{color:var(--accent)}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:40px}
+.toc h2{font-family:var(--mono);color:var(--accent);font-size:14px;margin-bottom:16px}
+.toc ol{padding-left:20px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.toc li{font-size:13px;line-height:1.6}
+.toc a{color:var(--accent);text-decoration:none}
+.blk{margin-bottom:48px;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.blkh{background:var(--surface);padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.blkn{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:16px}
+.blkh h2{font-family:var(--mono);font-size:15px;color:#fff;flex:1}
+.blkb{padding:24px}
+.bx{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-bottom:16px}
+.bx h3{color:var(--accent);font-size:13px;font-family:var(--mono);margin-bottom:8px}
+.exp{background:rgba(240,165,0,0.05);border:1px solid rgba(240,165,0,0.2);border-radius:8px;padding:16px 20px;margin-bottom:16px}
+.exp h3{color:var(--gold);font-size:13px;font-family:var(--mono);margin-bottom:8px}
+.ej{background:rgba(0,224,122,0.04);border:1px solid rgba(0,224,122,0.2);border-radius:8px;padding:16px 20px;margin-bottom:16px}
+.ej h3{color:var(--green);font-size:13px;font-family:var(--mono);margin-bottom:8px}
+.al{background:rgba(255,64,96,0.06);border:1px solid rgba(255,64,96,0.25);border-radius:8px;padding:16px 20px;margin-bottom:16px}
+.al h3{color:var(--red);font-size:13px;font-family:var(--mono);margin-bottom:8px}
+.tg{width:100%;border-collapse:collapse;font-size:12px;margin:12px 0}
+.tg th{font-family:var(--mono);font-size:10px;color:var(--accent);padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;background:rgba(0,194,255,0.05)}
+.tg td{padding:8px 10px;border-bottom:1px solid var(--border)}
+.st{display:flex;gap:16px;align-items:flex-start;margin-bottom:16px;padding:12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)}
+.sn{min-width:28px;height:28px;background:var(--accent);color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;margin-top:2px}
+.st h4{font-size:13px;color:#fff;margin-bottom:4px}
+.st p{font-size:12px;color:var(--muted);line-height:1.6}
+.g{color:var(--green)}.r{color:var(--red)}.y{color:var(--gold)}
+.bdg{font-size:9px;padding:2px 8px;border-radius:4px;font-family:var(--mono)}
+.bdg-m{background:rgba(0,224,122,0.15);color:var(--green)}
+.bdg-d{background:rgba(0,194,255,0.15);color:var(--accent)}
+.cg{background:rgba(0,224,122,0.15);color:var(--green)}
+.cb{background:rgba(0,194,255,0.15);color:var(--accent)}
+.cgl{background:rgba(240,165,0,0.15);color:var(--gold)}
+.cr{background:rgba(255,64,96,0.15);color:var(--red)}
+.cp{background:rgba(168,85,247,0.15);color:#a855f7}
+.ftr{text-align:center;margin-top:40px;padding:24px;color:var(--muted);font-size:11px;font-family:var(--mono);border-top:1px solid var(--border)}
+.form{text-align:center;font-family:var(--mono);font-size:16px;padding:12px;background:var(--surface);border-radius:6px;margin:12px 0}
+</style></head><body>
+<div class=hdr><h1>GUIA DE TRADING <span>OLYMPUS v7.0</span></h1>
+<p style=color:var(--muted);font-size:13px;margin-top:4px>Manual visual - 10 bloques para entender cada dashboard</p></div>
+<div class=toc><h2>INDICE</h2><ol>
+<li><a href=#b1>1. Heatmap de Correlaciones</a></li>
+<li><a href=#b2>2. Tabla de Scores (Ranking)</a></li>
+<li><a href=#b3>3. Metricas del Modelo (Boleta)</a></li>
+<li><a href=#b4>4. Portfolio Q5 (Cartera SxIV)</a></li>
+<li><a href=#b5>5. Semaforo SPY (Mercado sano?)</a></li>
+<li><a href=#b6>6. Top Predicciones (Elegidos Q5)</a></li>
+<li><a href=#b7>7. Cartera Real con Slider</a></li>
+<li><a href=#b8>8. Dashboard Diario (Ordenes IBKR)</a></li>
+<li><a href=#b9>9. Operativa Diaria (Rutina)</a></li>
+<li><a href=#b10>10. Codigo de Colores (Visual)</a></li>
+</ol></div>
+<div class=blk id=b1><div class=blkh><div class="blkn cb">1</div><h2>HEATMAP DE CORRELACIONES</h2><span class="bdg bdg-m">heatmap_dashboard</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>Imagina 50 amigos en el patio. Si Pedro salta, Maria tambien salta? <b>Este mapa de colores te dice que activos son hermanos gemelos</b> (se mueven igual) y cuales son desconocidos (cada uno va a su bola). Con el tiempo te ayuda a entender si tu cartera esta muy concentrada en un mismo tipo de activo.</p></div>
+<div class=bx><h3>QUE VES:</h3><p>Una tabla de <b>50x50</b> con numeros del <b class=r>-1.0</b> al <b class=g>+1.0</b>. Los colores van de azul intenso (-1, correlacion negativa) a gris (0, sin relacion) a rojo intenso (+1, gemelos).</p></div>
+<div class=bx><h3>COMO LEERLO:</h3><table class=tg>
+<tr><th>Valor</th><th>Significado</th><th>Ejemplo</th></tr>
+<tr><td><b class=r>+1.0</b></td><td>Gemelos: suben y bajan juntos</td><td>XLK y QQQ = 0.85</td></tr>
+<tr><td><b class=y>~0.50</b></td><td>Primos: a veces juntos, a veces no</td><td>SPY y XLF = 0.55</td></tr>
+<tr><td><b>0.0</b></td><td>Desconocidos: sin relacion</td><td>SPY y USO = 0.02</td></tr>
+<tr><td><b class=g>-0.5</b></td><td>Enemigos: uno sube, otro baja</td><td>SPY y VIX = -0.70</td></tr>
+</table></div>
+<div class=al><h3>OJO:</h3><p>Esta matriz <b>NO influye</b> en que compras ni cuanto. Es solo informativa. El modelo SxIV IGNORA las correlaciones porque el backtest demostro que usarlas baja el retorno de +263% a +47%.</p></div>
+<div class=ej><h3>EJEMPLO:</h3><p>Si tienes MU y FTNT en cartera y ves que su correlacion es 0.45, sabes que <b>no siempre se mueven igual</b>. Eso es bueno: si uno baja, el otro podria aguantar. Si su correlacion fuera 0.92, casi serian el mismo activo.</p></div>
+</div></div>
+<div class=blk id=b2><div class=blkh><div class="blkn cg">2</div><h2>TABLA DE SCORES (Ranking del Modelo)</h2><span class="bdg bdg-m">heatmap_dashboard</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>El profesor (la IA) pone una <b>nota de 0 a 100</b> a cada alumno (accion). Los de <b>90-100 (Q5)</b> son los cracks del cole, COMPRALOS. Los de <b>0-20 (Q1)</b> son los que suspendieron, EVITALOS. La nota es una <b>prediccion matematica</b> de cuanto va a subir el activo en los proximos 5 dias, no cuanto vale la empresa de verdad.</p></div>
+<div class=bx><h3>COLUMNAS DE LA TABLA:</h3><table class=tg>
+<tr><th>Columna</th><th>Significado</th><th>Como leerlo</th></tr>
+<tr><td><b>Score</b></td><td>Nota 0-100</td><td>100 = mejor prediccion del universo</td></tr>
+<tr><td><b>Q (Quintil)</b></td><td>Grupo 1-5</td><td>Q5 = COMPRAR / Q3 = MANTENER / Q1 = EVITAR</td></tr>
+<tr><td><b>Senial</b></td><td>Accion recomendada</td><td>LONG = comprar / NEUTRAL = esperar</td></tr>
+<tr><td><b>Confianza (z)</b></td><td>Seguridad de la prediccion</td><td>z>1.5=HIGH / z>0.75=MED / resto=LOW</td></tr>
+<tr><td><b>raw_pred</b></td><td>Prediccion cruda</td><td>Valor + = sube, valor - = baja</td></tr>
+</table></div>
+<div class=al><h3>OJO:</h3><p>Con IC bajo (como ahora ~0.015), <b>TODAS</b> las seniales seran LOW aunque el score sea 100. Eso no significa que la senial sea mala, solo que el modelo no esta en su mejor momento. Ve con cuidado.</p></div>
+</div></div>
+<div class=blk id=b3><div class=blkh><div class="blkn cgl">3</div><h2>METRICAS DEL MODELO (Boleta)</h2><span class="bdg bdg-m">heatmap_dashboard</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>Es la <b>boleta de calificaciones del profesor</b>. Te dice si el profesor acierta mas de lo que falla. Si el <b>IC (Information Coefficient)</b> es negativo, significa que el profesor da peores consejos que tirar una moneda al aire. En ese caso, <b>NO JUEGUES</b>.</p></div>
+<div class=bx><h3>5 METRICAS CLAVE:</h3><table class=tg>
+<tr><th>Metrica</th><th>Que mide</th><th>BUENO</th><th>REGULAR</th><th>MALO</th></tr>
+<tr><td><b>IC Medio</b></td><td>Prediccion vs realidad</td><td><span class=g>>0.04</span></td><td><span class=y>0.02-0.04</span></td><td><span class=r><0.02</span></td></tr>
+<tr><td><b>IR (Sharpe IC)</b></td><td>Consistencia del acierto</td><td><span class=g>>0.5</span></td><td><span class=y>0.2-0.5</span></td><td><span class=r><0.2</span></td></tr>
+<tr><td><b>Hit Rate</b></td><td>% de dias que acierta</td><td><span class=g>>55%</span></td><td><span class=y>50-55%</span></td><td><span class=r><50%</span></td></tr>
+<tr><td><b>IC Signif.</b></td><td>% IC estadisticamente real</td><td><span class=g>>30%</span></td><td><span class=y>10-30%</span></td><td><span class=r><10%</span></td></tr>
+<tr><td><b>IC_20d</b></td><td>IC de los ultimos 20 dias</td><td><span class=g>>0.02</span></td><td><span class=y>0-0.02</span></td><td><span class=r>Negativo</span></td></tr>
+</table></div>
+<div class=bx><h3>REGLA DE ORO:</h3><p><b>Si IC_20d < -0.01 durante 3 dias seguidos = PAUSAR TODAS LAS ENTRADAS.</b> El mercado cambio y el modelo ya no entiende lo que esta pasando. Espera a que IC_20d vuelva a positivo.</p></div>
+</div></div>
+<div class=blk id=b4><div class=blkh><div class="blkn cr">4</div><h2>PORTFOLIO Q5 (Cartera SxIV)</h2><span class="bdg bdg-m">heatmap_dashboard</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>De todos los alumnos con nota Q5 (los cracks), el sistema elige <b>cuanto dinero poner en cada uno</b> usando la formula <b>SxIV: Score x Inverse-Vol</b>. Mas nota = mas dinero. Mas volatilidad = menos dinero. Simple.</p></div>
+<div class=form>FORMULA: w<sub>i</sub> = score<sub>i</sub> / volatilidad<sub>i</sub>  (normalizado y capeado a 25%)</div>
+<div class=bx><h3>QUE VES:</h3><table class=tg>
+<tr><th>Dato</th><th>Significado</th></tr>
+<tr><td><b>HHI</b></td><td>Concentracion. 0.01 = muy diversificada, 0.25 = muy concentrada</td></tr>
+<tr><td><b>max_w</b></td><td>Peso maximo de una posicion. Tope 25%</td></tr>
+<tr><td><b>Portfolio Sharpe</b></td><td>Retorno / Riesgo de toda la cartera. >1.0 es bueno</td></tr>
+<tr><td><b>VaR 95%</b></td><td>Maxima perdida esperada en 1 dia (con 95% de confianza)</td></tr>
+</table></div>
+<div class=ej><h3>EJEMPLO:</h3><p>MU tiene score=100 y volatilidad=2.5% => peso = 100/2.5 = 40 (sin normalizar). PANW tiene score=99 y volatilidad=1.8% => peso = 99/1.8 = 55. PANW recibe mas capital porque es menos volatil aunque tiene 1 punto menos de score.</p></div>
+</div></div>
+<div class=blk id=b5><div class=blkh><div class="blkn cg">5</div><h2>SEMAFORO SPY (Mercado sano?)</h2><span class="bdg bdg-m">heatmap_dashboard</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>Antes de jugar al futbol, miras si <b>el campo esta en buenas condiciones</b>. Este semaforo mira el SPY (el mercado entero) y te dice: <b>VERDE = juega tranquilo, AMARILLO = cuidado, ROJO = mejor quedate en el banquillo</b>.</p></div>
+<div class=bx><h3>QUE VES:</h3><table class=tg>
+<tr><th>Indicador</th><th>VERDE (OK)</th><th>AMARILLO (Cuidado)</th><th>ROJO (No jugar)</th></tr>
+<tr><td><b>RSI(14)</b></td><td>30-70</td><td>20-30 o 70-80</td><td><20 o >80</td></tr>
+<tr><td><b>MACD</b></td><td>Histograma > 0 y subiendo</td><td>Histograma bajando pero >0</td><td>Histograma < 0</td></tr>
+<tr><td><b>Drawdown</b></td><td>< 5% desde maximo</td><td>5-10% desde maximo</td><td>> 10% desde maximo</td></tr>
+<tr><td><b>Precio vs MA50</b></td><td>Precio > MA50</td><td>Precio ~ MA50</td><td>Precio < MA50</td></tr>
+</table></div>
+<div class=al><h3>OJO:</h3><p><b>Si 3 de 4 indicadores estan en ROJO, reduce posiciones a la mitad.</b> Si los 4 estan en rojo, vender todo y esperar. El mercado esta en caida libre.</p></div>
+</div></div>
+<div class=blk id=b6><div class=blkh><div class="blkn cb">6</div><h2>TOP PREDICCIONES (Elegidos Q5)</h2><span class="bdg bdg-m">heatmap_dashboard</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>De los 307 alumnos de la clase, estos son <b>los 50 con mejores notas</b>. Pero ojo: de esos 50, solo entraran en cartera los primeros 7-20 (los que el dinero alcance a comprar con un minimo de 100 EUR por posicion).</p></div>
+<div class=bx><h3>QUE VES:</h3><table class=tg>
+<tr><th>Columna</th><th>Significado</th></tr>
+<tr><td><b>Ticker</b></td><td>Simbolo del activo (MU = Micron, FTNT = Fortinet)</td></tr>
+<tr><td><b>Score</b></td><td>Nota 0-100 del modelo</td></tr>
+<tr><td><b>z_score</b></td><td>Confianza estadistica (a mas alto, mas seguro)</td></tr>
+<tr><td><b>Sector</b></td><td>Tipo de empresa (Tech, Other, Health...)</td></tr>
+<tr><td><b>raw_pred</b></td><td>Cuanto % se espera que suba/baje en 5 dias</td></tr>
+</table></div>
+<div class=ej><h3>EJEMPLO:</h3><p>MU esta #1 con score=100 y z=4.87. Significa que el modelo tiene <b>maxima conviccion</b> en que MU va a subir en los proximos 5 dias. Por eso recibe el 12.8% del capital en la formula SxIV.</p></div>
+</div></div>
+<div class=blk id=b7><div class=blkh><div class="blkn cg">7</div><h2>CARTERA REAL CON SLIDER</h2><span class="bdg bdg-m">heatmap_dashboard</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>Tienes una <b>hucha con monedas</b> (tu capital). El slider te deja decidir cuantas monedas usar hoy. Si mueves el slider a 50, usas la mitad de tus monedas y las 7 posiciones se hacen mas pequenas. Si lo mueves a 200, usas el doble (con margen). <b>Cada posicion mantiene el mismo % del pastel, pero el pastel cambia de tamano.</b></p></div>
+<div class=bx><h3>CONTROLES:</h3><table class=tg>
+<tr><th>Control</th><th>Que hace</th></tr>
+<tr><td><b>Slider % Capital</b></td><td>Ajusta el capital total usado (50-200%)</td></tr>
+<tr><td><b>EUR/USD toggle</b></td><td>Cambia la moneda mostrada</td></tr>
+<tr><td><b>Columna Shares</b></td><td>Acciones exactas a comprar (fraccionables en IBKR)</td></tr>
+<tr><td><b>Columna EUR</b></td><td>Cuanto dinero va a esa posicion</td></tr>
+<tr><td><b>Columna Riesgo</b></td><td>Cuanto pierdes si salta el Stop Loss</td></tr>
+</table></div>
+</div></div>
+<div class=blk id=b8><div class=blkh><div class="blkn cp">8</div><h2>DASHBOARD DIARIO (Ordenes IBKR)</h2><span class="bdg bdg-d">dashboard_diario</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>Esta es <b>la lista de la compra</b>. El modelo ya decidio QUE comprar (top Q5) y CUANTO (formula SxIV). Tu solo tienes que <b>copiar estas ordenes en IBKR</b>. Es como cuando mama te da la lista del super: tu solo coges lo que dice la lista, no improvisas.</p></div>
+<div class=bx><h3>QUE VES:</h3><table class=tg>
+<tr><th>Columna</th><th>Significado</th><th>Ejemplo hoy</th></tr>
+<tr><td><b>Ticker</b></td><td>Simbolo en IBKR</td><td>MU, FTNT, DDOG</td></tr>
+<tr><td><b>Entrada (EUR)</b></td><td>Precio actual de mercado</td><td>Lo que pagas por accion</td></tr>
+<tr><td><b>Stop Loss</b></td><td>Precio de salida si sale mal</td><td>~2% debajo de entrada</td></tr>
+<tr><td><b>Take Profit</b></td><td>Precio de salida si sale bien</td><td>~4-12% encima de entrada</td></tr>
+<tr><td><b>Shares</b></td><td>Acciones exactas a comprar</td><td>Fraccionables (0.47, 1.12, etc.)</td></tr>
+<tr><td><b>EUR</b></td><td>Total invertido en esa posicion</td><td>~100 EUR por posicion (con 700 capital)</td></tr>
+<tr><td><b>Riesgo EUR</b></td><td>Perdida maxima si salta SL</td><td>~2-7 EUR por posicion</td></tr>
+</table></div>
+<div class=al><h3>OJO:</h3><p><b>Las acciones fraccionables FUNCIONAN en IBKR.</b> No redondees. Compra exactamente las shares que dice el dashboard. IBKR acepta 0.47 acciones de MU sin problema.</p></div>
+</div></div>
+<div class=blk id=b9><div class=blkh><div class="blkn cr">9</div><h2>OPERATIVA DIARIA (Rutina)</h2><span class="bdg bdg-d">ejecutar_diario.bat</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>Todos los dias hay que hacer <b>5 pasos, en orden</b>. Como lavarse los dientes: no puedes ponerte el pijama antes de cenar. Aqui tampoco: no puedes comprar sin mirar el semaforo, y no puedes vender sin mirar el IC.</p></div>
+<div class=st><div class=sn>1</div><div><h4>EJECUTAR EL MODELO (MANANA, antes de la apertura)</h4><p>Doble click en <b>ejecutar_diario.bat</b>. Tarda ~6-8 minutos. Genera CSVs y dashboards HTML. <b>NO hagas nada mas mientras corre.</b> Si falla, vuelve a ejecutar. Si falla 3 veces, escribe "fallo modelo" en tu diario de trading y no operes hoy.</p></div></div>
+<div class=st><div class=sn>2</div><div><h4>REVISAR EL SEMAFORO SPY</h4><p>Abre <b>heatmap_dashboard.html</b>. Mira el semaforo. VERDE (3+ verdes) = continuar. Si 3+ ROJOS = reducir posiciones a la mitad. Si 4 ROJOS = no operar hoy.</p></div></div>
+<div class=st><div class=sn>3</div><div><h4>REVISAR IC_20d</h4><p>En el mismo dashboard, busca <b>IC_20d</b>. Si es negativo 3 dias seguidos = PAUSAR. Si es positivo = continuar. Esta metrica te dice si el modelo "entiende" el mercado.</p></div></div>
+<div class=st><div class=sn>4</div><div><h4>EJECUTAR ORDENES EN IBKR</h4><p>Abre <b>dashboard_diario.html</b>. Ahi estan las ordenes BUY con precio exacto, SL, TP, y acciones. Copialas UNA A UNA en IBKR. Pon siempre <b>Stop Loss y Take Profit como ordenes OCO</b> (una cancela la otra).</p></div></div>
+<div class=st><div class=sn>5</div><div><h4>CIERRE DE POSICIONES (fin del dia)</h4><p>Ejecuta <b>python cierre_trade.py</b>. Revisa si alguna posicion abierta bajo de Q5 en la nueva ejecucion. Si bajo = vender manana en apertura. Si el SL salto = asumir perdida, no promediar. Si el TP llego = celebrar.</p></div></div>
+<div class=bx><h3>REGLAS DE ORO:</h3><p><b>SL fijo, no mover.</b> Si salta el stop, se asume la perdida.<br><b>TP fijo, no ser codicioso.</b> Si llega al TP, cierra. Beneficio 2:1 asegurado.<br><b>Re-ejecutar cada manana.</b> Lo que ayer era Q5 hoy puede ser Q3.<br><b>IC_20d negativo 3 dias = PAUSA.</b><br><b>SPY Drawdown > 10% = mitad de posiciones.</b></p></div>
+</div></div>
+<div class=blk id=b10><div class=blkh><div class="blkn cgl">10</div><h2>CODIGO DE COLORES (Visual)</h2><span class="bdg bdg-d">Ambos dashboards</span></div><div class=blkb>
+<div class=exp><h3>COMO SI TUVIERAS 8 ANIOS:</h3><p>Los colores son como los semaforos de trafico: <b>verde = puedes pasar, rojo = espera, amarillo = precaucion</b>. Una vez que memorizas los colores, leer el dashboard es instantaneo.</p></div>
+<div class=bx><h3>DICCIONARIO DE COLORES:</h3><table class=tg>
+<tr><th>Color</th><th>Significado</th><th>Ejemplo</th></tr>
+<tr><td><span class=g>VERDE</span></td><td>BUENO: comprar, Q5, ganancia, confianza HIGH</td><td>Semaforo verde, fila BUY</td></tr>
+<tr><td><span class=r>ROJO</span></td><td>MALO: evitar, Q1, perdida, riesgo</td><td>Semaforo rojo, Stop Loss</td></tr>
+<tr><td><span class=y>DORADO/AMARILLO</span></td><td>NEUTRAL: precaucion, Q3, MED</td><td>Semaforo amarillo</td></tr>
+<tr><td><span style=color:var(--accent)>CIAN/AZUL</span></td><td>Informativo: titulos, sistema</td><td>Titulos de secciones</td></tr>
+</table></div>
+<div class=bx><h3>BADGES:</h3><table class=tg>
+<tr><th>Badge</th><th>Significado</th></tr>
+<tr><td><span class="bdg bdg-m">heatmap_dashboard</span></td><td>Seccion en el dashboard de analisis (heatmap)</td></tr>
+<tr><td><span class="bdg bdg-d">dashboard_diario</span></td><td>Seccion en el dashboard de ordenes (diario)</td></tr>
+</table></div>
+</div></div><div class=ftr>
+Olympus Capital &middot; Hende Fund &middot; Guia v1.0 &middot; Junio 2026<br>
+Modelo: OLYMPUS_HEATMAP_REGRESSION_v7.0 &middot; Formula: SxIV (Score x Inverse-Vol)<br>
+Backtest OOS: +263% retorno anual &middot; IC Medio: ~0.015
+</div>
+
+</body></html>

@@ -2,35 +2,35 @@
 setlocal enabledelayedexpansion
 set "SCRIPT_DIR=C:\Users\marti\Desktop\PAPA\portfolio-navigator\Heatmap Regression"
 cd /d "%SCRIPT_DIR%"
-title OLYMPUS XTB - Daily Run
+title OLYMPUS v7.0 - Daily Run
 
 echo.
 echo ========================================
-echo   OLYMPUS XTB EDITION - Daily Execution
-echo   Model v5.0 + Screener v2.3
+echo   OLYMPUS v7.0 - Ejecucion Diaria
+echo   Modelo v7.0 + Screener
 echo ========================================
 echo.
 
-echo [1/3] Limpiando cache antigua...
+echo [1/4] Limpiando cache antigua...
 if exist ".screener_cache.pkl" del ".screener_cache.pkl" >nul 2>&1
 if exist "heatmap_cache.pkl" del "heatmap_cache.pkl" >nul 2>&1
 echo    OK Cache limpia
 echo.
 
-echo [2/3] Ejecutando modelo cuantitativo (N_FOLDS=5, modo swing)...
+echo [2/4] Ejecutando modelo cuantitativo v7 (modo swing, 700 EUR)...
 echo    Esto tarda ~5-10 minutos
 echo.
-python -X utf8 OLYMPUS_HEATMAP_REGRESSION_v5.py --mode swing
+python -X utf8 OLYMPUS_HEATMAP_REGRESSION_v7.py --mode swing --capital 700
 if errorlevel 1 (
     echo.
-    echo   ERROR: El modelo fallo. Revisa la consola.
+    echo   ERROR: El modelo v7 fallo. Revisa la consola.
     pause
     exit /b 1
 )
-echo    OK Modelo completado
+echo    OK Modelo v7 completado
 echo.
 
-echo [3/3] Ejecutando screener de senales...
+echo [3/4] Ejecutando screener de senales...
 python -X utf8 olympus_screener.py
 if errorlevel 1 (
     echo.
@@ -41,13 +41,18 @@ if errorlevel 1 (
 echo    OK Screener completado
 echo.
 
-echo OK Todo listo. Abriendo dashboard...
-start "" "oportunidades.html"
+echo [4/4] Generando dashboard...
+python -X utf8 generar_dashboard.py --capital 700 --open
+echo    OK Dashboard abierto
 echo.
+
 echo ========================================
 echo   Proceso completado con exito.
-echo   Si hay senales, aparecen en el dashboard.
-echo   Si no hay senales, 100%% en IBCZ/IS3Q.
+echo   Archivos generados:
+echo     - heatmap_dashboard.html
+echo     - predictions.csv
+echo     - portfolio_q5.csv
+echo     - ibkr_orders.csv
 echo ========================================
 echo.
 

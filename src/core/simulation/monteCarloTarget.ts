@@ -12,6 +12,10 @@
 //   3. Calcular CVaR del peor 5%
 //   4. Optimizar asignación para maximizar P(target) con CVaR < límite
 //
+// FIX-MULTIVAR: ahora soporta simulación multivariante (vector μ + matriz Σ)
+// además del modo univariante legacy. El modo multivariante modela la cartera
+// como combinación de activos correlacionados usando descomposición de Cholesky.
+//
 // REFERENCIAS:
 //   - Merton (1976): Option pricing when underlying returns are discontinuous
 //   - Glasserman (2004): Monte Carlo Methods in Financial Engineering
@@ -420,5 +424,173 @@ export function optimizeAllocationForTarget(
     bestProbability: best.probability,
     bestCVaR: best.cvar,
     allResults: results,
+  };
+}
+
+// ===============================================
+// MULTIVARIATE MONTE CARLO (FIX-MULTIVAR)
+// ===============================================
+// Simula N activos correlacionados usando descomposición de Cholesky.
+// A diferencia del modo univariante (single expectedReturn + volatility),
+// este modelo captura la estructura de correlación real del portfolio:
+//   r_i = μ_i·dt + Σ^(1/2)·ε·√dt + jumps
+// donde Σ^(1/2) es la raíz de Cholesky de la matriz de covarianza.
+
+export interface MultivariateMCInput {
+  expectedReturns: number[];   // vector μ anualizado (ej: [0.15, 0.08, 0.11])
+  volatilities: number[];       // vector σ anualizado (ej: [0.60, 0.18, 0.22])
+  covMatrix: number[][];        // matriz Σ anualizada (N×N)
+  weights: number[];            // pesos del portfolio
+  initialCapital: number;
+  monthlyContribution: number;
+  years: number;
+  simulations?: number;        // default: 10.000
+  jumpIntensity?: number;
+  jumpMean?: number;
+  jumpStd?: number;
+}
+
+export interface MultivariateMCResult {
+  finalValues: number[];
+  portfolioReturns: number[];   // retorno total por simulación
+  meanFinalValue: number;
+  medianFinalValue: number;
+  p10: number;
+  p25: number;
+  p75: number;
+  p90: number;
+  var95: number;
+  cvar95: number;
+  cvar95Percent: number;
+  maxDrawdownMean: number;
+  sharpeEstimate: number;
+}
+
+/**
+ * Descomposición de Cholesky: Σ = L·L^T
+ * Retorna L (triangular inferior) tal que L·z ~ N(0, Σ) para z ~ N(0, I).
+ */
+function choleskyDecomposition(matrix: number[][]): number[][] {
+  const n = matrix.length;
+  const L: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = 0;
+      for (let k = 0; k < j; k++) {
+        sum += L[i][k] * L[j][k];
+      }
+      if (i === j) {
+        L[i][j] = Math.sqrt(Math.max(0, matrix[i][i] - sum));
+      } else {
+        L[i][j] = (matrix[i][j] - sum) / Math.max(1e-16, L[j][j]);
+      }
+    }
+  }
+  return L;
+}
+
+/**
+ * Simulación Monte Carlo multivariante con Jump Diffusion.
+ * Modela la cartera como combinación de N activos correlacionados.
+ */
+export function runMultivariateMonteCarlo(input: MultivariateMCInput): MultivariateMCResult {
+  const {
+    expectedReturns,
+    volatilities,
+    covMatrix,
+    weights,
+    initialCapital,
+    monthlyContribution,
+    years,
+    simulations = 10000,
+    jumpIntensity = 1.0,
+    jumpMean = -0.05,
+    jumpStd = 0.10,
+  } = input;
+
+  const n = expectedReturns.length;
+  const months = years * 12;
+  const dt = 1 / 12;
+  const totalInvested = initialCapital + monthlyContribution * months;
+
+  // Descomposición de Cholesky de la matriz de covarianza
+  const chol = choleskyDecomposition(covMatrix);
+
+  const finalValues: number[] = [];
+  const portfolioReturns: number[] = [];
+  const maxDrawdowns: number[] = [];
+
+  for (let sim = 0; sim < simulations; sim++) {
+    let value = initialCapital;
+    let peak = initialCapital;
+    let maxDD = 0;
+
+    for (let m = 0; m < months; m++) {
+      value += monthlyContribution;
+      if (value > peak) peak = value;
+
+      let portfolioRet = 0;
+      for (let i = 0; i < n; i++) {
+        // Generar shocks correlacionados vía Cholesky
+        let shock = 0;
+        for (let j = 0; j <= i; j++) {
+          shock += chol[i][j] * randomNormal();
+        }
+
+        // Jump diffusion por activo
+        const drift = (expectedReturns[i] - 0.5 * volatilities[i] * volatilities[i]) * dt;
+        const diffusion = volatilities[i] * Math.sqrt(dt) * shock;
+        const jumpOccurred = Math.random() < (1 - Math.exp(-jumpIntensity * dt));
+        const jump = jumpOccurred ? jumpMean + jumpStd * randomNormal() : 0;
+
+        // Retorno compuesto del activo i este mes
+        const assetRet = Math.expm1(drift + diffusion + jump);
+        portfolioRet += weights[i] * assetRet;
+      }
+
+      value *= (1 + portfolioRet);
+
+      const dd = (value - peak) / peak;
+      if (dd < maxDD) maxDD = dd;
+    }
+
+    finalValues.push(value);
+    portfolioReturns.push(value / totalInvested - 1);
+    maxDrawdowns.push(maxDD);
+  }
+
+  finalValues.sort((a, b) => a - b);
+
+  const mean = finalValues.reduce((a, b) => a + b, 0) / simulations;
+  const median = finalValues[Math.floor(simulations * 0.50)];
+
+  // CVaR 95% sobre el capital total
+  const varIdx = Math.floor(simulations * 0.05);
+  const var95 = finalValues[varIdx];
+  const tail = finalValues.slice(0, varIdx + 1);
+  const cvar95 = tail.length > 0 ? tail.reduce((a, b) => a + b, 0) / tail.length : var95;
+  const cvar95Percent = totalInvested > 0 ? (totalInvested - cvar95) / totalInvested : 0;
+
+  // Sharpe estimado (sobre retornos simulados)
+  const retMean = portfolioReturns.reduce((a, b) => a + b, 0) / portfolioReturns.length;
+  const retVar = portfolioReturns.reduce((s, r) => s + (r - retMean) ** 2, 0) / portfolioReturns.length;
+  const retStd = Math.sqrt(retVar);
+  const sharpeEstimate = retStd > 0 ? (retMean / years - 0.04) / (retStd / Math.sqrt(years)) : 0;
+
+  return {
+    finalValues,
+    portfolioReturns,
+    meanFinalValue: mean,
+    medianFinalValue: median,
+    p10: finalValues[Math.floor(simulations * 0.10)],
+    p25: finalValues[Math.floor(simulations * 0.25)],
+    p75: finalValues[Math.floor(simulations * 0.75)],
+    p90: finalValues[Math.floor(simulations * 0.90)],
+    var95,
+    cvar95,
+    cvar95Percent,
+    maxDrawdownMean: maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length,
+    sharpeEstimate,
   };
 }

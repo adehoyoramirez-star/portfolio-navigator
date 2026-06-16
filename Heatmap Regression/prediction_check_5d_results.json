@@ -1,0 +1,142 @@
+{
+  "prediction_date": "2026-06-10",
+  "check_date": "2026-06-17",
+  "spy_return": 0.0,
+  "results": [
+    {
+      "ticker": "CRWD",
+      "score": 100.0,
+      "confidence": "HIGH",
+      "entry": 647.91,
+      "end": 647.91,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "PANW",
+      "score": 99.8,
+      "confidence": "HIGH",
+      "entry": 263.83,
+      "end": 263.83,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "FTNT",
+      "score": 99.6,
+      "confidence": "HIGH",
+      "entry": 138.82,
+      "end": 138.82,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "DDOG",
+      "score": 99.4,
+      "confidence": "HIGH",
+      "entry": 226.92,
+      "end": 226.92,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "MU",
+      "score": 99.3,
+      "confidence": "HIGH",
+      "entry": 891.13,
+      "end": 891.13,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "HPQ",
+      "score": 99.1,
+      "confidence": "HIGH",
+      "entry": 24.94,
+      "end": 24.94,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "HPE",
+      "score": 98.9,
+      "confidence": "HIGH",
+      "entry": 45.69,
+      "end": 45.69,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "GLW",
+      "score": 98.7,
+      "confidence": "HIGH",
+      "entry": 168.49,
+      "end": 168.49,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "FSLR",
+      "score": 98.5,
+      "confidence": "HIGH",
+      "entry": 249.85,
+      "end": 249.85,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "NOW",
+      "score": 98.3,
+      "confidence": "HIGH",
+      "entry": 108.06,
+      "end": 108.06,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "DELL",
+      "score": 98.1,
+      "confidence": "HIGH",
+      "entry": 381.11,
+      "end": 381.11,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "LITE",
+      "score": 97.9,
+      "confidence": "HIGH",
+      "entry": 832.07,
+      "end": 832.07,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "BBY",
+      "score": 97.8,
+      "confidence": "HIGH",
+      "entry": 75.76,
+      "end": 75.76,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "CIEN",
+      "score": 97.6,
+      "confidence": "HIGH",
+      "entry": 429.03,
+      "end": 429.03,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    },
+    {
+      "ticker": "MGM",
+      "score": 97.4,
+      "confidence": "HIGH",
+      "entry": 46.75,
+      "end": 46.75,
+      "return": 0.0,
+      "alpha_vs_spy": 0.0
+    }
+  ]
+}

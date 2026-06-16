@@ -1,0 +1,241 @@
+{
+  "ticker": "SPY",
+  "years": 10,
+  "best_params": {
+    "cooldown": 2,
+    "time_stop": 8,
+    "risk_pct": 2.0
+  },
+  "best_metrics": {
+    "sharpe": 0.443,
+    "wr": 60.9,
+    "pf": 1.13,
+    "np": 1389,
+    "mdd": 6.7,
+    "total": 23
+  },
+  "top10": [
+    {
+      "cooldown": 2,
+      "time_stop": 8,
+      "risk_pct": 2.0,
+      "sharpe": 0.443,
+      "wr": 60.9,
+      "pf": 1.13,
+      "np": 1389,
+      "total": 23,
+      "mdd": 6.7,
+      "tp1r": 30.4,
+      "avg_bars": 8.0
+    },
+    {
+      "cooldown": 2,
+      "time_stop": 8,
+      "risk_pct": 0.5,
+      "sharpe": 0.436,
+      "wr": 60.9,
+      "pf": 1.18,
+      "np": 344,
+      "total": 23,
+      "mdd": 1.7,
+      "tp1r": 30.4,
+      "avg_bars": 8.0
+    },
+    {
+      "cooldown": 2,
+      "time_stop": 8,
+      "risk_pct": 1.0,
+      "sharpe": 0.432,
+      "wr": 60.9,
+      "pf": 1.14,
+      "np": 691,
+      "total": 23,
+      "mdd": 3.5,
+      "tp1r": 30.4,
+      "avg_bars": 8.0
+    },
+    {
+      "cooldown": 2,
+      "time_stop": 8,
+      "risk_pct": 1.5,
+      "sharpe": 0.431,
+      "wr": 60.9,
+      "pf": 1.12,
+      "np": 1027,
+      "total": 23,
+      "mdd": 5.2,
+      "tp1r": 30.4,
+      "avg_bars": 8.0
+    },
+    {
+      "cooldown": 5,
+      "time_stop": 8,
+      "risk_pct": 2.0,
+      "sharpe": 0.379,
+      "wr": 61.9,
+      "pf": 1.09,
+      "np": 1158,
+      "total": 21,
+      "mdd": 6.9,
+      "tp1r": 28.6,
+      "avg_bars": 8.2
+    },
+    {
+      "cooldown": 5,
+      "time_stop": 8,
+      "risk_pct": 0.5,
+      "sharpe": 0.373,
+      "wr": 61.9,
+      "pf": 1.14,
+      "np": 286,
+      "total": 21,
+      "mdd": 1.7,
+      "tp1r": 28.6,
+      "avg_bars": 8.2
+    },
+    {
+      "cooldown": 5,
+      "time_stop": 8,
+      "risk_pct": 1.0,
+      "sharpe": 0.369,
+      "wr": 61.9,
+      "pf": 1.11,
+      "np": 576,
+      "total": 21,
+      "mdd": 3.5,
+      "tp1r": 28.6,
+      "avg_bars": 8.2
+    },
+    {
+      "cooldown": 5,
+      "time_stop": 8,
+      "risk_pct": 1.5,
+      "sharpe": 0.367,
+      "wr": 61.9,
+      "pf": 1.09,
+      "np": 854,
+      "total": 21,
+      "mdd": 5.3,
+      "tp1r": 28.6,
+      "avg_bars": 8.2
+    },
+    {
+      "cooldown": 7,
+      "time_stop": 8,
+      "risk_pct": 2.0,
+      "sharpe": 0.366,
+      "wr": 61.9,
+      "pf": 1.07,
+      "np": 1125,
+      "total": 21,
+      "mdd": 6.9,
+      "tp1r": 28.6,
+      "avg_bars": 8.1
+    },
+    {
+      "cooldown": 3,
+      "time_stop": 8,
+      "risk_pct": 2.0,
+      "sharpe": 0.359,
+      "wr": 56.5,
+      "pf": 0.99,
+      "np": 1128,
+      "total": 23,
+      "mdd": 7.2,
+      "tp1r": 30.4,
+      "avg_bars": 8.3
+    }
+  ],
+  "sensitivity": {
+    "cooldown": {
+      "2": {
+        "mean": 0.323,
+        "std": 0.067,
+        "max": 0.443,
+        "min": 0.241
+      },
+      "3": {
+        "mean": 0.249,
+        "std": 0.065,
+        "max": 0.359,
+        "min": 0.17
+      },
+      "5": {
+        "mean": 0.264,
+        "std": 0.068,
+        "max": 0.379,
+        "min": 0.18
+      },
+      "7": {
+        "mean": 0.225,
+        "std": 0.101,
+        "max": 0.366,
+        "min": 0.056
+      },
+      "10": {
+        "mean": 0.204,
+        "std": 0.078,
+        "max": 0.295,
+        "min": 0.056
+      }
+    },
+    "time_stop": {
+      "5": {
+        "mean": 0.304,
+        "std": 0.025,
+        "max": 0.357,
+        "min": 0.283
+      },
+      "8": {
+        "mean": 0.342,
+        "std": 0.081,
+        "max": 0.443,
+        "min": 0.189
+      },
+      "10": {
+        "mean": 0.158,
+        "std": 0.083,
+        "max": 0.275,
+        "min": 0.056
+      },
+      "15": {
+        "mean": 0.205,
+        "std": 0.032,
+        "max": 0.255,
+        "min": 0.167
+      },
+      "20": {
+        "mean": 0.256,
+        "std": 0.029,
+        "max": 0.319,
+        "min": 0.232
+      }
+    },
+    "risk_pct": {
+      "0.5": {
+        "mean": 0.25,
+        "std": 0.089,
+        "max": 0.436,
+        "min": 0.056
+      },
+      "1.0": {
+        "mean": 0.251,
+        "std": 0.086,
+        "max": 0.432,
+        "min": 0.06
+      },
+      "1.5": {
+        "mean": 0.251,
+        "std": 0.086,
+        "max": 0.431,
+        "min": 0.062
+      },
+      "2.0": {
+        "mean": 0.261,
+        "std": 0.086,
+        "max": 0.443,
+        "min": 0.072
+      }
+    }
+  }
+}

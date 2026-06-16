@@ -284,15 +284,25 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   const engineCumRet = engineReturns.reduce((acc, r) => acc * (1 + r), 1);
   const benchmarkCumRet = benchmarkReturns.reduce((acc, r) => acc * (1 + r), 1);
 
-  // FIX: Usar wall-clock time con un mínimo basado en el número de puntos.
-  // Si hay winddowSize snapshots, asumimos que cada una representa al menos
-  // medio día de trading. Esto evita anualización explosiva cuando las
-  // snapshots se registran en minutos/horas (ej. al abrir el dashboard).
-  const minYears = Math.max(windowSize / 504, 21 / 252); // min ~21 días o windowSize/504
-  const effectiveYears = Math.max(actualYears, minYears);
+  // FIX-BENCH-01: El floor anterior (windowSize / 504) trataba cada snapshot como
+  // 0.5 días de trading. Pero las snapshots se graban cada ~60s (live monitor).
+  //   → 500 snapshots en 1 semana → effectiveYears = 500/504 = 0.99 años
+  //   → CAGR = benchCumRet^(1/0.99) → anualiza 1 semana como 1 año → explosión.
+  // CORRECCIÓN: Usar wall-clock time real con un floor mínimo de 30 días
+  // (MIN_BENCHMARK_YEARS). Sin floor falso basado en número de snapshots.
+  // Si el periodo real es < 30 días, no se calcula CAGR (datos insuficientes).
+  const MIN_BENCHMARK_YEARS = 30 / 365.25; // ~1 mes mínimo para CAGR fiable
+  const effectiveYears = Math.max(actualYears, MIN_BENCHMARK_YEARS);
 
-  const engineCagr3m = Math.pow(Math.max(0.001, engineCumRet), 1 / effectiveYears) - 1;
-  const benchmarkCagr3m = Math.pow(Math.max(0.001, benchmarkCumRet), 1 / effectiveYears) - 1;
+  // Si tenemos < 30 días de datos reales, no anualizamos — mostramos retorno simple
+  const hasEnoughData = actualYears >= MIN_BENCHMARK_YEARS;
+
+  const engineCagr3m = hasEnoughData
+    ? Math.pow(Math.max(0.001, engineCumRet), 1 / effectiveYears) - 1
+    : engineCumRet - 1; // retorno simple (no anualizado) si < 30 días
+  const benchmarkCagr3m = hasEnoughData
+    ? Math.pow(Math.max(0.001, benchmarkCumRet), 1 / effectiveYears) - 1
+    : benchmarkCumRet - 1;
 
   const cleanEngineCagr = isFinite(engineCagr3m) ? engineCagr3m : 0;
   const cleanBenchmarkCagr = isFinite(benchmarkCagr3m) ? benchmarkCagr3m : 0;
@@ -329,11 +339,12 @@ export function getBenchmarkStatus(): BenchmarkStatus {
     : 0;
 
   // ── Mensaje legible ──────────────────────────────────────────
+  const periodLabel = hasEnoughData ? "anualizado en rolling 3m" : `retorno simple (${Math.round(actualYears * 365)} días de datos)`;
   let message: string;
   if (underperformanceAlert) {
-    message = `🔴 ALERTA: Motor underperformando benchmark 60/40 por ${Math.abs(outperformance * 100).toFixed(2)}% anualizado en rolling 3m. Revisar configuraciones.`;
+    message = `🔴 ALERTA: Motor underperformando benchmark 60/40 por ${Math.abs(outperformance * 100).toFixed(2)}% ${periodLabel}. Revisar configuraciones.`;
   } else if (outperformance > 0.02) {
-    message = `🟢 Motor superando benchmark 60/40 por ${(outperformance * 100).toFixed(2)}% anualizado en rolling 3m.`;
+    message = `🟢 Motor superando benchmark 60/40 por ${(outperformance * 100).toFixed(2)}% ${periodLabel}.`;
   } else if (outperformance > -0.02) {
     message = `🟡 Motor en línea con benchmark 60/40 (diferencia: ${(outperformance * 100).toFixed(2)}%).`;
   } else {

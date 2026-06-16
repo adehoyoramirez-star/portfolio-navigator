@@ -1,0 +1,99 @@
+{
+  "prediction_date": "2026-06-10",
+  "check_date": "2026-06-17",
+  "check_day": "Wednesday",
+  "horizon": "5 trading days",
+  "model_ic_mean": null,
+  "top_picks": [
+    {
+      "ticker": "CRWD",
+      "score": 100.0,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "PANW",
+      "score": 99.8,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "FTNT",
+      "score": 99.6,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "DDOG",
+      "score": 99.4,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "MU",
+      "score": 99.3,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "HPQ",
+      "score": 99.1,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "HPE",
+      "score": 98.9,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "GLW",
+      "score": 98.7,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "FSLR",
+      "score": 98.5,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "NOW",
+      "score": 98.3,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "DELL",
+      "score": 98.1,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "LITE",
+      "score": 97.9,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "BBY",
+      "score": 97.8,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "CIEN",
+      "score": 97.6,
+      "quintile": 5,
+      "confidence": "HIGH"
+    },
+    {
+      "ticker": "MGM",
+      "score": 97.4,
+      "quintile": 5,
+      "confidence": "HIGH"
+    }
+  ]
+}

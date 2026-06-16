@@ -30,7 +30,9 @@ show_oversold  = input.bool(true,  "OVERSOLD BOUNCE",     group="SENALES")
 show_sector    = input.bool(true,  "SECTOR ROTATION",     group="SENALES")
 show_stops     = input.bool(true,  "Mostrar Stop Loss/TPs", group="NIVELES")
 show_entry     = input.bool(true,  "Zona entrada RSI(2)", group="NIVELES")
-min_exec_score = input.int(55, "Execution Score minimo", 0, 100, group="FILTROS")
+show_blocked   = input.bool(true,  "Mostrar senales bloqueadas", group="NIVELES")
+entry_flex     = input.bool(true,  "Entry flexible RSI2 50-75", group="NIVELES", tooltip="Si activo, la zona de entrada se expande de 60-75 a 50-75")
+min_exec_score = input.int(45, "Execution Score minimo", 0, 100, group="FILTROS")
 
 // ── OLYMPUS HYBRID (desde Python v5.1 Heatmap Regression) ────
 // Introduce el score cross-seccional del modelo Python para ver
@@ -91,7 +93,7 @@ rs_vs_sector = (close[126] > 0 and sector_close[126] > 0) ?
 rs_vs_spy = (close[252] > 0 and spy_close[252] > 0) ?
      (close / close[252]) / (spy_close / spy_close[252]) : 1.0
 
-min_rs_spy     = input.float(0.85, "RS vs SPY minimo",    0.5, 1.5, step=0.01, group="FILTROS")
+min_rs_spy     = input.float(0.80, "RS vs SPY minimo",    0.5, 1.5, step=0.01, group="FILTROS")
 min_rs_sector  = input.float(0.90, "RS vs Sector minimo", 0.5, 1.5, step=0.01, group="FILTROS")
 min_dollar_vol = input.float(0, "Dollar Vol min (M)", 0, 10000, step=1, group="FILTROS", tooltip="0=sin filtro. Ej: 20 = 20M$")
 max_gap_pct    = input.float(5, "Max Gap % entrada", 0, 50, step=0.5, group="FILTROS", tooltip="0=sin filtro")
@@ -295,18 +297,18 @@ passes_gap       = gap_pct <= max_gap_pct or max_gap_pct <= 0
 passes_all       = passes_filter and (regime_override_ok or regime_ok) and passes_rs_spy and passes_rs_sector and not exhaustion_block and passes_liquidity and passes_gap and passes_mtf and passes_olympus_filter
 
 // ── STOP LOSS / TAKE PROFITS ─────────────────────────────────
-stop_loss  = close - atr14 * 2.0
+stop_loss  = close - atr14 * 1.8
 
-min_rr     = (blood_active or mean_active or ov_active) ? 1.5 : 2.0
-tp1_mult   = atrPct >= 0.04 ? 2.0 : atrPct >= 0.02 ? 2.0 : atrPct >= 0.008 ? 1.8 : 1.5
-tp2_mult   = atrPct >= 0.04 ? 4.5 : atrPct >= 0.02 ? 3.2 : atrPct >= 0.008 ? 2.8 : 2.2
+min_rr     = 1.2
+tp1_mult   = 1.5
+tp2_mult   = 2.5
 
-// FIX-3 + FIX-5 (sizing): consolidada en una sola variable `risk`
-// Original: existían `risk` y `trade_risk` calculando lo mismo
-// Corregido: todo usa `risk`. R:R compuesto: 60% peso TP1 + 40% peso TP2
-risk = math.max(close * 0.01, close - stop_loss)
-tp1  = close + risk * tp1_mult
-tp2  = close + risk * tp2_mult
+// FIX-7: SL/TP ajustados para targets alcanzables en swing trading
+// risk = atr14 * 1.8 (no mas min 1% del precio)
+// tp1_mult=1.5, tp2_mult=2.5 (reducidos desde 2.0-4.5)
+risk      = math.max(close * 0.01, close - stop_loss)  // min 1% precio, normalmente atr14*1.8
+tp1       = close + risk * tp1_mult
+tp2       = close + risk * tp2_mult
 
 // FIX-3: R:R compuesto ponderado — expectativa real del trade
 rr_tp1 = risk > 0 ? (tp1 - close) / risk : 0
@@ -315,10 +317,16 @@ rr     = rr_tp1 * 0.6 + rr_tp2 * 0.4
 rr_ok  = n_active > 0 and passes_all and rr >= min_rr
 
 // ── ENTRY TIMING ─────────────────────────────────────────────
-entry_go    = rsi2 >= 60 and rsi2 <= 75
+// Entry timing: reversiones (BLOOD/MEAN_REV/OVERSOLD) entran en RSI2 15-50
+// MOMENTUM/SECTOR_ROT siguen zona estándar (50-75 o 60-75 según modo)
+reversion_signal = blood_active or mean_active or ov_active
+entry_go_reversion = reversion_signal and rsi2 >= 15 and rsi2 <= 50
+entry_go_normal    = rsi2 >= 50 and rsi2 <= 75
+
+entry_go    = entry_flex ? (entry_go_normal or entry_go_reversion) : (rsi2 >= 60 and rsi2 <= 75)
 entry_hot   = rsi2 > 75 and rsi2 <= 85
 entry_ext   = rsi2 > 85
-entry_cold  = rsi2 < 60
+entry_cold  = not entry_go and not entry_hot and not entry_ext
 
 // ── POSITION SIZING ──────────────────────────────────────────
 account_size = input.float(10000, "Capital (€)", 100, 10000000, step=100, group="POSICION")
@@ -436,10 +444,14 @@ fill(bbU, bbL, color=color.new(color.blue, 93))
 plotshape(show_blood    and blood_active and passes_all, "BLOOD", style=shape.triangleup, location=location.belowbar, color=color.rgb(220,38,38), size=size.normal, text="BLOOD")
 plotshape(show_blood    and blood_active and not passes_all, "", style=shape.triangleup, location=location.belowbar, color=color.new(color.red, 80), size=size.tiny, text="x")
 plotshape(show_mean     and mean_active  and passes_all, "MR",   style=shape.circle,     location=location.belowbar, color=color.rgb(234,88,12), size=size.normal, text="MR")
+plotshape(show_blocked  and mean_active  and not passes_all, "MR_BLOQ", style=shape.circle, location=location.belowbar, color=color.new(color.gray,50), size=size.tiny, text="MR❌")
 plotshape(show_momentum and mom_active   and passes_all, "MOM",  style=shape.arrowup,    location=location.abovebar, color=color.rgb(34,197,94), size=size.normal, text="MOM")
 plotshape(show_momentum and mom_active   and rally_exhausted, "AGOT", style=shape.triangledown, location=location.abovebar, color=color.rgb(234,179,8), size=size.small, text="AGOT")
+plotshape(show_blocked  and mom_active   and not passes_all and not rally_exhausted, "MOM_BLOQ", style=shape.arrowup, location=location.abovebar, color=color.new(color.gray,50), size=size.tiny, text="MOM❌")
 plotshape(show_oversold and ov_active    and passes_all, "OB",   style=shape.diamond,    location=location.belowbar, color=color.rgb(6,182,212), size=size.small, text="OB")
+plotshape(show_blocked  and ov_active    and not passes_all, "OB_BLOQ", style=shape.diamond, location=location.belowbar, color=color.new(color.gray,50), size=size.tiny, text="OB❌")
 plotshape(show_sector   and sec_active   and passes_all, "SR",   style=shape.square,     location=location.belowbar, color=color.rgb(59,130,246), size=size.small, text="SR")
+plotshape(show_blocked  and sec_active   and not passes_all, "SR_BLOQ", style=shape.square, location=location.belowbar, color=color.new(color.gray,50), size=size.tiny, text="SR❌")
 
 any_signal = n_active > 0 and passes_all
 
@@ -549,7 +561,7 @@ if barstate.islast
     table.cell(t,2,12,passes_rs_sector?"OK":"<"+str.tostring(min_rs_sector), text_color=passes_rs_sector?color.green:color.red)
 
     // R:R compuesto
-    rrc = rr>=min_rr?color.green:rr>=1.2?color.yellow:color.red
+    rrc = rr>=min_rr?color.green:rr>=0.8?color.yellow:color.red
     table.cell(t,0,13,"R:R (comp.)", text_color=rrc)
     table.cell(t,1,13,str.tostring(math.round(rr*10)/10), text_color=rrc)
     table.cell(t,2,13,rr_ok?"OK":"NO", text_color=rr_ok?color.green:color.red)
@@ -561,11 +573,13 @@ if barstate.islast
     table.cell(t,2,14,rally_exhausted?"BLOQ":"OK", text_color=rally_exhausted?color.red:color.green)
 
     // RSI(2) Entry
-    etxt = entry_ext?"EXTREME":entry_hot?"TOO HOT":entry_go?"CONFIRMED":"EARLY"
-    ecol = entry_go?color.green:entry_hot or entry_ext?color.red:color.yellow
+    entry_status = entry_flex ?
+         (entry_ext ? "EXTREME" : entry_hot ? "HOT" : entry_go ? "OK" : "COLD") :
+         (entry_ext ? "EXTREME" : entry_hot ? "TOO HOT" : entry_go ? "CONFIRMED" : "EARLY")
+    ecol = entry_go ? color.green : entry_hot or entry_ext ? color.red : color.orange
     table.cell(t,0,15,"RSI(2)", text_color=ecol)
     table.cell(t,1,15,str.tostring(math.round(rsi2)), text_color=ecol)
-    table.cell(t,2,15,etxt, text_color=ecol)
+    table.cell(t,2,15,entry_status, text_color=ecol)
 
     // Posicion (usa valores efectivos: real si activo, auto si no)
     pc  = eff_in_pos ? color.green : color.gray

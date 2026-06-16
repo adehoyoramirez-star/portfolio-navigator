@@ -2314,7 +2314,7 @@ soxRsiWeekly,
             <div>
               <label style={styles.label}>
                 λ Portfolio (jumps/año)
-                <span style={{ fontSize: "0.6rem", color: "#ef4444", display: "block" }}>● modo univariante</span>
+                <span style={{ fontSize: "0.6rem", color: "#ef4444", display: "block" }}>● {marketData?.covMatrix ? "multivariante (Cholesky activo)" : "modo univariante"}</span>
               </label>
               <input type="number" value={jumpIntensityPortfolio}
                 onChange={(e) => setJumpIntensityPortfolio(Math.max(0, Math.min(5, Number(e.target.value))))}
@@ -3202,14 +3202,9 @@ soxRsiWeekly,
                 <strong>{a.name.replace('.DE', '')}</strong> {(a.finalAllocation * 100).toFixed(1)}%
               </span>
             ))}
-            <span style={{ color: "#fbbf24" }}><strong>Cash (cuenta)</strong> {(cashReserve / Math.max(1, totalPortfolioValue) * 100).toFixed(1)}%</span>
-            <span style={{ color: "#f97316" }}><strong>Cash retenido por motor</strong> {engineResult
-                ? (Math.max(0, 1 - engineResult.totalAllocation - cashReserve / Math.max(1, totalPortfolioValue)) * 100).toFixed(1)
-                : 0}%</span>
-            <span style={{ color: "#34d399" }}><strong>Total invertido</strong> {engineResult
-                ? (engineResult.totalAllocation * 100).toFixed(1)
-                : 0}%</span>
-            <span style={{ color: "#9ca3af", fontWeight: "bold" }}>Σ 100%</span>
+            <span style={{ color: "#fbbf24" }}><strong>Cash (cuenta)</strong> {formatCurrency(cashReserve)} · {(cashReserve / Math.max(1, totalPortfolioValue + cashReserve) * 100).toFixed(1)}% del patrimonio</span>
+            <span style={{ color: "#34d399" }}><strong>Motor:</strong> {((engineResult?.totalInvested ?? 0) * 100).toFixed(1)}% a invertir · {(Math.max(0, 1 - (engineResult?.totalInvested ?? 0)) * 100).toFixed(1)}% a retener</span>
+            <span style={{ color: "#9ca3af", fontSize: "0.6rem" }}>Los % de activos son sobre el tramo invertido (Σ dentro del motor)</span>
           </div>
         </div>
 

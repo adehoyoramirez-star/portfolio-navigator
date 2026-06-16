@@ -16,6 +16,26 @@ MAX_WORKERS = 6
 
 ETFS = {"TLT","AGG","LQD","HYG","SPY","QQQ","IWM","DIA","EFA","EEM","EWJ","EWZ","FXI","VGK","IEUR","MDY","XLI","XLK","XLY","XLE","XLB","XLF","XLV","XLU","XLP","XLRE","XLC","DBC","USO","SLV","GLD"}
 
+# Sector ETFs para RS vs Sector filter
+SECTOR_ETF_MAP = {
+    "XLK": ["AAPL","MSFT","NVDA","AVGO","CSCO","INTC","AMD","QCOM","TXN","AMAT","KLAC","LRCX","ADI","MCHP","SMCI","ANET","NTAP","PSTG","WDC","MU","STX","DELL","CIEN","HPE","FTNT","PANW","CRWD","ZS","OKTA","GOOGL","GOOG","META","CRM","ADBE","ORCL","IBM","NOW","SAP"],
+    "XLV": ["UNH","JNJ","PFE","ABBV","MRK","TMO","ABT","BMY","LLY","DHR","ISRG","SYK","BSX","BDX","ZTS","CI","CVS","HUM","MDT","ALGN","DXCM","PODD"],
+    "XLF": ["JPM","BAC","WFC","C","GS","MS","BLK","SCHW","AXP","V","MA","PYPL","SQ","COIN","IBKR","JPM","BRK.B","BX"],
+    "XLY": ["AMZN","TSLA","HD","MCD","NKE","SBUX","LOW","BKNG","CMG","MAR","HLT","F","GM","DAL","UAL","AAL","TSCO","ROST","TJX","ULTA"],
+    "XLE": ["XOM","CVX","COP","EOG","SLB","PSX","VLO","MPC","HAL","OXY","NEM","FCX"],
+    "XLU": ["NEE","DUK","SO","D","AEP","EXC","SRE","PEG","ED","WEC","XEL"],
+    "XLP": ["PG","KO","PEP","WMT","COST","GIS","KMB","CL","SYY","MDLZ","MNST","EL","PM","MO"],
+    "XLB": ["LIN","SHW","APD","ECL","DOW","DD","PPG","BALL","IP","EMN","CE"],
+    "XLI": ["CAT","HON","UNP","GE","BA","MMM","UPS","RTX","LMT","DE","ETN","CARR","OTIS","PWR","GEV","EMR","ITW","GD","NOC","URI"],
+    "XLRE": ["PLD","AMT","CCI","EQIX","WELL","SPG","O","DLR","AVB","EQR","PSA","CBRE"]
+}
+
+# Build reverse mapping: ticker -> sector ETF
+TICKER_SECTOR = {}
+for etf, tickers in SECTOR_ETF_MAP.items():
+    for t in tickers:
+        TICKER_SECTOR[t] = etf
+
 import json
 
 TACTICAL_SYMBOLS_PATH = os.path.normpath(os.path.join(CWD, "..", "public", "tactical_universe_symbols.json"))
@@ -78,7 +98,7 @@ def save_cache(df):
     except:
         pass
 
-def check(ticker, score, df):
+def check(ticker, score, df, spy_df=None, sector_data=None, ticker_sector=None):
     # Force Series for MultiIndex yfinance returns
     if isinstance(df.columns, pd.MultiIndex):
         close = df["Close"].iloc[:, 0].astype(float)
@@ -166,6 +186,84 @@ def check(ticker, score, df):
     else:
         zScore50 = 0.0
     
+    # --- MACD (needed for Exhaustion and MTF) ---
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+    macd_hist = macd_line - macd_signal
+    macd_hist_val = float(macd_hist.iloc[-1]) if len(macd_hist) > 0 else 0.0
+    macd_hist_prev = float(macd_hist.iloc[-2]) if len(macd_hist) > 1 else 0.0
+    
+    # --- RS vs SPY (252 días) ---
+    rs_vs_spy = 1.0
+    if spy_df is not None:
+        if isinstance(spy_df.columns, pd.MultiIndex):
+            spy_close = spy_df["Close"].iloc[:, 0].astype(float)
+        else:
+            spy_close = spy_df["Close"].astype(float)
+        if len(spy_close) >= 252 and n >= 252:
+            try:
+                spy_ret = float(spy_close.iloc[-1]) / float(spy_close.iloc[-252])
+                tk_ret = c / float(close.iloc[-252])
+                rs_vs_spy = tk_ret / spy_ret if spy_ret > 0 else 1.0
+            except:
+                rs_vs_spy = 1.0
+    passes_rs_spy = rs_vs_spy >= 0.80
+    
+    # --- RS vs Sector (126 días) ---
+    rs_vs_sector = 1.0
+    passes_rs_sector = True
+    if sector_data is not None and ticker_sector is not None:
+        sector_etf = ticker_sector.get(ticker, None)
+        if sector_etf is not None and sector_etf in sector_data:
+            sec_df = sector_data[sector_etf]
+            if isinstance(sec_df.columns, pd.MultiIndex):
+                sec_close = sec_df["Close"].iloc[:, 0].astype(float)
+            else:
+                sec_close = sec_df["Close"].astype(float)
+            if len(sec_close) >= 126 and n >= 126:
+                try:
+                    sec_ret = float(sec_close.iloc[-1]) / float(sec_close.iloc[-126])
+                    tk_ret_126 = c / float(close.iloc[-126])
+                    rs_vs_sector = tk_ret_126 / sec_ret if sec_ret > 0 else 1.0
+                except:
+                    rs_vs_sector = 1.0
+            passes_rs_sector = rs_vs_sector >= 0.90
+    
+    # --- MTF Weekly (2 de 3: tendencia>MA50, RSI>50, MACD alcista) ---
+    w_confirmed = True
+    w_confirmations = 0
+    try:
+        if n >= 50:
+            # Resample daily to weekly (Friday close = last of the week)
+            weekly = close.resample('W').last().dropna()
+            if len(weekly) >= 50:
+                w_close_val = float(weekly.iloc[-1])
+                w_ma50 = float(weekly.rolling(50).mean().iloc[-1])
+                w_trend_ok = w_close_val > w_ma50
+                # Weekly RSI14
+                w_delta = weekly.diff()
+                w_g14 = w_delta.where(w_delta>0,0.0).rolling(14).mean()
+                w_l14 = (-w_delta.where(w_delta<0,0.0)).rolling(14).mean()
+                w_rsi14 = 50.0
+                if float(w_l14.iloc[-1]) > 0:
+                    w_lr14 = float(w_g14.iloc[-1]) / float(w_l14.iloc[-1])
+                    if w_lr14 > 0 and w_lr14 not in [np.inf, -np.inf]:
+                        w_rsi14 = 100.0 - (100.0 / (1.0 + w_lr14))
+                w_rsi_ok = w_rsi14 > 50
+                # Weekly MACD
+                w_ema12 = weekly.ewm(span=12, adjust=False).mean()
+                w_ema26 = weekly.ewm(span=26, adjust=False).mean()
+                w_macd_line_ser = w_ema12 - w_ema26
+                w_macd_signal_ser = w_macd_line_ser.ewm(span=9, adjust=False).mean()
+                w_macd_ok = float(w_macd_line_ser.iloc[-1]) > float(w_macd_signal_ser.iloc[-1])
+                w_confirmations = (1 if w_trend_ok else 0) + (1 if w_rsi_ok else 0) + (1 if w_macd_ok else 0)
+                w_confirmed = w_confirmations >= 2
+    except Exception:
+        w_confirmed = True
+    passes_mtf = w_confirmed
+    
     # --- 5 SEÑALES (lógica Pine Script v10.4) ---
     # 1. BLOOD: rsi2<10 + zScore20<-1.5 + (aboveMA200 or extremeCrash)
     blood = r2 < 10.0 and zScore20 < -1.5 and (aboveMA200 or inExtremeCrash)
@@ -191,6 +289,27 @@ def check(ticker, score, df):
     sec = drawdown52w > -0.40 and drawdown52w < -0.20 and r14 > 40.0 and r14 < 55.0 and (aboveMA200 or aboveMA50)
     sec_score = 40.0 + min(25.0, (abs(drawdown52w) - 0.20) * 100.0) + (20.0 if aboveMA200 else 5.0) + (15.0 if volRatio > 1.2 else 0.0) if sec else 0.0
     sec_score = min(100.0, max(0.0, sec_score)) if sec else 0.0
+    
+    # --- EXHAUSTION DETECTION (Pine Script v10.4 exacto) ---
+    price_near_bb = bb_upper > 0 and c / bb_upper > 0.98
+    vol_decl_3bars = False
+    if n >= 4 and vol_series is not None and len(vol_series) >= 4:
+        v_arr = vol_series.values
+        vol_decl_3bars = (v_arr[-1] < v_arr[-2] and v_arr[-2] < v_arr[-3] and v_arr[-3] < v_arr[-4])
+    weak_rally = (c > float(close.iloc[-2]) or float(close.iloc[-2]) > float(close.iloc[-3])) and vol_decl_3bars
+    rsi_overbought = r14 > 75
+    rsi_stretched = r14 > 70
+    macd_weakening = macd_hist_val > 0 and macd_hist_val < macd_hist_prev and macd_hist_val < 0.5
+    price_stalling = abs(c - float(close.iloc[-3])) / c < 0.005 and abs(c - float(close.iloc[-2])) / c < 0.003 if n >= 3 else False
+    
+    exhaust_conf = 0.0
+    if price_near_bb: exhaust_conf += 25
+    if weak_rally: exhaust_conf += 20
+    if rsi_overbought: exhaust_conf += 25
+    elif rsi_stretched and (bb_upper > 0 and c / bb_upper > 0.95): exhaust_conf += 20
+    if price_stalling: exhaust_conf += 20
+    if macd_weakening: exhaust_conf += 10
+    rally_exhausted = exhaust_conf >= 40
     
     # --- PESOS (igual que Pine: blood=1.0, mom=0.8, mr=0.7, ob=0.5, sec=0.4) ---
     w_blood, w_mom, w_mr, w_ob, w_sec = 1.0, 0.8, 0.7, 0.5, 0.4
@@ -238,6 +357,9 @@ def check(ticker, score, df):
         best_val = sec_score * w_sec
         best_sig = "SECTOR_ROT"
     
+    # Exhaustion block (igual que Pine: solo bloquea MOMENTUM y SECTOR_ROT)
+    exhaustion_block = (best_sig in ("MOMENTUM", "SECTOR_ROT")) and rally_exhausted
+    
     # Opportunity (versión simplificada del Pine)
     confluence_bonus = 10.0 if n_active >= 3 else 5.0 if n_active == 2 else 0.0
     opp_raw = (weighted_sum / total_weight) if total_weight > 0 else 0.0
@@ -251,7 +373,7 @@ def check(ticker, score, df):
     rr = ((risk * 2.0) / risk) * 0.6 + ((risk * 3.2) / risk) * 0.4  # = 2.48
     
     # Filtros simplificados: pasa si tiene señal + RR mínimo
-    passes = n_active > 0 and rr >= 1.5
+    passes = n_active > 0 and rr >= 1.5 and passes_rs_spy and passes_rs_sector and passes_mtf and not exhaustion_block
     
     # Entry timing (basado en RSI2, como Pine)
     if 60.0 <= r2 <= 75.0:
@@ -267,7 +389,7 @@ def check(ticker, score, df):
     hybrid = round(min(100.0, float(score) * 0.4 + opp * 0.6), 1)
     
     return {
-        "ticker":ticker, "py_score":round(float(score),1),
+        "ticker":ticker,        "py_score":round(float(score),1),
         "pine_opp":round(opp,1), "hybrid":hybrid,
         "signal":best_sig, "n_signals":n_active,
         "regime":regime, "rr":round(rr,2),
@@ -275,7 +397,10 @@ def check(ticker, score, df):
         "entry":entry, "price":round(c,2),
         "blood":"YES" if blood else "", "mom":"YES" if mom else "",
         "mr":"YES" if mr else "", "ob":"YES" if ob else "",
-        "sec":"YES" if sec else ""
+        "sec":"YES" if sec else "",
+        "rs_spy":round(rs_vs_spy,3), "rs_sec":round(rs_vs_sector,3),
+        "mtf":"OK" if w_confirmed else "NO", "exh":round(exhaust_conf,0),
+        "exh_blk":"YES" if rally_exhausted else ""
     }
 
 def generate_html(df, con, dt_str):
@@ -589,11 +714,23 @@ def main():
         check_list = [t for t in q5_tickers[:50] if t.upper() not in ETFS and t != "^VIX"] + extra_syms
         n_check = len(check_list)
         print(f"Checking {len(q5_tickers)} Q5 + {len(extra_syms)} tácticos = {n_check} total...")
+        
+        # Pre-download SPY and sector ETFs for RS filters
+        print("   Descargando SPY (benchmark)...")
+        spy_df = dl_with_retry("SPY")
+        sector_data = {}
+        print("   Descargando ETFs sectoriales...")
+        for etf_name in list(SECTOR_ETF_MAP.keys()):  # Download all 10 sector ETFs
+            d_sector = dl_with_retry(etf_name)
+            if d_sector is not None:
+                sector_data[etf_name] = d_sector
+        print(f"   {len(sector_data)} ETFs sectoriales descargados")
+        
         results = []
         def dl_task(t):
             d = dl_with_retry(t)
             if d is None: return None
-            return check(t, all_scores.get(t, 50.0), d)
+            return check(t, all_scores.get(t, 50.0), d, spy_df, sector_data, TICKER_SECTOR)
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
             fs = {ex.submit(dl_task, t): t for t in check_list}
             done = 0
@@ -615,11 +752,15 @@ def main():
     print(f"\nResults: {len(con)} TOTAL confluence | {len(par)} PARTIAL | {len(nosig)} no signal")
     print()
     print("--- TOP 10 HYBRID OPPORTUNITIES ---")
-    print(f"{'Ticker':6s} {'PySc':>5s} {'Pine':>5s} {'Hybrid':>6s} {'Signal':>8s} {'n':>2s} {'R:R':>5s} {'Rsi2':>5s} {'Entry':>10s}")
-    print("-" * 57)
+    print(f"{'Ticker':6s} {'PySc':>5s} {'Pine':>5s} {'Hybrid':>6s} {'Signal':>8s} {'n':>2s} {'R:R':>5s} {'Rsi2':>5s} {'Entry':>10s} {'RS-SPY':>6s} {'RS-Sec':>6s} {'MTF':>4s} {'Exh':>4s}")
+    print("-" * 79)
     for _, r in df.head(10).iterrows():
         m = "* " if r["passes"] else "  "
-        print(f"{m}{r['ticker']:5s} {r['py_score']:5.1f} {r['pine_opp']:5.1f} {r['hybrid']:6.1f} {r['signal']:>8s} {r['n_signals']:2d} {r['rr']:4.1f}  {r['rsi2']:4.1f} {r['entry']:>10s}")
+        rs_s = f"{r['rs_spy']:.2f}" if 'rs_spy' in r and pd.notna(r['rs_spy']) else "-"
+        rs_c = f"{r['rs_sec']:.2f}" if 'rs_sec' in r and pd.notna(r['rs_sec']) else "-"
+        mtf_s = str(r.get('mtf', '?'))[:4]
+        exh_s = f"{r['exh']:.0f}" if 'exh' in r and pd.notna(r['exh']) else "-"
+        print(f"{m}{r['ticker']:5s} {r['py_score']:5.1f} {r['pine_opp']:5.1f} {r['hybrid']:6.1f} {r['signal']:>8s} {r['n_signals']:2d} {r['rr']:4.1f}  {r['rsi2']:4.1f} {r['entry']:>10s} {rs_s:>6s} {rs_c:>6s} {mtf_s:>4s} {exh_s:>4s}")
     if len(con) > 0:
         print(f"\nTOTAL CONFLUENCE ({len(con)} tickers - OK to enter):")
         for _, r in con.iterrows():
@@ -630,7 +771,7 @@ def main():
             print(f"  {r['ticker']:6s} hybrid={r['hybrid']:.1f} {r['signal']:>8s} rsi2={r['rsi2']:.1f} rr={r['rr']:.1f}")
     if len(nosig) > 0:
         print(f"\nNo signal: {len(nosig)} (Q5 fundamental only)")
-    cols = ["ticker","py_score","pine_opp","hybrid","signal","n_signals","regime","passes","rr","rsi2","rsi14","entry","blood","mom","mr","ob","sec"]
+    cols = ["ticker","py_score","pine_opp","hybrid","signal","n_signals","regime","passes","rr","rsi2","rsi14","entry","blood","mom","mr","ob","sec","rs_spy","rs_sec","mtf","exh","exh_blk"]
     df[cols].to_csv(OUTPUT_PATH, index=False)
     print(f"\nSaved: {OUTPUT_PATH}")
     # Generar HTML con datos embebidos

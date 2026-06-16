@@ -916,5 +916,10 @@ function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix
     }
     return Math.sqrt(Math.max(0, portfolioVar));
   }
-  return assets.reduce((sum, a, i) => sum + weights[i] * a.volatility, 0);
+  // FIX-VOLFALLBACK: antes sum(wi * σi) asumía correlación=1 (worst-case sobreestimado).
+  // Ahora usa descomposición de varianza sin correlación: sqrt(sum(wi² * σi²))
+  // Esta es la cota inferior (correlación=0), más realista que corr=1.
+  // En ausencia de covMatrix, es la mejor estimación no sesgada.
+  const variance = assets.reduce((sum, a, i) => sum + weights[i] * weights[i] * a.volatility * a.volatility, 0);
+  return Math.sqrt(Math.max(0, variance));
 }

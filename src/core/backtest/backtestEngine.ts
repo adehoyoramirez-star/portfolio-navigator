@@ -14,7 +14,7 @@
 
 import { ASSETS } from "../../lib/constants";
 import { dailyReturns, mean, variance } from "../../lib/stats";
-import { ledoitWolfCovariance } from "../data/volatility";
+import { covarianceMatrix } from "../../lib/marketData";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
 import type { AssetInput } from "../engine/olympusV3";
@@ -188,8 +188,10 @@ function computeWindowCovAndCorr(
     }
   }
 
-  // Matriz de covarianza con Ledoit-Wolf shrinkage (anualizada ×252 internamente)
-  const covMatrix = ledoitWolfCovariance(returns);
+  // Matriz de covarianza con Ledoit-Wolf shrinkage adaptativo (anualizada ×252 internamente)
+  // FIX-COV-UNIFY: usa covarianceMatrix de marketData.ts (misma función que el motor live)
+  // con shrinkage adaptativo por activo (URNU con 221d recibe más shrinkage que BTC con 1274d).
+  const covMatrix = covarianceMatrix(returns);
 
   // Matriz de correlación derivada de la covarianza shrunk
   const corrMatrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
@@ -267,7 +269,21 @@ function computeAssetFactors(
   const window = closes.slice(Math.max(0, t - lookbackDays), t);
   const dailyRet = dailyReturns(window);
   const vol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * 252)) : 0.25;
-  return { returns12m: r12m, returns3m: r3m, returns1m: r1m, volatility: vol, earningsYield: 0, ticker, name: ticker };
+  // FIX-EY-01: earningsYield ya NO es 0 para todos los activos.
+  // Usamos constantes por clase de activo para que Value factor y ERP trigger funcionen en backtest.
+  // Sin esto, el backtest era ciego al factor Value y al ERP equity cap.
+  const earningsYieldMap: Record<string, number> = {
+    'BTC-EUR': 0,      // cripto — no tiene earnings
+    'EMXC.DE': 0.05,   // EM equity — ~5% earnings yield
+    'IS3Q.DE': 0.04,   // Quality equity — ~4% earnings yield
+    'PPFB.DE': 0,      // oro — no tiene earnings
+    'URNU.DE': 0.03,   // uranio — commodity-like, earnings yield bajo
+    'VVSM.DE': 0.04,   // semiconductores — ~4% earnings yield
+    'XNAS.DE': 0.04,   // NASDAQ 100 — ~4% earnings yield
+    'BAYN.DE': 0.06,   // Bayer — deep value, EY alto (~12.5% P/E 8x, cap 6%)
+  };
+  const earningsYield = earningsYieldMap[ticker] ?? 0;
+  return { returns12m: r12m, returns3m: r3m, returns1m: r1m, volatility: vol, earningsYield, ticker, name: ticker };
 }
 
 // ── Asignación táctica real (usando runOlympusEngine) ──────────────────
