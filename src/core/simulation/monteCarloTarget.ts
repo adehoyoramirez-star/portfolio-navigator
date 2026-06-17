@@ -107,8 +107,8 @@ function runMonteCarloSimulation(input: MonteCarloTargetInput): {
     years,
     expectedReturn,
     volatility,
-    jumpIntensity = 1.0,
-    jumpMean = -0.05,
+    jumpIntensity = 0.5,
+    jumpMean = -0.10,
     jumpStd = 0.10,
     simulations = 10000,
   } = input;
@@ -131,6 +131,7 @@ function runMonteCarloSimulation(input: MonteCarloTargetInput): {
 
       // Componente de salto (Poisson con λ*dt)
       // FIX-MC-01: salto como multiplicador porcentual, no en exponente
+      // FIX-MC-03: defaults recalibrados (λ=0.5, jumpMean=-0.10)
       const jumpOccurred = Math.random() < (1 - Math.exp(-jumpIntensity * dt));
       const jumpMult = jumpOccurred ? (1 + jumpMean + jumpStd * randomNormal()) : 1;
 
@@ -505,8 +506,8 @@ export function runMultivariateMonteCarlo(input: MultivariateMCInput): Multivari
     monthlyContribution,
     years,
     simulations = 10000,
-    jumpIntensity = 1.0,
-    jumpMean = -0.05,
+    jumpIntensity = 0.5,
+    jumpMean = -0.10,
     jumpStd = 0.10,
   } = input;
 

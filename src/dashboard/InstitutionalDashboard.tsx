@@ -253,10 +253,10 @@ const InstitutionalDashboard: React.FC = () => {
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
   const [years, setYears] = useState(10);
 
-  const [jumpIntensity, setJumpIntensity] = useState(7.0);
-  const [jumpIntensityPortfolio, setJumpIntensityPortfolio] = useState(1.0);
-  const [jumpMean, setJumpMean] = useState(-0.08);
-  const [jumpStd, setJumpStd] = useState(0.12);
+  const [jumpIntensity, setJumpIntensity] = useState(1.5);  // FIX-MC-03: default recalibrado (1-2 crashes BTC reales/ano)
+  const [jumpIntensityPortfolio, setJumpIntensityPortfolio] = useState(0.5);  // FIX-MC-03: default recalibrado (correccion cada ~2 anos)
+  const [jumpMean, setJumpMean] = useState(-0.10);  // FIX-MC-03: -10% por crash, no -0.08 en exponente
+  const [jumpStd, setJumpStd] = useState(0.10);  // FIX-MC-03: dispersion de crash recalibrada
 
   const [vix, setVix] = useState(19);
   const [manualPER, setManualPER] = useState(29.69);
@@ -644,7 +644,7 @@ const InstitutionalDashboard: React.FC = () => {
       if (savedMacro.mvrvRatio !== undefined) setMvrvRatio(savedMacro.mvrvRatio);
       if (savedMacro.jumpIntensity !== undefined) setJumpIntensity(savedMacro.jumpIntensity);
       if (savedMacro.jumpIntensityPortfolio !== undefined) setJumpIntensityPortfolio(savedMacro.jumpIntensityPortfolio);
-      else setJumpIntensityPortfolio(1.0);
+      else setJumpIntensityPortfolio(0.5);  // FIX-MC-03: default recalibrado
       if (savedMacro.jumpMean !== undefined) setJumpMean(savedMacro.jumpMean);
       if (savedMacro.jumpStd !== undefined) setJumpStd(savedMacro.jumpStd);
       if (savedMacro.puellMultiple !== undefined) setPuellMultiple(savedMacro.puellMultiple);
@@ -2328,7 +2328,7 @@ soxRsiWeekly,
             </div>
             <div>
               <label style={styles.label}>
-                Jump Mean (log-ret)
+                Jump Mean (% multiplicativo)
                 <span style={{ fontSize: "0.6rem", color: jumpMean > 0 ? "#ef4444" : "#6b7280", display: "block" }}>
                   {jumpMean > 0 ? "⚠️ positivo = infla MC" : "● negativo = crashes"}
                 </span>

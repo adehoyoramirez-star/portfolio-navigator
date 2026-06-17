@@ -1,0 +1,534 @@
+Institutional Portfolio Dashboard (Olympus Engine V3+)
+💾 Guardado automáticamente · 17/06/2026, 12:50
+🔄 Actualizar precios y datos macro 🧠 Motor Intelligence AI📱 Resumen Telegram🗑 Borrar datos guardados
+RÉGIMEN
+EXPANSION
+×0.807 penalización
+🔓 Lock RegimeVIX ● auto
+16.4
+NormalidadERP
+-1.3%
+Bolsa cara vs bonosμ MONTE CARLO
+8.0%
+anual ajustado régimen · cap
+15%σ PORTFOLIO
+14.9%
+volatilidad realizadaSEÑAL DCA
+✅ ACTIVO
+compras permitidasLIQUIDEZ ● auto
+56%
+Neutral
+FEAR & GREED ● auto
+22
+Extreme FearON-CHAIN
+✅ Glassnode
+MVRV · Puell · Hash Ribbon
+autoFUENTE DATOS
+✅ Yahoo Finance
+precios + covMatrix reales
+PER S&P 500 ● manual
+32,39Bono USA 10y % ● Yahoo auto
+4,428Bono USA 2y % ● manual
+4,054M2 Growth % ● manual
+4,724
+Credit Spread % ● manual
+2,66VIX ● Yahoo auto
+16,43RSI S&P 500 ● Yahoo auto (^GSPC Wilder EMA)
+57Momentum S&P 500 ● Yahoo auto (12m-1m
+Jegadeesh-Titman)
+0,2395
+Liquidez Global % ● FRED auto (Fed+ECB)
+-0,281DXY (Dólar) ● Yahoo auto (DX-Y.NYB)
+99,6MOVE Index ● Yahoo auto (^MOVE)
+67,3Brent Crude Oil $/barril ● Yahoo auto (BZ=F)
+78,98
+🟡 Tensión elevada — penalización ×0.85 al motor
+Volatilidad BTC ● auto blend (PASO 3)
+0,3978
+BTC Dominance % ● manual
+58,82
+MVRV Ratio ● Glassnode auto (PASO 4)
+1,25817/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 1/15
+BTC RSI Semanal ● Yahoo auto (BTC-EUR semanal
+Wilder)
+38,1
+BTC.D mes anterior % para detectar caída desde
+>58%
+60,74
+⚠ Señales de Techo de Ciclo — activar ventas parciales automáticas
+Uranio Spot $/lb uxc.com
+84,18Uranio LT $/lb precio largo plazo
+94Semis SIA Sales YoY% SIA/WSTS
+mensual
+92
+SOX RSI Semanal TradingView: ^SOX ·
+W · RSI(14)
+80,16Breakeven Inflación 5y %
+TradingView: T5YIE
+2,36IS3Q RSI Semanal TradingView: IS3Q.DE
+· W · RSI(14)
+73,59
+IS3Q P/E Ratio TradingView: IS3Q.DE · P/E
+(TTM)
+21,83EMXC RSI Semanal TradingView:
+EMXC.DE · W · RSI(14)
+75,218EMXC P/E Ratio TradingView: EMXC.DE ·
+P/E (TTM)
+21,89XNAS RSI Semanal TradingView:
+XNAS.DE · W · RSI(14)
+77,41XNAS P/E Ratio TradingView: XNAS.DE ·
+P/E (TTM)
+25,56
+⚡ Parámetros Jump Diffusion — Monte Carlo
+λ BTC (jumps/año)
+● solo activo BTC
+7
+Típico: 5–8/añoλ Portfolio (jumps/año)
+● multivariante (Cholesky activo)
+0,6
+Típico: 0.5–1.5/añoJump Mean (log-ret)
+● negativo = crashes
+-0,08
+Típico: −0.05 a −0.15Jump Std
+0,12
+Típico: 0.08–0.15
+🔬 BTC Cycle Analyzer — Inputs Avanzados
+Opcionales. Cada campo que rellenes mejora la precisión del análisis de ciclo. Sin datos = SAFE por defecto.
+Puell Multiple lookintobitcoin.com
+0,8
+<0.5 = mineros en pérdidas → fondo · >2 =
+euforia mineros → techoHash Ribbon ● Glassnode auto (MA30 vs
+MA60)
+CAPITULAPi Cycle — 111 DMA ● Yahoo auto
+(BTC-EUR historial)
+61973,74Pi Cycle — 350 DMA × 2 ● auto
+157673,37
+Elliott Wave — Pivotes del ciclo mínimo 2 puntos: PRECIO:TIPO separados por coma
+15500:LOW, 28600:HIGH, 23400:LOW, 66700:HIGH, 45600:LOW, 105300:HIGH, 67900:LOW, 106400:HIGH, 50900:LOW, 73500:HIGH
+✓ 10 pivotes cargados · Onda detectada automáticamente
+Override onda actual (opcional)17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 2/15
+— automát
+Liquidez Global
+Régimen: CONTRACTION
+Crec: -0.281 %
+DXY Trend: -0.4%
+Fuente: manual + DXY  YahooRégimen Global
+Motor: EXPANSION
+Crisis prob: 9.8%
+Stress score: 1 / NORMAL
+🛢 WTI ELEVATED — ×0.85 penalización extra
+Confianza: HIGH  · Señal: CONSENSUSSmart DCA  — Motor Aware
+Acción: BLOCK_T AIL_RISK
+Tail Risk activo (×0.80). Kill Switch — no
+comprar.BTC T actical
+Señal: WATCH
+RSI: 40.7 · Z: -1.25
+MVR V: 1.26 🟡 acumulación  · BTC.D: 58.8% ↑
+acumulación
+📊 Resultados del Motor Olympus V3 — Nivel 2
+Régimen:  EXPANSION
+Confianza señal:  HIGH
+Señal dominante:  CONSENSUS
+Prob. crisis:  9.8%
+p(exp/cont/crisis):  100% / 0% / 0%
+ⓘ Modelo probabilístico y régimen final coinciden. Sin override activo.
+Penalización régimen:  ×0.807
+p(exp/cont/crisis): 100% / 0% / 0%
+ⓘ Modelo VIX+M2+Yield (probabilístico). El régimen final combina éste +
+credit spreads + WTI shock. El más conservador de los 3 modelos
+determina el régimen. Penalización = 40% modelo binario + 60% modelo
+continuo.
+Penalización correlación:  ×1.00
+Vol Target:  ×1.50
+⚠ Tail Risk: ×0.80 — DD -11.1% → Kill Switch L1 (REDUCCIÓN
+PREVENTIVA)Asignaciones finales:
+Bitcoin: 16.5% (K:6% MV:14%  RP:9%)
+Semiconductors: 5.8% (K:9% MV:14%  RP:8%)
+MSCI World Quality: 10.7% (K:20% MV:14%  RP:32% ⚠cap)
+Uranium: 6.5% (K:3% MV:14%  RP:7%)
+Emerging Markets: 5.6% (K:20% MV:14%  RP:13% ⚠cap)
+Gold (ETC): 11.4% (K:22% MV:14%  RP:15% ⚠cap)
+NASDAQ 100: 6.4% (K:20% MV:14%  RP:17% ⚠cap)Scores por activo:
+Bitcoin: Mom -0.28 · Val p0
+Semiconductors: Mom 1.19 · Val p43
+MSCI World Quality: Mom 0.16 · Val p71 ⚠
+Uranium: Mom 0.19 · Val p29
+Emerging Markets: Mom 0.49 · Val p86 ⚠
+Gold (ETC): Mom 0.17 · Val p0 ⚠
+NASDAQ 100: Mom 0.29 · Val p43 ⚠17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 3/15
+Markowitz: ✅ activo (50% Kelly + 30% MV + 20% RP)
+📈 Backtesting W alk-Forward — 3612  días ( 14.3 años)⬇ Exportar CSV
+🔄 Proxies: EEM (EMXC) · QUAL (IS3Q) · GLD (PPFB) · URA (URNU) · SMH (VVSM) · QQQ (XNAS) · BTC-EUR directo0d proxies · 3612 d ETFs reales💸 Costes transacción: −€ 232 acum. ( 58
+rebalanceos × 10bps) · CAGR neto ya incluye estos costes
+✅ 3612 días (14.3 años) — estadísticamente robusto.
+Rebalanceo cada 63 días (trimestral) Lookback2 años 📡 Yahoo Finance📂 CSV Local (11 años)
+🟣 Olympus Engine
+CAGR: 15.4%
+Sharpe: 0.93
+Max Drawdown: -23.2%
+Calmar: 0.66
+Volatilidad: 12.0%
+Win rate mensual: 64.5%
+Retorno total: 679.4%
+Capital final: €44.814⚖ Equal Weight B&H
+CAGR: 19.0%
+Sharpe: 0.85
+Max Drawdown: -36.9%
+Calmar: 0.51
+Volatilidad: 17.5%
+Win rate mensual: 62.8%
+Retorno total: 1111.6%
+Capital final: €69.664
+Alpha vs benchmark:-3.6% CAGR · 0.08 Sharpe
+📈 Capital🏛 Régimen📊 Rolling Sharpe
+Curva de capital (€)17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 4/15
+Drawdown (%)
+Proxies americanos para ETFs europeos. Backtest incluye costes de transacción. Resultados pasados no garantizan rendimiento futuro.
+📊 Portfolio Analytics (Forward-Looking)
+Estimaciones forward-looking basadas en condiciones actuales de mercado — no es backtest histórico. Sharpe, Sortino y Alpha usan el expected return estimado (μ), no retornos realizados.
+Sharpe Ratio
+0.27
+BajoSortino Ratio
+0.38
+Penaliza solo vol bajistaCalmar Ratio
+0.72
+CAGR / Max DrawdownVol Portfolio (σ_p)
+14.9%
+covMatrix real ✅Drawdown Actual
+-11.1%
+vs peak históricoRetorno Esp. (ajust.
+régimen)
+8.0%
+×0.81 penalty régimen
+Beta vs IS3Q (MSCI W orld)
+0.38
+DefensivoAlpha de Jensen
+0.4%
+r_p - [rf + β(r_m - rf)]D0D72D168D264D360D456D552D648D744D840D936D1044D1164D1284D1404D1524D1644D1764D1884D2004D2124D2244D2364D2484D2604D2724D2844D2964D3084D3204D3324D3444D3600€0€20.000€40.000€60.000€80.000
+Olympus Equal W eight
+D0D72D168D264D360D456D552D648D744D840D936D1044D1164D1284D1404D1524D1644D1764D1884D2004D2124D2244D2364D2484D2604D2724D2844D2964D3084D3204D3324D3444D3600-24%-18%-12%-6%0%17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 5/15
+Sharpe = (r_p − r_f) / σ_p · r_f = 4.0% ·Sortino: semi-desviación real (retornos < rf) — no aprox. σ/√2·Calmar = CAGR / |Max DD|·MC: ✅ Multivariante (Cholesky + correlaciones reales)
+Distribución de valores finales (Monte Carlo con Jump Diffusion)
+Años de simulación:
+10
+μ efectivo: 8.03% anual Fuente: ✅ James-Stein (Yahoo + shrinkage φ=0.65) Régimen: EXPANSION ×0.807 Modo: Multivariante Cholesky
+Priors LP (Damodaran 2024): BTC 15% · Semis 14% · MSCI Quality 11% · Uranio 10% · EM 8% · Gold 6% · NASDAQ 100 9% — shrinkage 65% hacia prior, 35% histórico Yahoo.
+MEDIANA (resultado más
+probable)
+64.460,32 €
+50% de simulaciones por
+encimaRANGO CENTRAL (P25–
+P75)
+51.824,81 €
+— a —
+82.057,00 €MEDIA (sesgada al alza)
+70.733,77 €PEOR 5% (cola bajista)
+39.071,97 €
+VaR 95%MEJOR 5% (cola alcista)
+123.713,07 €PROB. OBJETIVO
+2.0%
+Alcanzar 150.000,00 €
+Capital total invertido en 10 años: 65.749,65 € · Multiplicador mediana: 1.0x
+CVaR 95% — valor esperado peor 5%:  35.088,21 €
+Pérdida esperada vs capital invertido:  −30.661,44 €  · Tail ratio: 0.85x
+CVaR 99%: 29.901,02 €  · Estándar Basel III/IV
+Histograma basado en 10000 simulaciones (20 bins).22.989,57 € - 42.982,79 €
+42.982,79 € - 62.976,01 €
+62.976,01 € - 82.969,22 €
+82.969,22 € - 102.962,44 €
+02.962,44 € - 122.955,66 €
+22.955,66 € - 142.948,87 €
+42.948,87 € - 162.942,09 €
+62.942,09 € - 182.935,31 €
+82.935,31 € - 202.928,52 €
+202.928,52 € - 222.921,74 €
+222.921,74 € - 242.914,95 €
+242.914,95 € - 262.908,17 €
+262.908,17 € - 282.901,39 €
+282.901,39 € - 302.894,60 €
+302.894,60 € - 322.887,82 €
+322.887,82 € - 342.881,04 €
+342.881,04 € - 362.874,25 €
+362.874,25 € - 382.867,47 €
+382.867,47 € - 402.860,69 €
+402.860,69 € - 422.853,90 €095019002850380017/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 6/15
+💰 Gestión de Liquidez — Capital disponible y comprometido
+Caja de reserva (€)
+4381,05
+Cash total en cuenta ahora
+mismoAportación mensual (€)
+500
+Lo que aportas cada mes💰 Liquidez defensiva acumulada (€)
+0
+Acumulado en meses de
+bloqueo DCA
+💵 CASH EN BROKER AHORA MISMO
+€4381
+🔒 Buffer operacional: €350
+🔒 💿 Órdenes BTC pendientes: €0
+✅ Cash LIBRE para compras: €4031
+Cash operativo: €4031 libre · €0 en órdenes BTC ·
+€350 buffer
+Actualizar saldo
+4381,05
+Buffer operacional (€)
+350🛡 LIQUIDEZ DEFENSIVA (COLCHÓN DE
+ATAQUE)
+€0
+Solo se despliega con señal ATTACK ≥4/7. No
+tocar en meses normales.
+↓ Mover de Cash → Defensiva (fin de mes)
+0 Mover💿 ÓRDENES BTC LÍMITE (3)
+Nivel 3€50000 | €1400 ✓ ✖
+Nivel 1€50000 | €1400 ✓ ✖
+Nivel 3€50000 | €1400 ✓ ✖
+Comprometido: €0 | 0% del cash
+Nueva orden límite
+N3 50000 400
++Crear📊 RESUMEN DE LIQUIDEZ
+Total en broker: €4381
+🔒 Buffer: -€350
+💿 Órdenes BTC: - €0
+✅ LIBRE: €4031
+🛡 Defensiva: + €0
+📈 Total disponible (si ataque): €4031
+📅 Aportación mensual habitual (solo para
+proyecciones)
+500
+📊 PESOS DEL MOTOR
+Bitcoin 16.5% Semiconductors 5.8% MSCI World Quality 10.7% Uranium 6.5% Emerging Markets 5.6% Gold (ETC) 11.4% NASDAQ 100 6.4%
+Cash (cuenta) 4381,05 € · 43.2% del patrimonio Motor: 62.9% a invertir · 37.1% a retener Los % de activos son sobre el tramo invertido (Σ dentro del motor)
+Valor total cartera:  5749,65 € Objetivo:  150.000,00 € G/P totales:  -744,09 €
+🔔 Alertas del Motor
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 7/15
+17/6/2026, 12:50:41
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:50:38
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:50:26
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:46:50
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:46:48
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:46:4517/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 8/15
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:13:43
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:13:41
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:13:38
+⚠ Tail Risk Overlay activo
+DD -11.1% → Kill Switch L1 (REDUCCIÓN PREVENTIVA)
+→ El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.
+17/6/2026, 12:13:36
+👁 Crisis Early W arning SystemWATCH · Score 5/12
+Yield Curve (10y-2y) CLEAR
+0.37%
+➡ Estable · Score 0/3Credit Spreads (HY -IG) WARNING
+2.66%
+➡ Estable · Score 3/3Liquidity Impulse (M2 YoY) CLEAR
+4.72%
+➡ Estable · Score 0/3Volatility Clustering (VIX) WATCH
+16
+📈 Mejorando · Score 2/317/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 9/15
+Recomendación: Señales en vigilancia. Mantener plan actual pero no aumentar exposición hasta confirmar mejora.
+Basado en 78 puntos reales · 0 semanas en zona de alerta
+⏱ Madurez del RégimenYOUNG 2.8 meses
+Expansión joven (2.8m). Ciclo alcista en inicio. Máxima exposición justificada.
+📊 Rendimiento Histórico (500 registros)último: 17/6/2026
+📡 Monitoreo en Vivo CLOSED Yahoo · cada 60s⏱ 93s ↻ 12:50:52▼
+📊 Benchmark 60/40 500 snapshots · 17/6/2026
+Engine CAGR (3m)
+-11.69%Benchmark CAGR (3m)
+994.39%Outperformance
+-1006.08%Engine Sharpe (3m)
+1.43Benchmark Sharpe (3m)
+16.00
+🔴 🔴 ALERTA: Motor underperformando benchmark 60/40 por 1006.08% retorno simple (16 días de datos). Revisar configuraciones.
+Composición del benchmark 60/40
+🔥 Stress T esting — Escenarios Históricos
+Crisis Financiera Global 2008
+-28.5 %
+€1640  pérdida  · 52m recuperaciónBurbuja Dot-com 2000–2002
+-28.5 %
+€1636  pérdida  · 52m recuperaciónCOVID-19 Crash 2020
+-19.6 %
+€1125 pérdida  · 34m recuperaciónCiclo de Subida de Tipos 2022
+-20.0 %
+€1152 pérdida  · 35m recuperaciónCrypto Winter 2018
+-16.3 %
+€936 pérdida  · 28m recuperación
+🔬 Walk-Forward Robustness AOverfitting: LOW17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 10/15
+CONSISTENCIA
+87.6%SHARPE IS→OOS
+1.05 → 1.52CAGR IS→OOS
+15.8% → 26.1%PEOR MAXDD
+-24.3% → -15.1%VENTANAS OK
+5/5
+V Sharpe IS Sharpe OOS Degrad. CAGR IS CAGR OOS MaxDD IS MaxDD OOS WinRate OOS Consist.
+V1 1.78 3.02 -1.24 23.1% 52.8% -13.1 % -4.7% 90% 75.7%
+V2 1.04 1.49 -0.45 15.7% 21.2% -22.2 % -5.6% 70% 88.0%
+V3 0.99 1.26 -0.27 15.9% 21.3% -22.2 % -6.2% 70% 92.3%
+V4 0.67 1.04 -0.37 11.8% 20.2% -23.9 % -7.3% 50% 85.2%
+V5 0.75 0.80 -0.05 12.4% 15.1% -24.3 % -15.1 % 73% 97.0%
+Config: nWindows=5, trainRatio=0.65
+✅ 100% ventanas con Sharpe OOS positivo
+📋 Historial de Régimen
+EXPANSION
+VIX: 17 · ×0.81
+28/5/2026CONTRACTION
+VIX: 17 · ×0.75
+27/5/2026EXPANSION
+VIX: 17 · ×0.85
+27/5/2026CONTRACTION
+VIX: 17 · ×0.75
+27/5/2026EXPANSION
+VIX: 17 · ×0.85
+27/5/2026
+CONTRACTION
+VIX: 17 · ×0.75
+27/5/2026
+₿ BTC Cycle Intelligence 73
+/ 100🟢 ZONA DE COMPRA
+BUY
+Score 85/100 — Zona de compra histórica. 788 días post-halving. Bear market tardío / acumulación. Smart money construye posición para el próximo ciclo. Puell 0.80 — Zona de valor. Mineros
+con rentabilidad baja. Acumulación histórica inteligente. ⚠  Elliott Wave A DOWN: −12pts (85 → 73).
+📐 POWER LAW CHANNEL
+Precio actual: €55.883⛏ HALVING CYCLE
+Fase: BEAR ACCUMULATION⚡ ON-CHAIN SIGNALS
+Puell Multiple:
+🌊 ELLIOTT WAVE
+Onda A17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 11/15
+Valor justo: €149.397
+Canal: €37.349 – €1.195.178
+63% por debajo del valor justo
+Proyección Power Law:
+6m: €175.782
+12m: €51.703 – €1.654.488788 días post-halving. Bear market tardío /
+acumulación. Smart money construye posición
+para el próximo ciclo.
+788 días desde el halvingPuell 0.80 — Zona de valor. Mineros con
+rentabilidad baja. Acumulación histórica
+inteligente.
+Hash Ribbon:
+Hash Ribbon: Mineros apagando máquinas.
+Señal de compra PENDIENTE — esperar
+cruce alcista. (dato manual, 0 semanas en
+este estado)
+Pi Cycle Top:
+Separación: 6069% · sin señal de techo
+ADirección: DOWN · Confianza: MEDIUM
+⚠ Señales de T echo de Ciclo Activas
+BTC-EUR  — Bitcoin CAUTION  · REDUCIR 20%
+MVRV 1.26 · RSI-W 38
+BTC.D cayendo desde >58% — rotación a altcoins (fin de ciclo)
+VVSM.DE  — Semiconductors EXTREME  · REDUCIR 80%
+SIA sales +92.0% YoY · SOX RSI-W 80
+Ventas SIA +92.0% YoY — euforia insostenible · RSI semanal SOX 80 — sobrecompra
+PPFB.DE  — Gold (ETC) CAUTION  · REDUCIR 20%
+4.43% − 2.36% = 2.07% tipo real · Brent $79
+Tipo real 2.07% — presión sobre el oro, pero Brent $79 (tensión geopolítica) reduce el riesgo. Vigilar.
+EMXC.DE  — Emerging Markets DANGER  · REDUCIR 60%
+RSI-W 75 · P/E 21.9
+RSI semanal EEM 75 — zona de vigilancia · P/E 21.9 — Emergentes caros (media histórica ~15)
+XNAS.DE  — NASDAQ 100 CAUTION  · REDUCIR 15%
+RSI-W 77 · P/E 25.6
+RSI semanal NDX 77 — sobrecompra en NASDAQ
+🧾 Análisis Fiscal — IRPF España 2025
+Plusvalías latentes Minusvalías latentes17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 12/15
++€336 −€1080
+⚠ Cálculo orientativo. Consulta con un asesor fiscal antes de ejecutar ventas significativas.
+⚖ Rebalanceo — Motor Olympus
+⛔ DCA BLOCK_TAIL_RISK — La aportación mensual de €500 está congelada como liquidez defensiva.
+💰 Acumulado: €0·Objetivo Tramo 2: €1000–€1500
+Basado en allocations reales del motor. Cash disponible: €4381 · Cobertura del rebalanceo ideal: 100%
+Activo Acción Actual Objetivo Drift Cantidad €Prioridad / Señal
+BTC-EUR SELL 30.4% 16.5% 13.9pp −0.0062 (20%) +€346 LOW🔴 Cycle Top override · CAUTION ✓ Ejecutado
+EMXC.DE SELL 2.2% 5.6% -3.4pp −1 (60%) +€43 HIGH🔴 Cycle Top override · DANGER ✓ Ejecutado
+Total compras: €0 · Restante: €4770
+🎯 Modo Ataque — Confluencia de Fondo5/7 señales · Tramo —
+⚡ Motor B (BTC Ciclo): ACTIVO — 5/7 señales superan umbral de override
+ⓘ Las 7 señales son indicadores de ciclo BTC/macro. Con régimen no-CRISIS y 4/7 activas → bonus BTC en DCA. El DCA completo de cartera requiere además ≥1 señal macro (Régimen, CEWS o VIX) activa.
+⏳BTC Sobreventa
+Extrema
+RSI 41, Z -1.25⏳ CEWS Recuperándose
+CEWS en WATCH✅ Régimen Mejorando
+Régimen EXPANSION (×0.81)
+— mejora confirmada✅Divergencia de
+Momentum
+Caída -12.7% con Z -1.25✅ VIX Normalizándose
+Volatility clustering mejorando✅BTC Dominance
+Acumulación
+BTC.D 58.8% — acumulación
+✅ MVR V Zona de V alor
+MVRV 1.26 — acumulación17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 13/15
+🛑 DCA  Bloqueado: BLOCK_T AIL_RISK
+Tail Risk activo (×0.80). Kill Switch — no comprar.
+Distribución actual Activos
+Los pesos objetivo son tus metas de asignación. El motor sugiere compras para acercarte a ellos.
+Activo Precio (€) Particip. Valor (€)Precio
+compraEarnings
+Yield %Ret 12m % Ret 3m % Re
+Bitcoin
+BTC-EUR55.882,57 € 0,031286 1748,34 € 87898,74 0 -0,47317290 -0,11796882 -0,12
+Semiconductors
+VVSM.DE101,56 € 1 101,56 € 57,49 0,03 1,62496772 0,68201384 0,21
+MSCI W orld
+Quality
+IS3Q.DE75,72 € 29 2195,88 € 68,06 0,04 0,22405432 0,08980998 0,03
+Uranium
+URNU.DE25,10 € 44 1104,18 € 26,88 0,02 0,31058065 -0,0562241 0,01
+Emerging
+Markets
+EMXC.DE42,79 € 3 128,36 € 29,3 0,05 0,71792807 0,26883150 0,132
+Gold (ETC)
+PPFB.DE72,43 € 4 289,72 € 71,08 0 0,26769935 -0,14004153 -0,03
+NASDAQ 100
+XNAS.DE60,27 € 3,01331 181,61 € 52,29 0,03 0,37697052 0,21036253 0,05
+📒 Historial de Operaciones Ejecutadas⬇ Exportar CSV
+Fecha Activo Acción Acciones Precio ejec. TotalRégimen Fuente
+04/06/26, 13:38 EMXC.DE SELL 3 €41.00 +€123.00 EXPANSION REBALANCE
+03/06/26, 13:04 EMXC.DE SELL 7 €42.57 +€297.97 EXPANSION REBALANCE
+02/06/26, 12:18 VVSM.DE SELL 1 €96.89 +€96.89 EXPANSION REBALANCE
+28/05/26, 15:44 EMXC.DE SELL 19 €40.74 +€774.00 EXPANSION REBALANCE
+19/05/26, 13:21 URNU.DE BUY 3 €25.86 −€77.58 CONTRACTION DCA
+14/05/26, 16:54 EMXC.DE BUY 1 €40.77 −€40.77 CONTRACTION DCA
+14/05/26, 16:53 URNU.DE BUY 5 €27.70 −€138.50 CONTRACTION DCABitcoin 30%Semiconductors 2%
+ ld Quality 38%
+Uranium 19%Emerging MarketGold (ETC) 5%NASDAQ 100 17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 14/15
+Fecha Activo Acción Acciones Precio ejec. TotalRégimen Fuente
+13/05/26, 16:04 VVSM.DE SELL 4 €87.29 +€349.16 CONTRACTION REBALANCE17/6/26, 12:52 Lovable App
+https://portfolio-navigator-dun.vercel.app 15/15
