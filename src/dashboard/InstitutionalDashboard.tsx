@@ -151,7 +151,8 @@ function monteCarloJumpDiffusion(
     jumpMean: number;
     jumpStd: number;
     btcIdx: number;
-  }
+  },
+  disableJumps?: boolean  // FIX-MC-05: true = GBM puro, false = Jump Diffusion
 ): { mean: number; median: number; p25: number; p75: number; worst5: number; best95: number; simulations: number[]; muUsed: number } {
   const months = years * 12;
   const finalValues: number[] = [];
@@ -175,7 +176,7 @@ function monteCarloJumpDiffusion(
           // FIX-MC-01: GBM y salto separados; FIX-MC-02: guard btcIdx
           const gbmFactor = Math.exp(monthlyMus[i] - 0.5 * monthlySigmas[i] ** 2 + correlated[i]);
           let jumpFactor = 1;
-          if (multivariate.btcIdx >= 0 && i === multivariate.btcIdx) {
+          if (!disableJumps && multivariate.btcIdx >= 0 && i === multivariate.btcIdx) {
             const pJump = 1 - Math.exp(-multivariate.jumpIntensityBTC / 12);
             if (Math.random() < pJump) jumpFactor = 1 + multivariate.jumpMean + multivariate.jumpStd * randomNormal();
           }
@@ -192,8 +193,8 @@ function monteCarloJumpDiffusion(
       for (let m = 0; m < months; m++) {
         value += monthlyContribution;
         const diffusion = monthlyMu - 0.5 * monthlySigma ** 2 + monthlySigma * randomNormal();
-        const pJump = 1 - Math.exp(-jumpIntensity / 12);
-        const jumpMult = Math.random() < pJump ? (1 + jumpMean + jumpStd * randomNormal()) : 1;
+        // FIX-MC-05: disableJumps = GBM puro sin saltos
+        const jumpMult = disableJumps ? 1 : (Math.random() < (1 - Math.exp(-jumpIntensity / 12)) ? (1 + jumpMean + jumpStd * randomNormal()) : 1);
         // FIX-MC-01: salto como %% multiplicativo, no en exponente
         value = value * Math.exp(diffusion) * Math.max(0, jumpMult);
       }
@@ -257,6 +258,7 @@ const InstitutionalDashboard: React.FC = () => {
   const [jumpIntensityPortfolio, setJumpIntensityPortfolio] = useState(0.5);  // FIX-MC-03: default recalibrado (correccion cada ~2 anos)
   const [jumpMean, setJumpMean] = useState(-0.10);  // FIX-MC-03: -10% por crash, no -0.08 en exponente
   const [jumpStd, setJumpStd] = useState(0.10);  // FIX-MC-03: dispersion de crash recalibrada
+  const [enableJumps, setEnableJumps] = useState(false);  // FIX-MC-05: OFF = GBM puro (proyeccion), ON = Jump Diffusion (stress test)
 
   const [vix, setVix] = useState(19);
   const [manualPER, setManualPER] = useState(29.69);
@@ -647,6 +649,7 @@ const InstitutionalDashboard: React.FC = () => {
       else setJumpIntensityPortfolio(0.5);  // FIX-MC-03: default recalibrado
       if (savedMacro.jumpMean !== undefined) setJumpMean(savedMacro.jumpMean);
       if (savedMacro.jumpStd !== undefined) setJumpStd(savedMacro.jumpStd);
+      if (savedMacro.enableJumps !== undefined) setEnableJumps(savedMacro.enableJumps);  // FIX-MC-05
       if (savedMacro.puellMultiple !== undefined) setPuellMultiple(savedMacro.puellMultiple);
       if (savedMacro.hashRibbonState) setHashRibbonState(savedMacro.hashRibbonState as "CAPITULATION" | "RECOVERY" | "EXPANSION");
       if (savedMacro.piCycleMa111 !== undefined) setPiCycleMa111(savedMacro.piCycleMa111);
@@ -693,7 +696,7 @@ const InstitutionalDashboard: React.FC = () => {
       vix, manualPER, manualBond10y, bond2y, m2Growth,
       creditSpread, liquidityGrowth, dxy, moveIndex, btcVol,
       btcDominance, mvrvRatio,
-      jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd,
+      jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps,
       puellMultiple, hashRibbonState,
       piCycleMa111, piCycleMa350x2,
       elliottCurrentWave,
@@ -707,7 +710,7 @@ const InstitutionalDashboard: React.FC = () => {
       xnasRsiWeekly, xnasPERatio,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, is3qRsiWeekly, is3qPERatio, emxcRsiWeekly, emxcPERatio, xnasRsiWeekly, xnasPERatio]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, is3qRsiWeekly, is3qPERatio, emxcRsiWeekly, emxcPERatio, xnasRsiWeekly, xnasPERatio]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -1537,17 +1540,20 @@ soxRsiWeekly,
           jumpIntensityBTC: jumpIntensity,
           jumpMean, jumpStd,
           btcIdx: btcIdx >= 0 ? btcIdx : -1,  // FIX-MC-02: -1 = sin BTC
-        }
+        },
+        !enableJumps  // FIX-MC-05: disableJumps = !enableJumps
       );
     }
 
     return monteCarloJumpDiffusion(
       totalPortfolioValue, monthlyInjection, muCapped, portfolioVol,
-      jumpIntensityPortfolio, jumpMean, jumpStd, years, 10000
+      jumpIntensityPortfolio, jumpMean, jumpStd, years, 10000,
+      undefined,
+      !enableJumps  // FIX-MC-05: disableJumps = !enableJumps
     );
   }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol,
     jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, years,
-    marketData?.covMatrix, marketData?.expectedReturns, engineResult]);
+    marketData?.covMatrix, marketData?.expectedReturns, engineResult, enableJumps]);  // FIX-MC-05: stale-closure fix
 
   const { mean: meanValue, median: medianValue, p25, p75, worst5, best95, simulations } = jumpSim;
 
@@ -2347,6 +2353,18 @@ soxRsiWeekly,
                 onChange={(e) => setJumpStd(Math.max(0.01, Number(e.target.value)))}
                 style={styles.smallInput} step="0.01" min="0.01" />
               <p style={{ fontSize: "0.6rem", color: "#6b7280", margin: "0.15rem 0 0" }}>Típico: 0.08–0.15</p>
+            </div>
+            <div style={{ marginTop: "0.6rem", padding: "0.4rem 0.6rem", background: enableJumps ? "#1c0a0a" : "#071c10", borderRadius: "6px", border: `1px solid ${enableJumps ? "#ef4444" : "#10b981"}` }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontSize: "0.68rem", color: "#d1d5db", fontWeight: 600 }}>
+                <input type="checkbox" checked={enableJumps} onChange={(e) => setEnableJumps(e.target.checked)}
+                  style={{ width: "14px", height: "14px", accentColor: "#10b981", cursor: "pointer" }} />
+                {enableJumps ? "🔴 Jump Diffusion (Stress Test)" : "🟢 GBM Puro (Proyección de crecimiento)"}
+              </label>
+              <p style={{ fontSize: "0.55rem", color: "#6b7280", margin: "0.15rem 0 0" }}>
+                {enableJumps 
+                  ? "Incluye crashes aleatorios — muestra riesgo de cola, no crecimiento esperado."
+                  : "Sin saltos — muestra el crecimiento real compuesto al μ anual declarado."}
+              </p>
             </div>
           </div>
           {jumpMean > 0 && (

@@ -63,6 +63,7 @@ export interface PersistedMacro {
   jumpIntensityPortfolio?: number;
   jumpMean?: number;
   jumpStd?: number;
+  enableJumps?: boolean;  // FIX-MC-05: toggle GBM puro vs Jump Diffusion
   puellMultiple?: number;
   hashRibbonState?: string;
   piCycleMa111?: number;
