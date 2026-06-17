@@ -172,13 +172,14 @@ function monteCarloJumpDiffusion(
         );
         for (let i = 0; i < n; i++) {
           assetValues[i] += monthlyContribution * multivariate.weights[i];
-          const muI = monthlyMus[i] - 0.5 * monthlySigmas[i] ** 2;
-          let jump = 0;
-          if (i === multivariate.btcIdx) {
+          // FIX-MC-01: GBM y salto separados; FIX-MC-02: guard btcIdx
+          const gbmFactor = Math.exp(monthlyMus[i] - 0.5 * monthlySigmas[i] ** 2 + correlated[i]);
+          let jumpFactor = 1;
+          if (multivariate.btcIdx >= 0 && i === multivariate.btcIdx) {
             const pJump = 1 - Math.exp(-multivariate.jumpIntensityBTC / 12);
-            if (Math.random() < pJump) jump = multivariate.jumpMean + multivariate.jumpStd * randomNormal();
+            if (Math.random() < pJump) jumpFactor = 1 + multivariate.jumpMean + multivariate.jumpStd * randomNormal();
           }
-          assetValues[i] = assetValues[i] * Math.exp(muI + correlated[i] + jump);
+          assetValues[i] = assetValues[i] * gbmFactor * Math.max(0, jumpFactor);
         }
       }
       finalValues.push(assetValues.reduce((s, v) => s + v, 0));
@@ -192,8 +193,9 @@ function monteCarloJumpDiffusion(
         value += monthlyContribution;
         const diffusion = monthlyMu - 0.5 * monthlySigma ** 2 + monthlySigma * randomNormal();
         const pJump = 1 - Math.exp(-jumpIntensity / 12);
-        const jump = Math.random() < pJump ? jumpMean + jumpStd * randomNormal() : 0;
-        value = value * Math.exp(diffusion + jump);
+        const jumpMult = Math.random() < pJump ? (1 + jumpMean + jumpStd * randomNormal()) : 1;
+        // FIX-MC-01: salto como %% multiplicativo, no en exponente
+        value = value * Math.exp(diffusion) * Math.max(0, jumpMult);
       }
       finalValues.push(value);
     }
@@ -1489,7 +1491,7 @@ soxRsiWeekly,
         const muJS = marketData.expectedReturns[i] ?? 0.08;
         return acc + muJS * w;
       }, 0);
-      const capped = Math.min(0.15, Math.max(0.02, weightedJS));
+      const capped = Math.min(0.15, Math.max(0.01, weightedJS));
       return capped * regimePenalty;
     }
 
@@ -1498,7 +1500,7 @@ soxRsiWeekly,
       const r = asset ? (asset.expectedReturn / 100) : 0.10;
       return acc + r * alloc.finalAllocation;
     }, 0);
-    const capped = Math.min(0.15, Math.max(0.02, weightedHardcoded));
+    const capped = Math.min(0.15, Math.max(0.01, weightedHardcoded));
     return capped * regimePenalty;
   }, [engineResult, portfolio.assets, marketData?.expectedReturns]);
 
@@ -1521,7 +1523,7 @@ soxRsiWeekly,
       });
       const mus = ASSETS.map((_, i) => {
         const raw = marketData!.expectedReturns?.[i] ?? muCapped;
-        return Math.min(0.25, Math.max(0.02, raw));
+        return Math.min(0.25, Math.max(-0.05, raw));
       });
       const sigmas = ASSETS.map((_, i) => (marketData!.realizedVols?.[i] ?? portfolioVol));
       const btcIdx = ASSETS.indexOf('BTC-EUR' as any);
@@ -1534,7 +1536,7 @@ soxRsiWeekly,
           covMatrix: marketData!.covMatrix,
           jumpIntensityBTC: jumpIntensity,
           jumpMean, jumpStd,
-          btcIdx: btcIdx >= 0 ? btcIdx : 0,
+          btcIdx: btcIdx >= 0 ? btcIdx : -1,  // FIX-MC-02: -1 = sin BTC
         }
       );
     }

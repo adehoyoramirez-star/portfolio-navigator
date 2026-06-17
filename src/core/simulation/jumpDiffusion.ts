@@ -61,9 +61,12 @@ export function monteCarloJumpDiffusion(
       // FIX: era `Math.random() < jumpIntensity` (probabilidad ANUAL sin dt)
       // AHORA: `1 - exp(-jumpIntensity * dt)` = probabilidad MENSUAL correcta
       const jumpOccurred = Math.random() < (1 - Math.exp(-jumpIntensity * dt));
-      const jump = jumpOccurred ? jumpMean + jumpStd * randomNormal() : 0;
+      const jumpMult = jumpOccurred ? (1 + jumpMean + jumpStd * randomNormal()) : 1;
 
-      value *= Math.exp(diffusion + jump);
+      // FIX-MC-01: jump se aplica como multiplicador porcentual, no en exponente.
+      // Antes: Math.exp(diffusion + jump) → exp(log-retorno) con Jensen bias en saltos.
+      // Ahora: Math.exp(diffusion) * (1 + jump) → GBM correcto + salto como %.
+      value *= Math.exp(diffusion) * Math.max(0, jumpMult);
     }
 
     results.push(value);

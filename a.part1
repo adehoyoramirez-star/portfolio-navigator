@@ -1,0 +1,8 @@
+// run-backtest-hmr-v35.ts -- OLYMPUS HMR v3.5 STRICT vs HYBRID
+const fs=require("fs"),path=require("path");
+const P={emaF:50,emaS:200,rsi2:2,rsi14:14,adxL:14,adxT:15,adxC:60,regL:120,volL:20,slM:1.5,tp1RR:1.0,trM:2.0,strictG:9,strictS:70,hybG:4,hybS:50,lzK:24,lzLB:100,lzMin:4,mxH:12};
+function ema(a,p,i){if(i<1)return a[0];const k=2/(p+1);let e=a[0];for(let j=1;j<=i;j++)e=a[j]*k+e*(1-k);return e;}
+function rsi(a,p,i){if(i<p)return 50;let g=0,l=0;for(let j=i-p+1;j<=i;j++){const d=a[j]-a[j-1];if(d>0)g+=d;else l-=d;}return l===0?100:100-100/(1+g/l);}
+function linSl(a,p,i){if(i<p-1)return 0;let sx=0,sy=0,xy=0,x2=0;for(let j=0;j<p;j++){sx+=j+1;sy+=a[i-p+1+j];xy+=(j+1)*a[i-p+1+j];x2+=(j+1)*(j+1);}return (p*xy-sx*sy)/(p*x2-sx*sx);}
+function adx(h,l,c,i,p){if(i<p*2)return 0;let pD=0,mD=0,tS=0;for(let j=i-p+1;j<=i;j++){const up=h[j]-h[j-1],dn=l[j-1]-l[j];tS+=Math.max(h[j]-l[j],Math.abs(h[j]-c[j-1]),Math.abs(l[j]-c[j-1]));if(up>dn&&up>0)pD+=up;if(dn>up&&dn>0)mD+=dn;}const tA=tS/p;if(tA<=0)return 0;const pI=100*(pD/p)/tA,mI=100*(mD/p)/tA;return(pI+mI)>0?100*Math.abs(pI-mI)/(pI+mI):0;}
+function atr(h,l,c,i,p){if(i<p)return 0;let s=0;for(let j=i-p+1;j<=i;j++)s+=Math.max(h[j]-l[j],Math.abs(h[j]-c[j-1]),Math.abs(l[j]-c[j-1]));return s/p;}

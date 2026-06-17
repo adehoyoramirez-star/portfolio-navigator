@@ -49,7 +49,7 @@ tr:hover{background:rgba(0,194,255,0.04)}
 <body>
 
 <h1>Senal Diaria — Olympus</h1>
-<div class="sub" id="subtitle">16/06/2026 07:05 &middot; 7 BUY &middot; 0 AVOID &middot; Capital: <span id="capDisplay">700</span> EUR</div>
+<div class="sub" id="subtitle">16/06/2026 22:22 &middot; 7 BUY &middot; 0 AVOID &middot; Capital: <span id="capDisplay">700</span> EUR</div>
 
 <div class="sg">
   <div class="cd"><div class="cl">BUY Hoy</div><div class="cv" style="color:#00e07a">7</div></div>
@@ -117,7 +117,7 @@ tr:hover{background:rgba(0,194,255,0.04)}
 var MAX_POS_PCT   = 0.2;   // max 20% capital por posicion
 var RISK_PCT      = 0.02;  // max 2% capital en riesgo por trade
 
-var SIGS      = [{"t": "INTC", "e": 124.57, "sl": 100.8651, "tp": 171.9799, "rr": 2.0, "sc": 100.0, "c": "high", "sec": "Other", "z": 3.33, "re": 14.0}, {"t": "AMD", "e": 511.57, "sl": 430.5854, "tp": 673.5393, "rr": 2.0, "sc": 99.8, "c": "high", "sec": "Tech", "z": 3.32, "re": 14.0}, {"t": "DELL", "e": 395.57, "sl": 325.995, "tp": 534.72, "rr": 2.0, "sc": 99.6, "c": "high", "sec": "Other", "z": 3.31, "re": 14.0}, {"t": "STX", "e": 931.04, "sl": 795.8294, "tp": 1201.461, "rr": 2.0, "sc": 99.4, "c": "high", "sec": "Other", "z": 3.3, "re": 14.0}, {"t": "MU", "e": 981.61, "sl": 797.4631, "tp": 1349.9037, "rr": 2.0, "sc": 99.3, "c": "high", "sec": "Other", "z": 3.28, "re": 14.0}, {"t": "HPE", "e": 48.17, "sl": 40.0592, "tp": 64.3916, "rr": 2.0, "sc": 99.1, "c": "high", "sec": "Other", "z": 3.27, "re": 14.0}, {"t": "WDC", "e": 562.93, "sl": 475.0496, "tp": 738.6908, "rr": 2.0, "sc": 98.9, "c": "high", "sec": "Other", "z": 3.26, "re": 14.0}];
+var SIGS      = [{"t": "STX", "e": 1042.5, "sl": 894.1348, "tp": 1339.2304, "rr": 2.0, "sc": 100.0, "c": "high", "sec": "Other", "z": 3.33, "re": 0.78}, {"t": "DELL", "e": 411.03, "sl": 344.0872, "tp": 544.9157, "rr": 2.0, "sc": 99.8, "c": "high", "sec": "Other", "z": 3.32, "re": 14.0}, {"t": "INTC", "e": 120.6215, "sl": 96.956, "tp": 167.9524, "rr": 2.0, "sc": 99.6, "c": "high", "sec": "Other", "z": 3.31, "re": 14.0}, {"t": "AMD", "e": 521.175, "sl": 437.6136, "tp": 688.2978, "rr": 2.0, "sc": 99.4, "c": "high", "sec": "Tech", "z": 3.3, "re": 14.0}, {"t": "WDC", "e": 698.975, "sl": 593.6627, "tp": 909.5996, "rr": 2.0, "sc": 99.3, "c": "high", "sec": "Other", "z": 3.28, "re": 14.0}, {"t": "MU", "e": 1049.37, "sl": 855.236, "tp": 1437.638, "rr": 2.0, "sc": 99.1, "c": "high", "sec": "Other", "z": 3.27, "re": 14.0}, {"t": "HPE", "e": 49.19, "sl": 41.5264, "tp": 64.5173, "rr": 2.0, "sc": 98.9, "c": "high", "sec": "Other", "z": 3.26, "re": 14.0}];
 var capSlider = document.getElementById("capSlider");
 var capInput  = document.getElementById("capInput");
 var tbody     = document.getElementById("buyTbody");

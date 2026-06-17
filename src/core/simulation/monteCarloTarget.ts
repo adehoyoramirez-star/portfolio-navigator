@@ -130,10 +130,11 @@ function runMonteCarloSimulation(input: MonteCarloTargetInput): {
         + volatility * Math.sqrt(dt) * randomNormal();
 
       // Componente de salto (Poisson con λ*dt)
+      // FIX-MC-01: salto como multiplicador porcentual, no en exponente
       const jumpOccurred = Math.random() < (1 - Math.exp(-jumpIntensity * dt));
-      const jump = jumpOccurred ? jumpMean + jumpStd * randomNormal() : 0;
+      const jumpMult = jumpOccurred ? (1 + jumpMean + jumpStd * randomNormal()) : 1;
 
-      value = value * Math.exp(diffusion + jump);
+      value = value * Math.exp(diffusion) * Math.max(0, jumpMult);
     }
 
     finalValues.push(value);
@@ -539,13 +540,15 @@ export function runMultivariateMonteCarlo(input: MultivariateMCInput): Multivari
         }
 
         // Jump diffusion por activo
+        // FIX-MC-01: salto como multiplicador porcentual, no en exponente
         const drift = (expectedReturns[i] - 0.5 * volatilities[i] * volatilities[i]) * dt;
         const diffusion = volatilities[i] * Math.sqrt(dt) * shock;
         const jumpOccurred = Math.random() < (1 - Math.exp(-jumpIntensity * dt));
-        const jump = jumpOccurred ? jumpMean + jumpStd * randomNormal() : 0;
+        const jumpMult = jumpOccurred ? (1 + jumpMean + jumpStd * randomNormal()) : 1;
 
-        // Retorno compuesto del activo i este mes
-        const assetRet = Math.expm1(drift + diffusion + jump);
+        // Retorno compuesto del activo i este mes (GBM + salto multiplicativo)
+        const gbmRet = Math.expm1(drift + diffusion);
+        const assetRet = (1 + gbmRet) * Math.max(0, jumpMult) - 1;
         portfolioRet += weights[i] * assetRet;
       }
 
