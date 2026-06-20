@@ -59,7 +59,7 @@ function yahooFinancePlugin() {
   return {
     name: 'yahoo-finance-proxy',
     configureServer(server: any) {
-      server.middlewares.use('/api/yahoo-finance', async (req: any, res: any) => {
+      server.middlewares.use('/_proxy/yahoo-finance', async (req: any, res: any) => {
         if (req.method !== 'POST') {
           res.writeHead(405); res.end('Method not allowed');
           return;

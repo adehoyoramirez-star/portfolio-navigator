@@ -29,7 +29,7 @@ export async function fetchYahooBatch(tickers: string[]): Promise<YahooBatchResp
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
   try {
-    const res = await fetch('/api/yahoo-finance', {
+    const res = await fetch('/_proxy/yahoo-finance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tickers }),
