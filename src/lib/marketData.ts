@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { fetchYahooBatch, type YahooBatchResponse } from '@/lib/yahooFinance';
 import { ASSETS } from '@/lib/constants';
 import { cleanCloses, dailyReturns, mean, std, percentile } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
@@ -467,17 +467,20 @@ function calibrateJumps(dailyRets: number[], thresholdOverride?: number): { inte
 }
 
 export async function fetchRealMarketData(): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
-  // FIX-CRITICAL: Pasar ASSETS a la Edge Function para que sepa qué tickers fetchear
-  // Sin esto, la Edge Function devuelve tickers por defecto (^VIX) en lugar de BTC-EUR, EMXC.DE, etc.
-  const { data: response, error } = await supabase.functions.invoke<YahooResponse>('yahoo-finance', {
-    body: { tickers: ASSETS }
-  });
+  // ── Llamada directa a Yahoo Finance (sin Supabase) ──
+  const { data: yfData, errors: fetchErrors } = await fetchYahooBatch([...ASSETS]);
 
-  if (error || !response) {
-    throw new Error(`Failed to fetch market data: ${error?.message || 'No response'}`);
+  if (Object.keys(yfData).length === 0 && fetchErrors.length > 0) {
+    throw new Error(`Failed to fetch market data: ${fetchErrors.join(', ')}`);
   }
 
-  const { data: yfData, errors: fetchErrors, m2: fredM2, cape: fredCAPE, centralBanks, creditSpread: fredCreditSpread, breakeven: fredBreakeven, fundamentals: yfFundamentals } = response;
+  // Datos de FRED y fundamentales ya no vienen de Supabase — usar fallbacks
+  const fredM2 = undefined;
+  const fredCAPE = undefined;
+  const centralBanks = undefined;
+  const fredCreditSpread = undefined;
+  const fredBreakeven = undefined;
+  const yfFundamentals = undefined;
   
   // ====== DEBUG: Verificar estructura de datos recibidos (solo dev) ======
   const devMode = typeof import.meta !== 'undefined' && import.meta.env?.DEV;

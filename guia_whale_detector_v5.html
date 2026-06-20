@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐋 OLYMPUS Whale Detector v5 — Guía Definitiva</title>
+    <style>
+        :root {
+            --bg: #0a0e14;
+            --card: #131820;
+            --border: #1e2a3a;
+            --text: #c9d1d9;
+            --dim: #6e7681;
+            --green: #00e676;
+            --red: #ff5252;
+            --blue: #00b0ff;
+            --orange: #ff9800;
+            --gold: #ffc107;
+            --accent: #0d47a1;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.7;
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 20px 24px 80px;
+        }
+        h1 {
+            font-size: 2.2em;
+            text-align: center;
+            margin: 20px 0 8px;
+            background: linear-gradient(135deg, var(--green), var(--blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        h1 .sub { display: block; font-size: 0.45em; color: var(--dim); margin-top: 4px; }
+        h2 {
+            font-size: 1.5em;
+            color: var(--green);
+            margin: 48px 0 16px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border);
+        }
+        h3 { font-size: 1.15em; color: var(--blue); margin: 28px 0 10px; }
+        h4 { font-size: 1em; color: var(--orange); margin: 18px 0 8px; }
+        p { margin: 8px 0 14px; }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px 24px;
+            margin: 16px 0;
+        }
+        .card h3 { margin-top: 0; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 0.9em;
+        }
+        th, td {
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            text-align: left;
+        }
+        th { background: #1a2332; color: var(--dim); font-weight: 600; text-transform: uppercase; font-size: 0.78em; letter-spacing: 0.05em; }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+        .signal-row { display: flex; align-items: flex-start; gap: 14px; padding: 12px 0; border-bottom: 1px solid #1a2332; }
+        .signal-icon { font-size: 1.6em; min-width: 36px; text-align: center; }
+        .signal-info { flex: 1; }
+        .signal-name { font-weight: 700; font-size: 1.05em; }
+        .signal-desc { color: var(--dim); font-size: 0.88em; margin-top: 2px; }
+        .signal-action { font-size: 0.85em; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 4px; }
+        .action-buy { background: rgba(0,230,118,0.15); color: var(--green); }
+        .action-wait { background: rgba(255,152,0,0.12); color: var(--orange); }
+        .action-exit { background: rgba(255,82,82,0.15); color: var(--red); }
+        .step { counter-increment: step; position: relative; padding-left: 50px; margin: 20px 0; }
+        .step::before {
+            content: counter(step);
+            position: absolute; left: 0; top: 0;
+            width: 34px; height: 34px;
+            background: var(--accent);
+            color: white;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700;
+            font-size: 0.95em;
+        }
+        .flow-arrow { text-align: center; font-size: 1.5em; color: var(--dim); margin: 6px 0; }
+        .highlight { background: rgba(0,176,255,0.1); padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+        .green { color: var(--green); }
+        .red { color: var(--red); }
+        .blue { color: var(--blue); }
+        .orange { color: var(--orange); }
+        .gold { color: var(--gold); }
+        .dim { color: var(--dim); }
+        code {
+            background: #1a2332;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 0.88em;
+        }
+        .checklist { list-style: none; padding: 0; }
+        .checklist li { padding: 6px 0; padding-left: 28px; position: relative; }
+        .checklist li::before { content: "☐"; position: absolute; left: 0; color: var(--dim); font-size: 1.1em; }
+        .checklist li.yes::before { content: "✅"; }
+        .checklist li.no::before { content: "❌"; }
+        .warning {
+            background: rgba(255,152,0,0.08);
+            border-left: 3px solid var(--orange);
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .danger {
+            background: rgba(255,82,82,0.08);
+            border-left: 3px solid var(--red);
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .info {
+            background: rgba(0,176,255,0.06);
+            border-left: 3px solid var(--blue);
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<h1>🐋 OLYMPUS Whale Detector v5
+    <span class="sub">Guía Definitiva — TradingView + Factor Lab + Backtest</span>
+</h1>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>🧠 1. ¿QUÉ ES EL WHALE DETECTOR?</h2>
+
+<div class="card">
+    <p>El Whale Detector es un <strong>indicador de trading basado en Smart Money Concepts (SMC)</strong>. 
+    No predice el futuro — detecta cuándo el "dinero inteligente" (ballenas institucionales) 
+    está acumulando o distribuyendo y te dice el momento exacto para subirte a su movimiento.</p>
+
+    <p><strong>Principio JonTrader:</strong> <em>"Súbete a la ballena, no apuestes contra ella."</em></p>
+
+    <p>La estrategia opera en <strong>3 fases</strong>:</p>
+    <ol>
+        <li><strong>Detección de estructura:</strong> ¿El mercado está subiendo o bajando?</li>
+        <li><strong>Identificación del Order Block:</strong> ¿Dónde acumuló la ballena?</li>
+        <li><strong>Entrada en el retroceso:</strong> ¿El precio volvió a la zona de acumulación? → COMPRAR</li>
+    </ol>
+</div>
+
+<div class="info">
+    <strong>⏱️ Timeframe:</strong> Solo funciona en <strong>DIARIO (1D)</strong>. 
+    No uses 1h, 4h ni semanal — el indicador no está calibrado para esos timeframes.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>📊 2. QUÉ SIGNIFICA CADA COSA EN EL GRÁFICO</h2>
+
+<h3>🔺 2.1 Líneas de Estructura — Swing Points</h3>
+
+<div class="signal-row">
+    <div class="signal-icon" style="color:var(--red)">HH</div>
+    <div class="signal-info">
+        <div class="signal-name">HH — Higher High (Máximo Creciente)</div>
+        <div class="signal-desc">El precio hizo un máximo MÁS ALTO que el anterior. Tendencia alcista.</div>
+        <div class="dim">Línea roja discontinua en el pico. Si ves HH → el mercado está sano.</div>
+    </div>
+</div>
+
+<div class="signal-row">
+    <div class="signal-icon" style="color:var(--orange)">LH</div>
+    <div class="signal-info">
+        <div class="signal-name">LH — Lower High (Máximo Decreciente)</div>
+        <div class="signal-desc">El precio hizo un máximo MÁS BAJO que el anterior. ⚠️ La tendencia se está girando.</div>
+        <div class="dim">Línea naranja discontinua. Alerta: posible cambio de tendencia.</div>
+    </div>
+</div>
+
+<div class="signal-row">
+    <div class="signal-icon" style="color:var(--green)">HL</div>
+    <div class="signal-info">
+        <div class="signal-name">HL — Higher Low (Mínimo Creciente)</div>
+        <div class="signal-desc">El precio hizo un mínimo MÁS ALTO que el anterior. Soporte sólido.</div>
+        <div class="dim">Línea verde discontinua. Confirma que los compradores están activos.</div>
+    </div>
+</div>
+
+<div class="signal-row">
+    <div class="signal-icon" style="color:var(--gold)">LL</div>
+    <div class="signal-info">
+        <div class="signal-name">LL — Lower Low (Mínimo Decreciente)</div>
+        <div class="signal-desc">El precio hizo un mínimo MÁS BAJO. Tendencia bajista.</div>
+        <div class="dim">Línea amarilla discontinua. Precaución si estás LONG.</div>
+    </div>
+</div>
+
+<h3>🚀 2.2 BOS — Break of Structure (Ruptura de Estructura)</h3>
+
+<div class="signal-row">
+    <div class="signal-icon">🚀</div>
+    <div class="signal-info">
+        <div class="signal-name">BOS ▲ — Break of Structure Alcista</div>
+        <div class="signal-desc">El precio rompió por ENCIMA del último swing high. La ballena está empujando.</div>
+        <div class="signal-action action-buy">Es la señal MÁS IMPORTANTE. Sin BOS no hay Order Block, y sin OB no hay entrada.</div>
+    </div>
+</div>
+
+<div class="signal-row">
+    <div class="signal-icon">💥</div>
+    <div class="signal-info">
+        <div class="signal-name">BOS ▼ — Break of Structure Bajista</div>
+        <div class="signal-desc">El precio rompió por DEBAJO del último swing low. Peligro.</div>
+        <div class="signal-action action-exit">Si estás LONG con OB de ese BOS: sal inmediatamente (OB Invalidado).</div>
+    </div>
+</div>
+
+<h3>🐋 2.3 Order Blocks — Las Zonas de la Ballena</h3>
+
+<div class="card">
+    <p>El <strong>Order Block (OB)</strong> es la <span class="highlight">última vela contraria antes del BOS</span>. 
+    Representa dónde la ballena institucional acumuló (compró) antes de mover el precio al alza.</p>
+
+    <table>
+        <tr><th>Elemento visual</th><th>Qué significa</th></tr>
+        <tr>
+            <td><span class="green">🟩 Rectángulo verde</span><br><code>🐋 OB DEMANDA</code></td>
+            <td>Zona de compra institucional. El precio probablemente rebotará aquí. 
+            <strong>Es donde quieres entrar.</strong></td>
+        </tr>
+        <tr>
+            <td><span class="red">🟥 Rectángulo rojo</span><br><code>🐻 OB OFERTA</code></td>
+            <td>Zona de venta institucional. Si estás LONG, manten distancia.</td>
+        </tr>
+        <tr>
+            <td>⚡ Vol: 1.5x</td>
+            <td>Ratio de volumen de la vela OB vs media. >1.0x = acumulación real.</td>
+        </tr>
+    </table>
+
+    <div class="warning">
+        <strong>⏳ El OB no dura para siempre.</strong> Si el precio cierra por debajo del OB, 
+        este se invalida y se convierte en un <strong>Breaker Block 🔄</strong> (rectángulo semi-transparente). 
+        Un Breaker Block ya NO es zona de entrada.
+    </div>
+</div>
+
+<h3>🧹 2.4 Liquidity Sweeps — Barridos de Stops</h3>
+
+<div class="signal-row">
+    <div class="signal-icon">🧹</div>
+    <div class="signal-info">
+        <div class="signal-name">LIQ SWEEP ▲ / ▼</div>
+        <div class="signal-desc">El precio rompió brevemente un nivel clave (barriendo stops) y revirtió con fuerza.</div>
+        <div class="signal-action action-wait">Señal de confirmación. No entres solo por un sweep — espera el OB.</div>
+    </div>
+</div>
+
+<h3>📍 2.5 Señales de Entrada — LO MÁS IMPORTANTE</h3>
+
+<div class="signal-row" style="background:rgba(0,230,118,0.06);border-radius:8px;padding:14px;">
+    <div class="signal-icon" style="font-size:2em;">📍</div>
+    <div class="signal-info">
+        <div class="signal-name" style="font-size:1.2em;color:var(--green);">📍 ENTRY SETUP — ¡AQUÍ ENTRAS!</div>
+        <div class="signal-desc">
+            El precio tocó o entró en la zona del OB alcista activo, el volumen es bajo 
+            (no hay presión vendedora) y la vela cierra alcista. 
+            <strong>Esta es tu señal de compra.</strong>
+        </div>
+        <div class="signal-action action-buy">✅ COMPRAR en la apertura de la SIGUIENTE vela.</div>
+    </div>
+</div>
+
+<div class="signal-row">
+    <div class="signal-icon">✅</div>
+    <div class="signal-info">
+        <div class="signal-name">✅ LONG ▲ @ precio — Entrada Ejecutada</div>
+        <div class="signal-desc">Ya estás dentro. Muestra: precio de entrada, SL, TP, y número de unidades.</div>
+        <div class="dim">Las líneas roja (SL), naranja (Trailing) y verde (TP) aparecen en el chart.</div>
+    </div>
+</div>
+
+<h3>🚪 2.6 Señales de Salida</h3>
+
+<div class="signal-row">
+    <div class="signal-icon">🚪</div>
+    <div class="signal-info">
+        <div class="signal-name">EXIT — ✅ WIN / ❌ LOSS</div>
+        <div class="signal-desc">El trade se cerró. Muestra: motivo, % de ganancia/pérdida, y múltiplo R.</div>
+    </div>
+</div>
+
+<table>
+    <tr><th>Motivo de salida</th><th>Qué pasó</th></tr>
+    <tr><td><span class="orange">Trailing Stop</span></td><td>El precio subió y luego retrocedió 3.5 ATR desde el máximo. <strong>Salida más común.</strong></td></tr>
+    <tr><td><span class="green">Take Profit</span></td><td>El precio alcanzó el objetivo de 2:1 riesgo/recompensa. Ganancia fija.</td></tr>
+    <tr><td><span class="red">OB Invalidado</span></td><td>El precio cerró por debajo del OB de entrada. La ballena abandonó la zona.</td></tr>
+</table>
+
+<h3>📋 2.7 Panel de Estado (Dashboard)</h3>
+
+<div class="card">
+    <p>El panel arriba a la derecha muestra el <strong>estado en tiempo real</strong>:</p>
+    <table>
+        <tr><th>Campo</th><th>Significado</th></tr>
+        <tr><td>⚪ FLAT</td><td>Sin posición. Esperando señal.</td></tr>
+        <tr><td>🔵 PENDING</td><td>Señal detectada. Entrará en la apertura de la siguiente vela.</td></tr>
+        <tr><td>🟢 LONG</td><td>Estás dentro. Mira SL, TP, y PnL abierto.</td></tr>
+        <tr><td>🔴 SHORT</td><td>Posición corta (no recomendada para ETFs).</td></tr>
+        <tr><td>OB: 🐋 BULL OB</td><td>Hay un OB alcista activo — el setup está "armado".</td></tr>
+        <tr><td>OB: — Sin OB</td><td>No hay OB activo. Aunque todo lo demás esté bien, SIN OB = NO ENTRAR.</td></tr>
+        <tr><td>ESTRUCTURA: ✅ Alcista</td><td>EMA50 > EMA200. Tendencia de fondo sana.</td></tr>
+    </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>🔄 3. LA ESTRATEGIA COMPLETA — Paso a Paso</h2>
+
+<div class="card">
+    <h3>📅 CADA MAÑANA (30 min antes del open)</h3>
+
+    <div class="step"><strong>Ejecuta el Factor Lab + Whale Backtest</strong>
+        <p>Doble-click en <code>run_whale.bat</code> o:</p>
+        <p><code>python OLYMPUS_HEATMAP_REGRESSION_v9_2.py</code><br>
+        <code>python whale_backtest.py --from predictions.csv</code></p>
+        <p class="dim">Esto genera predictions.csv (700 tickers rankeados) + whale_backtest_results.csv (Q5 con Profit Factor).</p>
+    </div>
+
+    <div class="step"><strong>Filtra los tickers</strong>
+        <p>Abre <code>whale_backtest_results.csv</code>. Solo miras los que cumplan:</p>
+        <ul class="checklist">
+            <li>Profit Factor ≥ 1.0</li>
+            <li>Al menos 8-10 trades en el backtest</li>
+            <li>Win Rate ≥ 35%</li>
+            <li>Es un ETF o acción grande (nada de penny stocks)</li>
+        </ul>
+    </div>
+
+    <div class="step"><strong>Abre TradingView — solo los tickers del paso 2</strong>
+        <p>Para cada uno:</p>
+        <ul>
+            <li>Timeframe: <strong>1D</strong></li>
+            <li>Añade el indicador: busca <code>🐋 WHALE v5 DEF</code></li>
+            <li>NO toques los parámetros ⚙️</li>
+        </ul>
+    </div>
+
+    <div class="step"><strong>Busca la señal de entrada</strong>
+        <p>En cada chart, mira el panel de estado. Solo entras si TODO esto es verdad:</p>
+        <ul class="checklist">
+            <li>El panel dice <span class="blue">🔵 PENDING</span></li>
+            <li>Hay un <span class="green">rectángulo verde (OB)</span> visible</li>
+            <li>Apareció <span class="green">📍 ENTRY SETUP</span> en la vela de ayer</li>
+            <li>El panel dice <span class="green">ESTRUCTURA: ✅ Alcista</span></li>
+        </ul>
+    </div>
+
+    <div class="step"><strong>Ejecuta la orden</strong>
+        <p>Entra en la apertura con:</p>
+        <ul>
+            <li><strong>Stop Loss:</strong> El que marca el indicador (línea roja)</li>
+            <li><strong>Take Profit:</strong> El que marca el indicador (línea verde)</li>
+            <li><strong>Tamaño:</strong> El que calcula el panel (uds)</li>
+        </ul>
+        <div class="danger"><strong>⚠️ NUNCA muevas el Stop Loss manualmente.</strong> El trailing stop del indicador lo ajusta solo.</div>
+    </div>
+
+    <div class="step"><strong>Durante el trade — NO TOQUES NADA</strong>
+        <p>El indicador gestiona la salida automáticamente:</p>
+        <ul>
+            <li>Línea naranja = Trailing Stop. Sube con el precio.</li>
+            <li>Si el precio toca la línea naranja → salida.</li>
+            <li>Si llega al TP (línea verde) → salida con ganancia.</li>
+            <li>Si el OB se invalida → salida inmediata.</li>
+        </ul>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>🔗 4. CÓMO SE INTEGRA TODO — El Heatmap y El Whale</h2>
+
+<div class="card">
+    <h3>Los 3 motores trabajando juntos</h3>
+
+    <div style="text-align:center;font-size:1.1em;line-height:2.2;">
+        <div style="background:#1a2332;padding:12px;border-radius:8px;margin:8px 0;">
+            <strong>🔬 FACTOR LAB (Olympus v9.2)</strong><br>
+            <span class="dim">700 tickers → 25 factores (momentum, volatilidad, RSI...) → ranking Q1-Q5</span><br>
+            <span style="font-size:0.85em;">Responde: ¿<strong>QUÉ</strong> comprar?</span>
+        </div>
+        <div class="flow-arrow">⬇️ predictions.csv (solo los Q5, score ≥ 80)</div>
+        <div style="background:#1a2332;padding:12px;border-radius:8px;margin:8px 0;">
+            <strong>🐍 WHALE BACKTEST (whale_backtest.py)</strong><br>
+            <span class="dim">Solo backtestea los Q5 con SMC → ranking por Profit Factor</span><br>
+            <span style="font-size:0.85em;">Responde: ¿Este ticker <strong>FUNCIONA</strong> con SMC?</span>
+        </div>
+        <div class="flow-arrow">⬇️ whale_backtest_results.csv (filtrado: PF ≥ 1.0)</div>
+        <div style="background:#1a2332;padding:12px;border-radius:8px;margin:8px 0;">
+            <strong>🐋 WHALE DETECTOR (TradingView)</strong><br>
+            <span class="dim">Solo miras los tickers que pasaron los 2 filtros anteriores</span><br>
+            <span style="font-size:0.85em;">Responde: ¿<strong>CUÁNDO</strong> comprar?</span>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>¿El Heatmap tiene sentido?</h3>
+    <p><strong>Sí, pero es otra cosa.</strong> El heatmap de correlaciones (Ledoit-Wolf) 
+    te dice cómo se mueven los activos entre sí. Es útil para:</p>
+    <ul>
+        <li>✅ No sobre-concentrarte en un sector (ej: no comprar 5 ETFs de tech a la vez)</li>
+        <li>✅ Diversificar: si ya tienes NVDA, no compres también SMH (correlación 0.79)</li>
+        <li>✅ Entender el riesgo de cartera: si todo está correlacionado >0.7, tu diversificación es falsa</li>
+    </ul>
+    <p>Pero el heatmap <strong>NO</strong> te dice cuándo comprar. Para eso está el Whale Detector.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>⚙️ 5. PARÁMETROS — Qué significan y por qué estos valores</h2>
+
+<div class="card">
+    <table>
+        <tr><th>Parámetro</th><th>Valor</th><th>Qué hace</th><th>Por qué este valor</th></tr>
+        <tr>
+            <td><code>swing_lookback</code></td>
+            <td>5</td>
+            <td>Barras para confirmar un swing</td>
+            <td>5 = balance entre detectar estructura y evitar ruido</td>
+        </tr>
+        <tr>
+            <td><code>bos_min_body</code></td>
+            <td>0.3× ATR</td>
+            <td>Tamaño mínimo de vela de ruptura</td>
+            <td>0.3 filtra rupturas falsas (velas diminutas)</td>
+        </tr>
+        <tr>
+            <td><code>ob_lookback</code></td>
+            <td>10</td>
+            <td>Barras hacia atrás para buscar el OB</td>
+            <td>10 captura la vela de acumulación sin irse muy atrás</td>
+        </tr>
+        <tr>
+            <td><code>ob_volume_min</code></td>
+            <td>0.9×</td>
+            <td>Volumen mínimo de la vela OB</td>
+            <td>0.9 = laxo. Bajado de 1.2 porque bloqueaba OBs válidos</td>
+        </tr>
+        <tr>
+            <td><code>vol_displ_min</code></td>
+            <td>1.0×</td>
+            <td>Volumen mínimo del BOS</td>
+            <td>1.0 = la media. Bajado de 1.3 (bloqueaba 41% de BOS)</td>
+        </tr>
+        <tr>
+            <td><code>require_htf</code></td>
+            <td>OFF</td>
+            <td>Exige que el semanal esté alcista</td>
+            <td>OFF porque el filtro semanal bloqueaba demasiadas señales</td>
+        </tr>
+        <tr>
+            <td><code>trail_act</code></td>
+            <td>3.5× ATR</td>
+            <td>Distancia del trailing stop</td>
+            <td>3.5 deja correr ganancias. 2.0 era muy ajustado</td>
+        </tr>
+        <tr>
+            <td><code>rr_min</code></td>
+            <td>2.0</td>
+            <td>Ratio riesgo/recompensa mínimo</td>
+            <td>2:1 = necesitas 33% de acierto para ser rentable</td>
+        </tr>
+        <tr>
+            <td><code>sl_buffer</code></td>
+            <td>0.15× ATR</td>
+            <td>Buffer bajo el OB para SL y zona de entrada</td>
+            <td>0.15× ATR = ~0.22€ en SPY. Distancia fija, no % del precio</td>
+        </tr>
+    </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>🚫 6. QUÉ NO HACER — Errores comunes</h2>
+
+<div class="danger">
+    <ul>
+        <li>❌ <strong>Entrar sin OB activo.</strong> Si el panel dice "Sin OB", no hay entrada posible.</li>
+        <li>❌ <strong>Usar timeframe 1h o 4h.</strong> El indicador solo funciona en DIARIO.</li>
+        <li>❌ <strong>Mover el Stop Loss manualmente.</strong> El trailing stop del indicador lo gestiona.</li>
+        <li>❌ <strong>Entrar en más de 5 tickers a la vez.</strong> Sobrecarga. Máximo 2-3 trades abiertos.</li>
+        <li>❌ <strong>Entrar si el panel dice FLAT.</strong> Espera a PENDING.</li>
+        <li>❌ <strong>Ignorar el Profit Factor del backtest.</strong> Si un ticker tiene PF &lt; 0.8, ni lo mires aunque el Factor Lab diga Q5.</li>
+        <li>❌ <strong>Entrar en SHORT.</strong> La estrategia está optimizada para LONG. Los shorts son experimentales.</li>
+    </ul>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>📁 7. ARCHIVOS — Qué es cada cosa</h2>
+
+<div class="card">
+    <table>
+        <tr><th>Archivo</th><th>Tipo</th><th>Dónde usarlo</th></tr>
+        <tr>
+            <td><code>OLYMPUS_Whale_Detector_v5.pine</code></td>
+            <td>Indicador LIVE</td>
+            <td>TradingView → añadir como <strong>Indicador</strong></td>
+        </tr>
+        <tr>
+            <td><code>OLYMPUS_Whale_Detector_v5_2_BACKTEST.pine</code></td>
+            <td>Backtest 1 ticker</td>
+            <td>TradingView → añadir como <strong>Estrategia</strong></td>
+        </tr>
+        <tr>
+            <td><code>whale_backtest.py</code></td>
+            <td>Backtest multi-ticker</td>
+            <td>Terminal: <code>python whale_backtest.py --from predictions.csv</code></td>
+        </tr>
+        <tr>
+            <td><code>OLYMPUS_HEATMAP_REGRESSION_v9_2.py</code></td>
+            <td>Factor Lab</td>
+            <td>Terminal: genera predictions.csv con 700 tickers rankeados</td>
+        </tr>
+    </table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>📈 8. EXPECTATIVAS REALISTAS</h2>
+
+<div class="card">
+    <div class="two-col">
+        <div>
+            <h4 style="color:var(--green);margin-top:0;">✅ Esperado</h4>
+            <ul>
+                <li>4-8 trades por ticker al año</li>
+                <li>Win Rate 40-50%</li>
+                <li>Profit Factor 1.2 - 2.0</li>
+                <li>Drawdown 5-10%</li>
+                <li>Trades que duran 2-15 días</li>
+            </ul>
+        </div>
+        <div>
+            <h4 style="color:var(--red);margin-top:0;">❌ NO esperado</h4>
+            <ul>
+                <li>Trades intradía (esto no es scalping)</li>
+                <li>100% de aciertos</li>
+                <li>Señales todos los días</li>
+                <li>Ganancias enormes en 1 trade</li>
+            </ul>
+        </div>
+    </div>
+    <p class="dim" style="margin-top:16px;">Esto es un sistema de <strong>calidad sobre cantidad</strong>. 
+    Pocas señales, bien filtradas, con buena relación riesgo/recompensa. 
+    La paciencia es la clave.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2>🟢 9. CHECKLIST DIARIO — Imprímelo</h2>
+
+<div class="card">
+    <ol>
+        <li>☐ Ejecutar <code>run_whale.bat</code></li>
+        <li>☐ Abrir <code>whale_backtest_results.csv</code> — anotar top 10 (PF ≥ 1.0)</li>
+        <li>☐ En TradingView, abrir chart 1D de cada top ticker</li>
+        <li>☐ Verificar: ¿Panel dice 🔵 PENDING?</li>
+        <li>☐ Verificar: ¿Hay 🟩 rectángulo verde (OB)?</li>
+        <li>☐ Verificar: ¿ESTRUCTURA dice ✅ Alcista?</li>
+        <li>☐ Si las 3 son SÍ → comprar en apertura con SL y TP del indicador</li>
+        <li>☐ Si alguna es NO → siguiente ticker</li>
+        <li>☐ No abrir más de 3 trades simultáneos</li>
+    </ol>
+</div>
+
+<div class="info" style="margin-top:32px;text-align:center;">
+    <strong>🐋 Olympus Hedge Fund — Whale Detector v5</strong><br>
+    <span class="dim">Junio 2026 · Estrategia SMC JonTrader · Optimizado con backtest multi-ticker</span>
+</div>
+
+</body>
+</html>

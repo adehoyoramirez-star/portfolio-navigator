@@ -39,6 +39,7 @@
 //      se fetchean antes del primer buildAsset.
 // ============================================================
 
+import { fetchYahooBatch } from '@/lib/yahooFinance';
 import type {
   TacticalAsset, TacticalOpportunity, ScreenerResult, TacticalConfig,
   DataSource,
@@ -161,41 +162,33 @@ const SECTOR_TO_ETF: Record<string, string> = {
 const MIN_RS_VS_SPY    = 0.85;  // RS vs SPY mínimo para ser tradeable
 const MIN_RS_VS_SECTOR = 0.90;  // RS vs sector mínimo
 
-// ── Fetch de un chunk individual ─────────────────────────────
+// ── Fetch de un chunk individual (directo a Yahoo, sin Supabase) ──
 async function fetchSingleChunk(
-  supabase: any,
-  tickers:  string[],
-  fnName:   'yahoo-finance-tactical' | 'yahoo-finance',
+  tickers:  string[]
 ): Promise<Record<string, RawTickerData>> {
   if (tickers.length === 0) return {};
   try {
-    const { data, error } = await supabase.functions.invoke(fnName, {
-      body: { tickers },
-    });
-    if (error) {
-      console.warn(`[Screener] chunk error (${fnName}) [${tickers.slice(0,3).join(',')}...]:`, error?.message ?? error);
-      return {};
-    }
-    if (!data?.data) return {};
+    const response = await fetchYahooBatch(tickers);
+    if (!response?.data) return {};
 
     const result: Record<string, RawTickerData> = {};
     for (const ticker of tickers) {
-      const d = data.data[ticker];
+      const d = response.data[ticker];
       if (!d || !d.currentPrice || d.currentPrice <= 0) continue;
       result[ticker] = {
         closes:        Array.isArray(d.closes)  ? d.closes  : [],
-        volumes:       Array.isArray(d.volumes) ? d.volumes : [],
+        volumes:       Array.isArray((d as any).volumes) ? (d as any).volumes : [],
         highs:         Array.isArray(d.highs)   ? d.highs   : undefined,
         lows:          Array.isArray(d.lows)    ? d.lows    : undefined,
         price:         d.currentPrice,
-        per:           d.per,
-        earningsYield: d.earningsYield,
-        eps:           d.eps,
+        per:           (d as any).per,
+        earningsYield: (d as any).earningsYield,
+        eps:           (d as any).eps,
       };
     }
     return result;
   } catch (err: any) {
-    console.warn(`[Screener] chunk exception (${fnName}):`, err?.message ?? err);
+    console.warn(`[Screener] chunk exception:`, err?.message ?? err);
     return {};
   }
 }
@@ -223,16 +216,14 @@ async function runWithConcurrency<T>(
 }
 
 async function fetchBatch(
-  supabase: any,
   tickers:  string[],
-  fnName:   'yahoo-finance-tactical' | 'yahoo-finance',
 ): Promise<Record<string, RawTickerData>> {
   if (tickers.length === 0) return {};
   const chunks = chunkArray(tickers, CHUNK_SIZE);
   const tasks  = chunks.map((chunk, i) => async () => {
     if (i > 0 && i % MAX_CONCURRENT === 0)
       await new Promise(r => setTimeout(r, INTER_CHUNK_DELAY));
-    return fetchSingleChunk(supabase, chunk, fnName);
+    return fetchSingleChunk(chunk);
   });
   const chunkResults = await runWithConcurrency(tasks, MAX_CONCURRENT);
   const merged: Record<string, RawTickerData> = {};
@@ -241,18 +232,17 @@ async function fetchBatch(
 }
 
 export async function fetchLivePrices(
-  supabase: any,
   tickers:  string[],
 ): Promise<Record<string, number>> {
   if (tickers.length === 0) return {};
-  const batch1  = await fetchBatch(supabase, tickers, 'yahoo-finance-tactical');
+  const batch1  = await fetchBatch(tickers);
   const prices: Record<string, number> = {};
   for (const t of tickers) {
     if (batch1[t]?.price > 0) prices[t] = batch1[t].price;
   }
   const missing = tickers.filter(t => !prices[t]);
   if (missing.length > 0) {
-    const batch2 = await fetchBatch(supabase, missing, 'yahoo-finance');
+    const batch2 = await fetchBatch(missing);
     for (const t of missing) {
       if (batch2[t]?.price > 0) prices[t] = batch2[t].price;
     }
@@ -422,7 +412,6 @@ function buildOpportunity(asset: TacticalAsset): TacticalOpportunity | null {
 export async function scanTacticalUniverse(
   mode:     ScanMode,
   config:   TacticalConfig,
-  supabase: any,
 ): Promise<ScreenerResult> {
   const universe = {
     volatile: VOLATILE_UNIVERSE,
@@ -461,7 +450,7 @@ export async function scanTacticalUniverse(
 
   // FIX: fetch de tasas FX antes del scan
   // Se cachean 4 horas — si no hay datos, usa fallback EUR=1
-  const fxRates = await fetchFxRates(supabase);
+  const fxRates = await fetchFxRates();
   if (fxRates.isStale) {
     warnings.push(`FX rates stale o no disponibles — usando fallback EUR/USD=${fxRates.EURUSD}, EUR/GBP=${fxRates.EURGBP}`);
   }
@@ -479,12 +468,12 @@ export async function scanTacticalUniverse(
   const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX', 'SPY', ...sectorEtfTickers])];
 
   // Paso 2: fetch batch de todos los símbolos
-  let batchData = await fetchBatch(supabase, allSymbols, 'yahoo-finance-tactical');
+  let batchData = await fetchBatch(allSymbols);
   const missingSymbols = allSymbols.filter(
     s => !(batchData[s]?.closes?.length >= 21),
   );
   if (missingSymbols.length > 0) {
-    const basic = await fetchBatch(supabase, missingSymbols, 'yahoo-finance');
+    const basic = await fetchBatch(missingSymbols);
     Object.assign(batchData, basic);
   }
 
@@ -508,7 +497,7 @@ export async function scanTacticalUniverse(
     );
     const toFetch = [...ultraTickers].filter(t => !(batchData[t]?.closes?.length >= 21));
     if (toFetch.length > 0) {
-      const ultraData = await fetchBatch(supabase, toFetch, 'yahoo-finance-tactical');
+      const ultraData = await fetchBatch(toFetch);
       Object.assign(batchData, ultraData);
     }
   }
@@ -681,7 +670,7 @@ export async function scanTacticalUniverse(
   // por sector. Si falla (sin API key), el sistema sigue sin penalización.
   let narrativeStatus: ScreenerResult['narrativeStatus'] = undefined;
   if (assets.length > 0) {
-    const narrative = await fetchSectorNarrative(supabase, {
+    const narrative = await fetchSectorNarrative({
       regime: marketRegime?.regime ?? 'RANGING',
       vix: vixPrice,
       spyPrice,
@@ -985,9 +974,8 @@ export async function scanTacticalUniverse(
 export async function runTacticalScreener(
   mode:     ScanMode,
   config:   TacticalConfig,
-  supabase: any,
 ): Promise<ScreenerResult> {
-  return scanTacticalUniverse(mode, config, supabase);
+  return scanTacticalUniverse(mode, config);
 }
 
 // ── Tamaño de posición (exportado para acceso desde dashboard) ─
@@ -1016,6 +1004,5 @@ export function defaultTacticalConfig(
     // ── INSTITUCIONAL v2 ───────────────────────────────────
     useKellySizing:        true,     // Kelly progresivo por executionScore
     maxDrawdownPct:         15,      // Circuit breaker al -15% drawdown
-    supabasePersistence:    false,   // Desactivado por defecto (requiere supabaseClient)
   };
 }

@@ -17,7 +17,6 @@
 //   });
 // ===============================================
 
-import { supabase } from "@/integrations/supabase/client";
 import { ENGINE_VERSION } from "@/core/engine/olympusV3";
 import type { EngineOutput } from "@/core/engine/olympusV3";
 import type { MarketData } from "@/lib/marketData";
@@ -85,29 +84,25 @@ export async function logEngineDecision(input: DecisionLogInput): Promise<void> 
       price: a.price,
     })) ?? null;
 
-    const { error } = await (supabase as any)
-      .from("decision_log")
-      .insert({
-        engine_version:       ENGINE_VERSION,
-        regime:               engineResult.regime,
-        regime_penalty:       Number(engineResult.masterRegime.regimePenalty.toFixed(3)),
-        vix:                  macro.vix,
-        credit_spread:        macro.creditSpread,
-        yield_spread:         macro.yieldSpread,
-        m2_growth:            macro.m2Growth,
-        market_data_snapshot: marketSnapshot,
-        factor_scores:        factorScores,
-        allocations_before:   positionsBefore,
-        allocations_after:    allocationsAfter,
-        trigger_reason:       triggerReason ?? "manual",
-      });
-
-    if (error) {
-      // Log del error pero no romper la UI
-      console.warn("[DecisionLog] Error insertando en decision_log:", error.message);
-    } else {
-      console.info(`[DecisionLog] ✅ Decisión registrada — ${ENGINE_VERSION} · Régimen: ${engineResult.regime}`);
-    }
+    // ── Guardar en localStorage (sin Supabase) ──
+    const key = 'olympus_decision_log';
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    existing.unshift({
+      id: Date.now(),
+      created_at: new Date().toISOString(),
+      engine_version: ENGINE_VERSION,
+      regime: engineResult.regime,
+      regime_penalty: Number(engineResult.masterRegime.regimePenalty.toFixed(3)),
+      vix: macro.vix,
+      credit_spread: macro.creditSpread,
+      yield_spread: macro.yieldSpread,
+      m2_growth: macro.m2Growth,
+      factor_scores: factorScores,
+      allocations_after: allocationsAfter,
+      trigger_reason: triggerReason ?? "manual",
+    });
+    localStorage.setItem(key, JSON.stringify(existing.slice(0, 200)));
+    console.info(`[DecisionLog] ✅ Decisión registrada — ${ENGINE_VERSION} · Régimen: ${engineResult.regime}`);
   } catch (err) {
     // Nunca propagar el error — el logging es secundario a la funcionalidad
     console.warn("[DecisionLog] Error inesperado:", err);
@@ -119,16 +114,20 @@ export async function logEngineDecision(input: DecisionLogInput): Promise<void> 
  * Devuelve las últimas N decisiones ordenadas por fecha descendente.
  */
 export async function loadDecisionHistory(limit: number = 50) {
-  const { data, error } = await (supabase as any)
-    .from("decision_log")
-    .select("id, created_at, engine_version, regime, regime_penalty, vix, trigger_reason")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    console.warn("[DecisionLog] Error cargando historial:", error.message);
+  try {
+    const raw = localStorage.getItem('olympus_decision_log');
+    if (!raw) return [];
+    const all = JSON.parse(raw);
+    return all.slice(0, limit).map((r: any) => ({
+      id: r.id,
+      created_at: r.created_at,
+      engine_version: r.engine_version,
+      regime: r.regime,
+      regime_penalty: r.regime_penalty,
+      vix: r.vix,
+      trigger_reason: r.trigger_reason,
+    }));
+  } catch {
     return [];
   }
-
-  return data ?? [];
 }

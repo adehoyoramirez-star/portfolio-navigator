@@ -1,0 +1,356 @@
+// ============================================================
+// OLYMPUS Whale Detector v5.2 — BACKTEST MODULE v3
+// Pine Script v6 — Olympus Hedge Fund
+//
+// CAMBIOS v5.2 (auditoria junio 2026):
+//   → Parametros sincronizados con indicador LIVE v5.1
+//   → HTF: Diario → Semanal (mismo que live)
+//   → vol_displ_min: 1.1 → 1.3 (igual que live)
+//   → vol_retrace_max: 1.2 → 0.8 (igual que live, mas restrictivo)
+//   → ob_volume_min: 1.1 → 1.2 (igual que live)
+//   → ob_lookback: 20 → 10 (igual que live)
+//   → NUEVO: Salida por OB Invalidado (close < entry OB bottom → cierra trade)
+// ============================================================
+//@version=6
+strategy(
+  title             = "WHALE v5.2 — Backtest LONG Only",
+  shorttitle        = "BT v5.2 L",
+  overlay           = true,
+  default_qty_type  = strategy.percent_of_equity,
+  default_qty_value = 10,
+  initial_capital   = 10000,
+  currency          = currency.EUR,
+  commission_type   = strategy.commission.percent,
+  commission_value  = 0.1,
+  slippage          = 2,
+  pyramiding        = 0,
+  calc_on_every_tick = false,
+  max_bars_back     = 500)
+
+// DATE FILTER
+grp_date   = "WALK-FORWARD"
+use_date   = input.bool(false, "Activar filtro de fecha", group=grp_date)
+date_start = input.time(timestamp("2020-01-01"), "Fecha inicio", group=grp_date)
+date_end   = input.time(timestamp("2025-12-31"), "Fecha fin",   group=grp_date)
+in_window  = not use_date or (time >= date_start and time <= date_end)
+
+// FILTERS (individual ON/OFF)
+grp_filters = "FILTROS (desactiva para diagnosticar)"
+use_htf_filter   = input.bool(true,  "Filtro HTF (EMA rapida > lenta en TF sup.)",  group=grp_filters)
+use_vol_filter   = input.bool(true,  "Filtro volumen retroceso",  group=grp_filters)
+use_trend_filter = input.bool(false, "Filtro tendencia local (EMA50>EMA200)", group=grp_filters)
+use_vol_ob       = input.bool(true,  "Filtro volumen en vela OB",  group=grp_filters)
+use_vol_bos      = input.bool(true,  "Filtro volumen en BOS",  group=grp_filters)
+
+// STRUCTURE
+grp_struct     = "ESTRUCTURA DE MERCADO"
+swing_lookback = input.int(5,   "Lookback Swing Points", minval=2, maxval=20, group=grp_struct)
+bos_min_body   = input.float(0.3, "Cuerpo minimo BOS (x ATR)", minval=0.1, maxval=2.0, step=0.1, group=grp_struct)
+
+// ORDER BLOCKS
+grp_ob        = "ORDER BLOCKS"
+ob_lookback   = input.int(10,   "Barras busqueda OB",     minval=3, maxval=50,  group=grp_ob)
+ob_volume_min = input.float(0.9, "Ratio volumen minimo OB", minval=0.5, maxval=3.0, step=0.1, group=grp_ob)
+
+// VOLUME
+grp_vol         = "VOLUMEN"
+vol_ma_len      = input.int(20,    "Periodo MA volumen",              minval=5, maxval=50,  group=grp_vol)
+vol_displ_min   = input.float(1.0, "Volumen BOS minimo (x MA)",      minval=0.8, maxval=4.0, step=0.1, group=grp_vol)
+vol_retrace_max = input.float(0.8, "Volumen retroceso max. (x MA)", minval=0.3, maxval=1.5, step=0.1, group=grp_vol)
+
+// HTF
+grp_htf      = "CONTEXTO MULTI-TF"
+htf_tf       = input.timeframe("W", "Timeframe superior", group=grp_htf)
+htf_ema_fast = input.int(10, "EMA rapida HTF", minval=3,  maxval=50,  group=grp_htf)
+htf_ema_slow = input.int(30, "EMA lenta HTF",  minval=10, maxval=100, group=grp_htf)
+
+// RISK
+grp_risk  = "RIESGO"
+sl_buffer = input.float(0.15, "Buffer SL (x ATR) bajo OB", minval=0.0, maxval=1.0, step=0.05, group=grp_risk)
+trail_act = input.float(3.5,  "Trailing stop (x ATR)",     minval=0.5, maxval=5.0, step=0.1,  group=grp_risk)
+rr_min    = input.float(2.0,  "Ratio R:R minimo",          minval=1.0, maxval=5.0, step=0.1,  group=grp_risk)
+
+// BASIC CALCS
+atr        = ta.atr(14)
+vol_ma     = ta.sma(volume, vol_ma_len)
+body       = math.abs(close - open)
+lower_wick = math.min(open, close) - low
+
+ema_fast        = ta.ema(close, 50)
+ema_slow        = ta.ema(close, 200)
+bull_trend_local = ema_fast > ema_slow
+
+htf_ema_f = request.security(syminfo.tickerid, htf_tf, ta.ema(close, htf_ema_fast), lookahead=barmerge.lookahead_off)
+htf_ema_s = request.security(syminfo.tickerid, htf_tf, ta.ema(close, htf_ema_slow), lookahead=barmerge.lookahead_off)
+htf_bull  = htf_ema_f > htf_ema_s
+
+f_htf   = not use_htf_filter   or htf_bull
+f_vol   = not use_vol_filter   or (vol_ma > 0 and volume < vol_ma * vol_retrace_max)
+f_trend = not use_trend_filter or bull_trend_local
+
+// MARKET STRUCTURE
+is_swing_high  = false
+is_swing_low   = false
+float swing_high_price = na
+float swing_low_price  = na
+
+if bar_index >= swing_lookback * 2
+    is_swing_high := true
+    for i = 1 to swing_lookback
+        if high[swing_lookback] <= high[swing_lookback + i] or high[swing_lookback] <= high[swing_lookback - i]
+            is_swing_high := false
+            break
+
+    is_swing_low := true
+    for i = 1 to swing_lookback
+        if low[swing_lookback] >= low[swing_lookback + i] or low[swing_lookback] >= low[swing_lookback - i]
+            is_swing_low := false
+            break
+
+    if is_swing_high
+        swing_high_price := high[swing_lookback]
+    if is_swing_low
+        swing_low_price := low[swing_lookback]
+
+var float[] swing_highs = array.new_float(10)
+var float[] swing_lows  = array.new_float(10)
+
+if is_swing_high
+    array.unshift(swing_highs, swing_high_price)
+    if array.size(swing_highs) > 10
+        array.pop(swing_highs)
+
+if is_swing_low
+    array.unshift(swing_lows, swing_low_price)
+    if array.size(swing_lows) > 10
+        array.pop(swing_lows)
+
+// DIAGNOSTIC COUNTERS [NUEVO v5.2]
+var int dx_bos_total   = 0
+var int dx_bos_vol_blk = 0
+var int dx_ob_found    = 0
+var int dx_ob_vol_blk  = 0
+var int dx_ob_touch    = 0
+var int dx_block_htf   = 0
+var int dx_block_vol   = 0
+var int dx_block_trend = 0
+var int dx_block_bull  = 0
+
+// BULLISH BOS DETECTION
+bos_bull_signal = false
+
+if array.size(swing_highs) > 0 and array.size(swing_lows) > 0
+    prev_swing_high = array.get(swing_highs, 0)
+    bos_bull_candle = close > prev_swing_high and body > atr * bos_min_body and close > open
+    if bos_bull_candle
+        dx_bos_total += 1
+    bos_vol_ok  = not use_vol_bos or (vol_ma > 0 and volume > vol_ma * vol_displ_min)
+    if bos_bull_candle and not bos_vol_ok
+        dx_bos_vol_blk += 1
+    bos_bull_signal := bos_bull_candle and bos_vol_ok
+
+// ORDER BLOCK DETECTION
+var bool  has_active_ob    = false
+var float active_ob_top    = na
+var float active_ob_bottom = na
+var int   active_ob_bar    = na
+
+if bar_index >= ob_lookback and bos_bull_signal
+    found_ob = false
+    for i = 1 to ob_lookback
+        if not found_ob and close[i] < open[i]
+            ob_vol_ok = not use_vol_ob or (vol_ma[i] > 0 and volume[i] >= vol_ma[i] * ob_volume_min)
+            if ob_vol_ok
+                has_active_ob    := true
+                active_ob_top    := math.max(open[i], close[i])
+                active_ob_bottom := math.min(open[i], close[i])
+                active_ob_bar    := bar_index - i
+                found_ob         := true
+                dx_ob_found      += 1
+            else
+                dx_ob_vol_blk    += 1
+
+if has_active_ob
+    if close < active_ob_bottom - atr * 0.1
+        has_active_ob := false
+
+// LONG ENTRY SIGNAL
+entry_long_raw = false
+if bar_index >= 2 and has_active_ob
+    price_in_ob     = low <= active_ob_top and low >= active_ob_bottom - atr * sl_buffer
+    price_mitigated = (low[1] > active_ob_top and low <= active_ob_top) or (low <= active_ob_top and close > open)
+    touches_ob      = price_in_ob or price_mitigated
+    if touches_ob
+        dx_ob_touch += 1
+        if not f_htf
+            dx_block_htf += 1
+        if not f_vol
+            dx_block_vol += 1
+        if not f_trend
+            dx_block_trend += 1
+        if not (close > open)
+            dx_block_bull += 1
+    entry_long_raw  := touches_ob and f_htf and f_vol and f_trend and close > open
+
+// TRADE MANAGEMENT — LONG ONLY
+var float snap_ob_top    = na
+var float snap_ob_bottom = na
+var float bt_stop_long   = na
+var float bt_tp_long     = na
+var int   bt_entry_bar   = na
+
+if entry_long_raw and strategy.position_size == 0
+    snap_ob_top    := active_ob_top
+    snap_ob_bottom := active_ob_bottom
+
+if entry_long_raw[1] and strategy.position_size == 0 and in_window
+    sl_price = snap_ob_bottom[1] - atr * sl_buffer
+    sl_dist_ = open - sl_price
+    tp_price = open + sl_dist_ * rr_min
+    if sl_dist_ > 0
+        bt_stop_long := sl_price
+        bt_tp_long   := tp_price
+        bt_entry_bar := bar_index
+        strategy.entry("LONG", strategy.long)
+        strategy.exit("EXIT_L", from_entry="LONG",
+                      stop          = bt_stop_long,
+                      limit         = bt_tp_long,
+                      trail_points  = atr * trail_act / syminfo.mintick,
+                      trail_offset  = atr * trail_act / syminfo.mintick)
+
+// OB INVALIDATION EXIT [NUEVO v5.2]
+// Cierra el trade si el precio cierra por debajo del OB de entrada
+if strategy.position_size > 0 and not na(bt_entry_bar) and bar_index > bt_entry_bar
+    if close < snap_ob_bottom
+        strategy.close("LONG", comment="OB Inv")
+
+// CUSTOM METRICS
+var int   bt_total        = 0
+var int   bt_wins         = 0
+var float bt_gross_profit = 0.0
+var float bt_gross_loss   = 0.0
+var float bt_max_dd       = 0.0
+var float bt_peak_eq      = strategy.initial_capital
+
+trade_closed = strategy.closedtrades > strategy.closedtrades[1]
+if trade_closed
+    last_pnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    bt_total += 1
+    if last_pnl > 0
+        bt_wins        += 1
+        bt_gross_profit += last_pnl
+    else
+        bt_gross_loss  += math.abs(last_pnl)
+
+curr_eq = strategy.equity
+if curr_eq > bt_peak_eq
+    bt_peak_eq := curr_eq
+curr_dd = (bt_peak_eq - curr_eq) / bt_peak_eq * 100
+if curr_dd > bt_max_dd
+    bt_max_dd := curr_dd
+
+// STATS PANEL (mismo patron que el indicador v5 — probado que funciona)
+if barstate.islastconfirmedhistory
+    t = table.new(position.bottom_right, 2, 14,
+                  frame_color=color.new(color.gray, 50), border_width=1,
+                  border_color=color.new(color.white, 30))
+
+    wr  = bt_total > 0 ? bt_wins / bt_total * 100 : 0.0
+    pf  = bt_gross_loss > 0 ? bt_gross_profit / bt_gross_loss : 0.0
+    ret = (strategy.equity - strategy.initial_capital) / strategy.initial_capital * 100
+
+    table.cell(t, 0, 0, "WHALE v5.2 — Backtest LONG",
+               text_color=color.white, text_size=size.small, bgcolor=#0D47A1)
+    table.merge_cells(t, 0, 0, 1, 0)
+
+    table.cell(t, 0, 1, "Trades", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 1, str.tostring(bt_total) + "  W:" + str.tostring(bt_wins) + " L:" + str.tostring(bt_total - bt_wins),
+               text_color=color.white, text_size=size.tiny, bgcolor=#263238)
+
+    wr_col = wr >= 45 ? color.new(#00E676, 0) : wr >= 35 ? color.new(#FF9800, 0) : color.new(#FF5252, 0)
+    table.cell(t, 0, 2, "Win Rate", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 2, str.tostring(math.round(wr, 1)) + "%",
+               text_color=wr_col, text_size=size.tiny, bgcolor=#263238)
+
+    pf_col = pf >= 1.5 ? color.new(#00E676, 0) : pf >= 1.0 ? color.new(#FF9800, 0) : color.new(#FF5252, 0)
+    table.cell(t, 0, 3, "Profit Factor", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 3, str.tostring(math.round(pf, 2)),
+               text_color=pf_col, text_size=size.tiny, bgcolor=#263238)
+
+    dd_col = bt_max_dd <= 10 ? color.new(#00E676, 0) : bt_max_dd <= 20 ? color.new(#FF9800, 0) : color.new(#FF5252, 0)
+    table.cell(t, 0, 4, "Max Drawdown", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 4, str.tostring(math.round(bt_max_dd, 1)) + "%",
+               text_color=dd_col, text_size=size.tiny, bgcolor=#263238)
+
+    np_col = strategy.netprofit >= 0 ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    table.cell(t, 0, 5, "Net P&L", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 5, (strategy.netprofit >= 0 ? "+" : "") + str.tostring(math.round(strategy.netprofit, 2)) + " EUR",
+               text_color=np_col, text_size=size.tiny, bgcolor=#263238)
+
+    ret_col = ret >= 0 ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    table.cell(t, 0, 6, "Retorno", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 6, (ret >= 0 ? "+" : "") + str.tostring(math.round(ret, 1)) + "%",
+               text_color=ret_col, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 7, "DIAGNOSTICO (todo el historico)",
+               text_color=color.white, text_size=size.tiny, bgcolor=#37474F)
+    table.merge_cells(t, 0, 7, 1, 7)
+
+    table.cell(t, 0, 8, "BOS detectados", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 8, str.tostring(dx_bos_total) + "  (bloq.vol: " + str.tostring(dx_bos_vol_blk) + ")",
+               text_color=color.white, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 9, "OBs encontrados", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 9, str.tostring(dx_ob_found) + "  (bloq.vol: " + str.tostring(dx_ob_vol_blk) + ")",
+               text_color=color.white, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 10, "Toques al OB", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 10, str.tostring(dx_ob_touch),
+               text_color=color.white, text_size=size.tiny, bgcolor=#263238)
+
+    htf_txt  = "HTF: " + str.tostring(dx_block_htf)
+    htf_col2 = dx_block_htf > 0 ? color.new(#FF9800, 0) : color.new(#00E676, 0)
+    table.cell(t, 0, 11, "Bloqueados por...", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 11, htf_txt + "  Vol:" + str.tostring(dx_block_vol) + "  Trend:" + str.tostring(dx_block_trend) + "  Bear:" + str.tostring(dx_block_bull),
+               text_color=htf_col2, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 12, "HTF / OB / Senal (ahora)", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    htf_now = "HTF " + htf_tf + ": " + (htf_bull ? "UP" : "DOWN")
+    htf_col = htf_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    table.cell(t, 1, 12, htf_now + "  |  OB:" + (has_active_ob ? "SI" : "NO") + "  |  Sig:" + (entry_long_raw ? "ON" : "off"),
+               text_color=htf_col, text_size=size.tiny, bgcolor=#263238)
+
+    in_pos = strategy.position_size > 0
+    table.cell(t, 0, 13, "Posicion", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 13, in_pos ? "LONG activo" : "Flat",
+               text_color=color.white, text_size=size.tiny, bgcolor=#263238)
+
+// PLOTS
+plot(strategy.position_size > 0 ? bt_stop_long : na,
+     "SL", color=color.new(#FF5252, 0), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size > 0 ? bt_tp_long : na,
+     "TP", color=color.new(#00E676, 0), style=plot.style_linebr, linewidth=1)
+
+plotshape(entry_long_raw and strategy.position_size == 0 and in_window,
+          "Setup LONG", shape.triangleup, location.belowbar,
+          color=color.new(#00E676, 0), size=size.small)
+
+barcolor(strategy.position_size > 0 ? color.new(#00E676, 50) : na)
+
+// [FIN] OLYMPUS Whale Detector v5.2 - Backtest LONG Only v3
+// Olympus Hedge Fund . Junio 2026
+//
+// GUIA RAPIDA PARA MAS OPERACIONES:
+//   1. Desactiva "Filtro HTF" -> mas senales (el HTF semanal bloquea mucho)
+//   2. Baja swing_lookback a 3 -> detecta mas swings menores
+//   3. Sube ob_lookback a 20 -> busca OBs en mas barras
+//   4. Desactiva "Filtro volumen en BOS" -> mas BOS detectados
+//   5. Sube vol_retrace_max a 1.2 -> acepta mas retrocesos
+//
+// CAMBIOS v5.2 (sincronizado con LIVE v5.1):
+//   -> HTF Semanal (W), parametros de volumen identicos al indicador LIVE
+//   -> OB Invalidado: el trade se cierra si close < OB de entrada
+//      (mismo timing que LIVE: bar_index > bt_entry_bar)
+//
+// REGLA: desactiva filtros de uno en uno y observa cuantas senales
+//        aniade cada cambio. Asi sabes cual es el cuello de botella.

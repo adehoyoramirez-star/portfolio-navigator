@@ -25,7 +25,7 @@
 
 // ── Core React ──────────────────────────────────────────────────────────
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { supabase } from "./supabaseClient";
+import { fetchCryptoSignals, fetchAIIntelligence, sendTelegramAlert } from "@/lib/directApis";
 
 // ── UI / charting ────────────────────────────────────────────────────────
 import {
@@ -478,15 +478,17 @@ const InstitutionalDashboard: React.FC = () => {
       }
 
       try {
-        const { data: cryptoRaw } = await supabase.functions.invoke('crypto-signals');
-        if (cryptoRaw && !cryptoRaw.error) {
+        const cryptoRaw = await fetchCryptoSignals();
+        if (cryptoRaw && (!cryptoRaw.errors || cryptoRaw.errors.length < 5)) {
           if (cryptoRaw.fearGreedValue >= 0) setFearGreedIndex({
             value: cryptoRaw.fearGreedValue,
             label: cryptoRaw.fearGreedLabel,
             source: cryptoRaw.fearGreedSource,
           });
-          if (Math.abs(cryptoRaw.btcVol24h) > 0) {
-            const impliedAnnualVol = Math.abs(cryptoRaw.btcVol24h / 100) * Math.sqrt(365);
+          // btcVol24h removed - not in direct API
+          const hasVol = (cryptoRaw as any).btcVol24h > 0;
+          if (hasVol) {
+            const impliedAnnualVol = Math.abs((cryptoRaw as any).btcVol24h / 100) * Math.sqrt(365);
             setBtcVol(prev => parseFloat((prev * 0.70 + impliedAnnualVol * 0.30).toFixed(3)));
           }
         }
@@ -495,19 +497,14 @@ const InstitutionalDashboard: React.FC = () => {
       }
 
       try {
-        const { data: onChainRaw } = await supabase.functions.invoke('glassnode-onchain');
-        if (onChainRaw && !onChainRaw.error && onChainRaw.errors?.length < 5) {
-          if (onChainRaw.mvrv?.value > 0) setMvrvRatio(parseFloat(onChainRaw.mvrv.value.toFixed(3)));
-          if (onChainRaw.puell?.value > 0) setPuellMultiple(parseFloat(onChainRaw.puell.value.toFixed(3)));
-          if (onChainRaw.hashRibbonState) setHashRibbonState(onChainRaw.hashRibbonState);
-          setOnChainSource("GLASSNODE");
-        }
+        // Glassnode on-chain desactivado. Datos manuales.
+        setOnChainSource("MANUAL");
       } catch {
         // no crítico
       }
 
     } catch (error) {
-      setApiError("Error al conectar con Supabase/Yahoo Finance. Usando datos locales.");
+      setApiError("Error al conectar con Yahoo Finance. Usando datos locales.");
     } finally {
       setLoading(false);
     }
@@ -538,10 +535,10 @@ const InstitutionalDashboard: React.FC = () => {
         contradictions,
       };
 
-      const { data, error } = await supabase.functions.invoke('ai-intelligence', { body: ctxBody });
+      const data = await fetchAIIntelligence(ctxBody);
 
-      if (error || !data) {
-        throw new Error(typeof error === 'string' ? error : 'Edge Function returned no data');
+      if (!data || data.gemini?.error) {
+        throw new Error(data.gemini?.error || 'No data from Gemini');
       }
 
       const output = {
@@ -555,13 +552,11 @@ const InstitutionalDashboard: React.FC = () => {
       setAiIntelligence(output);
 
       if (data.grok?.blackSwanAlert && data.grok?.blackSwanReason && !data.grok?.error) {
-        supabase.functions.invoke('telegram-alerts', {
-          body: {
+        sendTelegramAlert( {
             type: 'black_swan',
             blackSwanReason: data.grok.blackSwanReason,
             currentRegime: engineResult.regime,
             vix,
-          },
         }).catch(() => {});
       }
 
@@ -916,8 +911,7 @@ const InstitutionalDashboard: React.FC = () => {
       const totalValue = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
 
       if (currentRegime !== previousRegimeRef.current && previousRegimeRef.current !== null) {
-        supabase.functions.invoke('telegram-alerts', {
-          body: {
+        sendTelegramAlert( {
             type: 'regime_change',
             previousRegime: previousRegimeRef.current,
             currentRegime,
@@ -927,31 +921,26 @@ const InstitutionalDashboard: React.FC = () => {
             vix,
             portfolioValue: totalValue,
             portfolioDrawdown: portfolioDrawdown ?? 0,
-          },
         }).catch(() => {});
       }
 
       if (engineResult.tailRiskActive) {
-        supabase.functions.invoke('telegram-alerts', {
-          body: {
+        sendTelegramAlert( {
             type: 'tail_risk',
             tailRiskReason: engineResult.tailRiskReason,
             volMultiplier: engineResult.volTargetMultiplier,
             currentRegime,
             vix,
-          },
         }).catch(() => {});
       }
 
       const hasVixAlert = newAlerts.some(a => a.id.startsWith('vix'));
       if (hasVixAlert) {
-        supabase.functions.invoke('telegram-alerts', {
-          body: {
+        sendTelegramAlert( {
             type: 'vix_spike',
             vix,
             currentRegime,
             portfolioValue: totalValue,
-          },
         }).catch(() => {});
       }
     }
@@ -1892,8 +1881,7 @@ soxRsiWeekly,
             setTelegramError('');
             try {
               const totalVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
-              const { error } = await supabase.functions.invoke('telegram-alerts', {
-                body: {
+              const { ok, error } = await sendTelegramAlert( {
                   type: 'daily_summary',
                   currentRegime: engineResult.regime,
                   regimePenalty: engineResult.masterRegime.regimePenalty,
@@ -1907,9 +1895,8 @@ soxRsiWeekly,
                   allocations: engineResult.allocations.map(a => ({ name: a.name, pct: a.finalAllocation })),
                   muEffective: Math.min(0.15, expectedReturn),
                   aiNarrative: aiIntelligence?.gemini?.regimeNarrative ?? undefined,
-                },
               });
-              if (error) throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
+              if (!ok) throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
               setTelegramStatus('ok');
               setTimeout(() => setTelegramStatus('idle'), 4000);
             } catch (e: any) {

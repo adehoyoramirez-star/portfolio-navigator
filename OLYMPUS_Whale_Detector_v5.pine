@@ -1,0 +1,854 @@
+// ============================================================
+// OLYMPUS 🐋 Whale Detector v5 DEFINITIVO — SMC + Bug Fixes + Optimizado
+// Pine Script v6 — Olympus Hedge Fund
+//
+// FUSION v5.1 (bug fixes) + v5 (parametros optimizados) = DEFINITIVO
+// Junio 2026
+//
+// BUG FIXES heredados de v5.1:
+//   [BUG#1] sl_buffer en zona de entrada: fraccion de precio → multiplo ATR
+//           Antes: low >= active_ob_bottom * (1 - sl_buffer)  [15% de precio]
+//           Ahora: low >= active_ob_bottom - atr * sl_buffer  [0.22$ con ATR=1.5]
+//   [BUG#2] Pending entry guarda niveles OB propios al momento de la senal.
+//           El OB activo puede ser reemplazado antes de ejecutar la entrada;
+//           pending_ob_top/bottom evita que SL/TP se calculen con un OB diferente.
+//   [BUG#3] OB y Breaker Block usan var box persistentes con delete/recreate.
+//           Antes: box.new() cada barra → limit 200 agotado en ~200 barras.
+//           Ahora: 1 box por OB activo, extendido con box.set_right() cada barra.
+//   [BUG#4] Etiquetas de swing reales: HH/LH para highs, HL/LL para lows.
+//           Antes: siempre "HH" y "HL" sin importar la estructura.
+//   [BUG#5] Exit "OB Invalidado" usa entry_ob_top/bottom (OB de la entrada),
+//           no active_ob_top/bottom (que puede haber cambiado durante el trade).
+//
+// PARAMETROS OPTIMIZADOS (del backtest multi-ticker, junio 2026):
+//   require_htf        = false  (el filtro semanal bloqueaba 41% de senales)
+//   require_vol_confirm = false  (bloqueaba 87% de senales)
+//   vol_displ_min      = 1.0    (bajado de 1.3)
+//   ob_volume_min      = 0.9    (bajado de 1.2)
+//   trail_act          = 3.5    (subido de 2.0)
+//
+// Principio JonTrader real: "Subete a la ballena, no apuestes contra ella"
+// ============================================================
+
+//@version=6
+indicator(title      = "OLYMPUS 🐋 Whale Detector v5 DEFINITIVO — SMC + Optimizado",
+          shorttitle = "🐋 WHALE v5 DEF",
+          overlay    = true,
+          max_bars_back    = 500,
+          max_labels_count = 500,
+          max_lines_count  = 500,
+          max_boxes_count  = 200)
+
+// ════════════════════════════════════════════════════════════
+// ██  INPUTS — ESTRUCTURA DE MERCADO
+// ════════════════════════════════════════════════════════════
+
+grp_struct     = "━━━ ESTRUCTURA DE MERCADO ━━━"
+swing_lookback = input.int(5,   "Lookback Swing Points",        minval=2,   maxval=20,  group=grp_struct,
+                 tooltip="Barras a izquierda/derecha para confirmar un swing high/low")
+bos_min_body   = input.float(0.3, "Cuerpo minimo BOS (x ATR)", minval=0.1, maxval=2.0, step=0.1, group=grp_struct,
+                 tooltip="Tamano minimo de la vela de ruptura de estructura para considerarla valida")
+show_structure = input.bool(true, "Mostrar lineas de estructura", group=grp_struct)
+show_bos       = input.bool(true, "Mostrar BOS (Break of Structure)", group=grp_struct)
+
+// ════════════════════════════════════════════════════════════
+// ██  INPUTS — ORDER BLOCKS (JonTrader)
+// ════════════════════════════════════════════════════════════
+
+grp_ob        = "━━━ ORDER BLOCKS (JonTrader) ━━━"
+ob_lookback   = input.int(10,    "Barras max. busqueda OB",    minval=3,   maxval=30,  group=grp_ob,
+                tooltip="Buscar el order block dentro de estas barras antes del BOS")
+ob_volume_min = input.float(0.9, "Ratio volumen minimo OB",    minval=0.5, maxval=3.0, step=0.1, group=grp_ob,
+                tooltip="[OPTIMIZADO 0.9] Volumen del OB debe ser al menos X veces el volumen promedio")
+ob_show_zones  = input.bool(true, "Mostrar zonas OB activas",  group=grp_ob)
+ob_show_labels = input.bool(true, "Mostrar etiquetas OB",      group=grp_ob)
+ob_zone_extend = input.int(50,   "Extender zona OB N barras",  minval=10, maxval=200,  group=grp_ob)
+
+// ════════════════════════════════════════════════════════════
+// ██  INPUTS — LIQUIDITY SWEEPS
+// ════════════════════════════════════════════════════════════
+
+grp_liq        = "━━━ LIQUIDITY SWEEPS ━━━"
+sweep_wicks_min = input.float(0.15, "Mechero minimo sweep (x ATR)", minval=0.05, maxval=1.0, step=0.05, group=grp_liq,
+                  tooltip="La mecha que barre el nivel debe ser al menos este tamano")
+sweep_reversal  = input.float(0.5,  "Reversion post-sweep (x ATR)",  minval=0.2,  maxval=2.0, step=0.1,  group=grp_liq,
+                  tooltip="Tras el sweep, el precio debe revertir al menos esta distancia")
+show_sweeps     = input.bool(true, "Mostrar liquidity sweeps", group=grp_liq)
+
+// ════════════════════════════════════════════════════════════
+// ██  INPUTS — CONFIRMACION DE VOLUMEN
+// ════════════════════════════════════════════════════════════
+
+grp_vol             = "━━━ CONFIRMACION DE VOLUMEN ━━━"
+vol_ma_len          = input.int(20,   "Periodo MA volumen",                minval=5,   maxval=50,  group=grp_vol)
+vol_displ_min       = input.float(1.0, "Volumen desplazamiento (x MA)",    minval=1.0, maxval=4.0, step=0.1, group=grp_vol,
+                      tooltip="[OPTIMIZADO 1.0] El volumen del desplazamiento debe superar X veces la media")
+vol_retrace_max     = input.float(0.8, "Volumen retroceso (x MA) max.",    minval=0.3, maxval=1.5, step=0.1, group=grp_vol,
+                      tooltip="El volumen del retroceso al OB debe ser menor que X veces la media")
+require_vol_confirm = input.bool(false, "Exigir confirmacion de volumen",   group=grp_vol,
+                      tooltip="[OPTIMIZADO OFF] Desactivalo para mas senales")
+
+// ════════════════════════════════════════════════════════════
+// ██  INPUTS — TIMEFRAME SUPERIOR (HTF)
+// ════════════════════════════════════════════════════════════
+
+grp_htf      = "━━━ CONTEXTO MULTI-TF ━━━"
+require_htf  = input.bool(false, "Exigir alineacion HTF",  group=grp_htf,
+               tooltip="[OPTIMIZADO OFF] El HTF semanal bloqueaba 41% de senales. Desactivalo.")
+htf_tf       = input.timeframe("W", "Timeframe superior", group=grp_htf)
+htf_ema_fast = input.int(10, "EMA rapida HTF",            minval=3,  maxval=50,  group=grp_htf)
+htf_ema_slow = input.int(30, "EMA lenta HTF",             minval=10, maxval=100, group=grp_htf)
+
+// ════════════════════════════════════════════════════════════
+// ██  INPUTS — GESTION DE RIESGO
+// ════════════════════════════════════════════════════════════
+
+grp_risk  = "━━━ RIESGO Y SALIDA ━━━"
+sl_buffer = input.float(0.15, "Buffer SL/Entrada (x ATR) bajo OB", minval=0.0, maxval=1.0, step=0.05, group=grp_risk,
+            tooltip="[BUG#1 FIX] Distancia en ATR bajo/sobre el OB para zona de entrada y stop loss")
+trail_act = input.float(3.5,  "Trailing stop (x ATR)",             minval=0.5, maxval=5.0, step=0.1,  group=grp_risk,
+            tooltip="[OPTIMIZADO 3.5] Subido de 2.0 para dejar correr ganancias")
+rr_min    = input.float(2.0,  "Ratio R:R minimo",                  minval=1.0, maxval=5.0, step=0.1,  group=grp_risk,
+            tooltip="Solo tomar trades con al menos este ratio riesgo:recompensa")
+show_trade = input.bool(true, "Mostrar gestion de trade", group=grp_risk)
+
+grp_size     = "━━━ DIMENSIONADO ━━━"
+account_size = input.float(10000.0, "Capital cuenta",      minval=100, group=grp_size)
+risk_pct     = input.float(1.0,     "% riesgo por trade",  minval=0.1, maxval=5.0, step=0.1, group=grp_size)
+
+// ════════════════════════════════════════════════════════════
+// ██  INPUTS — VISUALIZACION
+// ════════════════════════════════════════════════════════════
+
+grp_vis        = "━━━ VISUALIZACION ━━━"
+bar_color_mode = input.bool(true, "Barras coloreadas por estado",       group=grp_vis)
+show_proj      = input.bool(true, "Mostrar proyeccion de estructura",   group=grp_vis)
+show_dashboard = input.bool(true, "Mostrar panel de estado",            group=grp_vis)
+show_breakers  = input.bool(true, "Mostrar Breaker Blocks",             group=grp_vis,
+                 tooltip="Muestra las zonas de OB invalidados convertidos en Breaker Blocks")
+
+// ════════════════════════════════════════════════════════════
+// ██  CALCULOS BASICOS
+// ════════════════════════════════════════════════════════════
+
+atr            = ta.atr(14)
+vol_ma         = ta.sma(volume, vol_ma_len)
+body           = math.abs(close - open)
+candle_range   = high - low
+upper_wick     = high - math.max(open, close)
+lower_wick     = math.min(open, close) - low
+
+// ── EMA para tendencia local ──
+ema_fast        = ta.ema(close, 50)
+ema_slow        = ta.ema(close, 200)
+bull_trend_local = ema_fast > ema_slow
+
+// ── HTF Context ──
+htf_ema_f = request.security(syminfo.tickerid, htf_tf,
+              ta.ema(close, htf_ema_fast), lookahead=barmerge.lookahead_off)
+htf_ema_s = request.security(syminfo.tickerid, htf_tf,
+              ta.ema(close, htf_ema_slow), lookahead=barmerge.lookahead_off)
+htf_bull  = htf_ema_f > htf_ema_s
+htf_ok    = not require_htf or htf_bull
+
+// ════════════════════════════════════════════════════════════
+// ██  ESTRUCTURA DE MERCADO — Swing Highs & Lows
+//
+// Un swing se confirma swing_lookback barras DESPUES de ocurrir.
+// Esto evita el error RE10008 (indices negativos en Pine Script).
+// ════════════════════════════════════════════════════════════
+
+is_swing_high   = false
+is_swing_low    = false
+float swing_high_price = na
+float swing_low_price  = na
+
+if bar_index >= swing_lookback * 2
+    is_swing_high := true
+    for i = 1 to swing_lookback
+        if high[swing_lookback] <= high[swing_lookback + i] or high[swing_lookback] <= high[swing_lookback - i]
+            is_swing_high := false
+            break
+
+    is_swing_low := true
+    for i = 1 to swing_lookback
+        if low[swing_lookback] >= low[swing_lookback + i] or low[swing_lookback] >= low[swing_lookback - i]
+            is_swing_low := false
+            break
+
+    if is_swing_high
+        swing_high_price := high[swing_lookback]
+    if is_swing_low
+        swing_low_price := low[swing_lookback]
+
+// ── Almacenar swing points ──
+var float[] swing_highs     = array.new_float(10)
+var int[]   swing_high_bars = array.new_int(10)
+var float[] swing_lows      = array.new_float(10)
+var int[]   swing_low_bars  = array.new_int(10)
+
+// ── [BUG#4 FIX] Etiqueta real de estructura ANTES de actualizar el array ──
+// Primer swing sin historia → "SH" / "SL"; los siguientes → HH/LH y HL/LL
+var string swing_high_label = "SH"
+var string swing_low_label  = "SL"
+
+if is_swing_high
+    if array.size(swing_highs) == 0
+        swing_high_label := "SH"
+    else
+        swing_high_label := swing_high_price > array.get(swing_highs, 0) ? "HH" : "LH"
+    array.unshift(swing_highs,     swing_high_price)
+    array.unshift(swing_high_bars, bar_index - swing_lookback)
+    if array.size(swing_highs) > 10
+        array.pop(swing_highs)
+        array.pop(swing_high_bars)
+
+if is_swing_low
+    if array.size(swing_lows) == 0
+        swing_low_label := "SL"
+    else
+        swing_low_label := swing_low_price > array.get(swing_lows, 0) ? "HL" : "LL"
+    array.unshift(swing_lows,     swing_low_price)
+    array.unshift(swing_low_bars, bar_index - swing_lookback)
+    if array.size(swing_lows) > 10
+        array.pop(swing_lows)
+        array.pop(swing_low_bars)
+
+// ════════════════════════════════════════════════════════════
+// ██  DETECCION BOS (Break of Structure)
+//
+// Bullish BOS: precio rompe por encima del ultimo swing high
+// Bearish BOS: precio rompe por debajo del ultimo swing low
+// ════════════════════════════════════════════════════════════
+
+var int   last_bos_bar    = na
+var bool  last_bos_bull   = false
+var float last_bos_price  = na
+var float last_bos_volume = na
+
+bos_bull_signal = false
+bos_bear_signal = false
+
+if array.size(swing_highs) > 0 and array.size(swing_lows) > 0
+    prev_swing_high = array.get(swing_highs, 0)
+    prev_swing_low  = array.get(swing_lows,  0)
+
+    bos_bull_candle = close > prev_swing_high and body > atr * bos_min_body and close > open
+    bos_bull_signal := bos_bull_candle
+
+    bos_bear_candle = close < prev_swing_low and body > atr * bos_min_body and close < open
+    bos_bear_signal := bos_bear_candle
+
+if bos_bull_signal
+    last_bos_bar    := bar_index
+    last_bos_bull   := true
+    last_bos_price  := close
+    last_bos_volume := volume
+
+if bos_bear_signal
+    last_bos_bar    := bar_index
+    last_bos_bull   := false
+    last_bos_price  := close
+    last_bos_volume := volume
+
+// ════════════════════════════════════════════════════════════
+// ██  ORDER BLOCK DETECTION — metodologia JonTrader real
+//
+// Bull OB: ultima vela bajista antes de un BOS alcista.
+// Bear OB: ultima vela alcista antes de un BOS bajista.
+// Zona del OB: [open, close] de esa vela (cuerpo).
+// ════════════════════════════════════════════════════════════
+
+var bool  has_active_ob    = false
+var bool  active_ob_bull   = true
+var float active_ob_top    = na
+var float active_ob_bottom = na
+var int   active_ob_bar    = na
+var float active_ob_volume = na
+
+if bar_index >= ob_lookback and bos_bull_signal and volume > vol_ma * vol_displ_min
+    found_ob = false
+    for i = 1 to ob_lookback
+        if not found_ob and close[i] < open[i]
+            ob_vol_ok = not require_vol_confirm or (vol_ma[i] > 0 and volume[i] >= vol_ma[i] * ob_volume_min)
+            if ob_vol_ok
+                has_active_ob    := true
+                active_ob_bull   := true
+                active_ob_top    := math.max(open[i], close[i])
+                active_ob_bottom := math.min(open[i], close[i])
+                active_ob_bar    := bar_index - i
+                active_ob_volume := volume[i]
+                found_ob         := true
+
+if bar_index >= ob_lookback and bos_bear_signal and volume > vol_ma * vol_displ_min
+    found_ob = false
+    for i = 1 to ob_lookback
+        if not found_ob and close[i] > open[i]
+            ob_vol_ok = not require_vol_confirm or (vol_ma[i] > 0 and volume[i] >= vol_ma[i] * ob_volume_min)
+            if ob_vol_ok
+                has_active_ob    := true
+                active_ob_bull   := false
+                active_ob_top    := math.max(open[i], close[i])
+                active_ob_bottom := math.min(open[i], close[i])
+                active_ob_bar    := bar_index - i
+                active_ob_volume := volume[i]
+                found_ob         := true
+
+// ── BREAKER BLOCKS — OB invalidado se convierte en Breaker Block ──
+var bool  has_breaker    = false
+var bool  breaker_is_bull = true
+var float breaker_top    = na
+var float breaker_bottom = na
+var int   breaker_bar    = na
+
+if has_active_ob
+    invalidation_buffer = atr * 0.1
+    if active_ob_bull and close < active_ob_bottom - invalidation_buffer
+        has_breaker     := true
+        breaker_is_bull := false
+        breaker_top     := active_ob_top
+        breaker_bottom  := active_ob_bottom
+        breaker_bar     := active_ob_bar
+        has_active_ob   := false
+    if not active_ob_bull and close > active_ob_top + invalidation_buffer
+        has_breaker     := true
+        breaker_is_bull := true
+        breaker_top     := active_ob_top
+        breaker_bottom  := active_ob_bottom
+        breaker_bar     := active_ob_bar
+        has_active_ob   := false
+
+if has_breaker
+    if breaker_is_bull     and close < breaker_bottom
+        has_breaker := false
+    if not breaker_is_bull and close > breaker_top
+        has_breaker := false
+
+// ════════════════════════════════════════════════════════════
+// ██  LIQUIDITY SWEEPS — barridos de stops
+//
+// Alcista: barre swing low y revierte al alza con fuerza.
+// Bajista: barre swing high y revierte a la baja.
+// ════════════════════════════════════════════════════════════
+
+sweep_bull_signal = false
+sweep_bear_signal = false
+
+if array.size(swing_lows) > 0
+    prev_low        = array.get(swing_lows, 0)
+    sweep_bull_ok   = low < prev_low and close > prev_low and lower_wick > atr * sweep_wicks_min
+    sweep_bull_rev  = close - low > atr * sweep_reversal
+    sweep_bull_signal := sweep_bull_ok and sweep_bull_rev
+
+if array.size(swing_highs) > 0
+    prev_high       = array.get(swing_highs, 0)
+    sweep_bear_ok   = high > prev_high and close < prev_high and upper_wick > atr * sweep_wicks_min
+    sweep_bear_rev  = high - close > atr * sweep_reversal
+    sweep_bear_signal := sweep_bear_ok and sweep_bear_rev
+
+// ════════════════════════════════════════════════════════════
+// ██  SENAL DE ENTRADA — retorno al Order Block
+//
+// JonTrader: esperar a que el precio regrese al OB (mitigation)
+// para entrar en direccion del BOS original.
+//
+// [BUG#1 FIX] Zona de entrada usa atr * sl_buffer, no fraccion de precio.
+//             Antes: low >= active_ob_bottom * (1 - 0.15) → +-15% del precio.
+//             Ahora: low >= active_ob_bottom - atr * sl_buffer → +-0.2$ con ATR=1.5.
+// ════════════════════════════════════════════════════════════
+
+entry_long_raw = false
+if bar_index >= 2 and has_active_ob and active_ob_bull
+    // Precio dentro de la zona OB: entre top y bottom - buffer ATR
+    price_in_ob    = low <= active_ob_top and low >= active_ob_bottom - atr * sl_buffer
+    // Precio toco la zona OB en esta vela o la anterior
+    price_mitigated = ((low[1] > active_ob_top and low <= active_ob_top) or
+                       (low <= active_ob_top and close > open))
+    vol_ok  = not require_vol_confirm or (vol_ma > 0 and volume < vol_ma * vol_retrace_max)
+    all_ok  = htf_ok and vol_ok
+    entry_long_raw := ((price_in_ob or price_mitigated) and all_ok and close > open)
+
+entry_short_raw = false
+if bar_index >= 2 and has_active_ob and not active_ob_bull
+    // [BUG#1 FIX] zona superior con buffer ATR
+    price_in_ob    = high >= active_ob_bottom and high <= active_ob_top + atr * sl_buffer
+    price_mitigated = ((high[1] < active_ob_bottom and high >= active_ob_bottom) or
+                       (high >= active_ob_bottom and close < open))
+    vol_ok        = not require_vol_confirm or (vol_ma > 0 and volume < vol_ma * vol_retrace_max)
+    htf_short_ok  = not require_htf or (not htf_bull)
+    all_ok        = htf_short_ok and vol_ok
+    entry_short_raw := ((price_in_ob or price_mitigated) and all_ok and close < open)
+
+// ════════════════════════════════════════════════════════════
+// ██  MAQUINA DE ESTADOS — gestion de trades
+// ════════════════════════════════════════════════════════════
+
+var bool  in_position        = false
+var bool  pos_is_long        = true
+var bool  pending_entry      = false
+var bool  pending_entry_long = true
+var float entry_price        = na
+var float stop_loss          = na
+var float take_profit        = na
+var float trail_stop         = na
+var float highest_since      = na
+var float lowest_since       = na
+var float sl_dist            = na
+var int   entry_bar          = na
+var float entry_atr          = na
+var float risk_amount        = na
+
+// [BUG#2 FIX] Niveles del OB capturados en el momento de la senal de entrada.
+//             Si llega un nuevo BOS antes de ejecutar, estos no se contaminan.
+var float pending_ob_top     = na
+var float pending_ob_bottom  = na
+
+// [BUG#5 FIX] Niveles del OB en el momento de ejecutar la entrada.
+//             El exit "OB Invalidado" los usa en lugar de active_ob_top/bottom.
+var float entry_ob_top       = na
+var float entry_ob_bottom    = na
+
+float  exit_price  = na
+string exit_reason = na
+
+// ── Ejecutar entrada pendiente en la apertura del bar siguiente ──
+if pending_entry
+    entry_price  := open
+    entry_atr    := atr
+    entry_bar    := bar_index
+    risk_amount  := account_size * (risk_pct / 100.0)
+
+    if pending_entry_long
+        pos_is_long     := true
+        highest_since   := high
+        // [BUG#2+5 FIX] SL usa niveles del OB original de la senal, no el OB activo actual
+        entry_ob_top    := pending_ob_top
+        entry_ob_bottom := pending_ob_bottom
+        stop_loss       := pending_ob_bottom - atr * sl_buffer
+        sl_dist         := entry_price - stop_loss
+        take_profit     := entry_price + sl_dist * rr_min
+        trail_stop      := stop_loss
+    else
+        pos_is_long     := false
+        lowest_since    := low
+        entry_ob_top    := pending_ob_top
+        entry_ob_bottom := pending_ob_bottom
+        stop_loss       := pending_ob_top + atr * sl_buffer
+        sl_dist         := stop_loss - entry_price
+        take_profit     := entry_price - sl_dist * rr_min
+        trail_stop      := stop_loss
+
+    in_position   := true
+    pending_entry := false
+
+// ── Registrar senal de entrada ──
+if not in_position and not pending_entry
+    if entry_long_raw
+        pending_entry      := true
+        pending_entry_long := true
+        // [BUG#2 FIX] Guardar niveles del OB activo en el instante de la senal
+        pending_ob_top     := active_ob_top
+        pending_ob_bottom  := active_ob_bottom
+    if entry_short_raw and not bull_trend_local
+        pending_entry      := true
+        pending_entry_long := false
+        pending_ob_top     := active_ob_top
+        pending_ob_bottom  := active_ob_bottom
+
+// ── Gestion de posicion abierta ──
+if in_position
+    if pos_is_long
+        highest_since   := math.max(highest_since, high)
+        candidate_trail  = highest_since - atr * trail_act
+        trail_stop      := math.max(trail_stop, candidate_trail)
+
+        if low <= trail_stop
+            exit_price  := math.min(open, trail_stop)
+            exit_reason := "Trailing Stop"
+            in_position := false
+        else if high >= take_profit
+            exit_price  := math.max(open, take_profit)
+            exit_reason := "Take Profit"
+            in_position := false
+        // [BUG#5 FIX] Usa entry_ob_bottom (OB que genero la entrada), no active_ob_bottom
+        else if close < entry_ob_bottom and bar_index > entry_bar + 1
+            exit_price  := open
+            exit_reason := "OB Invalidado"
+            in_position := false
+    else
+        lowest_since    := math.min(lowest_since, low)
+        candidate_trail  = lowest_since + atr * trail_act
+        trail_stop      := math.min(trail_stop, candidate_trail)
+
+        if high >= trail_stop
+            exit_price  := math.max(open, trail_stop)
+            exit_reason := "Trailing Stop"
+            in_position := false
+        else if low <= take_profit
+            exit_price  := math.min(open, take_profit)
+            exit_reason := "Take Profit"
+            in_position := false
+        // [BUG#5 FIX] Usa entry_ob_top (OB que genero la entrada), no active_ob_top
+        else if close > entry_ob_top and bar_index > entry_bar + 1
+            exit_price  := open
+            exit_reason := "OB Invalidado"
+            in_position := false
+
+// ════════════════════════════════════════════════════════════
+// ██  DIMENSIONADO DE POSICION
+// ════════════════════════════════════════════════════════════
+
+sl_dist_calc = in_position ? (pos_is_long ? entry_price - stop_loss : stop_loss - entry_price) : na
+pos_units    = (in_position and sl_dist_calc > 0) ? risk_amount / sl_dist_calc : na
+pos_value    = na(pos_units) ? na : pos_units * entry_price
+
+// ════════════════════════════════════════════════════════════
+// ██  VISUALIZACION — Lineas de Estructura
+// ════════════════════════════════════════════════════════════
+
+// [BUG#4 FIX] — Colores distintos para HH/LH y HL/LL
+if show_structure and is_swing_high
+    sw_bar   = bar_index - swing_lookback
+    sh_line  = swing_high_label == "HH" ? color.new(#FF5252, 40) : color.new(#FF9800, 50)
+    sh_bg    = swing_high_label == "HH" ? color.new(#FF5252, 15) : color.new(#FF9800, 20)
+    line.new(sw_bar, swing_high_price, sw_bar + 10, swing_high_price,
+             color=sh_line, width=1, style=line.style_dashed)
+    label.new(sw_bar, swing_high_price, swing_high_label,
+              color=sh_bg, textcolor=color.white, size=size.tiny, style=label.style_label_down)
+
+if show_structure and is_swing_low
+    sw_bar   = bar_index - swing_lookback
+    sl_line  = swing_low_label == "HL" ? color.new(#00E676, 40) : color.new(#FFC107, 50)
+    sl_bg    = swing_low_label == "HL" ? color.new(#00E676, 15) : color.new(#FFC107, 20)
+    line.new(sw_bar, swing_low_price, sw_bar + 10, swing_low_price,
+             color=sl_line, width=1, style=line.style_dashed)
+    label.new(sw_bar, swing_low_price, swing_low_label,
+              color=sl_bg, textcolor=color.white, size=size.tiny, style=label.style_label_up)
+
+// ── BOS ──
+if show_bos and bos_bull_signal
+    label.new(bar_index, high + atr * 0.3,
+              "🚀 BOS ▲", color=color.new(#00C853, 70),
+              textcolor=color.white, size=size.small, style=label.style_label_down)
+
+if show_bos and bos_bear_signal
+    label.new(bar_index, low - atr * 0.3,
+              "💥 BOS ▼", color=color.new(#FF5252, 70),
+              textcolor=color.white, size=size.small, style=label.style_label_up)
+
+// ── Liquidity Sweeps ──
+if show_sweeps and sweep_bull_signal
+    label.new(bar_index, low - atr * 0.5,
+              "🧹 LIQ SWEEP ▲", color=color.new(#00E676, 60),
+              textcolor=color.white, size=size.small, style=label.style_label_up)
+
+if show_sweeps and sweep_bear_signal
+    label.new(bar_index, high + atr * 0.5,
+              "🧹 LIQ SWEEP ▼", color=color.new(#FF5252, 60),
+              textcolor=color.white, size=size.small, style=label.style_label_down)
+
+// ════════════════════════════════════════════════════════════
+// ██  VISUALIZACION — Order Blocks (Zonas de Ballena)
+//
+// [BUG#3 FIX] var box persistente: solo se crea/elimina cuando el OB cambia.
+//             box.set_right() extiende el borde derecho cada barra sin crear
+//             un box nuevo → el limit de 200 boxes ya no se agota.
+// ════════════════════════════════════════════════════════════
+
+var box   ob_box        = na
+var int   ob_box_bar    = na
+var float ob_box_top_v  = na
+
+// OB ha cambiado si cambio su barra de origen o su nivel top
+ob_changed = has_active_ob and (na(ob_box_bar) or active_ob_bar != ob_box_bar or active_ob_top != ob_box_top_v)
+
+if ob_show_zones
+    if not has_active_ob
+        // OB ya no activo → eliminar box
+        if not na(ob_box)
+            box.delete(ob_box)
+            ob_box       := na
+        ob_box_bar   := na
+        ob_box_top_v := na
+    else if ob_changed
+        // Nuevo OB detectado → reemplazar box
+        if not na(ob_box)
+            box.delete(ob_box)
+        ob_color = active_ob_bull ? color.new(#00E676, 75) : color.new(#FF5252, 75)
+        ob_box := box.new(
+             left         = active_ob_bar,
+             top          = active_ob_top,
+             right        = math.min(bar_index, active_ob_bar + ob_zone_extend),
+             bottom       = active_ob_bottom,
+             border_color = active_ob_bull ? color.new(#00E676, 40) : color.new(#FF5252, 40),
+             border_width = 2,
+             bgcolor      = ob_color,
+             text         = active_ob_bull ? "🐋 OB DEMANDA" : "🐋 OB OFERTA",
+             text_size    = size.tiny,
+             text_color   = color.white)
+        ob_box_bar   := active_ob_bar
+        ob_box_top_v := active_ob_top
+    else if not na(ob_box)
+        // Mismo OB activo → solo extender borde derecho
+        box.set_right(ob_box, math.min(bar_index, active_ob_bar + ob_zone_extend))
+
+// ── Etiquetas de volumen OB ──
+vol_ratio_safe = vol_ma > 0 ? active_ob_volume / vol_ma : 0.0
+if ob_show_labels
+    if bos_bull_signal and has_active_ob
+        label.new(active_ob_bar, active_ob_top + atr * 1.0,
+                  "🐋 BULL OB\n⚡ Vol: " + str.tostring(math.round(vol_ratio_safe, 1)) + "x",
+                  color=color.new(#00C853, 20), textcolor=color.white,
+                  size=size.small, style=label.style_label_down)
+    if bos_bear_signal and has_active_ob
+        label.new(active_ob_bar, active_ob_bottom - atr * 1.0,
+                  "🐻 BEAR OB\n⚡ Vol: " + str.tostring(math.round(vol_ratio_safe, 1)) + "x",
+                  color=color.new(#FF5252, 20), textcolor=color.white,
+                  size=size.small, style=label.style_label_up)
+
+// ════════════════════════════════════════════════════════════
+// ██  SENALES DE ENTRADA Y SALIDA
+// ════════════════════════════════════════════════════════════
+
+if entry_long_raw
+    label.new(bar_index, low - atr * 0.4,
+              "📍 ENTRY SETUP\nRetorno al OB",
+              color=color.new(#00B0FF, 15), textcolor=color.white,
+              size=size.small, style=label.style_label_up)
+
+if entry_short_raw
+    label.new(bar_index, high + atr * 0.4,
+              "📍 SHORT SETUP\nRetorno al OB",
+              color=color.new(#FF6D00, 15), textcolor=color.white,
+              size=size.small, style=label.style_label_down)
+
+// ── Entrada ejecutada ──
+if in_position and bar_index == entry_bar
+    dir_txt   = pos_is_long ? "LONG ▲" : "SHORT ▼"
+    units_txt = na(pos_units) ? "—" : str.tostring(math.round(pos_units, 2))
+    label.new(bar_index, pos_is_long ? low - atr * 0.8 : high + atr * 0.8,
+              "✅ " + dir_txt + " @ " + str.tostring(math.round(entry_price, 4)) +
+              "\n🛑 SL: " + str.tostring(math.round(stop_loss, 4)) +
+              " | 🎯 TP: " + str.tostring(math.round(take_profit, 4)) +
+              "\n📐 " + units_txt + " uds",
+              color=pos_is_long ? color.new(#1B5E20, 5) : color.new(#B71C1C, 5),
+              textcolor=color.white, size=size.small,
+              style=pos_is_long ? label.style_label_up : label.style_label_down)
+
+// ── Salida ──
+if not na(exit_price)
+    ret_pct = pos_is_long ? 
+              (exit_price - entry_price) / entry_price * 100 :
+              (entry_price - exit_price) / entry_price * 100
+    r_mult  = sl_dist_calc > 0 ? math.abs(exit_price - entry_price) / sl_dist_calc : na
+    outcome = ret_pct >= 0 ? "✅ WIN" : "❌ LOSS"
+    r_txt   = na(r_mult) ? "—" : str.tostring(math.round(r_mult, 2)) + "R"
+    lbl_color = ret_pct >= 0 ? color.new(#00C853, 5) : color.new(#FF5252, 5)
+    lbl_style = pos_is_long ? label.style_label_down : label.style_label_up
+    lbl_y = pos_is_long ? high + atr * 0.5 : low - atr * 0.5
+    label.new(bar_index, lbl_y,
+              "🚪 EXIT — " + outcome + " " + r_txt +
+              "\n📋 " + exit_reason +
+              "\n💵 " + (ret_pct >= 0 ? "+" : "") + str.tostring(math.round(ret_pct, 2)) + "%",
+              color=lbl_color, textcolor=color.white, size=size.small, style=lbl_style)
+
+// ════════════════════════════════════════════════════════════
+// ██  TRAILING STOP Y NIVELES EN TIEMPO REAL
+// ════════════════════════════════════════════════════════════
+
+plot(show_trade and in_position ? stop_loss  : na, "Stop Loss",
+     color=color.new(#FF5252, 0), linewidth=1, style=plot.style_linebr)
+plot(show_trade and in_position ? trail_stop : na, "Trailing Stop",
+     color=color.new(#FF6D00, 0), linewidth=2, style=plot.style_linebr)
+plot(show_trade and in_position ? take_profit : na, "Take Profit",
+     color=color.new(#00E676, 0), linewidth=1, style=plot.style_linebr)
+
+// ════════════════════════════════════════════════════════════
+// ██  BREAKER BLOCKS — var box persistente [BUG#3 FIX]
+// ════════════════════════════════════════════════════════════
+
+var box   brk_box      = na
+var int   brk_box_bar  = na
+var float brk_box_top_v = na
+
+brk_changed = has_breaker and (na(brk_box_bar) or breaker_bar != brk_box_bar or breaker_top != brk_box_top_v)
+
+if show_breakers
+    if not has_breaker
+        if not na(brk_box)
+            box.delete(brk_box)
+            brk_box       := na
+        brk_box_bar   := na
+        brk_box_top_v := na
+    else if brk_changed
+        if not na(brk_box)
+            box.delete(brk_box)
+        bb_color = breaker_is_bull ? color.new(#00E676, 60) : color.new(#FF5252, 60)
+        brk_box := box.new(
+             left         = breaker_bar,
+             top          = breaker_top,
+             right        = math.min(bar_index, breaker_bar + ob_zone_extend),
+             bottom       = breaker_bottom,
+             border_color = breaker_is_bull ? color.new(#00E676, 50) : color.new(#FF5252, 50),
+             border_width = 2,
+             bgcolor      = bb_color,
+             text         = breaker_is_bull ? "🔄 BULL BRK" : "🔄 BEAR BRK",
+             text_size    = size.tiny,
+             text_color   = color.white)
+        brk_box_bar   := breaker_bar
+        brk_box_top_v := breaker_top
+    else if not na(brk_box)
+        box.set_right(brk_box, math.min(bar_index, breaker_bar + ob_zone_extend))
+
+// ════════════════════════════════════════════════════════════
+// ██  PROYECCION DE ESTRUCTURA
+// ════════════════════════════════════════════════════════════
+
+var line  proj_line  = na
+var label proj_label = na
+
+if show_proj and barstate.islast and array.size(swing_highs) > 1 and array.size(swing_lows) > 1
+    line.delete(proj_line)
+    label.delete(proj_label)
+
+    sh0 = array.get(swing_highs, 0)
+    sh1 = array.get(swing_highs, 1)
+    sl0 = array.get(swing_lows,  0)
+    sl1 = array.get(swing_lows,  1)
+
+    highs_rising = sh0 > sh1
+    lows_rising  = sl0 > sl1
+    struct_bull  = highs_rising and lows_rising
+
+    proj_dir = struct_bull ? "📈 ESTRUCTURA ALCISTA" :
+               (not highs_rising and not lows_rising) ? "📉 ESTRUCTURA BAJISTA" : "↔️ INDEFINIDA"
+    proj_col = struct_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+
+    proj_line  := line.new(bar_index, close, bar_index + 30,
+                           close + (struct_bull ? atr * 2 : -atr * 2),
+                           color=proj_col, width=2, style=line.style_dashed)
+    proj_label := label.new(bar_index + 30, close + (struct_bull ? atr * 2 : -atr * 2),
+                            proj_dir, color=proj_col, textcolor=color.white,
+                            size=size.small, style=label.style_label_left)
+
+// ════════════════════════════════════════════════════════════
+// ██  SHAPES Y BARCOLOR
+// ════════════════════════════════════════════════════════════
+
+plotshape(bos_bull_signal,       "BOS Alcista",   shape.triangleup,   location.belowbar,
+          color=color.new(#00E676, 0), size=size.small)
+plotshape(bos_bear_signal,       "BOS Bajista",   shape.triangledown, location.abovebar,
+          color=color.new(#FF5252, 0), size=size.small)
+plotshape(sweep_bull_signal,     "Sweep Alcista", shape.diamond,      location.belowbar,
+          color=color.new(#00B0FF, 0), size=size.tiny)
+plotshape(sweep_bear_signal,     "Sweep Bajista", shape.diamond,      location.abovebar,
+          color=color.new(#FF6D00, 0), size=size.tiny)
+plotshape(entry_long_raw,        "Entry LONG",    shape.circle,       location.belowbar,
+          color=color.new(#00E676, 0), size=size.tiny)
+plotshape(not na(exit_price),    "Exit",          shape.xcross,       location.abovebar,
+          color=color.new(#FF5252, 0), size=size.small)
+
+barcolor(not bar_color_mode ? na :
+         in_position and pos_is_long      ? color.new(#00E676, 25) :
+         in_position and not pos_is_long  ? color.new(#FF5252, 25) :
+         pending_entry                    ? color.new(#00B0FF, 40) :
+         na)
+
+// ════════════════════════════════════════════════════════════
+// ██  PANEL DE ESTADO (Dashboard)
+// ════════════════════════════════════════════════════════════
+
+if show_dashboard and barstate.islast
+    t = table.new(position.top_right, 2, 13,
+                  frame_color=color.new(color.gray, 50), border_width=1,
+                  border_color=color.new(color.white, 30))
+
+    table.cell(t, 0, 0, "🐋 WHALE v5 DEF — SMC + Optimizado",
+               text_color=color.white, text_size=size.small, bgcolor=#0D47A1)
+    table.merge_cells(t, 0, 0, 1, 0)
+
+    estado = in_position ? (pos_is_long ? "🟢 LONG" : "🔴 SHORT") :
+             pending_entry ? "🔵 PENDING" : "⚪ FLAT"
+    table.cell(t, 0, 1, "Estado",  text_color=color.gray,  text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 1, estado,    text_color=color.white, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 2, "Entrada", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 2, in_position ? str.tostring(math.round(entry_price,  4)) : "—",
+               text_color=#00E676, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 3, "Stop Loss",  text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 3, in_position ? str.tostring(math.round(stop_loss,    4)) : "—",
+               text_color=#FF5252, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 4, "Take Profit", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 4, in_position ? str.tostring(math.round(take_profit,  4)) : "—",
+               text_color=#00E676, text_size=size.tiny, bgcolor=#263238)
+
+    pnl_pct   = in_position ? (pos_is_long ? (close - entry_price) / entry_price * 100 :
+                                             (entry_price - close) / entry_price * 100) : na
+    pnl_color = na(pnl_pct) ? color.gray : pnl_pct >= 0 ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    pnl_txt   = na(pnl_pct) ? "—" : (pnl_pct >= 0 ? "+" : "") + str.tostring(math.round(pnl_pct, 2)) + "%"
+    table.cell(t, 0, 5, "PnL Abierto", text_color=color.gray,  text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 5, pnl_txt,       text_color=pnl_color,   text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 6, "Tamano",  text_color=color.gray,  text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 6, na(pos_units) ? "—" : str.tostring(math.round(pos_units, 2)) + " uds",
+               text_color=color.white, text_size=size.tiny, bgcolor=#263238)
+
+    table.cell(t, 0, 7, "━━ CONTEXTO ━━", text_color=color.white, text_size=size.tiny, bgcolor=#37474F)
+    table.merge_cells(t, 0, 7, 1, 7)
+
+    htf_t = htf_bull ? "✅ HTF Alcista" : "❌ HTF Bajista"
+    htf_c = htf_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    table.cell(t, 0, 8, "HTF (" + htf_tf + ")", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 8, htf_t, text_color=htf_c, text_size=size.tiny, bgcolor=#263238)
+
+    struct_t = bull_trend_local ? "✅ Alcista" : "❌ Bajista"
+    struct_c = bull_trend_local ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    table.cell(t, 0, 9, "Estructura", text_color=color.gray,  text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 9, struct_t,     text_color=struct_c,    text_size=size.tiny, bgcolor=#263238)
+
+    ob_t = has_active_ob ? (active_ob_bull ? "🐋 BULL OB" : "🐻 BEAR OB") : "— Sin OB"
+    ob_c = has_active_ob ? (active_ob_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)) : color.gray
+    table.cell(t, 0, 10, "Order Block", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 10, ob_t,          text_color=ob_c,       text_size=size.tiny, bgcolor=#263238)
+
+    vol_ratio = vol_ma > 0 ? volume / vol_ma : 1.0
+    vol_t = vol_ratio > 1.2 ? "🔥 Alto" : (vol_ratio > 0.8 ? "⚡ Normal" : "💤 Bajo")
+    vol_c = vol_ratio > 1.2 ? color.new(#FF6D00, 0) : vol_ratio > 0.8 ? color.white : color.gray
+    table.cell(t, 0, 11, "Volumen", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 11, vol_t + " (" + str.tostring(math.round(vol_ratio, 1)) + "x)",
+               text_color=vol_c, text_size=size.tiny, bgcolor=#263238)
+
+    bos_t = (na(last_bos_bar) ? "—" :
+            (last_bos_bull ? "🚀 BOS ▲ " : "💥 BOS ▼ ") + str.tostring(bar_index - last_bos_bar) + "b")
+    bos_c = (na(last_bos_bar) ? color.gray :
+            (last_bos_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)))
+    table.cell(t, 0, 12, "Ultimo BOS", text_color=color.gray, text_size=size.tiny, bgcolor=#263238)
+    table.cell(t, 1, 12, bos_t,        text_color=bos_c,      text_size=size.tiny, bgcolor=#263238)
+
+// ════════════════════════════════════════════════════════════
+// ██  ALERTAS
+// ════════════════════════════════════════════════════════════
+
+alertcondition(bos_bull_signal,    "🚀 BOS Alcista", "BOS alcista @ {{close}} — {{ticker}}")
+alertcondition(entry_long_raw,     "📍 Setup LONG",  "Retorno al OB alcista @ {{close}} — {{ticker}}")
+alertcondition(entry_short_raw,    "📍 Setup SHORT", "Retorno al OB bajista @ {{close}} — {{ticker}}")
+alertcondition(not na(exit_price), "🚪 Salida",      "Salida @ {{close}} — {{ticker}}")
+alertcondition(sweep_bull_signal,  "🧹 Liq Sweep ▲", "Barrido de liquidez alcista @ {{close}} — {{ticker}}")
+alertcondition(sweep_bear_signal,  "🧹 Liq Sweep ▼", "Barrido de liquidez bajista @ {{close}} — {{ticker}}")
+
+// ════════════════════════════════════════════════════════════
+// [FIN] OLYMPUS Whale Detector v5 DEFINITIVO
+// Fusion v5.1 (bug fixes) + v5 (parametros optimizados)
+// Olympus Hedge Fund · Junio 2026
+//
+// VERIFICACION RAPIDA:
+//   BUG#1 ✅ sl_buffer con ATR, no fraccion de precio
+//   BUG#2 ✅ pending_ob_top/bottom al momento de la senal
+//   BUG#3 ✅ var box persistente con box.set_right()
+//   BUG#4 ✅ HH/LH y HL/LL reales
+//   BUG#5 ✅ entry_ob_top/bottom para OB Invalidado
+//
+//   PARAM ✅ HTF=OFF, VolConfirm=OFF, VolBOS=1.0, VolOB=0.9, Trail=3.5
+// ════════════════════════════════════════════════════════════

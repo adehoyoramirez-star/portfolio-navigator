@@ -17,7 +17,6 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { supabase } from './supabaseClient';
 import type {
   TacticalEngineState, TacticalOpportunity, ScreenerResult,
   TacticalPosition, TacticalConfig,
@@ -25,12 +24,12 @@ import type {
 import type { TacticalSignal } from '../core/tactical/types';
 import {
   initTacticalState, loadTacticalState, saveTacticalState,
-  loadTacticalStateFromSupabase,
+
   openPosition, closePosition, updatePositionPrices,
   calcExpectedDays, calcTimingScore,
   evaluatePositionHealth, type PositionHealth,
   getTacticalSummary, calcKellySizingFromScore,
-  setSupabaseClient,
+
 } from '../core/tactical/tacticalPortfolio';
 import { checkCorrelation } from '../core/tactical/correlationManager';
 import {
@@ -264,21 +263,6 @@ export default function TacticalDashboard() {
   const [cfgMaxPos,      setCfgMaxPos]      = useState(state.config.maxOpenPositions);
   const [cfgRiskPct,     setCfgRiskPct]     = useState(state.config.riskPerTradePct * 100);
   const [cfgMA200,       setCfgMA200]       = useState(state.config.requireAboveMA200);
-  const [cfgSupabasePersistence, setCfgSupabasePersistence] = useState(state.config.supabasePersistence);
-
-  // ── Cargar desde Supabase al montar (si supabasePersistence activo) ──
-  useEffect(() => {
-    loadTacticalStateFromSupabase(state.config).then(supabaseLoaded => {
-      if (supabaseLoaded) {
-        // Solo sobreescribir si hay datos en Supabase
-        const localSaved = localStorage.getItem('olympus_tactical_state_v5');
-        if (!localSaved) {
-          setState(supabaseLoaded);
-        }
-      }
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── [FIX-DAY-COUNTER] Ref para leer siempre el state más reciente ──
   // Sin esto, el tick del interval captura el state del primer render
@@ -309,11 +293,6 @@ export default function TacticalDashboard() {
     return () => clearInterval(interval);
   }, []); // Dependencia vacía: el interval se registra una sola vez
 
-  // ── Conectar Supabase persistence al montar ──────────────────────
-  useEffect(() => {
-    setSupabaseClient(supabase);
-  }, []);
-
   useEffect(() => { saveTacticalState(state); }, [state]);
   const summary = useMemo(() => getTacticalSummary(state), [state]);
 
@@ -331,7 +310,7 @@ export default function TacticalDashboard() {
     setLoading(true); setError(null);
     try {
       // FIX: orden correcto (mode, config, supabase)
-      const result = await runTacticalScreener(scanMode, state.config, supabase);
+      const result = await runTacticalScreener(scanMode, state.config);
       // FIX: validar que result no sea undefined antes de acceder a sus propiedades
       if (!result) {
         setError('El screener no devolvió resultados');
@@ -623,7 +602,6 @@ export default function TacticalDashboard() {
         maxOpenPositions:   cfgMaxPos,
         riskPerTradePct:    cfgRiskPct / 100,
         requireAboveMA200:  cfgMA200,
-        supabasePersistence: cfgSupabasePersistence,
       };
       const capitalUsed = prev.openPositions.reduce((s: number, p: TacticalPosition) => s + (p.totalInvested ?? 0), 0);
       return { ...prev, config: newConfig, capitalUsed, capitalAvailable: Math.max(0, cfgCapital - capitalUsed) };
@@ -1537,11 +1515,6 @@ export default function TacticalDashboard() {
                 </label>
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
-                <input type="checkbox" checked={cfgSupabasePersistence} onChange={e => setCfgSupabasePersistence(e.target.checked)} id="supabasecheck"
-                  style={{ width:16, height:16, cursor:'pointer', accentColor:'#3b82f6' }} />
-                <label htmlFor="supabasecheck" style={{ fontSize:'0.75rem', color:'#94a3b8', cursor:'pointer' }}>
-                  Persistencia en Supabase (backup nube)
-                </label>
               </div>
             </div>
           </div>

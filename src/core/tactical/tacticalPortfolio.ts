@@ -46,47 +46,6 @@ import type { MarketRegime } from './marketRegimeFilter';
 // ESTADO INICIAL Y PERSISTENCIA
 // ════════════════════════════════════════════════════════════
 
-// ── Supabase persistence: cliente inyectado por el dashboard ───
-let supabaseClient: any = null;
-export function setSupabaseClient(client: any): void {
-  supabaseClient = client;
-}
-
-// ── Guardar estado en Supabase ──────────────────────────────────
-async function saveToSupabase(toSave: Record<string, unknown>): Promise<boolean> {
-  if (!supabaseClient) return false;
-  try {
-    const { error } = await supabaseClient
-      .from('tactical_engine_state')
-      .upsert({ id: 1, state: toSave, updated_at: new Date().toISOString() });
-    if (error) {
-      console.warn('[Tactical] Supabase save error:', error.message);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.warn('[Tactical] Supabase save exception:', err);
-    return false;
-  }
-}
-
-// ── Cargar estado desde Supabase ────────────────────────────────
-async function loadFromSupabase(): Promise<Record<string, unknown> | null> {
-  if (!supabaseClient) return null;
-  try {
-    const { data, error } = await supabaseClient
-      .from('tactical_engine_state')
-      .select('state')
-      .eq('id', 1)
-      .single();
-    if (error || !data?.state) return null;
-    return data.state as Record<string, unknown>;
-  } catch (err) {
-    console.warn('[Tactical] Supabase load error:', err);
-    return null;
-  }
-}
-
 export function initTacticalState(config: TacticalConfig): TacticalEngineState {
   return {
     config,
@@ -140,13 +99,6 @@ export function loadTacticalState(config: TacticalConfig): TacticalEngineState {
   }
 }
 
-export async function loadTacticalStateFromSupabase(config: TacticalConfig): Promise<TacticalEngineState | null> {
-  if (!config.supabasePersistence) return null;
-  const supabaseState = await loadFromSupabase();
-  if (!supabaseState) return null;
-  return sanitizeState({ ...supabaseState as unknown as TacticalEngineState, config });
-}
-
 export function saveTacticalState(state: TacticalEngineState): void {
   try {
     const toSave = {
@@ -155,10 +107,7 @@ export function saveTacticalState(state: TacticalEngineState): void {
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 
-    // ── Backup a Supabase si config.supabasePersistence está activo ──
-    if (state.config.supabasePersistence) {
-      saveToSupabase(toSave);
-    }
+    // Supabase persistence eliminado — solo localStorage
   } catch (err) {
     console.error('[Tactical] Error al guardar estado:', err);
   }

@@ -49,13 +49,13 @@ tr:hover{background:rgba(0,194,255,0.04)}
 <body>
 
 <h1>Senal Diaria — Olympus</h1>
-<div class="sub" id="subtitle">16/06/2026 22:22 &middot; 7 BUY &middot; 0 AVOID &middot; Capital: <span id="capDisplay">700</span> EUR</div>
+<div class="sub" id="subtitle">18/06/2026 13:35 &middot; 5 BUY &middot; 2 AVOID &middot; Capital: <span id="capDisplay">700</span> EUR</div>
 
 <div class="sg">
-  <div class="cd"><div class="cl">BUY Hoy</div><div class="cv" style="color:#00e07a">7</div></div>
+  <div class="cd"><div class="cl">BUY Hoy</div><div class="cv" style="color:#00e07a">5</div></div>
   <div class="cd"><div class="cl">Capital Total</div><div class="cv" id="capCard" style="color:#fff">700 EUR</div></div>
-  <div class="cd"><div class="cl">Max / Pos</div><div class="cv" id="posCard" style="color:#00c2ff">100 EUR</div></div>
-  <div class="cd"><div class="cl">AVOID</div><div class="cv" style="color:#ff4060">0</div></div>
+  <div class="cd"><div class="cl">Max / Pos</div><div class="cv" id="posCard" style="color:#00c2ff">140 EUR</div></div>
+  <div class="cd"><div class="cl">AVOID</div><div class="cv" style="color:#ff4060">2</div></div>
 </div>
 
 <div id="warnZero" class="warn-zero">&#9888; Capital insuficiente para al menos una posicion con riesgo controlado</div>
@@ -64,7 +64,7 @@ tr:hover{background:rgba(0,194,255,0.04)}
   <label>Capital:</label>
   <input type="range" id="capSlider" min="100" max="100000" step="100" value="700">
   <input type="number" id="capInput" value="700" step="100" min="100" max="100000">
-  <span style="font-size:11px;color:#5a7a96">Posiciones activas: <strong id="posCount" style="color:#00c2ff">7</strong></span>
+  <span style="font-size:11px;color:#5a7a96">Posiciones activas: <strong id="posCount" style="color:#00c2ff">5</strong></span>
 </div>
 
 <div class="summary" id="summaryLine">
@@ -93,7 +93,16 @@ tr:hover{background:rgba(0,194,255,0.04)}
 </tr></thead>
 <tbody id="buyTbody"></tbody>
 </table>
-
+<div class="st" style="margin-top:32px">AVOID &mdash; No operar (2 total)</div>
+<table>
+<thead><tr>
+  <th>Ticker</th><th>Sector</th><th>Entry</th><th>Score</th>
+</tr></thead>
+<tbody>
+<tr><td class="m">WST</td><td class="m">Other</td><td>323.59</td><td>99.1</td></tr>
+<tr><td class="m">HPE</td><td class="m">Other</td><td>48.20</td><td>98.9</td></tr>
+</tbody>
+</table>
 
 <div class="foot">
 <strong>REGLAS DE SEGURIDAD</strong><br>
@@ -117,7 +126,7 @@ tr:hover{background:rgba(0,194,255,0.04)}
 var MAX_POS_PCT   = 0.2;   // max 20% capital por posicion
 var RISK_PCT      = 0.02;  // max 2% capital en riesgo por trade
 
-var SIGS      = [{"t": "STX", "e": 1042.5, "sl": 894.1348, "tp": 1339.2304, "rr": 2.0, "sc": 100.0, "c": "high", "sec": "Other", "z": 3.33, "re": 0.78}, {"t": "DELL", "e": 411.03, "sl": 344.0872, "tp": 544.9157, "rr": 2.0, "sc": 99.8, "c": "high", "sec": "Other", "z": 3.32, "re": 14.0}, {"t": "INTC", "e": 120.6215, "sl": 96.956, "tp": 167.9524, "rr": 2.0, "sc": 99.6, "c": "high", "sec": "Other", "z": 3.31, "re": 14.0}, {"t": "AMD", "e": 521.175, "sl": 437.6136, "tp": 688.2978, "rr": 2.0, "sc": 99.4, "c": "high", "sec": "Tech", "z": 3.3, "re": 14.0}, {"t": "WDC", "e": 698.975, "sl": 593.6627, "tp": 909.5996, "rr": 2.0, "sc": 99.3, "c": "high", "sec": "Other", "z": 3.28, "re": 14.0}, {"t": "MU", "e": 1049.37, "sl": 855.236, "tp": 1437.638, "rr": 2.0, "sc": 99.1, "c": "high", "sec": "Other", "z": 3.27, "re": 14.0}, {"t": "HPE", "e": 49.19, "sl": 41.5264, "tp": 64.5173, "rr": 2.0, "sc": 98.9, "c": "high", "sec": "Other", "z": 3.26, "re": 14.0}];
+var SIGS      = [{"t": "NTAP", "e": 154.81, "sl": 135.3926, "tp": 193.6448, "rr": 2.0, "sc": 100.0, "c": "high", "sec": "Other", "z": 3.33, "re": 14.0}, {"t": "URI", "e": 1048.97, "sl": 972.2613, "tp": 1202.3874, "rr": 2.0, "sc": 99.8, "c": "high", "sec": "Other", "z": 3.32, "re": 14.0}, {"t": "HUM", "e": 362.0, "sl": 332.3577, "tp": 421.2845, "rr": 2.0, "sc": 99.6, "c": "high", "sec": "Other", "z": 3.31, "re": 14.0}, {"t": "DDOG", "e": 226.63, "sl": 195.3514, "tp": 289.1872, "rr": 2.0, "sc": 99.4, "c": "high", "sec": "Other", "z": 3.3, "re": 14.0}, {"t": "CNC", "e": 60.64, "sl": 54.6584, "tp": 72.6032, "rr": 2.0, "sc": 99.3, "c": "high", "sec": "Other", "z": 3.28, "re": 12.28}];
 var capSlider = document.getElementById("capSlider");
 var capInput  = document.getElementById("capInput");
 var tbody     = document.getElementById("buyTbody");

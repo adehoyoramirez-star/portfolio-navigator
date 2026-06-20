@@ -207,7 +207,6 @@ export interface TacticalConfig {
   // ── INSTITUCIONAL v2 ─────────────────────────────────────
   useKellySizing:        boolean;   // Usar Kelly progresivo (escala con executionScore)
   maxDrawdownPct:        number;    // Circuit breaker: drawdown máx antes de bloquear (ej: 15)
-  supabasePersistence:   boolean;   // Backup de posiciones en Supabase
 }
 
 // ── Estado del motor táctico ─────────────────────────────────

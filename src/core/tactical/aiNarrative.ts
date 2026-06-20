@@ -17,6 +17,7 @@
 // ============================================================
 
 import type { TacticalAsset } from './types';
+import { fetchAIIntelligence } from '@/lib/directApis';
 
 // ── Mapa de palabras/sectores que buscamos en narrativas ─────
 // Cada entrada tiene: palabras clave, sector a ajustar, dirección
@@ -84,7 +85,6 @@ function parseNarrativesToBiases(narratives: string[]): {
 }
 
 export async function fetchSectorNarrative(
-  supabase: any,
   marketContext: {
     regime: string;
     vix: number;
@@ -109,27 +109,35 @@ export async function fetchSectorNarrative(
   }
 
   try {
-    const { data, error } = await supabase.functions.invoke('ai-intelligence', {
-      body: {
-        regime: marketContext.regime,
-        vix: marketContext.vix,
-        spyPrice: marketContext.spyPrice ?? 500,
-        btcPrice: 0,
-        btcRsi: 50,
-        fearGreed: 50,
-        fearGreedLabel: 'NEUTRAL',
-      },
+    const data = await fetchAIIntelligence({
+      regime: marketContext.regime,
+      vix: marketContext.vix,
+      btcPrice: 0,
+      btcRsi: 50,
+      btcDominance: 0,
+      mvrv: 0,
+      fearGreed: 50,
+      fearGreedLabel: 'NEUTRAL',
+      regimePenalty: 0,
+      probCrisis: 0,
+      move: 0,
+      bond10y: 0,
+      bond2y: 0,
+      creditSpread: 0,
+      m2Growth: 0,
+      dxy: 0,
+      brent: 0,
     });
 
-    if (error || !data) {
-      console.warn('[AINarrative] Error:', error?.message ?? 'sin datos');
+    if (!data || data.gemini?.error) {
+      console.warn('[AINarrative] Error:', data?.gemini?.error ?? 'sin datos');
       return emptyNarrativeResponse();
     }
 
     const narratives: string[] =
-      data.grok?.topNarratives ?? data.gemini?.topNarratives ?? [];
+      (data.grok as any)?.topNarratives ?? (data.gemini as any)?.topNarratives ?? [];
     const marketSentiment: string =
-      data.grok?.marketSentiment ?? data.gemini?.marketSentiment ?? '';
+      (data.grok as any)?.marketSentiment ?? (data.gemini as any)?.marketSentiment ?? '';
 
     const { sectorBiases, marketWideBias } = parseNarrativesToBiases(narratives);
 
