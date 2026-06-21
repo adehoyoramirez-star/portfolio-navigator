@@ -12,6 +12,7 @@ export interface YahooChartResult {
   closes: number[];
   highs: number[];
   lows: number[];
+  volumes: number[];
   dataPoints: number;
 }
 

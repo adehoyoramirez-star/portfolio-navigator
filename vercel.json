@@ -5,9 +5,7 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/_proxy/yahoo-finance", "destination": "/api/proxy/yahoo-finance" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
