@@ -120,21 +120,25 @@ interface RawTickerData {
 
 // ── Ultra-fallback sectorial ──────────────────────────────────
 const ULTRA_FALLBACK_MAP: Record<string, string> = {
-  'Equity':         'IVV',
-  'Technology':     'VOO',
-  'Commodities':    'GLD',
-  'Energy':         'GLD',
-  'Finance':        'IVV',
-  'Healthcare':     'VOO',
-  'Materials':      'GLD',
-  'Utilities':      'VOO',
-  'Consumer':       'IVV',
-  'Small Cap':      'IWM',
-  'Real Estate':    'VNQ',
-  'Emerging':       'EEM',
-  'Emerging Bonds': 'EMB',
-  'Factor':         'QUAL',
-  'Crypto':         'BTC-USD',
+  'Equity':          'IVV',
+  'Technology':      'VOO',
+  'Commodities':     'GLD',
+  'Energy':          'GLD',
+  'Finance':         'IVV',
+  'Healthcare':      'VOO',
+  'Materials':       'GLD',
+  'Utilities':       'VOO',
+  'Consumer':        'IVV',
+  'Small Cap':       'IWM',
+  'Real Estate':     'VNQ',
+  'Emerging':        'EEM',
+  'Emerging Bonds':  'EMB',
+  'Factor':          'QUAL',
+  'Crypto':          'BTC-USD',
+  'Industry':        'XLI',   // v6
+  'Defense':         'ITA',   // v6: iShares US Aerospace & Defense
+  'Infrastructure':  'XLI',   // v6
+  'Fixed Income':    'TLT',   // v6
 };
 
 // ── REFUERZO #3: Sector → ETF de referencia para Strength vs Sector ──
@@ -149,6 +153,7 @@ const SECTOR_TO_ETF: Record<string, string> = {
   'Consumer':        'XLP',
   'Real Estate':     'XLRE',
   'Industrials':     'XLI',
+  'Industry':        'XLI',   // FIX v6: XLI e IYT usan 'Industry'
   'Materials':       'XLB',
   'Utilities':       'XLU',
   'Commodities':     'GLD',
@@ -156,6 +161,11 @@ const SECTOR_TO_ETF: Record<string, string> = {
   'Emerging':        'EEM',
   'Equity':          'SPY',
   'Small Cap':       'IWM',
+  'Defense':         'ITA',   // v6: iShares US Aerospace & Defense (PPA está en universo)
+  'Infrastructure':  'XLI',   // v6: IBEX35 infra stocks
+  'Fixed Income':    'TLT',   // v6: bond ETFs
+  'Factor':          'QUAL',  // v6: factor ETFs
+  'Emerging Bonds':  'EMB',   // v6: EM bond ETFs
 };
 
 // ── REFUERZO #2: Umbrales de filtro duro RS ─────────────────

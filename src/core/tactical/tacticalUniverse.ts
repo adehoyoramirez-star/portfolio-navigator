@@ -213,6 +213,43 @@ export const US_SECTOR_ETFS: UniverseAsset[] = [
   { ticker:'USO',    name:'United States Oil Fund',           sector:'Energy',      type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'USO', },
 ];
 
+// ── ETFs Temáticos US (del olympus_etf_sectors.html) ───────────
+// Añadidos v6: 22 ETFs sectoriales y temáticos US que complementan
+// los UCITS y SPDRs existentes. Todos son USD, NYSE/NASDAQ.
+export const THEMATIC_ETFS: UniverseAsset[] = [
+  // Technology & AI
+  { ticker:'BOTZ',   name:'Global X Robotics & AI ETF',          sector:'Technology',  type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'BOTZ', },
+  { ticker:'CIBR',   name:'First Trust NASDAQ Cybersecurity ETF', sector:'Technology',  type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'CIBR', },
+  { ticker:'CLOU',   name:'Global X Cloud Computing ETF',        sector:'Technology',  type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'CLOU', },
+  { ticker:'DCLD',   name:'Defiance Cloud Computing ETF',         sector:'Technology',  type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'DCLD', },
+  { ticker:'SOCL',   name:'Global X Social Media ETF',            sector:'Technology',  type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'SOCL', },
+  { ticker:'HERO',   name:'Global X Video Games & Esports ETF',   sector:'Technology',  type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'HERO', },
+  { ticker:'XSD',    name:'SPDR S&P Semiconductor ETF',           sector:'Technology',  type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'XSD', },
+  { ticker:'IXP',    name:'iShares Global Comm Services ETF',     sector:'Technology',  type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'IXP', },
+  // Healthcare
+  { ticker:'GNOM',   name:'Global X Genomics & Biotech ETF',     sector:'Healthcare',  type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'GNOM', },
+  { ticker:'IXJ',    name:'iShares Global Healthcare ETF',        sector:'Healthcare',  type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'IXJ', },
+  // Energy & Clean Energy
+  { ticker:'ICLN',   name:'iShares Global Clean Energy ETF',     sector:'Energy',      type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'ICLN', },
+  { ticker:'TAN',    name:'Invesco Solar ETF',                    sector:'Energy',      type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'TAN', },
+  { ticker:'NLR',    name:'VanEck Uranium+Nuclear Energy ETF',    sector:'Energy',      type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'NLR', },
+  { ticker:'EVX',    name:'VanEck Environmental Services ETF',    sector:'Energy',      type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'EVX', },
+  // Finance & Crypto
+  { ticker:'BKCH',   name:'Global X Blockchain ETF',              sector:'Finance',     type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'BKCH', },
+  { ticker:'GFIN',   name:'Global X FinTech ETF',                 sector:'Finance',     type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'GFIN', },
+  // Consumer
+  { ticker:'EBIZ',   name:'Global X E-commerce ETF',              sector:'Consumer',    type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'EBIZ', },
+  // Transport & Defense
+  { ticker:'IYT',    name:'iShares Transportation Average ETF',   sector:'Industry',    type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'IYT', },
+  { ticker:'PPA',    name:'Invesco Aerospace & Defense ETF',      sector:'Defense',     type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'PPA', },
+  // Materials
+  { ticker:'REMX',   name:'VanEck Rare Earth/Strategic Metals ETF',sector:'Materials',  type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'REMX', },
+  // Auto/EV
+  { ticker:'DRIV',   name:'Global X Autonomous & EV ETF',         sector:'Technology',  type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'DRIV', },
+  // Small Cap Value
+  { ticker:'CALF',   name:'Pacer US Small Cap Cash Cows 100 ETF', sector:'Small Cap',   type:'ETF', exchange:'NYSE',   currency:'USD', yahooSymbol:'CALF', },
+];
+
 // ── Emerging Markets ex-China (RSX ELIMINADO — suspendido 2022)
 export const EM_EX_CHINA: UniverseAsset[] = [
   { ticker:'INDA',   name:'iShares MSCI India ETF',           sector:'Emerging',    type:'ETF', exchange:'NASDAQ', currency:'USD', yahooSymbol:'INDA', },
@@ -284,7 +321,7 @@ export const US_STOCKS: UniverseAsset[] = [
 // UNIVERSOS COMPUESTOS
 // ════════════════════════════════════════════════════════════
 
-// FULL: ~189 activos (~15-20 min)
+// FULL: ~211 activos (~18-22 min) — v6: +22 ETFs temáticos
 export const FULL_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...OLYMPUS_ASSETS,
   ...UCITS_ETFS,
@@ -295,12 +332,13 @@ export const FULL_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...US_STOCKS,
   ...US_REITS,
   ...US_SECTOR_ETFS,
+  ...THEMATIC_ETFS,
   ...EM_EX_CHINA,
   ...FACTOR_ETFS,
   ...CRYPTO_ETPS,
 ];
 
-// CORE: ~60 activos (~5-7 min)
+// CORE: ~75 activos (~6-8 min) — v6: +15 ETFs temáticos
 export const CORE_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...OLYMPUS_ASSETS,
   ...UCITS_ETFS.filter(a => [
@@ -316,9 +354,10 @@ export const CORE_TACTICAL_UNIVERSE: UniverseAsset[] = [
   ...US_STOCKS.filter(a => ['NVDA','AAPL','MSFT','TSLA','META','GOOGL','AMZN','AMD','JPM','V'].includes(a.ticker)),
   ...US_REITS.filter(a => ['O','PLD'].includes(a.ticker)),
   ...US_SECTOR_ETFS.filter(a => ['XLK','XLE','XLF','XLV','SOXX'].includes(a.ticker)),
+  ...THEMATIC_ETFS.filter(a => ['BOTZ','CIBR','CLOU','ICLN','TAN','PPA','IYT','XSD','DRIV','SOCL','IXJ','REMX','HERO','NLR','BKCH'].includes(a.ticker)),
 ];
 
-// VOLATILE: ~35 activos (~2-3 min)
+// VOLATILE: ~40 activos (~2-4 min) — v6: +5 ETFs temáticos high-beta
 export const VOLATILE_UNIVERSE: UniverseAsset[] = [
   ...OLYMPUS_ASSETS,
   ...UCITS_ETFS.filter(a => [
@@ -329,6 +368,7 @@ export const VOLATILE_UNIVERSE: UniverseAsset[] = [
   ...US_STOCKS.filter(a => ['NVDA','TSLA','AMD','SMCI','COIN','MSTR','PLTR'].includes(a.ticker)),
   ...IBEX35_STOCKS.filter(a => ['IAG.MC','GRF.MC','MTS.MC'].includes(a.ticker)),
   ...US_SECTOR_ETFS.filter(a => ['SOXX','GDXJ','KRE'].includes(a.ticker)),
+  ...THEMATIC_ETFS.filter(a => ['BKCH','TAN','NLR','DCLD','SOCL'].includes(a.ticker)),
   ...EM_EX_CHINA.filter(a => ['EWZ','VNM'].includes(a.ticker)),
   ...CRYPTO_ETPS,
 ];
