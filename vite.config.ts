@@ -29,6 +29,7 @@ function yahooFinancePlugin() {
       const rawCloses: (number | null)[] = quote.close || [];
       const rawHighs: (number | null)[] = quote.high || [];
       const rawLows: (number | null)[] = quote.low || [];
+      const rawVolumes: (number | null)[] = quote.volume || [];
       const minLen = Math.min(timestamps.length, rawCloses.length, rawHighs.length, rawLows.length);
       if (minLen < 60) return null;
       const closes = rawCloses.slice(0, minLen).map((v: any, i: number) => {
@@ -46,11 +47,13 @@ function yahooFinancePlugin() {
       });
       const currentPrice = result.meta?.regularMarketPrice ?? closes[closes.length - 1] ?? 0;
       if (currentPrice <= 0) return null;
+      const volumes = rawVolumes.slice(0, minLen).map((v: any) => (v != null && isFinite(v) && v >= 0) ? v : 0);
+      while (volumes.length < minLen) volumes.push(0);
       return {
         ticker: ticker.replace(/%5E/g, '^'),
         currentPrice,
         timestamps: timestamps.slice(0, minLen),
-        closes, highs, lows,
+        closes, highs, lows, volumes,
         dataPoints: minLen,
       };
     } catch { return null; }
@@ -60,6 +63,16 @@ function yahooFinancePlugin() {
     name: 'yahoo-finance-proxy',
     configureServer(server: any) {
       server.middlewares.use('/_proxy/yahoo-finance', async (req: any, res: any) => {
+        // CORS preflight (OPTIONS) — el navegador lo envía con Content-Type: application/json
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+          });
+          res.end();
+          return;
+        }
         if (req.method !== 'POST') {
           res.writeHead(405); res.end('Method not allowed');
           return;
@@ -87,10 +100,16 @@ function yahooFinancePlugin() {
             else errors.push(name);
           });
 
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          });
           res.end(JSON.stringify({ data, errors }));
         } catch (err: any) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.writeHead(500, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          });
           res.end(JSON.stringify({ data: {}, errors: [err?.message ?? 'unknown'] }));
         }
       });
