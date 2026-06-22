@@ -39,6 +39,7 @@ const BENCHMARK_WEIGHTS: Record<string, number> = {
 
 const UNDERPERFORM_THRESHOLD = 0.05; // 5% underperformance → alerta
 const ROLLING_WINDOW_DAYS = 63;     // ~3 meses de trading
+const MIN_DATA_POINTS = 63;         // mínimo de snapshots para CAGR anualizado fiable
 
 const STORAGE_KEY_SNAPSHOTS = "olympus_benchmark_snapshots";
 const STORAGE_KEY_RETURNS = "olympus_benchmark_returns";
@@ -266,14 +267,10 @@ export function getBenchmarkStatus(): BenchmarkStatus {
 
   const windowSize = rollingReturns.length;
 
-  if (windowSize < 2) {
-    return empty("Recolectando datos rolling de 3 meses...");
-  }
-
   const engineReturns = rollingReturns.map(r => r.engineReturn);
   const benchmarkReturns = rollingReturns.map(r => r.benchmarkReturn);
 
-  // ── Retornos acumulados (desde el inicio) ────────────────────
+// ── Retornos acumulados (desde el inicio) ────────────────────
   const engineTotalReturn = returnRecords.reduce(
     (acc, r) => acc * (1 + r.engineReturn), 1
   ) - 1;
@@ -281,6 +278,26 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   const benchmarkTotalReturn = returnRecords.reduce(
     (acc, r) => acc * (1 + r.benchmarkReturn), 1
   ) - 1;
+
+  // FIX-BENCH-GUARD: con pocas snapshots, la anualización explota
+  // Mínimo 63 snapshots (~1 trimestre) para CAGR anualizado fiable
+  if (windowSize < MIN_DATA_POINTS) {
+    const simpleEngine = isFinite(engineTotalReturn) ? engineTotalReturn : 0;
+    const simpleBenchmark = isFinite(benchmarkTotalReturn) ? benchmarkTotalReturn : 0;
+    return {
+      engineCagr3m: simpleEngine,
+      benchmarkCagr3m: simpleBenchmark,
+      outperformance: simpleEngine - simpleBenchmark,
+      underperformanceAlert: false,
+      engineSharpe3m: 0,
+      benchmarkSharpe3m: 0,
+      dataPoints,
+      lastUpdated: returnRecords[returnRecords.length - 1].timestamp,
+      engineTotalReturn: simpleEngine,
+      benchmarkTotalReturn: simpleBenchmark,
+      message: `Recolectando datos del benchmark... ${windowSize}/${MIN_DATA_POINTS} snapshots. Retorno acumulado: engine ${(simpleEngine * 100).toFixed(2)}% · benchmark ${(simpleBenchmark * 100).toFixed(2)}%.`,
+    };
+  }
 
   // ── Tiempo real transcurrido en el rolling window ────────────
   // NO usar windowSize / 252: eso asume cada snapshot = 1 día, pero

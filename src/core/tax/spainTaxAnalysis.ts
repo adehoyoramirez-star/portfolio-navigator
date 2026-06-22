@@ -118,13 +118,18 @@ export interface PortfolioTaxSummary {
   totalLatentLosses: number;
   availableLossOffset: number;
   compensationOpportunity: boolean;
+  // FIX-IRPF-REALIZED: plusvalías ya materializadas y pool disponible
+  realizedGainsYTD: number;
+  availableLossPool: number;
+  totalTaxableGains: number;
   generalAdvice: string[];
 }
 
 // ── Función principal ─────────────────────────────────────────────
 export function analyzeSpainTax(
   assets: Array<{ ticker: string; name: string; shares: number; avgPrice: number; price: number }>,
-  sellSuggestions: Array<{ ticker: string; sharesToSell: number; trimPct: number; cycleZone?: string }>
+  sellSuggestions: Array<{ ticker: string; sharesToSell: number; trimPct: number; cycleZone?: string }>,
+  realizedGainsYTD: number = 0  // FIX-IRPF-REALIZED: plusvalías ya materializadas este año
 ): PortfolioTaxSummary {
 
   // Calcular plusvalías/minusvalías latentes de TODA la cartera
@@ -136,8 +141,14 @@ export function analyzeSpainTax(
   const totalGains  = allGainLoss.filter(x => x.gain > 0).reduce((s, x) => s + x.gain, 0);
   const totalLosses = allGainLoss.filter(x => x.gain < 0).reduce((s, x) => s + Math.abs(x.gain), 0);
 
-  // Pool de pérdidas disponibles para compensar (se consume activo a activo)
-  let lossPool = totalLosses;
+  // FIX-IRPF-REALIZED: las plusvalías ya materializadas reducen el pool de pérdidas
+  // disponibles. Si ya has realizado €1,291 en ganancias este año, solo te quedan
+  // €(totalLosses - realizedGainsYTD) de pérdidas para compensar.
+  const realizedGains = Math.max(0, realizedGainsYTD);
+  let lossPool = Math.max(0, totalLosses - realizedGains);
+
+  // Ganancia total fiscal del año = latentes + realizadas
+  const totalTaxableGains = totalGains + realizedGains;
   const analyses: TaxAnalysis[] = [];
 
   for (const sell of sellSuggestions) {
@@ -249,6 +260,10 @@ export function analyzeSpainTax(
     totalLatentLosses:       totalLosses,
     availableLossOffset:     totalLosses,
     compensationOpportunity: totalLosses > 0 && totalGains > 0,
+    // FIX-IRPF-REALIZED: expone ganancias ya materializadas para el dashboard
+    realizedGainsYTD,
+    availableLossPool: lossPool,
+    totalTaxableGains,
     generalAdvice,
   };
 }

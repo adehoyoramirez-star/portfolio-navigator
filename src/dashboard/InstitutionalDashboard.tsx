@@ -804,6 +804,28 @@ const InstitutionalDashboard: React.FC = () => {
     }
   }, [marketData?.closesHistory, marketData?.covMatrix]);
 
+  const cycleTopResult = useMemo(() => {
+    const cycleInputs: CycleTopInputs = {
+      mvrvRatio,
+      btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
+      btcRsiWeekly,
+      uraniumSpotPrice: uraniumSpot,
+      uraniumLTPrice: uraniumLT,
+      siaSalesYoY,
+soxRsiWeekly,
+      bondYield10y: manualBond10y,
+      inflationBreakeven,
+      brentOil: wtiOil > 0 ? wtiOil : undefined,
+      wlgRsiWeekly,
+      wlgPERatio,
+      emxcRsiWeekly,
+      emxcPERatio,
+    };
+    return detectCycleTops(cycleInputs);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
+
+  
+
   const engineResult = useMemo(() => {
     if (assetInputs.length === 0 || corrMatrix.length === 0) return null;
     // MEJORA-7: El WFO autocorrige los blend weights cuando detecta overfitting HIGH.
@@ -848,7 +870,7 @@ const InstitutionalDashboard: React.FC = () => {
   // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
   // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
   // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult]);
 
   useEffect(() => {
     if (engineResult?.regime && engineResult.regime !== lastRegime) {
@@ -1145,26 +1167,6 @@ const InstitutionalDashboard: React.FC = () => {
     }));
     return runAllStressScenarios(weightedAssets, totalPortfolioValue);
   }, [engineResult?.allocations, portfolio.assets, totalPortfolioValue]);
-
-  const cycleTopResult = useMemo(() => {
-    const cycleInputs: CycleTopInputs = {
-      mvrvRatio,
-      btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
-      btcRsiWeekly,
-      uraniumSpotPrice: uraniumSpot,
-      uraniumLTPrice: uraniumLT,
-      siaSalesYoY,
-soxRsiWeekly,
-      bondYield10y: manualBond10y,
-      inflationBreakeven,
-      brentOil: wtiOil > 0 ? wtiOil : undefined,
-      wlgRsiWeekly,
-      wlgPERatio,
-      emxcRsiWeekly,
-      emxcPERatio,
-    };
-    return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
 
   const btcCycleResult = useMemo((): BitcoinCycleOutput | null => {
     const btcAssetLocal = portfolio.assets.find(a => a.ticker === "BTC-EUR");

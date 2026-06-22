@@ -227,6 +227,7 @@ export interface OlympusEngineInput {
   // porque todas las llamadas ocurren en milisegundos.
   bypassHysteresis?: boolean;
   avgCorrelation?: number;
+  cycleTopSignals?: { ticker: string; allocationMultiplier: number }[];
   regimeLock?: RegimeLock | null;
   blendWeights?: {
     BL?: number;
@@ -636,6 +637,21 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   relativeWeightsAfterCap.forEach((_, i) => {
     relativeWeightsAfterCap[i] /= relCapTotal;
   });
+  // CAPA 8.5: CYCLE TOP OVERLAY (FIX-CYCLE-MOTOR)
+  if (input.cycleTopSignals && input.cycleTopSignals.length > 0) {
+    for (let i = 0; i < assets.length; i++) {
+      const ticker = assets[i].ticker ?? assets[i].name;
+      const baseTicker = ticker.split(".")[0];
+      const cycleSignal = input.cycleTopSignals.find(function(s) {
+        return s.ticker === ticker || s.ticker.split(".")[0] === baseTicker;
+      });
+      if (cycleSignal && cycleSignal.allocationMultiplier < 1.0) {
+        relativeWeightsAfterCap[i] *= cycleSignal.allocationMultiplier;
+      }
+    }
+    const cycleTotal = relativeWeightsAfterCap.reduce(function(s,w){return s+w;},0) || 1;
+    relativeWeightsAfterCap.forEach(function(_,i){relativeWeightsAfterCap[i] /= cycleTotal;});
+  }
 
   // ====== CAPA 7: VOL TARGET (reordenado post-BTC-cap) ======
   // FIX-V5-7 (audit ronda 2): realizedVol usa relativeWeightsAfterCap (post-BTC-cap)

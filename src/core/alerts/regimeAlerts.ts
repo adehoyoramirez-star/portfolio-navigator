@@ -42,6 +42,14 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
   const alerts: RegimeAlert[] = [];
   const now = new Date().toISOString();
 
+  // ── DEBOUNCE: Tail Risk alert solo se emite 1 vez por hora ──────
+  // FIX-ALERT-SPAM: sin debounce, el Kill Switch generaba una alerta nueva
+  // en cada tick de precio (cada ~60s con live monitor activo). El id `tail_${Date.now()}`
+  // era siempre único → 10+ alertas idénticas en el panel. Ahora: cooldown de 1h.
+  const TAIL_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hora
+  const lastTailAlert = getLastTailAlertTimestamp();
+  const tailDebounced = lastTailAlert !== null && (Date.now() - lastTailAlert) < TAIL_DEBOUNCE_MS;
+
   // ---- CAMBIO DE RÉGIMEN ----
   if (input.previousRegime && input.currentRegime !== input.previousRegime) {
     const isWorsen = worsenedRegime(input.previousRegime, input.currentRegime);
@@ -77,7 +85,8 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
   }
 
   // ---- TAIL RISK ACTIVADO ----
-  if (input.tailRiskActive) {
+  if (input.tailRiskActive && !tailDebounced) {
+    setLastTailAlertTimestamp(Date.now());
     alerts.push({
       id: `tail_${Date.now()}`,
       timestamp: now,
@@ -137,6 +146,22 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
 const REGIME_PRIORITY: Record<string, number> = {
   EXPANSION: 0, CONTRACTION: 1, CRISIS: 2, ALL_CASH: 3,
 };
+
+// ── DEBOUNCE HELPERS ───────────────────────────────────────────
+// FIX-ALERT-SPAM: guardar timestamp del último Tail Risk alert en sessionStorage
+// (no localStorage — se limpia al cerrar pestaña, el debounce es por sesión)
+const TAIL_ALERT_KEY = 'olympus_last_tail_alert_ts';
+
+function getLastTailAlertTimestamp(): number | null {
+  try {
+    const raw = sessionStorage.getItem(TAIL_ALERT_KEY);
+    return raw ? parseInt(raw, 10) : null;
+  } catch { return null; }
+}
+
+function setLastTailAlertTimestamp(ts: number): void {
+  try { sessionStorage.setItem(TAIL_ALERT_KEY, String(ts)); } catch { /* silencio */ }
+}
 
 function worsenedRegime(prev: string, curr: string): boolean {
   return (REGIME_PRIORITY[curr] ?? 0) > (REGIME_PRIORITY[prev] ?? 0);

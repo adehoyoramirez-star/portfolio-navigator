@@ -80,7 +80,12 @@ export function computeRebalanceSuggestions(
     const targetPct    = asset.targetAllocation;
     const drift        = currentPct - targetPct;
     const deficitValue = Math.max(0, targetPct * totalValue - currentValue);
-    const cycleSignal  = cycleTopSignals.find(s => s.ticker === asset.ticker);
+    // FIX-CYCLEMATCH: matching exchange-agnostic para cubrir alias de ticker
+    // (ej: VVSM.DE y VVSM, 0P00000WLG.F y WLG). El split en '.' captura el ticker base.
+    const baseTicker = asset.ticker.split('.')[0];
+    const cycleSignal  = cycleTopSignals.find(s =>
+      s.ticker === asset.ticker || s.ticker.split('.')[0] === baseTicker
+    );
     return { ...asset, currentPct, targetPct, drift, deficitValue, cycleSignal };
   });
 
@@ -129,11 +134,22 @@ export function computeRebalanceSuggestions(
     .reduce((sum, s) => sum + s.proceedsIfSold, 0);
   const cashForBuys = availableCash + sellProceeds;
 
+  // FIX-DUAL-SIGNAL: failsafe post-hoc — después de calcular SELLs, ningún activo
+  // vendido puede aparecer también como BUY. Esto resuelve el bug donde VVSM (semis)
+  // aparecía como "reducir" (SELL por cycleTop) y "comprar" (BUY por infraponderado)
+  // simultáneamente en el panel de rebalance.
+  const soldTickers = new Set(
+    suggestions.filter(s => s.action === "SELL").map(s => s.ticker.split('.')[0])
+  );
+
   if (cashForBuys > 0) {
     const underweight = withDrift
       .filter(a => {
+        // Capa 1: señal de techo de ciclo → nunca comprar
         if (a.cycleSignal?.shouldTrim) return false;
         if (a.cycleSignal && a.cycleSignal.allocationMultiplier < 0.6) return false;
+        // Capa 2: failsafe — si YA se va a vender este ticker (o un alias), no comprar
+        if (soldTickers.has(a.ticker.split('.')[0])) return false;
         return a.drift < -driftThreshold && a.deficitValue > 0 && a.price > 0;
       })
       .sort((a, b) => a.drift - b.drift);

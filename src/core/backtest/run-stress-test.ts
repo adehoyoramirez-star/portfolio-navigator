@@ -36,10 +36,10 @@ for (let i = 1; i < lines.length; i++) {
   const parts = line.split(',');
   if (parts.length < headers.length) continue;
   for (const ticker of ASSETS) {
-    let colName = ticker;
+    let colName: string = ticker;
     let idx = headers.indexOf(colName);
     if (idx === -1 && CSV_FALLBACK[ticker]) {
-      colName = CSV_FALLBACK[ticker];
+      colName = CSV_FALLBACK[ticker] as string;
       idx = headers.indexOf(colName);
     }
     if (idx !== -1) closesHistory[ticker].push(parseFloat(parts[idx]) || 0);
