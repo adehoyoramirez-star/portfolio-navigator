@@ -389,6 +389,18 @@ export function clearCEWSHistory(): void {
 // ── DATOS SINTÉTICOS PARA DEMOSTRACIÓN ───────────────────────────────────
 // Si no hay historial, genera 12 semanas de datos basados en los valores actuales
 // con variación realista para que el CEWS tenga algo que analizar.
+// FIX-DETERMINISTIC-CEWS (22-Jun-2026): Math.random() reemplazado por
+// seed determinista basada en la fecha actual (día). Esto garantiza que
+// el CEWS devuelva las mismas señales durante todo el día, independientemente
+// de recargas de página. Un hedge fund no puede tener alertas que cambien
+// con cada F5. La seed rota cada 24h para mantener variación temporal.
+function deterministicNoise(index: number, salt: number): number {
+  // Hash simple basado en el día (floor para que no cambie en 24h) + índice
+  const daySeed = Math.floor(Date.now() / 86400000);
+  const x = Math.sin(daySeed * 127.1 + index * 31.7 + salt * 13.3) * 43758.5453;
+  return (x - Math.floor(x)) - 0.5; // [-0.5, +0.5]
+}
+
 export function generateSyntheticHistory(
   currentVix: number,
   currentYieldSpread: number,
@@ -403,7 +415,7 @@ export function generateSyntheticHistory(
     const t = (weeks - i) / weeks; // 0 = hace 12 semanas, 1 = ahora
     // Tendencia: los valores empeoran gradualmente hacia el presente
     // (simula un entorno que se ha ido deteriorando)
-    const noise = (Math.random() - 0.5) * 0.3;
+    const noise = deterministicNoise(i, 0) * 0.3;
     history.push({
       timestamp: new Date(now - i * 7 * 24 * 3600 * 1000).toISOString(),
       vix:          currentVix * (0.7 + 0.3 * t) + noise * 3,

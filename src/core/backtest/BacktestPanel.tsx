@@ -100,16 +100,27 @@ export default function BacktestPanel({
     const spxCloses = marketData.closesHistory['^GSPC'] ?? marketData.closesHistory['SPY'] ?? [];
 
     const buildVixProxy = (closes: number[], targetLen: number): number[] => {
+      // FIX-FORWARD-BIAS (22-Jun-2026): la versión anterior usaba
+      // closes[i+1]/closes[i] para calcular el retorno diario,
+      // filtrando datos del futuro hacia el VIX en t=i.
+      // AHORA: el retorno en t=i se calcula con closes[i]/closes[i-1]
+      // (backward-looking), alineando el VIX proxy con la información
+      // disponible en cada momento histórico.
       if (closes.length < 22) return Array(targetLen).fill(currentVix);
-      const vixProxy: number[] = [];
-      for (let i = 0; i < closes.length - 1; i++) {
-        if (closes[i] > 0 && closes[i + 1] > 0) {
-          vixProxy.push(Math.log(closes[i + 1] / closes[i]));
+      const logReturns: number[] = [];
+      for (let i = 1; i < closes.length; i++) {
+        if (closes[i] > 0 && closes[i - 1] > 0) {
+          logReturns.push(Math.log(closes[i] / closes[i - 1]));
         }
       }
       const computed: number[] = [];
-      for (let i = 0; i < vixProxy.length; i++) {
-        const window = vixProxy.slice(Math.max(0, i - 21), i + 1);
+      for (let i = 0; i < logReturns.length; i++) {
+        // FIX-FORWARD-BIAS: la ventana usa slice(..., i) en vez de slice(..., i+1).
+        // Con i+1, computed[i] incluía logReturns[i] = log(c[i+1]/c[i]),
+        // filtrando datos del futuro (c[i+1] no se conoce en t=i).
+        // Con i, computed[i] solo usa retornos hasta logReturns[i-1] = log(c[i]/c[i-1]),
+        // que SÍ es conocido en t=i. computed[0] recibe ventana vacía → currentVix.
+        const window = logReturns.slice(Math.max(0, i - 21), i);
         if (window.length < 5) { computed.push(currentVix); continue; }
         const mean = window.reduce((s, v) => s + v, 0) / window.length;
         const variance = window.reduce((s, v) => s + (v - mean) ** 2, 0) / window.length;
@@ -119,6 +130,7 @@ export default function BacktestPanel({
         const vrp = Math.max(2, Math.min(8, annualVol * 100 * 0.08 + 2));
         computed.push(Math.max(10, Math.min(80, annualVol * 100 + vrp)));
       }
+      // Prepend currentVix para el día 0 (sin retorno previo)
       while (computed.length < targetLen) computed.unshift(currentVix);
       return computed.slice(-targetLen);
     };

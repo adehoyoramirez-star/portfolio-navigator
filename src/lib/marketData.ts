@@ -137,39 +137,31 @@ const PROXY_FALLBACK: Partial<Record<string, string>> = {
   'BAYN.DE': 'XBI',    // SPDR S&P Biotech ETF — proxy sectorial healthcare/pharma
 };
 
-// ── FIX-COV-ADAPTIVE: Ledoit-Wolf con shrinkage adaptativo POR ACTIVO ─────────
-// PROBLEMA DETECTADO EN AUDITORÍA:
-//   URNU.DE tiene solo 221 días de datos vs 1274+ de los demás.
-//   Al truncar todos a minLen=221, se pierden 4+ años de historia de los
-//   activos maduros (BTC, EMXC, IS3Q, etc.) sin ganar calidad en URNU.
-//   RESULTADO: covMatrix basada en solo 221 días → correlaciones inestables
-//   → minimumVarianceWeights puede producir pesos extremos → allocations rotas.
+// ── FIX-LEDOIT-WOLF-CANONICAL (22-Jun-2026) ───────────────────────────────────
+// Corrección de auditoría: la implementación anterior usaba un target
+// identity-based (traceMean en diagonal, 0 off-diagonal) con fórmula de
+// shrinkage no canónica: α = (normDiff/normSample) * (n/(minLen-1)).
 //
-// SOLUCIÓN: shrinkage adaptativo por activo + pares
-//   Para activos con T < 400 días:
-//     1. Su diagonal usa SOLO su propia varianza (no truncada a minLen global)
-//     2. Sus correlaciones off-diagonal reciben shrinkage fuerte (α_pair > α_global)
-//     3. La identidad escalada "amortigua" las covarianzas ruidosas hacia cero
+// La implementación canónica de Ledoit & Wolf (2004) usa:
+//   1. Target F = Constant Correlation Model
+//      - diagonal F_ii = S_ii (varianzas muestrales)
+//      - off-diagonal F_ij = r̄ * sqrt(S_ii * S_jj) donde r̄ = correlación media
+//   2. Shrinkage intensity: ρ̂ = Σ Var(s_ij) / ||S - F||²_F
+//      - Var(s_ij) estimado como (1/T²) * Σ_t (x_it * x_jt - s_ij)²
+//      - Esto es el oracle shrinkage intensity que minimiza el MSE esperado
+//   3. MLE covariance: divide por T (no T-1), siguiendo el paper original
+//   4. Annualización (×252) al final, sobre los daily shrunk
 //
-//   Esto preserva la historia larga de BTC/IS3Q/EMXC y regulariza URNU.
-//
-// REFERENCIA: Ledoit & Wolf (2004) "A well-conditioned estimator for
-//   large-dimensional covariance matrices", Journal of Multivariate Analysis.
-// FIX-2: assetTickers acepta readonly string[] además de string[].
-// ASSETS en constants.ts es 'readonly ["BTC-EUR", ...]' — TypeScript no permite
-// asignar un tipo readonly a un parámetro mutable string[].
-// Solución: usar 'readonly string[]' que es compatible con ambos.
+// Se elimina el shrinkage adaptativo por activo (SHORT_ASSET_THRESHOLD,
+// SHORT_ALPHA_BASE) — el target de correlación constante ya regulariza
+// naturalmente las covarianzas de series cortas sin necesidad de hacks.
 export function covarianceMatrix(returnsSeries: number[][], assetTickers?: readonly string[]): number[][] {
   const n = returnsSeries.length;
-
-  // ── FIX NaN: necesitamos al menos 2 observaciones para covarianza ──────
   const safeLengths = returnsSeries.map(r => r.length);
-  const minLen = Math.min(...safeLengths);
+  const T = Math.min(...safeLengths);
 
-  if (minLen < 2) {
-    // Identity-based shrinkage: mismo patrón que ledoitWolfCovariance en volatility.ts.
-    // Cuando no hay observaciones solapadas para covarianzas pairwise, regularizamos
-    // las varianzas individuales hacia la media del portafolio.
+  // Fallback: < 2 observaciones → matriz diagonal con varianzas por activo
+  if (T < 2) {
     const variances = returnsSeries.map(r => {
       if (r.length < 2) return 0.04;
       const m = r.reduce((a, b) => a + b, 0) / r.length;
@@ -178,14 +170,9 @@ export function covarianceMatrix(returnsSeries: number[][], assetTickers?: reado
     const traceMean = variances.reduce((s, v) => s + v, 0) / variances.length;
     const shortCount = returnsSeries.filter(r => r.length < 20).length;
     const alpha = Math.min(0.9, 0.5 + 0.3 * (shortCount / n));
-
     console.warn(
-      '[Olympus] covMatrix: minLen=' + minLen + ' < 2, ' +
-      'identity-based shrinkage (α=' + alpha.toFixed(2) + ')' +
-      ' | meanVar=' + traceMean.toFixed(4) +
-      ' | shortSeries=' + shortCount + '/' + n
+      '[Olympus] covMatrix: T=' + T + ' < 2, identity-based fallback (α=' + alpha.toFixed(2) + ')'
     );
-
     return Array.from({ length: n }, (_, i) =>
       Array.from({ length: n }, (_, j) => {
         if (i === j) {
@@ -197,105 +184,99 @@ export function covarianceMatrix(returnsSeries: number[][], assetTickers?: reado
     );
   }
 
-  // Trim all to same length (desde el final — datos más recientes)
-  const trimmed = returnsSeries.map(r => r.slice(r.length - minLen));
-  const means = trimmed.map(mean);
+  if (n <= 1) {
+    const vols = returnsSeries[0];
+    if (vols.length < 2) return [[0.04]];
+    const m = vols.reduce((a, b) => a + b, 0) / vols.length;
+    const v = vols.reduce((s, v) => s + (v - m) ** 2, 0) / (vols.length - 1) * 252;
+    return [[isFinite(v) ? v : 0.04]];
+  }
 
-  // ── Paso 1: MLE sample covariance (anualizada) ─────────────────────────
-  const covSample: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  // ── Paso 1: MLE Sample Covariance S (daily, divide por T) ────────────
+  // Truncar todas las series a la misma longitud (más reciente)
+  const trimmed = returnsSeries.map(r => r.slice(r.length - T));
+  const means = trimmed.map(r => r.reduce((a, b) => a + b, 0) / T);
+  const x = trimmed.map((r, i) => r.map(val => val - means[i])); // centrado
+
+  const S: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let j = i; j < n; j++) {
-      let s = 0;
-      for (let k = 0; k < minLen; k++) {
-        s += (trimmed[i][k] - means[i]) * (trimmed[j][k] - means[j]);
-      }
-      // ── FIX NaN: proteger contra minLen=1 → división por cero ──────────
-      const denom = Math.max(1, minLen - 1);
-      const c = isFinite(s) ? s / denom : 0;
-      covSample[i][j] = c * 252;
-      covSample[j][i] = c * 252;
+      let sum = 0;
+      for (let t = 0; t < T; t++) sum += x[i][t] * x[j][t];
+      const cov = isFinite(sum) ? sum / T : 0;
+      S[i][j] = cov;
+      S[j][i] = cov;
     }
   }
 
-  if (n <= 1) return covSample;
+  // ── Paso 2: Target F — Constant Correlation Model ────────────────────
+  // Correlación media muestral
+  let sumCorr = 0, countCorr = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const si = Math.sqrt(Math.max(1e-16, S[i][i]));
+      const sj = Math.sqrt(Math.max(1e-16, S[j][j]));
+      if (si > 0 && sj > 0) {
+        sumCorr += S[i][j] / (si * sj);
+        countCorr++;
+      }
+    }
+  }
+  const avgCorr = countCorr > 0 ? sumCorr / countCorr : 0;
 
-  // ── Paso 2: Per-asset sample sizes para shrinkage adaptativo ──────────
-  // Cada activo tiene su propio T_i (longitud real de su serie)
-  const perAssetT = safeLengths; // T_i para cada activo i
-
-  // Umbral: activos con < SHORT_ASSET_THRESHOLD días → "cortos" → más shrinkage
-  const SHORT_ASSET_THRESHOLD = 400;
-
-  // ── Paso 3: Tracemean para el target de shrinkage ──────────────────────
-  // Usar la varianza LARGA de cada activo (no truncada a minLen global)
-  // para la diagonal del prior — más representativa que la truncada.
-  const longTermVariances = returnsSeries.map(r => {
-    if (r.length < 2) return 0.04;
-    const m = r.reduce((a,b) => a+b, 0) / r.length;
-    return Math.max(0.0001, r.reduce((s,v) => s + (v-m)**2, 0) / (r.length-1) * 252);
-  });
-  const traceMean = longTermVariances.reduce((s,v) => s+v, 0) / n;
-
-  // ── Paso 4: Intensidad de shrinkage global (Ledoit-Wolf Oracle) ────────
-  let normDiff = 0, normSample = 0;
+  const F: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      const target = i === j ? traceMean : 0;
-      normDiff   += (covSample[i][j] - target) ** 2;
-      normSample += covSample[i][j] ** 2;
+      if (i === j) {
+        F[i][j] = S[i][i];
+      } else {
+        F[i][j] = avgCorr * Math.sqrt(Math.max(1e-16, S[i][i] * S[j][j]));
+      }
     }
   }
-  // ── FIX NaN: proteger normSample=0 y normDiff/normSample=Inf ──────────
-  const alphaGlobal = (normSample > 1e-12 && isFinite(normDiff) && isFinite(normSample))
-    ? Math.min(0.9, (normDiff / normSample) * (n / Math.max(1, minLen - 1)))
-    : 0.30; // fallback conservador si la matriz es degenerada
 
-  // ── Paso 5: Aplicar shrinkage adaptativo por par (i,j) ─────────────────
-  // Para pares donde al menos un activo es "corto" (URNU.DE con 221 días):
-  //   α_pair = max(α_global, α_short)
-  //   donde α_short = min(0.90, SHORT_ALPHA_BASE + (1 - T_short/SHORT_ASSET_THRESHOLD))
-  const SHORT_ALPHA_BASE = 0.55; // shrinkage mínimo para activos cortos
+  // ── Paso 3: Shrinkage intensity ρ̂ = Σ Var(s_ij) / ||S - F||²_F ──────
+  let sumVar = 0;   // Σ Var(s_ij)
+  let normDiffSq = 0; // ||S - F||²_F
 
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      // Asymptotic variance of MLE s_ij: (1/T²) * Σ_t (x_it·x_jt - s_ij)²
+      let varSum = 0;
+      for (let t = 0; t < T; t++) {
+        varSum += (x[i][t] * x[j][t] - S[i][j]) ** 2;
+      }
+      sumVar += isFinite(varSum) ? varSum / (T * T) : 0;
+
+      // Squared Frobenius norm of S - F
+      const diff = S[i][j] - F[i][j];
+      normDiffSq += isFinite(diff) ? diff * diff : 0;
+    }
+  }
+
+  let rho = 0;
+  if (normDiffSq > 1e-12 && isFinite(sumVar) && isFinite(normDiffSq)) {
+    rho = sumVar / normDiffSq;
+  }
+  rho = Math.max(0, Math.min(1, rho));
+
+  // ── Paso 4: Mix S + F, luego anualizar (×252) ────────────────────────
   const covLW: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      const ti = perAssetT[i];
-      const tj = perAssetT[j];
-      const isShortI = ti < SHORT_ASSET_THRESHOLD;
-      const isShortJ = tj < SHORT_ASSET_THRESHOLD;
-
-      let alpha = alphaGlobal;
-
-      if (isShortI || isShortJ) {
-        // El activo más corto del par determina el shrinkage
-        const shortestT = Math.min(ti, tj);
-        const alphaShort = Math.min(0.90,
-          SHORT_ALPHA_BASE + (1 - shortestT / SHORT_ASSET_THRESHOLD) * 0.40
-        );
-        alpha = Math.max(alphaGlobal, alphaShort);
-      }
-
-      // Para la diagonal: usar la varianza larga del activo en vez del sample truncado
-      const target = i === j ? longTermVariances[i] : 0;
-      const rawValue = (1 - alpha) * covSample[i][j] + alpha * target;
-
-      // ── FIX NaN final: garantizar que ningún elemento sea NaN/Inf ──────
-      covLW[i][j] = isFinite(rawValue) ? rawValue : (i === j ? longTermVariances[i] : 0);
+      const dailyShrunk = (1 - rho) * S[i][j] + rho * F[i][j];
+      covLW[i][j] = isFinite(dailyShrunk) ? dailyShrunk * 252 : (i === j ? 0.04 : 0);
     }
   }
 
   // ── Diagnóstico (solo en desarrollo) ──────────────────────────────────
-  // Gateado con import.meta.env.DEV (Vite) — evita ~5 líneas de log por refresh
-  // en producción. Los warnings de NaN/Inf se mantienen siempre.
   const devMode = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
   if (devMode) {
     const tickers = assetTickers ?? returnsSeries.map((_, i) => 'Asset' + i);
     const lenStr = tickers.map((t, i) => t + ':' + safeLengths[i]).join(' | ');
-    console.log('[Olympus] returnsPerAsset lengths: ' + lenStr);
     const hasNaN = covLW.some(row => row.some(v => !isFinite(v)));
-    const nanStr = tickers.map((t, i) => t + ':' + !returnsSeries[i].every(isFinite)).join(' | ');
-    console.log('[Olympus] returnsPerAsset hasNaN: ' + nanStr);
-    console.log('[Olympus] covMatrix size: ' + n + ' x ' + n + ' | hasNaN: ' + hasNaN + ' | alpha_global: ' + alphaGlobal.toFixed(3) + ' | minLen: ' + minLen);
+    console.log('[Olympus] Ledoit-Wolf Canonical | T=' + T + ' | ρ=' + rho.toFixed(4) + ' | r̄=' + avgCorr.toFixed(4) + ' | hasNaN=' + hasNaN);
+    console.log('[Olympus] returnsPerAsset lengths: ' + lenStr);
   }
 
   return covLW;

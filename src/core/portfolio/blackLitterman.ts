@@ -304,6 +304,21 @@ function invertMatrix(M: number[][], n: number): number[][] {
 /**
  * Genera views automáticas desde los datos del motor Olympus.
  * Las views se derivan de las señales del motor: momentum fuerte → view positiva.
+ *
+ * FIX-BL-CIRCULARITY (22-Jun-2026): las views auto-generadas usan los mismos
+ * factor scores que producen μ vía calibrateExpectedReturn(), creando un bucle
+ * tautológico (el motor se convence a sí mismo de sus propias opiniones).
+ *
+ * CORRECCIONES:
+ *   1. Confianza máxima reducida de 0.85 → 0.55 para views individuales.
+ *      Las views no son externas (analyst consensus), son derivadas del mismo
+ *      modelo que produce μ → menor peso en la actualización bayesiana.
+ *   2. Jitter (±10%) en expectedReturn para romper la correlación perfecta
+ *      con los factor scores. Sin jitter, BL simplemente amplifica μ sin añadir
+ *      información nueva.
+ *   3. Check contrarian: si momentum Y value son alcistas para el mismo activo,
+ *      se reduce confianza adicional (posible overfitting del factor model).
+ *   4. Cap de views a 3 (antes 5) para limitar la influencia del bucle.
  */
 export function generateViewsFromEngine(
   assets: { name: string; ticker: string; momentumScore: number; valuePercentileRank: number }[],
@@ -312,25 +327,55 @@ export function generateViewsFromEngine(
 ): BLView[] {
   const views: BLView[] = [];
 
+  // Pseudorandom jitter determinista por ticker (evita que cambie en cada ejecución)
+  const tickerSeed = (t: string): number => {
+    let h = 0;
+    for (let i = 0; i < t.length; i++) h = ((h << 5) - h) + t.charCodeAt(i);
+    return (Math.abs(h) % 200 - 100) / 1000; // [-0.10, +0.10]
+  };
+
+  // Trackear activos con múltiples señales alcistas → reducir confianza
+  const bullishMomentum = new Set<string>();
+  const bullishValue = new Set<string>();
+
   assets.forEach(asset => {
+    const jitter = tickerSeed(asset.ticker);
+    let hasMomentumView = false;
+    let hasValueView = false;
+
     if (asset.momentumScore > 0.3) {
+      bullishMomentum.add(asset.ticker);
+      hasMomentumView = true;
+      // FIX: confianza cap 0.55 (antes 0.85), expectedReturn con jitter ±10%
+      const baseER = 0.08 + asset.momentumScore * 0.15;
       views.push({
         assets: [asset.ticker],
         weights: [1],
-        expectedReturn: 0.08 + asset.momentumScore * 0.15,
-        confidence: Math.min(0.85, 0.5 + asset.momentumScore * 0.5),
+        expectedReturn: baseER * (1 + jitter),
+        confidence: Math.min(0.55, 0.35 + asset.momentumScore * 0.30),
         description: `Momentum fuerte (${asset.momentumScore.toFixed(2)}) en ${asset.name}`,
       });
     }
 
     if (asset.valuePercentileRank < 30 && asset.valuePercentileRank > 0) {
+      bullishValue.add(asset.ticker);
+      hasValueView = true;
+      const baseER = 0.06 + (30 - asset.valuePercentileRank) / 100;
       views.push({
         assets: [asset.ticker],
         weights: [1],
-        expectedReturn: 0.06 + (30 - asset.valuePercentileRank) / 100,
-        confidence: 0.6,
+        expectedReturn: baseER * (1 + jitter * 0.7),
+        confidence: 0.40, // FIX: reducido de 0.60
         description: `Valoración atractiva (percentil ${asset.valuePercentileRank}) en ${asset.name}`,
       });
+    }
+
+    // FIX: si momentum Y value coinciden → reducir confianza de AMBAS views
+    if (hasMomentumView && hasValueView) {
+      // Penalizar las últimas 2 views añadidas (momentum + value de este activo)
+      for (let v = views.length - 2; v < views.length; v++) {
+        if (v >= 0) views[v].confidence *= 0.70; // -30% confianza por señal dual
+      }
     }
   });
 
@@ -344,11 +389,11 @@ export function generateViewsFromEngine(
         assets: riskAssets,
         weights: riskAssets.map(() => 1 / riskAssets.length),
         expectedReturn: 0.06 + liquidityGrowth / 200,
-        confidence: 0.55,
+        confidence: 0.35, // FIX: reducido de 0.55 — liquidity es input manual, no externo
         description: `Liquidez global positiva (+${liquidityGrowth.toFixed(1)}%) → tailwind para renta variable`,
       });
     }
   }
 
-  return views.slice(0, 5);
+  return views.slice(0, 3); // FIX: cap 3 views (antes 5) — limitar influencia del bucle
 }

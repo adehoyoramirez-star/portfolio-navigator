@@ -79,10 +79,10 @@ export function calculateQuality(
 
   let rawQuality = sharpeZ * 0.50 + volZ * 0.30 + consistencyZ * 0.20;
 
-  // FIX-IS3Q-QUALITY: bonus explícito para ETFs de factor quality
-  // IS3Q.DE ya pre-selecciona las mejores empresas por calidad fundamentaL.
-  // El motor debe reconocer esto aunque el scoring cuantitativo no lo capture
-  // perfectamente (porque trabajamos con retornos del ETF, no de las empresas).
+  // FIX-IS3Q-QUALITY: bonus para ETFs de factor quality.
+  // NOTA (22-Jun-2026): IS3Q.DE fue eliminado del portfolio.
+  // Ningún activo actual usa isQualityFactor=true → este bonus está inactivo.
+  // Se mantiene por si se reintroduce un ETF de quality en el futuro.
   if (input.isQualityFactor) {
     rawQuality += 0.30;
   }

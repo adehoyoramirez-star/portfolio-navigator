@@ -447,9 +447,14 @@ export interface MultivariateMCInput {
   monthlyContribution: number;
   years: number;
   simulations?: number;        // default: 10.000
-  jumpIntensity?: number;
-  jumpMean?: number;
-  jumpStd?: number;
+  // Jump params (global defaults, overridden by per-asset arrays if provided)
+  jumpIntensity?: number;       // λ global: saltos por año (default: 0.5)
+  jumpMean?: number;            // μ_jump global (default: -0.10)
+  jumpStd?: number;             // σ_jump global (default: 0.10)
+  // FIX-AUDIT-01: per-asset jump params para modelar BTC correctamente
+  jumpIntensityPerAsset?: number[];  // λ por activo (BTC ~3-7/año, equity ~0.5/año)
+  jumpMeanPerAsset?: number[];       // μ_jump por activo
+  jumpStdPerAsset?: number[];        // σ_jump por activo
 }
 
 export interface MultivariateMCResult {
@@ -464,7 +469,10 @@ export interface MultivariateMCResult {
   var95: number;
   cvar95: number;
   cvar95Percent: number;
-  maxDrawdownMean: number;
+  maxDrawdownMean: number;      // media de maxDD en todas las simulaciones
+  maxDrawdownP95: number;       // FIX-AUDIT-02: P95 del maxDD (peor 5% de simulaciones)
+  maxDrawdownWorst: number;     // FIX-AUDIT-02: peor maxDD absoluto entre todas las simulaciones
+  maxDrawdownP50: number;       // FIX-AUDIT-02: mediana de maxDD
   sharpeEstimate: number;
 }
 
@@ -509,6 +517,9 @@ export function runMultivariateMonteCarlo(input: MultivariateMCInput): Multivari
     jumpIntensity = 0.5,
     jumpMean = -0.10,
     jumpStd = 0.10,
+    jumpIntensityPerAsset,
+    jumpMeanPerAsset,
+    jumpStdPerAsset,
   } = input;
 
   const n = expectedReturns.length;
@@ -532,20 +543,31 @@ export function runMultivariateMonteCarlo(input: MultivariateMCInput): Multivari
       value += monthlyContribution;
       if (value > peak) peak = value;
 
+      // FIX-AUDIT-03: generar vector z UNA VEZ por mes y reutilizar para todos los activos.
+      // Antes se llamaba randomNormal() fresh para cada (i,j), rompiendo la correlación.
+      const z: number[] = [];
+      for (let k = 0; k < n; k++) {
+        z.push(randomNormal());
+      }
+
       let portfolioRet = 0;
       for (let i = 0; i < n; i++) {
-        // Generar shocks correlacionados vía Cholesky
+        // Shocks correlacionados vía Cholesky: shock_i = Σ_j L[i][j] * z[j]
         let shock = 0;
         for (let j = 0; j <= i; j++) {
-          shock += chol[i][j] * randomNormal();
+          shock += chol[i][j] * z[j];
         }
 
+        // FIX-AUDIT-01: jump params por activo (BTC ≠ equity)
+        const lambdaI = jumpIntensityPerAsset ? jumpIntensityPerAsset[i] : jumpIntensity;
+        const jumpMeanI = jumpMeanPerAsset ? jumpMeanPerAsset[i] : jumpMean;
+        const jumpStdI  = jumpStdPerAsset  ? jumpStdPerAsset[i]  : jumpStd;
+
         // Jump diffusion por activo
-        // FIX-MC-01: salto como multiplicador porcentual, no en exponente
         const drift = (expectedReturns[i] - 0.5 * volatilities[i] * volatilities[i]) * dt;
         const diffusion = volatilities[i] * Math.sqrt(dt) * shock;
-        const jumpOccurred = Math.random() < (1 - Math.exp(-jumpIntensity * dt));
-        const jumpMult = jumpOccurred ? (1 + jumpMean + jumpStd * randomNormal()) : 1;
+        const jumpOccurred = Math.random() < (1 - Math.exp(-lambdaI * dt));
+        const jumpMult = jumpOccurred ? (1 + jumpMeanI + jumpStdI * randomNormal()) : 1;
 
         // Retorno compuesto del activo i este mes (GBM + salto multiplicativo)
         const gbmRet = Math.expm1(drift + diffusion);
@@ -582,6 +604,16 @@ export function runMultivariateMonteCarlo(input: MultivariateMCInput): Multivari
   const retStd = Math.sqrt(retVar);
   const sharpeEstimate = retStd > 0 ? (retMean / years - 0.04) / (retStd / Math.sqrt(years)) : 0;
 
+  // FIX-AUDIT-02: métricas de drawdown con percentiles correctos.
+  // Los DD son negativos (ej: -0.60). sortedDDs va de PEOR (-0.60) a MEJOR (-0.01).
+  // ddWorst = peor DD absoluto (índice 0).
+  // ddP95 = DD peor que el 95% de escenarios (índice floor(N * 0.05)).
+  const sortedDDs = [...maxDrawdowns].sort((a, b) => a - b);
+  const ddMean = maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length;
+  const ddWorst = sortedDDs[0];
+  const ddP95 = sortedDDs[Math.floor(simulations * 0.05)];
+  const ddP50 = sortedDDs[Math.floor(simulations * 0.50)];
+
   return {
     finalValues,
     portfolioReturns,
@@ -594,7 +626,10 @@ export function runMultivariateMonteCarlo(input: MultivariateMCInput): Multivari
     var95,
     cvar95,
     cvar95Percent,
-    maxDrawdownMean: maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length,
+    maxDrawdownMean: ddMean,
+    maxDrawdownP95: ddP95,
+    maxDrawdownWorst: ddWorst,
+    maxDrawdownP50: ddP50,
     sharpeEstimate,
   };
 }

@@ -46,7 +46,11 @@ export function computeUniverseStats(assets: ValueInput[]): UniverseStats {
   if (n === 1) return { mean: yields[0], std: 1, sortedYields: [...yields] };
 
   const mean = yields.reduce((a, b) => a + b, 0) / n;
-  const variance = yields.reduce((sum, y) => sum + (y - mean) ** 2, 0) / n;
+  // FIX-VARIANCE (22-Jun-2026): usar n-1 (varianza muestral) en vez de n (poblacional).
+  // Con n=6 activos, la diferencia es ~17% → z-scores menos sesgados.
+  const variance = n > 1
+    ? yields.reduce((sum, y) => sum + (y - mean) ** 2, 0) / (n - 1)
+    : 0;
   const std = Math.sqrt(variance);
   const sortedYields = [...yields].sort((a, b) => a - b);
 

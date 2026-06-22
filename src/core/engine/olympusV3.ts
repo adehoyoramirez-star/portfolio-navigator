@@ -552,7 +552,17 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // FIX-OVERPERF: blendToTacticalRatio bajado de 0.60 → 0.50
   // Con 0.60 → BL 60% da ~5% BTC → BTC final ~14% (vs benchmark 14.29%)
   // El ratio se define en regimeTacticalAllocation.ts → applyTacticalConstraints()
-  const tacticalWeights   = getTacticalWeights(masterRegime.regime, assets);
+  // FIX-BTC-GATE + FIX-VVSM-GATE: pasar métricas para que los pesos tácticos
+  // de BTC y VVSM se reduzcan cuando están sobrevalorados o sobrecalentados.
+  const btcMVRV = input.btcOnChain?.mvrvRatio;
+  const vvsmIdx = assets.findIndex(a => {
+    const t = (a.ticker ?? a.name).toLowerCase();
+    return t === 'vvsm.de' || t.includes('vvsm');
+  });
+  const vvsmReturns12m = vvsmIdx >= 0 ? assets[vvsmIdx].returns12m : undefined;
+  const tacticalWeights   = getTacticalWeights(
+    masterRegime.regime, assets, btcMVRV, vvsmReturns12m
+  );
   const blendedWithTactical = applyTacticalConstraints(
     blendNorm, tacticalWeights, masterRegime.regime
   );

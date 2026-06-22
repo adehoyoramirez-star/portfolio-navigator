@@ -25,7 +25,9 @@ type AssetTicker =
 
 export interface RegimeTacticalWeights {
   weights: Partial<Record<AssetTicker, number>>;
-  cashReserveForced: number;     // % mínimo de cash fuera de la cartera
+  // FIX-DEAD-CODE (22-Jun-2026): cashReserveForced eliminado.
+  // Estaba definido en los 3 regímenes pero nunca se consumía en olympusV3.ts.
+  // El cash implícito se maneja vía pesos tácticos sumando < 1.0 (ej: CRISIS=0.65).
   maxSingleAsset: number;        // cap individual (default: 0.25)
   maxTechCryptoCluster: number;  // cap BTC+VVSM (default: 0.40)
   kellyCapOverride: number;      // cap Kelly en este régimen
@@ -46,7 +48,6 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
       'EMXC.DE':  0.12,   // EM — subido para compensar menos activos
       'PPFB.DE':  0.11,   // oro — hedge subido (0.08→0.11, más peso sin IS3Q)
     },
-    cashReserveForced: 0.01,        // 1% cash mínimo — casi todo invertido en EXPANSIÓN
     maxSingleAsset: 0.30,
     maxTechCryptoCluster: 0.55,     // BTC+VVSM ≤ 55% — benchmark da ~31%, damos margen
     kellyCapOverride: 0.25,         // Kelly cap 25% — permite BTC hasta ~22% post-restricciones
@@ -66,7 +67,6 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
       'URNU.DE':  0.12,   // uranio — tesis independiente del ciclo
       'EMXC.DE':  0.12,   // EM — subido de 0.10, diversificación geográfica
     },
-    cashReserveForced: 0.00,        // 0% cash forzado
     maxSingleAsset: 0.30,
     maxTechCryptoCluster: 0.40,     // BTC+VVSM ≤ 40%
     kellyCapOverride: 0.18,
@@ -84,7 +84,6 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
       'EMXC.DE':  0.03,   // EM — mínimo
       'VVSM.DE':  0.02,   // semis — mínimo
     },
-    cashReserveForced: 0.35,        // 35% cash — polvo seco para oportunidades de crisis
     maxSingleAsset: 0.35,
     maxTechCryptoCluster: 0.10,     // BTC+VVSM ≤ 10% — mínimo en crisis
     kellyCapOverride: 0.08,         // Kelly máximo 8% en CRISIS
@@ -101,13 +100,98 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
 //
 // Esto reemplaza la penalización uniforme (×0.616) por un cambio real de composición.
 
+// ── VVSM GATE (Semiconductores) ──────────────────────────────────────────────
+// FIX-VVSM-GATE (22-Jun-2026): los pesos tácticos de VVSM se modulan por
+// su retorno de 12 meses como proxy de sobrecalentamiento del sector.
+// Los semis son notoriamente cíclicos: +60% en 12m suele preceder correcciones.
+//
+// returns12m < 20%: normal       → 100% del peso táctico
+// returns12m 20-40%: caliente    → 80% del peso táctico
+// returns12m 40-60%: muy caliente → 50% del peso táctico
+// returns12m > 60%: burbuja semis → 25% del peso táctico (tracking position)
+//
+// El exceso se redistribuye íntegramente a WLG (núcleo developed equity).
+// Esto es complementario al cluster cap (BTC+VVSM) y al ERP trigger.
+function applyVVSMGate(
+  weights: Partial<Record<AssetTicker, number>>,
+  vvsmReturns12m?: number
+): Partial<Record<AssetTicker, number>> {
+  if (vvsmReturns12m === undefined) return weights;
+  const vvsmWeight = weights['VVSM.DE'];
+  if (!vvsmWeight || vvsmWeight <= 0) return weights;
+
+  let scaleFactor: number;
+  if (vvsmReturns12m < 0.20)       scaleFactor = 1.0;   // normal
+  else if (vvsmReturns12m < 0.40)  scaleFactor = 0.80;  // caliente
+  else if (vvsmReturns12m < 0.60)  scaleFactor = 0.50;  // muy caliente
+  else                              scaleFactor = 0.25;  // burbuja semis
+
+  const newVvsmWeight = vvsmWeight * scaleFactor;
+  const excess = vvsmWeight - newVvsmWeight;
+  if (excess <= 0) return weights;
+
+  // Redistribuir exceso a WLG (núcleo equity, 100%)
+  const result = { ...weights };
+  result['VVSM.DE'] = newVvsmWeight;
+  result['0P00000WLG.F'] = (result['0P00000WLG.F'] ?? 0) + excess;
+  return result;
+}
+
+// ── BTC ON-CHAIN GATE ─────────────────────────────────────────────────────────
+// FIX-BTC-GATE (22-Jun-2026): los pesos tácticos de BTC se modulan por MVRV.
+// El régimen define la INTENCIÓN (25% EXPANSION, 15% CONTRACTION, 3% CRISIS),
+// pero las métricas on-chain deciden si BTC MERECE ese peso en este momento.
+//
+// MVRV < 2.0: infravalorado → 100% del peso táctico (oportunidad de compra)
+// MVRV 2.0-3.0: fair value  → 80% del peso táctico
+// MVRV 3.0-4.0: sobrevalorado → 50% del peso táctico
+// MVRV > 4.0: burbuja       → 20% del peso táctico (solo tracking position)
+//
+// El exceso de peso se redistribuye proporcionalmente a PPFB (oro) y WLG (núcleo).
+// Esto es independiente del dynamicBtcCap en olympusV3.ts (que es un hard cap
+// sobre el peso final, no sobre la guía táctica).
+function applyBTCOnChainGate(
+  weights: Partial<Record<AssetTicker, number>>,
+  btcMVRV?: number
+): Partial<Record<AssetTicker, number>> {
+  if (btcMVRV === undefined || btcMVRV <= 0) return weights;
+  const btcWeight = weights['BTC-EUR'];
+  if (!btcWeight || btcWeight <= 0) return weights;
+
+  // Factor de escala según MVRV
+  let scaleFactor: number;
+  if (btcMVRV < 2.0)       scaleFactor = 1.0;   // infravalorado — sin reducción
+  else if (btcMVRV < 3.0)  scaleFactor = 0.80;  // fair value — leve reducción
+  else if (btcMVRV < 4.0)  scaleFactor = 0.50;  // sobrevalorado — reducción media
+  else                      scaleFactor = 0.20;  // burbuja — tracking position
+
+  const newBtcWeight = btcWeight * scaleFactor;
+  const excess = btcWeight - newBtcWeight;
+  if (excess <= 0) return weights;
+
+  // Redistribuir exceso a PPFB (oro, 60%) y WLG (núcleo, 40%)
+  const result = { ...weights };
+  result['BTC-EUR'] = newBtcWeight;
+  result['PPFB.DE'] = (result['PPFB.DE'] ?? 0) + excess * 0.60;
+  result['0P00000WLG.F'] = (result['0P00000WLG.F'] ?? 0) + excess * 0.40;
+  return result;
+}
+
 export function getTacticalWeights(
   regime: string,
-  assets: { name: string; ticker?: string }[]
+  assets: { name: string; ticker?: string }[],
+  btcMVRV?: number,         // FIX-BTC-GATE: opcional, para filtrar por on-chain
+  vvsmReturns12m?: number   // FIX-VVSM-GATE: opcional, retorno 12m de semis
 ): number[] {
   const tacticalConfig = REGIME_TACTICAL_ALLOCATIONS[regime]
     ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];
-  const w = tacticalConfig.weights;
+
+  // Aplicar gates: BTC on-chain + VVSM momentum exhaustion
+  // (ambas manejan internamente el caso undefined → no-op)
+  const w = applyVVSMGate(
+    applyBTCOnChainGate(tacticalConfig.weights, btcMVRV),
+    vvsmReturns12m
+  );
 
   return assets.map(a => {
     const ticker = a.ticker ?? a.name;

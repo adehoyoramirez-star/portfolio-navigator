@@ -234,17 +234,29 @@ function estimatePortfolioVolatility(
 }
 
 // ── Construir CEWS data point para el backtest ─────────────────────
-// Se genera un punto CEWS por cada rebalanceo (aprox. cada 21 días)
-// a partir de los datos macro disponibles en ese momento.
+// FIX-CEWS-TIMESTAMP (22-Jun-2026): antes usaba new Date() del presente
+// para TODOS los puntos históricos, rompiendo computeWeeksInWarning
+// (todos los timestamps iguales → 0 semanas consecutivas siempre).
+// AHORA: usa dayIndex (relativo, empieza en 0) como offset de días hacia
+// atrás desde hoy. El punto más antiguo (dayIndex=0) recibe un timestamp
+// de hace ~totalDays, el más reciente recibe un timestamp de hoy.
+// Se necesita backtestDuration (total de días del backtest) para anclar
+// correctamente la escala temporal.
 function buildCEWSPoint(
   vix: number,
   yieldSpread: number,
   creditSpread: number,
-  m2Growth: number
+  m2Growth: number,
+  dayIndex: number,        // índice relativo (0 = primer día del backtest)
+  backtestDuration: number  // total de días en el backtest (backtestEnd - backtestStart)
 ): CEWSDataPoint {
-  const today = new Date();
+  const now = Date.now();
+  // Mapear dayIndex a un timestamp real: dayIndex=0 → hace backtestDuration días
+  // dayIndex=backtestDuration → ahora. Sin timestamps futuros.
+  const daysAgo = backtestDuration - dayIndex;
+  const pointDate = new Date(now - daysAgo * 24 * 3600 * 1000);
   return {
-    timestamp: today.toISOString(),
+    timestamp: pointDate.toISOString(),
     vix,
     yieldSpread,
     creditSpread,
@@ -293,6 +305,8 @@ function computeAllocationsWithRegime(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
   t: number,
+  backtestStart: number,
+  backtestDuration: number,
   lookbackDays: number,
   macro: {
     vix: number;
@@ -345,8 +359,10 @@ function computeAllocationsWithRegime(
   );
 
   // ── 4. CEWS point para tracking ──
+  const dayIndex = t - backtestStart;
   const cewsPoint = buildCEWSPoint(
-    macro.vix, macro.yieldSpread, macro.creditSpread, macro.m2Growth ?? 2
+    macro.vix, macro.yieldSpread, macro.creditSpread, macro.m2Growth ?? 2,
+    dayIndex, backtestDuration
   );
   const updatedCews = cewsHistory
     ? [...cewsHistory, cewsPoint].slice(-168)
@@ -475,7 +491,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const erpAtT = input.macroHistory.erpValue?.[t];
       const avgCorrAtT = input.macroHistory.avgCorrelation?.[t];
     const result = computeAllocationsWithRegime(
-        closesHistory, backtestTickers, t, lookbackDays,
+        closesHistory, backtestTickers, t, backtestStart, backtestEnd - backtestStart, lookbackDays,
         {
           vix, yieldSpread, creditSpread,
           move: moveArray?.[t],
@@ -491,13 +507,13 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         cewsHistory,
         regimeHistory
       );
-      // Actualizar tracking para masterRegime y CEWS
-      if (result.regime !== currentRegime || regimeHistory.length === 0) {
-        const ts = new Date().toISOString();
-        regimeHistory.push({ timestamp: ts, regime: result.regime });
-        // Mantener max 50 entradas
-        if (regimeHistory.length > 50) regimeHistory.splice(0, regimeHistory.length - 50);
-      }
+      // FIX-REGIME-TRACKING (22-Jun-2026): añadir en cada rebalanceo.
+      // Usar dayIndex (relativo) para generar timestamps secuenciales sin futuro.
+      const daysAgo = (backtestEnd - backtestStart) - dayIndex;
+      const ts = new Date(Date.now() - daysAgo * 24 * 3600 * 1000).toISOString();
+      regimeHistory.push({ timestamp: ts, regime: result.regime });
+      // Mantener max 50 entradas
+      if (regimeHistory.length > 50) regimeHistory.splice(0, regimeHistory.length - 50);
       if (result.cewsPoint) {
         cewsHistory.push(result.cewsPoint);
         if (cewsHistory.length > 168) cewsHistory.splice(0, cewsHistory.length - 168);
@@ -527,6 +543,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     let benchmarkReturn = 0;
     let activeWeight = 0;
 
+    // FIX-USINGPROXY (22-Jun-2026): documentado. Esta fórmula clasifica días
+    // donde al menos un activo depende de su proxy americano (ej: URTH para WLG).
+    // maxLen = máximo de días en todos los activos; minProxyLen = mínimo.
+    // Los activos con menos historia usan proxy durante los primeros
+    // (maxLen - minProxyLen) días del backtest (más el lookback inicial).
     const usingProxy = t < (maxLen - minProxyLen + lookbackDays);
     if (usingProxy) daysWithProxies++; else daysWithRealData++;
 

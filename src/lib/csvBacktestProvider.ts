@@ -11,6 +11,7 @@ const CSV_PATH = '/historical_data_daily.csv';
 const COLUMN_MAP: Record<string, number> = {
   'BTC-EUR': 1,
   'EMXC.DE': 2,
+  '0P00000WLG.F': 3,
   'PPFB.DE': 4,
   'URNU.DE': 5,
   'VVSM.DE': 6,
