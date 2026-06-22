@@ -7,7 +7,7 @@
 //   Ver engineConfig.ts → TAIL_RISK_CONFIG.KILL_SWITCH para justificación.
 //
 //   ANTES:  L1=-5%  L2=-10% L3=-15% L4=-20% L5=-25%
-//   AHORA:  L1=-8%  L2=-15% L3=-20% L4=-25% L5=-32%
+//   AHORA:  L1=-12% L2=-15% L3=-20% L4=-25% L5=-32% (FIX-L1-BTC, 22-Jun-2026)
 //
 //   PORCENTAJES DE REDUCCIÓN sin cambios (son matemáticamente correctos).
 //

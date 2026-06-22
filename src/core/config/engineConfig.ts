@@ -12,7 +12,7 @@
 //   Resultado: el motor perdía TODAS las oportunidades de corrección.
 //
 // SOLUCIÓN: Ajustar triggers de drawdown para portfolio < €20k:
-//   - L1 sube de -5% → -8%  (€400 de pérdida en €5k = poco significativo)
+//   - L1 sube de -5% → -8% (FIX-SCALE-01) → -12% (FIX-L1-BTC, 22-Jun-2026)
 //   - L2 sube de -10% → -15% (más margen antes de frenar del todo)
 //   - L3-L5 sin cambios (estos sí son daños reales a cualquier escala)
 //   - Vol target sube de 18% → 20% (BTC justifica mayor tolerancia)
@@ -138,11 +138,18 @@ export const REGIME_CONFIG = {
 //   L5: -32% → 0.30 (70% reducción)
 //
 // AHORA (FIX-KILLSWITCH-AGGRESSIVE):
-//   L1: -8%  → 0.80 (20% reducción) — preventivo, casi igual
+//   L1: -12% → 0.80 (20% reducción) — preventivo, subido de -8% (22-Jun-2026)
 //   L2: -15% → 0.50 (50% reducción) — mucho más agresivo (era 35%)
 //   L3: -20% → 0.30 (70% reducción) — defensivo real (era 50%)
 //   L4: -25% → 0.15 (85% reducción) — casi cash (era 65%)
 //   L5: -32% → 0.05 (95% reducción) — cash virtual (era 70%)
+//
+// FIX-L1-BTC (22-Jun-2026): L1 subido de -8% → -12%.
+//   BTC (~20% del portfolio, vol 72%) genera DD de 8-10% frecuentemente
+//   por volatilidad normal de crypto, bloqueando compras en todo el portfolio.
+//   Con -12%, BTC puede corregir hasta ~60% sin disparar el Kill Switch L1
+//   (20% × 60% = 12%), permitiendo al resto de activos seguir operando.
+//   L2-L5 sin cambios: caídas más profundas sí activan protección completa.
 //
 // JUSTIFICACIÓN:
 //   Con el antiguo kill switch, en un drawdown del -25% el motor aún
@@ -156,7 +163,7 @@ export const REGIME_CONFIG = {
 //   en L2 (0.50 vs 0.40) pero más protectora en L4-L5.
 export const TAIL_RISK_CONFIG = {
   KILL_SWITCH: {
-    L1: { threshold: 0.08, name: "REDUCCIÓN PREVENTIVA",  overlay: 0.80, reduction: 0.20 },
+    L1: { threshold: 0.12, name: "REDUCCIÓN PREVENTIVA",  overlay: 0.80, reduction: 0.20 },
     L2: { threshold: 0.15, name: "REDUCCIÓN MODERADA",    overlay: 0.50, reduction: 0.50 },
     L3: { threshold: 0.20, name: "MODO DEFENSIVO",        overlay: 0.30, reduction: 0.70 },
     L4: { threshold: 0.25, name: "SALIDA CASI TOTAL",     overlay: 0.15, reduction: 0.85 },

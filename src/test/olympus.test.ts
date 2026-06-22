@@ -265,15 +265,15 @@ describe("Olympus V5 — Edge Cases", () => {
   test("CRISIS con drawdown activo → tailRisk reduce exposición", () => {
     // NOTA: Con Kelly = μ/σ², retornos negativos dan Kelly negativo, no cero.
     // El camino ALL_CASH solo se activa si expectedReturn = 0 exacto.
-    // Para activar tailRisk kill switch se necesita drawdown > umbral L1 (8%).
-    // Con drawdown=-10% + VIX=35 + creditSpread=5 → Kill Switch L1 activo + crisis sistémica.
+    // Para activar tailRisk kill switch se necesita drawdown > umbral L1 (12%).
+    // Con drawdown=-13% + VIX=35 + creditSpread=5 → Kill Switch L1 activo + crisis sistémica.
     const result = runOlympusEngine(baseInput({
       assets: [
         { name: "CashL", returns12m: -0.95, returns3m: -0.50, returns1m: -0.30, earningsYield: 0, volatility: 0.05, sector: "fixed_income" },
       ],
       correlationMatrix: [[1]],
       macro: { vix: 35, yieldSpread: 4.0, creditSpread: 5.0, move: 200, dxyTrend: 5, btcVol: 0.80, m2Growth: -5.0 },
-      portfolioDrawdown: -0.10,
+      portfolioDrawdown: -0.13,
       portfolioRealizedVol: 0.35,
     }));
 
