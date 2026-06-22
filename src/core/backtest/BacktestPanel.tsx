@@ -160,20 +160,20 @@ export default function BacktestPanel({
       yieldHistorical = Array(length).fill(0);
     }
 
-    // ── ERP proxy from IS3Q.DE (contra-cyclical earnings yield) + ^TNX (risk-free) ──
-    const is3qCloses = marketData.closesHistory['IS3Q.DE'] ?? [];
+    // ── ERP proxy from 0P00000WLG.F (MSCI World) + ^TNX (risk-free) ──
+    const wlgCloses = marketData.closesHistory['0P00000WLG.F'] ?? [];
     const erpValueProxy: number[] = [];
-    if (is3qCloses.length > 0 || tnxCloses.length > 0) {
-      const paddedIs3q = [...is3qCloses];
-      while (paddedIs3q.length < length) paddedIs3q.unshift(paddedIs3q[0] ?? 100);
-      const is3qPrices = paddedIs3q.slice(-length);
+    if (wlgCloses.length > 0 || tnxCloses.length > 0) {
+      const paddedWlg = [...wlgCloses];
+      while (paddedWlg.length < length) paddedWlg.unshift(paddedWlg[0] ?? 200);
+      const wlgPrices = paddedWlg.slice(-length);
       const paddedTnx = [...tnxCloses];
       while (paddedTnx.length < length) paddedTnx.unshift(paddedTnx[0] ?? 4.0);
       const tnxValues = paddedTnx.slice(-length);
       const LONG_TERM_AVG_RETURN = 0.225;
       for (let i = 0; i < length; i++) {
-        const price3yAgo = is3qPrices[Math.max(0, i - 756)];
-        const total3yReturn = price3yAgo > 0 ? is3qPrices[i] / price3yAgo - 1 : 0;
+        const price3yAgo = wlgPrices[Math.max(0, i - 756)];
+        const total3yReturn = price3yAgo > 0 ? wlgPrices[i] / price3yAgo - 1 : 0;
         const earningsYield = 0.055 - 0.15 * (total3yReturn - LONG_TERM_AVG_RETURN);
         const riskFree = tnxValues[i] / 100;
         const erp = earningsYield - riskFree;
@@ -279,7 +279,7 @@ export default function BacktestPanel({
 
       <div style={styles.proxyBar}>
         <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>
-          🔄 Proxies: EEM (EMXC) · QUAL (IS3Q) · GLD (PPFB) · URA (URNU) · SMH (VVSM) · QQQ (XNAS) · BTC-EUR directo
+          🔄 Proxies: EEM (EMXC) · URTH (WLG) · GLD (PPFB) · URA (URNU) · SMH (VVSM) · BTC-EUR directo
         </span>
         <span style={{ color: "#6b7280", fontSize: "0.75rem", marginLeft: "1rem" }}>
           {result.daysWithProxies}d proxies · {result.daysWithRealData}d ETFs reales

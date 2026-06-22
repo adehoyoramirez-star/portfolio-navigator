@@ -3,19 +3,17 @@
 
 import { runOlympusEngine } from './src/core/engine/olympusV3';
 
-const TICKERS = ['BTC-EUR','EMXC.DE','IS3Q.DE','PPFB.DE','URNU.DE','VVSM.DE','XNAS.DE'];
-const ASSET_NAMES = ['Bitcoin','Emerging Markets','MSCI World Quality','Gold (ETC)','Uranium','Semiconductors','NASDAQ 100'];
-const VOLS = [0.60,0.18,0.22,0.15,0.35,0.25,0.16];
+const TICKERS = ['BTC-EUR','EMXC.DE','PPFB.DE','URNU.DE','VVSM.DE','0P00000WLG.F'];
+const ASSET_NAMES = ['Bitcoin','Emerging Markets','Gold (ETC)','Uranium','Semiconductors','Vanguard Global Stock'];
+const VOLS = [0.60,0.18,0.15,0.35,0.25,0.16];
 
 function makeCorr(base: number, stress: number): number[][] {
   const m = [
-    [1.00,0.15,0.20,0.05,0.10,0.30,0.10],
-    [0.15,1.00,0.75,0.10,0.15,0.40,0.25],
-    [0.20,0.75,1.00,0.10,0.15,0.45,0.20],
-    [0.05,0.10,0.10,1.00,0.05,0.05,0.15],
-    [0.10,0.15,0.15,0.05,1.00,0.20,0.10],
-    [0.30,0.40,0.45,0.05,0.20,1.00,0.15],
-    [0.10,0.25,0.20,0.15,0.10,0.15,1.00],
+    [1.00,0.15,0.05,0.10,0.30,0.15],
+    [0.15,1.00,0.10,0.15,0.40,0.65],
+    [0.10,0.15,0.05,1.00,0.20,0.15],
+    [0.30,0.40,0.05,0.20,1.00,0.50],
+    [0.15,0.65,0.05,0.15,0.50,1.00],
   ];
   if (stress <= 0) return m;
   return m.map((row, i) => row.map((v, j) => {

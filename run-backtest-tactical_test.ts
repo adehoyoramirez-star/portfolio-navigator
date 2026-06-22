@@ -46,13 +46,13 @@ const lines = csvRaw.split('
 ').filter(l => l.trim());
 const headers = lines[0].split(',');
 
-const ASSETS = ['BTC-EUR', 'EMXC.DE', 'IS3Q.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'XNAS.DE'];
+const ASSETS = ['BTC-EUR', 'EMXC.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', '0P00000WLG.F'];
 const VIX_COL = '^VIX';
 
 const TICKER_TYPES: Record<string, string> = {
-  'BTC-EUR': 'CRYPTO', 'EMXC.DE': 'ETF', 'IS3Q.DE': 'ETF',
+  'BTC-EUR': 'CRYPTO', 'EMXC.DE': 'ETF',
   'PPFB.DE': 'ETC',    'URNU.DE': 'ETF', 'VVSM.DE': 'ETF',
-  'XNAS.DE': 'ETF',
+  '0P00000WLG.F': 'ETF',
 };
 
 interface BacktestDay {

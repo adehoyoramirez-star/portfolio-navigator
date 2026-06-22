@@ -669,8 +669,7 @@ export async function scanTacticalUniverse(
   }
 
     // Paso 6: régimen de mercado (necesario para narrative + filtros)
-  const indexAsset = assets.find(a =>
-    ['IS3Q.DE', 'XNAS.DE', 'CSPX.AS', 'SPY', 'QQQ', 'IVV'].includes(a.ticker),
+  const indexAsset = assets.find(a => ['CSPX.AS', 'SPY', 'QQQ', 'IVV'].includes(a.ticker)
   );
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);

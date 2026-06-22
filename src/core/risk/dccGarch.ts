@@ -7,7 +7,7 @@
 //   El sistema anterior usaba covarianza ESTÁTICA (media histórica fija).
 //   Ejemplo del problema:
 //     Jan 2024: corr(BTC, XNAS) = 0.35  → HRP los trata como diversificadores
-//     Nov 2024 (rally cripto): corr(BTC, XNAS) = 0.72  → ¡ya no diversifican!
+//     Nov 2024 (rally cripto): corr(BTC, VVSM) = 0.72  → ¡ya no diversifican!
 //     Mar 2020 (COVID crash): corr(TODOS) → 1.0  → HRP inútil, todo cae igual
 //
 //   DCC-GARCH resuelve esto en 2 pasos:
@@ -103,9 +103,8 @@ export interface DCCGARCHOutput {
 
 export const DEFAULT_GARCH_PARAMS: Record<string, GARCHParams> = {
   'BTC-EUR':  { omega: 0.00008, alpha: 0.12, beta: 0.82 },  // crypto: alta reactividad
-  'XNAS.DE':  { omega: 0.00003, alpha: 0.08, beta: 0.88 },  // Nasdaq: tech volátil
+  '0P00000WLG.F': { omega: 0.00002, alpha: 0.06, beta: 0.90 }, // MSCI World: similar a quality, estable
   'VVSM.DE':  { omega: 0.00003, alpha: 0.08, beta: 0.88 },  // Semis: similar Nasdaq
-  'IS3Q.DE':  { omega: 0.00002, alpha: 0.06, beta: 0.90 },  // Quality: más estable
   'EMXC.DE':  { omega: 0.00003, alpha: 0.07, beta: 0.89 },  // EM: moderado
   'PPFB.DE':  { omega: 0.00002, alpha: 0.05, beta: 0.91 },  // Gold: defensivo
   'URNU.DE':  { omega: 0.00004, alpha: 0.09, beta: 0.87 },  // Uranium: commodities

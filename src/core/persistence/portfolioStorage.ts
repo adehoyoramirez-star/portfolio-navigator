@@ -70,12 +70,10 @@ export interface PersistedMacro {
   piCycleMa350x2?: number;
   elliottCurrentWave?: string;
   elliottPivots?: Array<{ price: number; dateStr: string; type: string }>;
-  is3qRsiWeekly?: number;
-  is3qPERatio?: number;
+  wlgRsiWeekly?: number;
+  wlgPERatio?: number;
   emxcRsiWeekly?: number;
   emxcPERatio?: number;
-  xnasRsiWeekly?: number;
-  xnasPERatio?: number;
   savedAt: string;
 }
 

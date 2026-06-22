@@ -87,9 +87,9 @@ function computeERPProxy(priceHistory: number[], riskFree: number[]): number[] {
   return erpValues;
 }
 
-const is3qPrices = closesHistory['IS3Q.DE'] ?? Array(totalDays).fill(100);
+const wlgPrices = closesHistory['0P00000WLG.F'] ?? Array(totalDays).fill(200);
 const riskFreeDecimal = tnxHistory.map(v => v / 100);
-const erpProxy = computeERPProxy(is3qPrices, riskFreeDecimal);
+const erpProxy = computeERPProxy(wlgPrices, riskFreeDecimal);
 
 // ── PROXY DE CORRELACIÓN MEDIA ──────────────────────────────────
 // Durante estrés de mercado, las correlaciones convergen a 1.

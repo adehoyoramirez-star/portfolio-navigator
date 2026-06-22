@@ -20,8 +20,8 @@ const MOCK_ENGINE_RESULT = {
   portfolioDrawdown: -0.03,
   allocations: [
     { name: "BTC", ticker: "BTC-EUR", finalAllocation: 0.15, momentumScore: 0.7, valueScore: 0.3, qualityScore: 0.4, lowVolScore: 0.1, expectedReturn: 0.30, kellyFraction: 0.12 },
-    { name: "IS3Q", ticker: "IS3Q.DE", finalAllocation: 0.25, momentumScore: 0.6, valueScore: 0.5, qualityScore: 0.8, lowVolScore: 0.6, expectedReturn: 0.10, kellyFraction: 0.08 },
-    { name: "XNAS", ticker: "XNAS.DE", finalAllocation: 0.20, momentumScore: 0.8, valueScore: 0.2, qualityScore: 0.5, lowVolScore: 0.3, expectedReturn: 0.15, kellyFraction: 0.09 },
+    { name: "WLG"  , ticker: "0P00000WLG.F", finalAllocation: 0.25, momentumScore: 0.6, valueScore: 0.5, qualityScore: 0.8, lowVolScore: 0.6, expectedReturn: 0.10, kellyFraction: 0.08 },
+    { name: "VVSM" , ticker: "VVSM.DE", finalAllocation: 0.20, momentumScore: 0.8, valueScore: 0.2, qualityScore: 0.5, lowVolScore: 0.3, expectedReturn: 0.15, kellyFraction: 0.09 },
     { name: "PPFB", ticker: "PPFB.DE", finalAllocation: 0.15, momentumScore: 0.3, valueScore: 0.6, qualityScore: 0.7, lowVolScore: 0.8, expectedReturn: 0.06, kellyFraction: 0.05 },
     { name: "VVSM", ticker: "VVSM.DE", finalAllocation: 0.10, momentumScore: 0.5, valueScore: 0.4, qualityScore: 0.6, lowVolScore: 0.5, expectedReturn: 0.12, kellyFraction: 0.07 },
     { name: "EMXC", ticker: "EMXC.DE", finalAllocation: 0.10, momentumScore: 0.4, valueScore: 0.7, qualityScore: 0.5, lowVolScore: 0.4, expectedReturn: 0.08, kellyFraction: 0.06 },

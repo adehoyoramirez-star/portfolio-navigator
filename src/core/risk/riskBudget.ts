@@ -87,6 +87,5 @@ export const DEFAULT_SECTOR_BUDGETS: Record<string, number> = {
   uranium:     0.9,
   semis:       1.0,
   real_estate: 1.0,
-  technology:  1.0,  // XNAS.DE — NASDAQ 100, sector propio (no agrupado con semis)
-  equity:      1.0,  // IS3Q — MSCI World Quality Factor
+  equity:      1.0,  // 0P00000WLG.F — Vanguard Global Stock (MSCI World)
 };

@@ -109,7 +109,7 @@ export const portfolio: Portfolio = {
       factorRole: 'momentum'
     },
     {
-      ticker: "IS3Q.DE",
+      ticker: "0P00000WLG.F",
       name: "MSCI World Quality",
       weight: 20.0,
       currentWeight: 26.6,
@@ -181,7 +181,7 @@ export const portfolio: Portfolio = {
       factorRole: 'defensive'
     },
     {
-      ticker: "XNAS.DE",
+      ticker: "VVSM.DE",
       name: "NASDAQ 100",
       weight: 8.6,
       currentWeight: 10.6,

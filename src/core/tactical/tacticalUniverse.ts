@@ -25,15 +25,14 @@ export interface UniverseAsset {
   fallbackYahooSymbol?: string;
 }
 
-// ── Portfolio Olympus (7 ETFs core — siempre monitorizados) ──
+// ── Portfolio Olympus (6 activos core — siempre monitorizados) ──
 export const OLYMPUS_ASSETS: UniverseAsset[] = [
   { ticker:'BTC-EUR',  name:'Bitcoin EUR',                  sector:'Crypto',      type:'CRYPTO', exchange:'Crypto',    currency:'EUR', yahooSymbol:'BTC-EUR',  fallbackYahooSymbol:'BTC-USD' },
-  { ticker:'IS3Q.DE',  name:'iShares MSCI World Quality',   sector:'Equity',      type:'ETF',    exchange:'XETRA',     currency:'EUR', yahooSymbol:'IS3Q.DE',  fallbackYahooSymbol:'URTH', },
   { ticker:'VVSM.DE',  name:'VanEck Semiconductor',         sector:'Technology',  type:'ETF',    exchange:'XETRA',     currency:'EUR', yahooSymbol:'VVSM.DE',  fallbackYahooSymbol:'SMH', },
   { ticker:'URNU.DE',  name:'Global X Uranium',             sector:'Energy',      type:'ETF',    exchange:'XETRA',     currency:'EUR', yahooSymbol:'URNU.DE',  fallbackYahooSymbol:'URA', },
   { ticker:'EMXC.DE',  name:'iShares MSCI EM ex-China',     sector:'Emerging',    type:'ETF',    exchange:'XETRA',     currency:'EUR', yahooSymbol:'EMXC.DE',  fallbackYahooSymbol:'EEM', },
   { ticker:'PPFB.DE',  name:'iShares Physical Gold',        sector:'Commodities', type:'ETC',    exchange:'XETRA',     currency:'EUR', yahooSymbol:'PPFB.DE',  fallbackYahooSymbol:'GLD', },
-  { ticker:'XNAS.DE',  name:'iShares NASDAQ 100 UCITS',     sector:'Technology',  type:'ETF',    exchange:'XETRA',     currency:'EUR', yahooSymbol:'XNAS.DE',  fallbackYahooSymbol:'QQQ', },
+  { ticker:'0P00000WLG.F', name:'Vanguard Glb Stk Idx € Acc', sector:'Equity',      type:'ETF',    exchange:'FRA',       currency:'EUR', yahooSymbol:'0P00000WLG.F', fallbackYahooSymbol:'URTH', },
 ];
 
 // ── ETFs / ETCs UCITS (55 activos) ───────────────────────────

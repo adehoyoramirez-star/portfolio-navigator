@@ -41,15 +41,15 @@ interface BacktestRegimeState {
 }
 
 // Activos reales en el CSV (columnas de precio)
-const ASSETS = ['BTC-EUR', 'EMXC.DE', 'IS3Q.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'XNAS.DE', 'HYG', 'LQD'];
+const ASSETS = ['BTC-EUR', 'EMXC.DE', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', '0P00000WLG.F', 'HYG', 'LQD'];
 
-function detectBacktestRegime(vix: number, is3qCloses: number[]): BacktestRegimeState {
+function detectBacktestRegime(vix: number, wlgCloses: number[]): BacktestRegimeState {
   const highVol = vix > 25;
   if (highVol) return { regime: 'HIGH_VOL', vixLevel: vix };
-  if (!is3qCloses || is3qCloses.length < 50) return { regime: 'BULL', vixLevel: vix };
-  const last = is3qCloses[is3qCloses.length - 1];
-  const sma20 = is3qCloses.slice(-20).reduce((a, b) => a + b, 0) / 20;
-  const sma50 = is3qCloses.slice(-50).reduce((a, b) => a + b, 0) / 50;
+  if (!wlgCloses || wlgCloses.length < 50) return { regime: 'BULL', vixLevel: vix };
+  const last = wlgCloses[wlgCloses.length - 1];
+  const sma20 = wlgCloses.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const sma50 = wlgCloses.slice(-50).reduce((a, b) => a + b, 0) / 50;
   if (last < sma50 * 0.95 && sma20 < sma50) return { regime: 'BEAR', vixLevel: vix };
   if (last > sma50 && sma20 > sma50) return { regime: 'BULL', vixLevel: vix };
   return { regime: 'SIDEWAYS', vixLevel: vix };
@@ -123,13 +123,13 @@ function runTacticalBacktest(lookbackDays: number, useRegimeFilter: boolean) {
   const dateIdx = 0;
   const assetCols: { name: string; idx: number }[] = [];
   let vixIdx = -1;
-  let is3qIdx = -1;
+  let wlgIdx = -1;
   let hyGIdx = -1;
   let lqdIdx = -1;
   for (let i = 1; i < headers.length; i++) {
     const h = headers[i].replace('\r', '');
     if (h === '^VIX') vixIdx = i;
-    else if (h === 'IS3Q.DE') is3qIdx = i;
+    else if (h === '0P00000WLG.F') wlgIdx = i;
     else if (h === 'HYG') hyGIdx = i;
     else if (h === 'LQD') lqdIdx = i;
   }
@@ -176,9 +176,9 @@ function runTacticalBacktest(lookbackDays: number, useRegimeFilter: boolean) {
     const windowStart = Math.max(0, t - lookbackDays);
     const vix = vixData[t] ?? 15;
 
-    // Detect regime using VIX and IS3Q trend
-    const is3qCloses = priceData['IS3Q.DE']?.slice(windowStart, t + 1) ?? [];
-    const regime = detectBacktestRegime(vix, is3qCloses);
+    // Detect regime using VIX and WLG trend
+    const wlgCloses = priceData['0P00000WLG.F']?.slice(windowStart, t + 1) ?? [];
+    const regime = detectBacktestRegime(vix, wlgCloses);
     const scoreMul = regimeScoreMultiplier(regime);
 
     // --- Check open positions ---

@@ -18,8 +18,8 @@ const FUNCTION_BASE = SUPABASE_URL.replace('supabase.co', 'supabase.co/functions
 
 // ── Core tickers (OLYMPUS + sectoriales clave) ────────────────
 const CORE_TICKERS = [
-  // Olympus
-  'BTC-EUR', 'IS3Q.DE', 'VVSM.DE', 'URNU.DE', 'EMXC.DE', 'PPFB.DE', 'XNAS.DE',
+  // Olympus (6 activos core)
+  'BTC-EUR', 'VVSM.DE', 'URNU.DE', 'EMXC.DE', 'PPFB.DE', '0P00000WLG.F',
   // Mega-caps US
   'AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'JPM', 'V',
   // Sectoriales US

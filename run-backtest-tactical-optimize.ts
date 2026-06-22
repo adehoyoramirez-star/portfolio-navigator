@@ -142,8 +142,8 @@ function runBT(data: DataCache, cfg: { riskPerTradePct: number; minScore: number
   for (var t = LOOKBACK; t < dates.length; t++) {
     var ws = Math.max(0, t - LOOKBACK);
     var vix = vixData[t] ?? 15;
-    var is3q = priceData["IS3Q.DE"]?.slice(ws, t+1) ?? [];
-    var reg = detectRegime(vix, is3q);
+    var wlg = priceData["0P00000WLG.F"]?.slice(ws, t+1) ?? [];
+    var reg = detectRegime(vix, wlg);
     var sMul = regMul(reg);
     for (var pi = open.length-1; pi >= 0; pi--) {
       var pos = open[pi];

@@ -29,13 +29,12 @@ import { ASSETS } from "../../lib/constants";
 
 // ── Constantes del benchmark ─────────────────────────────────────────
 const BENCHMARK_WEIGHTS: Record<string, number> = {
-  "BTC-EUR": 0.10,
+  "0P00000WLG.F": 0.35,  // núcleo developed markets (sustituye IS3Q + XNAS)
+  "PPFB.DE": 0.20,
+  "VVSM.DE": 0.15,
   "EMXC.DE": 0.10,
-  "IS3Q.DE": 0.20,
-  "PPFB.DE": 0.25,
-  "URNU.DE": 0.05,
-  "VVSM.DE": 0.10,
-  "XNAS.DE": 0.20,
+  "BTC-EUR": 0.10,
+  "URNU.DE": 0.10,
 };
 
 const UNDERPERFORM_THRESHOLD = 0.05; // 5% underperformance → alerta

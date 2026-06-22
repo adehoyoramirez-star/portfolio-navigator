@@ -27,7 +27,7 @@ export const FUNDAMENTALS: Record<string, FundamentalData> = {
     lastUpdated: '2026-04-20',
   },
 
-  'IS3Q.DE': {  // iShares MSCI World Quality Factor UCITS ETF
+  '0P00000WLG.F': { // Vanguard Global Stock Index Fund EUR Acc — MSCI World
     earningsYield: 0.042,  // ~4.2% (PER ~24)
     per: 23.8,
     eps: 4.20,
@@ -64,14 +64,6 @@ export const FUNDAMENTALS: Record<string, FundamentalData> = {
     per: 0,
     eps: 0,
     source: 'N/A (Commodity)',
-    lastUpdated: '2026-04-20',
-  },
-
-  'XNAS.DE': {  // iShares NASDAQ 100 UCITS ETF
-    earningsYield: 0.032,  // ~3.2% (PER ~31)
-    per: 31.2,
-    eps: 6.40,
-    source: 'iShares factsheet + NASDAQ-100 data',
     lastUpdated: '2026-04-20',
   },
 

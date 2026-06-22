@@ -7,20 +7,18 @@
 import { runOlympusEngine, AssetInput, EngineOutput } from './src/core/engine/olympusV3';
 
 // ── ASSETS (7 activos) ─────────────────────────────────────────────
-const NAMES   = ['Bitcoin','Emerging Markets','MSCI World Quality','Gold (ETC)','Uranium','Semiconductors','NASDAQ 100'];
-const TICKERS = ['BTC-EUR','EMXC.DE','IS3Q.DE','PPFB.DE','URNU.DE','VVSM.DE','XNAS.DE'];
-const VOLS    = [0.60,0.18,0.22,0.15,0.35,0.25,0.16];
+const NAMES   = ['Bitcoin','Emerging Markets','Gold (ETC)','Uranium','Semiconductors','Vanguard Global Stock'];
+const TICKERS = ['BTC-EUR','EMXC.DE','PPFB.DE','URNU.DE','VVSM.DE','0P00000WLG.F'];
+const VOLS = [0.60,0.18,0.15,0.35,0.25,0.16];
 
 function makeCorrMatrix(level: number): number[][] {
   // level = 0: normal, 1: high stress, 2: panic
   const BASE = [
-    [1.00,0.15,0.20,0.05,0.10,0.30,0.10],
-    [0.15,1.00,0.75,0.10,0.15,0.40,0.25],
-    [0.20,0.75,1.00,0.10,0.15,0.45,0.25],
-    [0.05,0.10,0.10,1.00,0.05,0.05,0.15],
-    [0.10,0.15,0.15,0.05,1.00,0.20,0.10],
-    [0.30,0.40,0.45,0.05,0.20,1.00,0.15],
-    [0.10,0.25,0.25,0.15,0.10,0.15,1.00],
+    [1.00,0.15,0.05,0.10,0.30,0.15],
+    [0.15,1.00,0.10,0.15,0.40,0.65],
+    [0.10,0.15,0.05,1.00,0.20,0.15],
+    [0.30,0.40,0.05,0.20,1.00,0.50],
+    [0.15,0.65,0.05,0.15,0.50,1.00],
   ];
   const stress = level === 0 ? 1 : level === 1 ? 1.15 : 1.30;
   return BASE.map(row => row.map((v, i) => Math.min(0.99, v * stress + (i === 0 ? 0 : 0))));
@@ -74,7 +72,7 @@ const SCENARIOS: Scenario[] = [];
 
 // ── ESCENARIO 1: BASE (condiciones actuales, abril 2026) ──────────
 {
-  const ret12m = [0.45, 0.08, 0.12, 0.15, 0.05, 0.10, 0.18];
+  const ret12m = [0.45,0.08,0.15,0.05,0.10,0.10];
   const corr = makeCorrMatrix(0);
   SCENARIOS.push({
     name: '🏁 BASE — Condiciones actuales (Abril 2026)',
@@ -91,7 +89,7 @@ const SCENARIOS: Scenario[] = [];
 
 // ── ESCENARIO 2: SPACEX IPO EUPHORIA ─────────────────────────────
 {
-  const ret12m = [0.75, 0.18, 0.22, 0.10, 0.12, 0.25, 0.35]; // todo sube con euforia
+  const ret12m = [0.75,0.18,0.10,0.12,0.25,0.20]; // todo sube con euforia
   const corr = makeCorrMatrix(0); // correlaciones normales (todo sube)
   SCENARIOS.push({
     name: '🚀 SPACEX IPO — Euforia post-salida a bolsa',
@@ -110,7 +108,7 @@ const SCENARIOS: Scenario[] = [];
 // ── ESCENARIO 3: SPACEX CRASH (post-euforia) ─────────────────────
 {
   // Cripto cae más por ser risk-on, quality resiste mejor, gold sube
-  const ret12m = [-0.25, -0.18, -0.08, 0.05, -0.22, -0.15, -0.12];
+  const ret12m = [-0.25,-0.18,0.05,-0.22,-0.15,-0.15];
   const corr = makeCorrMatrix(2); // panic: todas las correlaciones suben
   SCENARIOS.push({
     name: '💥 SPACEX CRASH — Corrección severa post-IPO',

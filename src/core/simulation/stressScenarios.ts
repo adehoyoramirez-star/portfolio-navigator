@@ -16,11 +16,11 @@
 // PROXIES (definidos en Nivel 3):
 //   BTC-EUR     → BTC (datos reales desde 2013)
 //   EMXC.DE     → EEM (20 años)
-//   IS3Q.DE     → QUAL (12 años)
+//   0P00000WLG.F → URTH (27+ años, MSCI World proxy)
 //   PPFB.DE     → GLD (20 años)
 //   URNU.DE     → URA (14 años)
 //   VVSM.DE     → SMH (24 años)
-//   XNAS.DE     → QQQ (25 años)
+//   VVSM.DE     → SMH (20+ años)
 // ===============================================
 
 export interface StressScenario {
@@ -157,11 +157,10 @@ export const STRESS_SCENARIOS: StressScenario[] = [
 const PROXY_MAP: Record<string, string> = {
   "BTC-EUR": "BTC-EUR",
   "EMXC.DE": "EEM",
-  "IS3Q.DE": "QUAL",
+  "0P00000WLG.F": "URTH",
   "PPFB.DE": "GLD",
   "URNU.DE": "URA",
   "VVSM.DE": "SMH",
-  "XNAS.DE": "QQQ",
 };
 
 // ── CÁLCULO DE STRESS ────────────────────────────────────────────────────────

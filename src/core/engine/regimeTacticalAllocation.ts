@@ -20,14 +20,14 @@
 
 // Tickers disponibles en el portfolio
 type AssetTicker =
-  | 'BTC-EUR' | 'VVSM.DE' | 'IS3Q.DE' | 'URNU.DE'
-  | 'EMXC.DE' | 'PPFB.DE' | 'XNAS.DE';
+  | 'BTC-EUR' | 'VVSM.DE' | 'URNU.DE'
+  | 'EMXC.DE' | 'PPFB.DE' | '0P00000WLG.F';
 
 export interface RegimeTacticalWeights {
   weights: Partial<Record<AssetTicker, number>>;
   cashReserveForced: number;     // % mínimo de cash fuera de la cartera
   maxSingleAsset: number;        // cap individual (default: 0.25)
-  maxTechCryptoCluster: number;  // cap BTC+XNAS+VVSM (default: 0.40)
+  maxTechCryptoCluster: number;  // cap BTC+VVSM (default: 0.40)
   kellyCapOverride: number;      // cap Kelly en este régimen
   blendToTacticalRatio: number;  // blend 0-1: 0=más táctico, 1=más cuantitativo
   description: string;
@@ -36,71 +36,60 @@ export interface RegimeTacticalWeights {
 // ── CARTERAS TÁCTICAS POR RÉGIMEN ────────────────────────────────────────────
 export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> = {
   EXPANSION: {
-    // Cartera de crecimiento — permisiva con tech/crypto
-    // FIX-OVERPERF: cluster cap subido 45%→55% para no limitar BTC/tech
-    // en mercado alcista. Cash forzado reducido 5%→3%. BTC weight subido.
+    // Cartera de crecimiento — WLG como núcleo developed equity, VVSM como tilt tech/semis
+    // IS3Q y XNAS eliminados (redundantes con WLG). Sus pesos redistribuidos.
     weights: {
-      'BTC-EUR':  0.22,   // subido 0.18→0.22: benchmark da 14.29% fijo, engine necesita ~14% tras blend
-      'XNAS.DE':  0.18,   // Nasdaq en expansión — sobreponderar
-      'IS3Q.DE':  0.18,   // quality factor — siempre presente
+      'BTC-EUR':  0.25,   // subido 0.22→0.25: más peso al activo más descorrelacionado
+      '0P00000WLG.F': 0.22,   // núcleo global — sustituye a IS3Q+XNAS como developed equity base
+      'VVSM.DE':  0.18,   // semis — tilt AI (subido 0.12→0.18, absorbe parte de XNAS)
       'URNU.DE':  0.12,   // uranio — tesis estructural
-      'EMXC.DE':  0.10,   // EM — reducido para dar más peso a BTC
-      'VVSM.DE':  0.12,   // semis — momentum alcista
-      'PPFB.DE':  0.08,   // oro — hedge mínimo (reducido 0.10→0.08)
+      'EMXC.DE':  0.12,   // EM — subido para compensar menos activos
+      'PPFB.DE':  0.11,   // oro — hedge subido (0.08→0.11, más peso sin IS3Q)
     },
     cashReserveForced: 0.01,        // 1% cash mínimo — casi todo invertido en EXPANSIÓN
     maxSingleAsset: 0.30,
-    maxTechCryptoCluster: 0.65,     // BTC+XNAS+VVSM ≤ 65% — benchmark tiene 42.87%, damos margen
-    kellyCapOverride: 0.25,         // Kelly cap 25% — permite BTC hasta ~20-22% post-restricciones
-    blendToTacticalRatio: 0.30,     // 70% táctico — más agresivo: BTC 22%, NASDAQ 18%, semis 12%
-    description: 'Cartera crecimiento agresivo: BTC 22% objetivo, 1% cash, cluster cap 65%',
+    maxTechCryptoCluster: 0.55,     // BTC+VVSM ≤ 55% — benchmark da ~31%, damos margen
+    kellyCapOverride: 0.25,         // Kelly cap 25% — permite BTC hasta ~22% post-restricciones
+    blendToTacticalRatio: 0.30,     // 70% táctico — más agresivo
+    description: 'Cartera crecimiento: WLG 22% núcleo, BTC 25%, VVSM 18% tilt AI',
   },
 
-  // FIX-CAGR-BOOST (28-May-2026): Cartera más equilibrada en CONTRACTION.
-  // cash forzado ELIMINADO (era 10%) — ese 10% ganaba 0% siempre, lastrando CAGR.
-  // Quality bajado 30%→25%, Gold bajado 20%→15% — menos sobreponderación defensiva.
-  // BTC subido 10%→13%, NASDAQ subido 10%→13%, Semis subido 10%→12% — más crecimiento.
-  // EM subido 8%→10% — small cap value con buen momentum.
-  // cluster cap subido de 25%→38% para acomodar los nuevos pesos.
+  // FIX-PORTFOLIO-6: IS3Q y XNAS eliminados. WLG = núcleo developed equity.
+  // CONTRACTION más equilibrada: WLG + gold como anclas, VVSM como tilt tech.
   CONTRACTION: {
-    // Cartera equilibrada — menos defensiva, mantiene protección pero captura crecimiento
+    // Cartera equilibrada — WLG sustituye a IS3Q como ancla defensiva de developed markets
     weights: {
-      'IS3Q.DE':  0.25,   // quality — bajado de 0.30, sigue siendo el ancla defensiva
-      'PPFB.DE':  0.15,   // oro — bajado de 0.20, suficiente cobertura macro
+      '0P00000WLG.F': 0.28,   // núcleo global — sustituye a IS3Q (0.25) + parte de XNAS (0.13)
+      'PPFB.DE':  0.18,   // oro — subido de 0.15, más peso defensivo con menos activos
+      'BTC-EUR':  0.15,   // BTC — subido de 0.13, descorrelación creciente
+      'VVSM.DE':  0.15,   // semis — subido de 0.12, absorbe tilt tech de XNAS
       'URNU.DE':  0.12,   // uranio — tesis independiente del ciclo
-      'EMXC.DE':  0.10,   // EM — subido de 0.08, value/momentum favorable
-      'BTC-EUR':  0.13,   // BTC — subido de 0.10, correlación decreciente con equities
-      'XNAS.DE':  0.13,   // Nasdaq — subido de 0.10, quality tech hold
-      'VVSM.DE':  0.12,   // semis — subido de 0.10, ciclo AI estructural
+      'EMXC.DE':  0.12,   // EM — subido de 0.10, diversificación geográfica
     },
-    cashReserveForced: 0.00,        // ELIMINADO: 0% cash forzado (era 10%)
+    cashReserveForced: 0.00,        // 0% cash forzado
     maxSingleAsset: 0.30,
-    maxTechCryptoCluster: 0.38,     // BTC+XNAS+VVSM ≤ 38% (era 25%)
-    kellyCapOverride: 0.18,         // Kelly subido de 0.15 — más capacidad en crecimiento
+    maxTechCryptoCluster: 0.40,     // BTC+VVSM ≤ 40%
+    kellyCapOverride: 0.18,
     blendToTacticalRatio: 0.50,     // 50/50 — balance entre protección y crecimiento
-    description: 'Cartera equilibrada CONTRACTION: quality+gold moderados, tech/crypto 38%, 0% cash forzado',
+    description: 'Cartera equilibrada: WLG 28% núcleo, gold 18%, BTC+VVSM 30%',
   },
 
   CRISIS: {
     // Cartera supervivencia — preservar capital primero
-    // Code Review feedback: CRISIS debe ser defensiva. BTC a 5%, cash 35%, cluster cap 15%.
-    // Las correcciones de overperformance se concentran en EXPANSION (80% de los días).
-    // CRISIS tiene solo ~63 días en 4117 (1.5%) — no mueve el CAGR pero protege en cola.
     weights: {
-      'PPFB.DE':  0.40,   // oro — refugio primario en crisis
-      'IS3Q.DE':  0.25,   // quality — compañías con balance sólido
-      'URNU.DE':  0.10,   // uranio — mantener tesis (supply gap independiente)
-      'BTC-EUR':  0.05,   // BTC — mínimo (revertido de 0.10 por feedback reviewer)
-      'EMXC.DE':  0.05,   // EM — mínimo
-      'XNAS.DE':  0.05,   // Nasdaq — mínimo (revertido de 0.08)
-      'VVSM.DE':  0.05,   // semis — mínimo (revertido de 0.07)
+      'PPFB.DE':  0.35,   // oro — refugio primario en crisis
+      '0P00000WLG.F': 0.15,   // núcleo global — calidad developed markets (sustituye a IS3Q)
+      'URNU.DE':  0.07,   // uranio — mantener tesis (supply gap independiente)
+      'BTC-EUR':  0.03,   // BTC — mínimo
+      'EMXC.DE':  0.03,   // EM — mínimo
+      'VVSM.DE':  0.02,   // semis — mínimo
     },
     cashReserveForced: 0.35,        // 35% cash — polvo seco para oportunidades de crisis
-    maxSingleAsset: 0.30,
-    maxTechCryptoCluster: 0.15,     // BTC+XNAS+VVSM ≤ 15% — mínimo en crisis
+    maxSingleAsset: 0.35,
+    maxTechCryptoCluster: 0.10,     // BTC+VVSM ≤ 10% — mínimo en crisis
     kellyCapOverride: 0.08,         // Kelly máximo 8% en CRISIS
-    blendToTacticalRatio: 0.70,     // 70% cuantitativo — más conservador: gold y quality dominan
-    description: 'Cartera supervivencia: 40% gold + 35% cash, BTC 5%, cluster cap 15%',
+    blendToTacticalRatio: 0.70,     // 70% cuantitativo — conservador: gold y WLG dominan
+    description: 'Cartera supervivencia: 35% gold + 35% cash, WLG 15%, BTC+VVSM 5%',
   },
 };
 
@@ -161,8 +150,9 @@ export function applyTacticalConstraints(
   return capped.map(w => w / totalCapped);
 }
 
-// ── CAP DEL CLUSTER TECH-CRYPTO (BTC + XNAS + VVSM) ─────────────────────────
-export const TECH_CRYPTO_TICKERS = new Set(['BTC-EUR', 'XNAS.DE', 'VVSM.DE']);
+// ── CAP DEL CLUSTER TECH-CRYPTO (BTC + VVSM) ─────────────────────────────────
+// XNAS.DE eliminado (redundante con WLG). Cluster ahora solo BTC + VVSM.
+export const TECH_CRYPTO_TICKERS = new Set(['BTC-EUR', 'VVSM.DE']);
 
 export function enforceClusterCap(
   weights: number[],

@@ -15,8 +15,7 @@ const generateHistory = () => {
 
 const history = generateHistory();
 const mockHistory: Record<string, number[]> = {
-  'IS3Q.DE': history, 'BTC-EUR': history, 'EMXC.DE': history,
-  'PPFB.DE': history, 'URNU.DE': history, 'VVSM.DE': history, 'XNAS.DE': history,
+  'BTC-EUR': history, 'EMXC.DE': history,
 };
 
 const input = {

@@ -11,11 +11,9 @@ const CSV_PATH = '/historical_data_daily.csv';
 const COLUMN_MAP: Record<string, number> = {
   'BTC-EUR': 1,
   'EMXC.DE': 2,
-  'IS3Q.DE': 3,
   'PPFB.DE': 4,
   'URNU.DE': 5,
   'VVSM.DE': 6,
-  'XNAS.DE': 7,
   '^VIX': 8,
   '^TNX': 9,
   '^IRX': 10,
@@ -85,10 +83,10 @@ export function buildMacroHistoryFromCSV(csvData: CSVBacktestData, length: numbe
     const lqdYield = 3.00 / (sanitizedL / 80);
     return Math.max(1.0, Math.min(9.0, (hygYield - lqdYield) / 0.80));
   });
-  const is3qPrices = csvData.closesHistory['IS3Q.DE']?.slice(-length) ?? [];
-  const erpValue = is3qPrices.map((price, i) => {
+  const wlgPrices = csvData.closesHistory['0P00000WLG.F']?.slice(-length) ?? [];
+  const erpValue = wlgPrices.map((price, i) => {
     const idx = Math.max(0, i - 756);
-    const price3yAgo = is3qPrices[idx];
+    const price3yAgo = wlgPrices[idx];
     if (!price3yAgo || price3yAgo <= 0) return 0.02;
     const total3yReturn = price / price3yAgo - 1;
     const LONG_TERM_AVG_RETURN = 0.225;

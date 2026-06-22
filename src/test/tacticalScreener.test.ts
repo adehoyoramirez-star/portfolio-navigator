@@ -100,7 +100,7 @@ describe("defaultTacticalConfig", () => {
 
   test("minRiskReward es 1.3", () => {
     const config = defaultTacticalConfig(100000, 50000);
-    expect(config.minRiskReward).toBe(1.3);
+    expect(config.minRiskReward).toBe(2.0);
   });
 
   test("riskPerTradePct es 0.01 (1%)", () => {

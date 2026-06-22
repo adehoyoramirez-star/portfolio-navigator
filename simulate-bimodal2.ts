@@ -3,19 +3,17 @@
 
 import { runOlympusEngine } from './src/core/engine/olympusV3';
 
-const TICKERS = ['BTC-EUR','EMXC.DE','IS3Q.DE','PPFB.DE','URNU.DE','VVSM.DE','XNAS.DE'];
-const NAMES   = ['Bitcoin','Emerging Markets','MSCI World Quality','Gold (ETC)','Uranium','Semiconductors','NASDAQ 100'];
-const VOLS    = [0.60,0.18,0.22,0.15,0.35,0.25,0.16];
+const TICKERS = ['BTC-EUR','EMXC.DE','PPFB.DE','URNU.DE','VVSM.DE','0P00000WLG.F'];
+const NAMES   = ['Bitcoin','Emerging Markets','Gold (ETC)','Uranium','Semiconductors','Vanguard Global Stock'];
+const VOLS = [0.60,0.18,0.15,0.35,0.25,0.16];
 
 function makeCorr(): number[][] {
   return [
-    [1.00,0.15,0.20,0.05,0.10,0.30,0.10],
-    [0.15,1.00,0.75,0.10,0.15,0.40,0.25],
-    [0.20,0.75,1.00,0.10,0.15,0.45,0.20],
-    [0.05,0.10,0.10,1.00,0.05,0.05,0.15],
-    [0.10,0.15,0.15,0.05,1.00,0.20,0.10],
-    [0.30,0.40,0.45,0.05,0.20,1.00,0.15],
-    [0.10,0.25,0.20,0.15,0.10,0.15,1.00],
+    [1.00,0.15,0.05,0.10,0.30,0.15],
+    [0.15,1.00,0.10,0.15,0.40,0.65],
+    [0.10,0.15,0.05,1.00,0.20,0.15],
+    [0.30,0.40,0.05,0.20,1.00,0.50],
+    [0.15,0.65,0.05,0.15,0.50,1.00],
   ];
 }
 
@@ -26,7 +24,7 @@ function makeAssets(returns12m: number[]) {
     returns12m: returns12m[i],
     returns3m: returns12m[i] * 0.3,
     returns1m: returns12m[i] * 0.1,
-    earningsYield: [0, 0.05, 0.04, 0, 0.02, 0.03, 0.03][i],
+    earningsYield: [0, 0.05, 0.04, 0, 0.02, 0.03, 0.03, 0.05][i],
     volatility: VOLS[i],
   }));
 }
@@ -53,8 +51,8 @@ function runScenario(label: string, macro: any, returns: number[], btcCycle?: an
   console.log(`KillSwitch: L${result.killSwitchLevel}`);
   console.log(`ERP Triggered: ${result.meta.erpTriggered}`);
   console.log(`\nAllocations:`);
-  const growth = ['Bitcoin','NASDAQ 100','Semiconductors'];
-  const defensive = ['MSCI World Quality','Gold (ETC)'];
+  const growth = ['Bitcoin','Semiconductors','Uranium'];
+  const defensive = ['Vanguard Global Stock','Gold (ETC)'];
   let gSum = 0, dSum = 0;
   result.allocations.forEach(a => {
     console.log(`  ${a.name.padEnd(22)} ${(a.finalAllocation * 100).toFixed(2)}%`);
@@ -72,7 +70,7 @@ function runScenario(label: string, macro: any, returns: number[], btcCycle?: an
 runScenario('EXPANSION - Bull Market', {
   vix: 14, yieldSpread: 1.5, creditSpread: 1.5,
   move: 60, dxyTrend: -0.5, btcVol: 0.40, m2Growth: 5.0,
-}, [0.60, 0.25, 0.18, 0.12, 0.10, 0.40, 0.30], {
+}, [0.60,0.25,0.12,0.10,0.40,0.15], {
   mvrvRatio: 2.0, puellMultiple: 0.8, rsiWeekly: 70,
 });
 
@@ -80,7 +78,7 @@ runScenario('EXPANSION - Bull Market', {
 runScenario('CONTRACTION - Mixed', {
   vix: 22, yieldSpread: 0.3, creditSpread: 2.8,
   move: 80, dxyTrend: 0.3, btcVol: 0.50, m2Growth: 2.5,
-}, [0.15, 0.08, 0.05, 0.10, 0.03, -0.05, 0.02], {
+}, [0.15,0.08,0.10,0.03,-0.05,0.06], {
   mvrvRatio: 1.5, puellMultiple: 0.6, rsiWeekly: 45,
 });
 
@@ -88,7 +86,7 @@ runScenario('CONTRACTION - Mixed', {
 runScenario('CRISIS - Market Crash', {
   vix: 45, yieldSpread: -1.2, creditSpread: 6.0,
   move: 120, dxyTrend: 2.0, btcVol: 0.80, m2Growth: -3.0,
-}, [-0.40, -0.25, -0.15, 0.05, -0.30, -0.35, -0.20], {
+}, [-0.40,-0.25,0.05,-0.30,-0.35,-0.20], {
   mvrvRatio: 0.9, puellMultiple: 0.3, rsiWeekly: 25,
 });
 

@@ -21,11 +21,10 @@ import type { AssetInput } from "../engine/olympusV3";
 
 export const PROXY_MAP: Record<string, string> = {
   'EMXC.DE': 'EEM',
-  'IS3Q.DE': 'QUAL',
   'PPFB.DE': 'GLD',
   'URNU.DE': 'URA',
   'VVSM.DE': 'SMH',
-  'XNAS.DE': 'QQQ',
+  '0P00000WLG.F': 'URTH',
   'BAYN.DE': 'XBI',
   'BTC-EUR': 'BTC-EUR',
 };
@@ -275,11 +274,10 @@ function computeAssetFactors(
   const earningsYieldMap: Record<string, number> = {
     'BTC-EUR': 0,      // cripto — no tiene earnings
     'EMXC.DE': 0.05,   // EM equity — ~5% earnings yield
-    'IS3Q.DE': 0.04,   // Quality equity — ~4% earnings yield
     'PPFB.DE': 0,      // oro — no tiene earnings
     'URNU.DE': 0.03,   // uranio — commodity-like, earnings yield bajo
     'VVSM.DE': 0.04,   // semiconductores — ~4% earnings yield
-    'XNAS.DE': 0.04,   // NASDAQ 100 — ~4% earnings yield
+    '0P00000WLG.F': 0.05, // Vanguard Global Stock Index — MSCI World developed equity
     'BAYN.DE': 0.06,   // Bayer — deep value, EY alto (~12.5% P/E 8x, cap 6%)
   };
   const earningsYield = earningsYieldMap[ticker] ?? 0;

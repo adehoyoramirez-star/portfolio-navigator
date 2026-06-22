@@ -133,7 +133,7 @@ describe("initGARCH auto-calibration", () => {
   it("uses default params when calibrate=false", () => {
     const rng = gaussRng(createRng(456));
     const returns = Array.from({ length: 300 }, () => rng() * 0.015);
-    const state = initGARCH("IS3Q.DE", returns, undefined, false);
+    const state = initGARCH("0P00000WLG.F", returns, undefined, false);
     expect(state.params.omega).toBe(0.00002);
     expect(state.params.alpha).toBe(0.06);
     expect(state.params.beta).toBe(0.90);
@@ -163,7 +163,7 @@ describe("runDCCGARCH with calibration", () => {
   it("produces valid output with calibrated params", () => {
     const nAssets = 4;
     const T = 400;
-    const tickers = ["BTC-EUR", "IS3Q.DE", "XNAS.DE", "PPFB.DE"];
+    const tickers = ["BTC-EUR", "0P00000WLG.F", "VVSM.DE", "PPFB.DE"];
     const rngs = tickers.map((_, i) => gaussRng(createRng(1000 + i)));
     const returnMatrix: number[][] = rngs.map((rng, i) =>
       Array.from({ length: T }, () => rng() * 0.015 * (1 + i * 0.3))

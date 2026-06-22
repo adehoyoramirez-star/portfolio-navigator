@@ -3,19 +3,17 @@
 
 import { runOlympusEngine, EngineOutput } from './src/core/engine/olympusV3';
 
-const TICKERS = ['BTC-EUR','EMXC.DE','IS3Q.DE','PPFB.DE','URNU.DE','VVSM.DE','XNAS.DE'];
-const NAMES   = ['Bitcoin','Emerging Markets','MSCI World Quality','Gold (ETC)','Uranium','Semiconductors','NASDAQ 100'];
-const VOLS    = [0.60,0.18,0.22,0.15,0.35,0.25,0.16];
+const TICKERS = ['BTC-EUR','EMXC.DE','PPFB.DE','URNU.DE','VVSM.DE','0P00000WLG.F'];
+const NAMES   = ['Bitcoin','Emerging Markets','Gold (ETC)','Uranium','Semiconductors','Vanguard Global Stock'];
+const VOLS = [0.60,0.18,0.15,0.35,0.25,0.16];
 
 function makeCorr(stress: number): number[][] {
   const m = [
-    [1.00,0.15,0.20,0.05,0.10,0.30,0.10],
-    [0.15,1.00,0.75,0.10,0.15,0.40,0.25],
-    [0.20,0.75,1.00,0.10,0.15,0.45,0.20],
-    [0.05,0.10,0.10,1.00,0.05,0.05,0.15],
-    [0.10,0.15,0.15,0.05,1.00,0.20,0.10],
-    [0.30,0.40,0.45,0.05,0.20,1.00,0.15],
-    [0.10,0.25,0.20,0.15,0.10,0.15,1.00],
+    [1.00,0.15,0.05,0.10,0.30,0.15],
+    [0.15,1.00,0.10,0.15,0.40,0.65],
+    [0.10,0.15,0.05,1.00,0.20,0.15],
+    [0.30,0.40,0.05,0.20,1.00,0.50],
+    [0.15,0.65,0.05,0.15,0.50,1.00],
   ];
   if (stress <= 0) return m;
   return m.map((row, i) => row.map((v, j) => i === j ? 1 : Math.min(0.95, v + (1 - v) * stress * 0.3)));
@@ -45,10 +43,8 @@ function runScenario(label: string, input: any) {
 }
 
 console.log('\n🔧 PARÁMETROS APLICADOS (FIX-CAGR-BOOST):');
-console.log('  • cashReserveForced CONTRACTION: 0% (era 10%)');
-console.log('  • CONTRACTION weights: Growth: BTC 13%, NASDAQ 13%, Semis 12%');
-console.log('  • Factor weights: momentum 0.45, quality 0.15');
-console.log('  • Binary penalty CONTRACTION: 0.80 (era 0.70)');
+console.log('  • Portfolio 6 activos: WLG (núcleo), BTC, VVSM, EMXC, PPFB, URNU');
+console.log('  • Portfolio 6 activos: WLG = nucleo MSCI World');
 
 // ── SCENARIO 1: BASE (current conditions - CONTRACTION suave) ──
 const assets = TICKERS.map((t, i) => ({
@@ -57,9 +53,9 @@ const assets = TICKERS.map((t, i) => ({
   returns12m: 0.12,
   returns3m: 0.03,
   returns1m: 0.01,
-  earningsYield: t === 'BTC-EUR' ? 0 : (t === 'EMXC.DE' ? 0.05 : 0.055),
+  earningsYield: t === 'BTC-EUR' ? 0 : (t === 'EMXC.DE' ? 0.05 : (t === '0P00000WLG.F' ? 0.05 : 0.055)),
   volatility: VOLS[i],
-  sector: t === 'BTC-EUR' ? 'crypto' : t === 'VVSM.DE' ? 'semis' : t === 'XNAS.DE' ? 'technology' : 'equity',
+  sector: t === 'BTC-EUR' ? 'crypto' : t === 'VVSM.DE' ? 'semis' : 'equity',
 }));
 
 const BASE = {
@@ -133,8 +129,8 @@ console.log('\n✅ 1. Cash forzado ELIMINADO (10%→0%) en CONTRACTION');
 console.log('   → Ese 10% antes ganaba 0% siempre. Ahora está invertido.');
 console.log('   Impacto estimado: +0.5% a +1.0% CAGR');
 console.log('\n✅ 2. CONTRACTION más equilibrada (crecimiento ↑, defensa ↓)');
-console.log('   → BTC 10%→13%, NASDAQ 10%→13%, Semis 10%→12%');
-console.log('   → IS3Q 30%→25%, Gold 20%→15%');
+console.log('   → BTC 10%→13%, VVSM 15%→18%, Semis 10%→12%');
+console.log('   → WLG 35% nucleo developed equity, sin redundancia IS3Q+XNAS');
 console.log('   Impacto estimado: +1.0% a +2.0% CAGR');
 console.log('\n✅ 3. Factor weights: momentum 0.40→0.45, quality 0.20→0.15');
 console.log('   → Más tendencia, menos sesgo defensivo');

@@ -159,7 +159,7 @@ export function computeRebalanceSuggestions(
         // FIX-REBALANCER-CORR: degradar HIGH si el activo tiene alta correlación con BTC
         // y BTC ya está sobreexpuesto (> 25%). Evita añadir cluster tech-crypto involuntariamente.
         const BTC_CORR: Record<string, number> = {
-          'XNAS.DE': 0.68, 'VVSM.DE': 0.72, 'IS3Q.DE': 0.52, 'EMXC.DE': 0.45,
+          '0P00000WLG.F': 0.65, 'VVSM.DE': 0.72, 'EMXC.DE': 0.45,
           'PPFB.DE': -0.12, 'URNU.DE': 0.28, 'BTC-EUR': 1.0,
         };
         // FIX: usar withDrift (tiene currentPct) en lugar de assets (RebalanceAsset, sin currentPct)

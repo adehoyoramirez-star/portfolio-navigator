@@ -358,12 +358,10 @@ const InstitutionalDashboard: React.FC = () => {
  const [siaSalesYoY, setSiaSalesYoY] = useState<number | undefined>(undefined);
  const [soxRsiWeekly, setSoxRsiWeekly] = useState<number | undefined>(undefined);
   const [inflationBreakeven, setInflationBreakeven] = useState<number | undefined>(undefined);
-  const [is3qRsiWeekly, setIs3qRsiWeekly] = useState<number | undefined>(undefined);
-  const [is3qPERatio, setIs3qPERatio] = useState<number | undefined>(undefined);
+  const [wlgRsiWeekly, setWlgRsiWeekly] = useState<number | undefined>(undefined);
+  const [wlgPERatio, setWlgPERatio] = useState<number | undefined>(undefined);
   const [emxcRsiWeekly, setEmxcRsiWeekly] = useState<number | undefined>(undefined);
   const [emxcPERatio, setEmxcPERatio] = useState<number | undefined>(undefined);
-  const [xnasRsiWeekly, setXnasRsiWeekly] = useState<number | undefined>(undefined);
-  const [xnasPERatio, setXnasPERatio] = useState<number | undefined>(undefined);
 
   const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
@@ -659,12 +657,10 @@ const InstitutionalDashboard: React.FC = () => {
         setElliottPivots(pts);
         setElliottPivotsText(savedMacro.elliottPivots.map((p: { price: number; dateStr: string; type: string }) => `${p.price}:${p.type}`).join(", "));
       }
-      if (savedMacro.is3qRsiWeekly !== undefined) setIs3qRsiWeekly(savedMacro.is3qRsiWeekly);
-      if (savedMacro.is3qPERatio !== undefined) setIs3qPERatio(savedMacro.is3qPERatio);
+      if (savedMacro.wlgRsiWeekly !== undefined) setWlgRsiWeekly(savedMacro.wlgRsiWeekly);
+      if (savedMacro.wlgPERatio !== undefined) setWlgPERatio(savedMacro.wlgPERatio);
       if (savedMacro.emxcRsiWeekly !== undefined) setEmxcRsiWeekly(savedMacro.emxcRsiWeekly);
       if (savedMacro.emxcPERatio !== undefined) setEmxcPERatio(savedMacro.emxcPERatio);
-      if (savedMacro.xnasRsiWeekly !== undefined) setXnasRsiWeekly(savedMacro.xnasRsiWeekly);
-      if (savedMacro.xnasPERatio !== undefined) setXnasPERatio(savedMacro.xnasPERatio);
     }
     refreshMarketData();
   }, []);
@@ -700,12 +696,11 @@ const InstitutionalDashboard: React.FC = () => {
         dateStr: p.date ? p.date.toISOString() : new Date().toISOString(),
         type: p.label,
       })),
-      is3qRsiWeekly, is3qPERatio,
+      wlgRsiWeekly, wlgPERatio,
       emxcRsiWeekly, emxcPERatio,
-      xnasRsiWeekly, xnasPERatio,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, is3qRsiWeekly, is3qPERatio, emxcRsiWeekly, emxcPERatio, xnasRsiWeekly, xnasPERatio]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -1066,9 +1061,9 @@ const InstitutionalDashboard: React.FC = () => {
 
       // ── PASO 3: Actualizar filtro de Kalman con observaciones del mes ────
       // Aproximamos los retornos de cada factor premium usando los activos del universo:
-      //   momentum  → promedio top-3 por retorno 1m (IS3Q, XNAS, VVSM si subieron)
+      //   momentum  → promedio top-3 por retorno 1m (WLG, VVSM, URNU si subieron)
       //   value     → retorno de EMXC + PPFB (proxies value/commodity)
-      //   quality   → retorno de IS3Q (ETF de calidad pura)
+      //   quality   → retorno de WLG (MSCI World broad equity)
       //   lowVol    → retorno de PPFB (oro, menor volatilidad del universo)
       const closes = marketData.closesHistory;
       const getMonthlyReturn = (ticker: string): number => {
@@ -1079,15 +1074,16 @@ const InstitutionalDashboard: React.FC = () => {
         return prev > 0 ? (curr - prev) / prev : 0;
       };
 
-      const retIS3Q  = getMonthlyReturn("IS3Q.DE");
-      const retXNAS  = getMonthlyReturn("XNAS.DE");
+      const retWLG   = getMonthlyReturn("0P00000WLG.F");
       const retVVSM  = getMonthlyReturn("VVSM.DE");
+      const retURNU  = getMonthlyReturn("URNU.DE");
       const retEMXC  = getMonthlyReturn("EMXC.DE");
       const retPPFB  = getMonthlyReturn("PPFB.DE");
+      
 
-      const momentumReturn = (retIS3Q + retXNAS + retVVSM) / 3;
+      const momentumReturn = (retWLG + retVVSM + retURNU) / 3;
       const valueReturn    = (retEMXC + retPPFB) / 2;
-      const qualityReturn  = retIS3Q;
+      const qualityReturn  = retWLG;
       const lowVolReturn   = retPPFB;
 
       const kalmanObs: FactorObservation = {
@@ -1162,15 +1158,13 @@ soxRsiWeekly,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
-      is3qRsiWeekly,
-      is3qPERatio,
+      wlgRsiWeekly,
+      wlgPERatio,
       emxcRsiWeekly,
       emxcPERatio,
-      xnasRsiWeekly,
-      xnasPERatio,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, is3qRsiWeekly, is3qPERatio, emxcRsiWeekly, emxcPERatio, xnasRsiWeekly, xnasPERatio]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
 
   const btcCycleResult = useMemo((): BitcoinCycleOutput | null => {
     const btcAssetLocal = portfolio.assets.find(a => a.ticker === "BTC-EUR");
@@ -1649,7 +1643,7 @@ soxRsiWeekly,
       ? sortinoRatioReal(dailyPortfolioReturns, annualReturn, rf)
       : excessReturn / (portfolioVol / Math.sqrt(2));
 
-    const benchmarkAsset = portfolio.assets.find(a => a.ticker === 'IS3Q.DE');
+    const benchmarkAsset = portfolio.assets.find(a => a.ticker === '0P00000WLG.F');
     let beta = 1.0, alpha = 0;
     if (benchmarkAsset && benchmarkAsset.history.length > 20 && dailyPortfolioReturns.length > 20) {
       const benchReturns: number[] = [];
@@ -2264,12 +2258,12 @@ soxRsiWeekly,
               <input type="number" placeholder="—" value={inflationBreakeven ?? ""} onChange={e => setInflationBreakeven(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="10" />
             </div>
             <div>
-              <label style={styles.label}>IS3Q RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: IS3Q.DE · W · RSI(14)</span></label>
-              <input type="number" placeholder="—" value={is3qRsiWeekly ?? ""} onChange={e => setIs3qRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
+              <label style={styles.label}>WLG RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URTH · W · RSI(14)</span></label>
+              <input type="number" placeholder="—" value={wlgRsiWeekly ?? ""} onChange={e => setWlgRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
             </div>
             <div>
-              <label style={styles.label}>IS3Q P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: IS3Q.DE · P/E (TTM)</span></label>
-              <input type="number" placeholder="—" value={is3qPERatio ?? ""} onChange={e => setIs3qPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
+              <label style={styles.label}>WLG P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URTH · P/E (TTM)</span></label>
+              <input type="number" placeholder="—" value={wlgPERatio ?? ""} onChange={e => setWlgPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
             </div>
             <div>
               <label style={styles.label}>EMXC RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · W · RSI(14)</span></label>
@@ -2278,14 +2272,6 @@ soxRsiWeekly,
             <div>
               <label style={styles.label}>EMXC P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · P/E (TTM)</span></label>
               <input type="number" placeholder="—" value={emxcPERatio ?? ""} onChange={e => setEmxcPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
-            </div>
-            <div>
-              <label style={styles.label}>XNAS RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: XNAS.DE · W · RSI(14)</span></label>
-              <input type="number" placeholder="—" value={xnasRsiWeekly ?? ""} onChange={e => setXnasRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
-            </div>
-            <div>
-              <label style={styles.label}>XNAS P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: XNAS.DE · P/E (TTM)</span></label>
-              <input type="number" placeholder="—" value={xnasPERatio ?? ""} onChange={e => setXnasPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
             </div>
           </div>
         </div>
@@ -2824,7 +2810,7 @@ soxRsiWeekly,
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>×{(engineResult?.masterRegime.regimePenalty ?? 1).toFixed(2)} penalty régimen</div>
             </div>
             <div style={{ background: (portfolioAnalytics.beta ?? 1) > 1.3 ? "#78350f" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "#1e3a5f" : "#065f46", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
-              <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Beta vs IS3Q (MSCI World)</div>
+              <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Beta vs WLG (MSCI World)</div>
               <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#ffffff" }}>{(portfolioAnalytics.beta ?? 1).toFixed(2)}</div>
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>
                 {(portfolioAnalytics.beta ?? 1) > 1.2 ? "Agresivo" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "Mercado" : "Defensivo"}

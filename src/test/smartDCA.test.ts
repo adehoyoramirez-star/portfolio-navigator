@@ -25,8 +25,9 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
     accumulatedDefensiveLiquidity: 0,
     motorAllocations: [
       { name: "Bitcoin", ticker: "BTC-EUR", finalAllocation: 0.20, price: 60000 },
-      { name: "S&P 500", ticker: "IS3Q.DE", finalAllocation: 0.30, price: 75 },
-      { name: "Nasdaq", ticker: "XNAS.DE", finalAllocation: 0.25, price: 120 },
+      { name: "MSCI World", ticker: "0P00000WLG.F", finalAllocation: 0.30, price: 75 },
+      { name: "Uranio", ticker: "URNU.DE", finalAllocation: 0.05, price: 28 },
+      { name: "E.M.", ticker: "EMXC.DE", finalAllocation: 0.10, price: 30 },
       { name: "Gold", ticker: "PPFB.DE", finalAllocation: 0.15, price: 70 },
       { name: "Value", ticker: "VVSM.DE", finalAllocation: 0.10, price: 55 },
     ],
@@ -168,8 +169,8 @@ describe("DCA Normal (< 4 señales)", () => {
     // Todos los activos no-skips deben tener asignación
     const tickers = result.allocationByAsset.map(a => a.ticker);
     expect(tickers).toContain("BTC-EUR");
-    expect(tickers).toContain("IS3Q.DE");
-    expect(tickers).toContain("XNAS.DE");
+    expect(tickers).toContain("0P00000WLG.F");
+    expect(tickers).toContain("VVSM.DE");
   });
 
   test("Cash total invertido no supera lo disponible", () => {
@@ -349,8 +350,8 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
     // Múltiples activos
     const tickers = result.allocationByAsset.filter(a => !a.skipped).map(a => a.ticker);
     expect(tickers.length).toBeGreaterThan(1);
-    expect(tickers).toContain("IS3Q.DE");
-    expect(tickers).toContain("XNAS.DE");
+    expect(tickers).toContain("0P00000WLG.F");
+    expect(tickers).toContain("VVSM.DE");
   });
 
   test("Distribuye cash entre todos los activos según peso", () => {
@@ -499,8 +500,8 @@ describe("Edge Cases", () => {
     const result = computeSmartDCA(baseInput({
       cycleTopSignals: [
         { ticker: "BTC-EUR", shouldTrim: true, zone: "CAUTION" },
-        { ticker: "IS3Q.DE", shouldTrim: true, zone: "DANGER" },
-        { ticker: "XNAS.DE", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "0P00000WLG.F", shouldTrim: true, zone: "DANGER" },
+        { ticker: "VVSM.DE", shouldTrim: true, zone: "CAUTION" },
         { ticker: "PPFB.DE", shouldTrim: true, zone: "CAUTION" },
         { ticker: "VVSM.DE", shouldTrim: true, zone: "EXTREME" },
       ],
@@ -516,8 +517,9 @@ describe("Edge Cases", () => {
     const result = computeSmartDCA(baseInput({
       motorAllocations: [
         { name: "Bitcoin", ticker: "BTC-EUR", finalAllocation: 0.20, price: 60000 },
-        { name: "S&P 500", ticker: "IS3Q.DE", finalAllocation: 0.30, price: 75 },
-        { name: "Nasdaq", ticker: "XNAS.DE", finalAllocation: 0.25, price: 120 },
+        { name: "MSCI World", ticker: "0P00000WLG.F", finalAllocation: 0.30, price: 75 },
+        { name: "Uranio", ticker: "URNU.DE", finalAllocation: 0.05, price: 28 },
+      { name: "E.M.", ticker: "EMXC.DE", finalAllocation: 0.10, price: 30 },
         { name: "Gold", ticker: "PPFB.DE", finalAllocation: 0.15, price: 20 },  // price bajo para que sea comprable
         { name: "Value", ticker: "VVSM.DE", finalAllocation: 0.10, price: 55 },
       ],

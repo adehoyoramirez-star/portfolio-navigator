@@ -7,9 +7,8 @@
 //   Uranio    → Spot/LT ratio (mercado físico)
 //   Semis     → Book-to-Bill ratio (SEMI.org)
 //   Oro       → Tipo real (bono 10y − inflación implícita)
-//   IS3Q      → RSI semanal IS3Q + P/E MSCI World (manual)
+//   WLG       → RSI semanal MSCI World + P/E MSCI World (manual) — sustituye a IS3Q y XNAS
 //   EMXC      → RSI semanal EEM + P/E Emergentes (manual)
-//   XNAS      → RSI semanal NDX + P/E NASDAQ 100 (manual)
 //
 // Output: un multiplicador [0, 1] por activo
 //   1.0 = sin restricción (zona segura)
@@ -36,17 +35,13 @@ soxRsiWeekly?: number;       // RSI semanal del índice PHLX Semiconductor (^SOX
   inflationBreakeven?: number; // TradingView: T5YIE — breakeven inflación 5 años EEUU
   brentOil?: number;           // $/barril — si >$95 la guerra/inflación protege al oro → override HOLD
 
-  // IS3Q (MSCI World Quality Factor)
-  is3qRsiWeekly?: number;     // RSI semanal IS3Q.DE — TradingView, período 14, timeframe W
-  is3qPERatio?: number;       // P/E del MSCI World (manual — multpl.com o Yardeni)
+  // WLG (Vanguard Global Stock — MSCI World)
+  wlgRsiWeekly?: number;     // RSI semanal URTH (proxy MSCI World) — TradingView, período 14, timeframe W
+  wlgPERatio?: number;       // P/E del MSCI World (manual — multpl.com o Yardeni)
 
   // EMXC (Emerging Markets)
   emxcRsiWeekly?: number;     // RSI semanal EEM — TradingView, período 14, timeframe W
   emxcPERatio?: number;       // P/E del MSCI Emerging Markets (manual — Yardeni)
-
-  // XNAS (NASDAQ 100)
-  xnasRsiWeekly?: number;     // RSI semanal ^NDX — TradingView, período 14, timeframe W
-  xnasPERatio?: number;       // P/E del NASDAQ 100 (manual — multpl.com o Yardeni)
 }
 
 export interface CycleTopSignal {
@@ -343,25 +338,22 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
   };
 }
 
-// ── IS3Q (MSCI World Quality Factor) ──────────────────────────────
-// El Quality Factor (IS3Q) agrupa empresas con alta rentabilidad sobre recursos propios
-// (ROE), baja deuda y beneficios estables. Históricamente cotiza con prima P/E de 3-5
-// puntos sobre el mercado general porque los inversores pagan más por calidad.
-//
+// ── WLG (Vanguard Global Stock — MSCI World) ─────────────────────
+// El MSCI World es el índice de developed markets más amplio.
 // Señales de techo:
 //   RSI Semanal > 75 → sobrecompra. > 80 → sobrecompra extrema.
-//   P/E > 28 → caro incluso para Quality. > 35 → extremo (solo visto en 2021 post-COVID).
-function detectIS3QTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { is3qRsiWeekly, is3qPERatio } = inputs;
+//   P/E > 28 → caro (media histórica ~17-19). > 35 → burbuja.
+function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
+  const { wlgRsiWeekly, wlgPERatio } = inputs;
 
-  if (is3qRsiWeekly === undefined && is3qPERatio === undefined) {
+  if (wlgRsiWeekly === undefined && wlgPERatio === undefined) {
     return {
-      asset: "MSCI World Quality",
-      ticker: "IS3Q.DE",
+      asset: "Vanguard Global Stock",
+      ticker: "0P00000WLG.F",
       allocationMultiplier: 1.0,
       zone: "SAFE",
-      reason: "Sin datos de RSI semanal ni P/E — introduce is3qRsiWeekly e is3qPERatio para activar esta señal",
-      indicator: "RSI Semanal IS3Q + P/E MSCI World",
+      reason: "Sin datos de RSI semanal ni P/E — introduce wlgRsiWeekly y wlgPERatio para activar esta señal",
+      indicator: "RSI Semanal URTH + P/E MSCI World",
       indicatorValue: "Sin datos",
       shouldTrim: false,
       trimPct: 0,
@@ -371,33 +363,29 @@ function detectIS3QTop(inputs: CycleTopInputs): CycleTopSignal {
   let topSignals = 0;
   const reasons: string[] = [];
 
-  // Evaluar RSI semanal
-  if (is3qRsiWeekly !== undefined) {
-    if (is3qRsiWeekly > 85) {
+  if (wlgRsiWeekly !== undefined) {
+    if (wlgRsiWeekly > 85) {
       topSignals += 2;
-      reasons.push(`RSI semanal IS3Q ${is3qRsiWeekly.toFixed(0)} — sobrecompra extrema`);
-    } else if (is3qRsiWeekly > 80) {
+      reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra extrema`);
+    } else if (wlgRsiWeekly > 80) {
       topSignals += 1.5;
-      reasons.push(`RSI semanal IS3Q ${is3qRsiWeekly.toFixed(0)} — sobrecompra severa`);
-    } else if (is3qRsiWeekly > 75) {
+      reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra severa`);
+    } else if (wlgRsiWeekly > 75) {
       topSignals += 1;
-      reasons.push(`RSI semanal IS3Q ${is3qRsiWeekly.toFixed(0)} — sobrecompra`);
+      reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra`);
     }
   }
 
-  // Evaluar P/E del MSCI World
-  // Rango histórico P/E MSCI World: media ~17. Quality prima: +3-5 puntos → media ~21.
-  // 2021 pico: ~28. Burbuja: >30.
-  if (is3qPERatio !== undefined) {
-    if (is3qPERatio > 35) {
+  if (wlgPERatio !== undefined) {
+    if (wlgPERatio > 35) {
       topSignals += 2.5;
-      reasons.push(`P/E ${is3qPERatio.toFixed(1)} — Quality en territorio de burbuja (histórico: >28 = caro)`);
-    } else if (is3qPERatio > 30) {
+      reasons.push(`P/E ${wlgPERatio.toFixed(1)} — MSCI World en territorio de burbuja (>28 = caro)`);
+    } else if (wlgPERatio > 28) {
       topSignals += 1.5;
-      reasons.push(`P/E ${is3qPERatio.toFixed(1)} — Quality extremadamente caro (solo visto en 2021)`);
-    } else if (is3qPERatio > 25) {
+      reasons.push(`P/E ${wlgPERatio.toFixed(1)} — MSCI World caro por encima de su media (~18)`);
+    } else if (wlgPERatio > 22) {
       topSignals += 1;
-      reasons.push(`P/E ${is3qPERatio.toFixed(1)} — Quality caro por encima de su media histórica (~21)`);
+      reasons.push(`P/E ${wlgPERatio.toFixed(1)} — MSCI World por encima de la media`);
     }
   }
 
@@ -418,17 +406,17 @@ function detectIS3QTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   const parts: string[] = [];
-  if (is3qRsiWeekly !== undefined) parts.push(`RSI-W ${is3qRsiWeekly.toFixed(0)}`);
-  if (is3qPERatio !== undefined) parts.push(`P/E ${is3qPERatio.toFixed(1)}`);
+  if (wlgRsiWeekly !== undefined) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
+  if (wlgPERatio !== undefined) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
   return {
-    asset: "MSCI World Quality",
-    ticker: "IS3Q.DE",
+    asset: "Vanguard Global Stock",
+    ticker: "0P00000WLG.F",
     allocationMultiplier: multiplier,
     zone,
-    reason: reasons.length > 0 ? reasons.join(" · ") : "Ciclo saludable — sin señales de techo en Quality",
-    indicator: "RSI Semanal IS3Q + P/E MSCI World",
+    reason: reasons.length > 0 ? reasons.join(" · ") : "MSCI World en zona saludable — sin señales de techo",
+    indicator: "RSI Semanal URTH + P/E MSCI World",
     indicatorValue,
     shouldTrim: trimPct > 0,
     trimPct,
@@ -525,96 +513,9 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   };
 }
 
-// ── XNAS (NASDAQ 100) ──────────────────────────────────────────────
-// NASDAQ 100 es el índice tecnológico por excelencia. Su P/E histórico
-// es más alto que el del S&P 500 (~25-30 media) por el sesgo a crecimiento.
-//
-// Señales de techo:
-//   RSI Semanal > 80 → sobrecompra. > 85 → extrema (solo en 2020 y 2024).
-//   P/E > 35 → caro incluso para NASDAQ. > 45 → burbuja dot-com 2.0.
-function detectXNASConPEGrowthTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { xnasRsiWeekly, xnasPERatio } = inputs;
-
-  if (xnasRsiWeekly === undefined && xnasPERatio === undefined) {
-    return {
-      asset: "NASDAQ 100",
-      ticker: "XNAS.DE",
-      allocationMultiplier: 1.0,
-      zone: "SAFE",
-      reason: "Sin datos de RSI semanal ni P/E — introduce xnasRsiWeekly y xnasPERatio para activar esta señal",
-      indicator: "RSI Semanal NDX + P/E NASDAQ 100",
-      indicatorValue: "Sin datos",
-      shouldTrim: false,
-      trimPct: 0,
-    };
-  }
-
-  let topSignals = 0;
-  const reasons: string[] = [];
-
-  // Evaluar RSI semanal del NASDAQ 100 (^NDX)
-  if (xnasRsiWeekly !== undefined) {
-    if (xnasRsiWeekly > 88) {
-      topSignals += 2;
-      reasons.push(`RSI semanal NDX ${xnasRsiWeekly.toFixed(0)} — sobrecompra extrema en NASDAQ`);
-    } else if (xnasRsiWeekly > 82) {
-      topSignals += 1.5;
-      reasons.push(`RSI semanal NDX ${xnasRsiWeekly.toFixed(0)} — sobrecompra severa en NASDAQ`);
-    } else if (xnasRsiWeekly > 75) {
-      topSignals += 1;
-      reasons.push(`RSI semanal NDX ${xnasRsiWeekly.toFixed(0)} — sobrecompra en NASDAQ`);
-    }
-  }
-
-  // Evaluar P/E del NASDAQ 100
-  // Rango histórico: ~20 en crisis, ~28-32 media, ~35 caro, ~45 burbuja dot-com, ~65 en 2021.
-  // El P/E del NASDAQ en 2024-2026 está artificialmente alto por el peso de Nvidia/Tesla.
-  if (xnasPERatio !== undefined) {
-    if (xnasPERatio > 50) {
-      topSignals += 3;
-      reasons.push(`P/E ${xnasPERatio.toFixed(1)} — NASDAQ en burbuja tecnológica (solo visto en 2000 y 2021)`);
-    } else if (xnasPERatio > 40) {
-      topSignals += 2;
-      reasons.push(`P/E ${xnasPERatio.toFixed(1)} — NASDAQ extremadamente caro (niveles pre-corrección)`);
-    } else if (xnasPERatio > 30) {
-      topSignals += 1;
-      reasons.push(`P/E ${xnasPERatio.toFixed(1)} — NASDAQ por encima de su media histórica (~28)`);
-    }
-  }
-
-  let multiplier: number;
-  let zone: CycleTopSignal["zone"];
-  let trimPct = 0;
-
-  if (topSignals >= 4) {
-    multiplier = 0.10; zone = "EXTREME"; trimPct = 80;
-  } else if (topSignals >= 2.5) {
-    multiplier = 0.30; zone = "DANGER";  trimPct = 60;
-  } else if (topSignals >= 1.5) {
-    multiplier = 0.50; zone = "CAUTION"; trimPct = 35;
-  } else if (topSignals >= 0.5) {
-    multiplier = 0.70; zone = "CAUTION"; trimPct = 15;
-  } else {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-  }
-
-  const parts: string[] = [];
-  if (xnasRsiWeekly !== undefined) parts.push(`RSI-W ${xnasRsiWeekly.toFixed(0)}`);
-  if (xnasPERatio !== undefined) parts.push(`P/E ${xnasPERatio.toFixed(1)}`);
-  const indicatorValue = parts.join(" · ") || "Sin datos";
-
-  return {
-    asset: "NASDAQ 100",
-    ticker: "XNAS.DE",
-    allocationMultiplier: multiplier,
-    zone,
-    reason: reasons.length > 0 ? reasons.join(" · ") : "NASDAQ en zona saludable — sin señales de techo",
-    indicator: "RSI Semanal NDX + P/E NASDAQ 100",
-    indicatorValue,
-    shouldTrim: trimPct > 0,
-    trimPct,
-  };
-}
+// ── XNAS (NASDAQ 100) — ELIMINADO (redundante con WLG) ──────────
+// La detección de techo del NASDAQ 100 ya está cubierta por WLG (MSCI World)
+// que contiene todas las empresas del NASDAQ 100. VVSM cubre el tilt semis.
 
 // ── FUNCIÓN PRINCIPAL ─────────────────────────────────────────────
 export function detectCycleTops(inputs: CycleTopInputs): CycleTopOutput {
@@ -623,9 +524,8 @@ export function detectCycleTops(inputs: CycleTopInputs): CycleTopOutput {
     detectUraniumTop(inputs),
     detectSemisTop(inputs),
     detectGoldTop(inputs),
-    detectIS3QTop(inputs),
+    detectWLGTop(inputs),
     detectEMXCTop(inputs),
-    detectXNASConPEGrowthTop(inputs),
   ];
 
   return {

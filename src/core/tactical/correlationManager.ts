@@ -165,7 +165,7 @@ export function getSectorExposure(
 // LIMITACIÓN CONOCIDA: correlaciones son régimen-dependientes.
 // En crisis, pueden subir a 0.95+ incluso entre pares "no correlados".
 const HIGH_CORRELATION_PAIRS: [string, string][] = [
-  ['QQQ',     'XNAS.DE'],
+  ['QQQ',     '0P00000WLG.F'],
   ['QQQ',     'CNDX.AS'],
   ['QQQ',     'VVSM.DE'],
   ['SMH',     'VVSM.DE'],

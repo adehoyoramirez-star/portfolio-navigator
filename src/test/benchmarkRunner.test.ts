@@ -16,31 +16,28 @@ import {
 const TEST_PRICES_1: Record<string, number> = {
   "BTC-EUR": 45000,
   "EMXC.DE": 29.5,
-  "IS3Q.DE": 68,
+  "0P00000WLG.F": 68,
   "PPFB.DE": 70,
   "URNU.DE": 27,
   "VVSM.DE": 53,
-  "XNAS.DE": 185,
 };
 
 const TEST_PRICES_2: Record<string, number> = {
   "BTC-EUR": 46000,
   "EMXC.DE": 29.8,
-  "IS3Q.DE": 69,
+  "0P00000WLG.F": 69,
   "PPFB.DE": 69.5,
   "URNU.DE": 27.2,
   "VVSM.DE": 54,
-  "XNAS.DE": 188,
 };
 
 const TEST_PRICES_BEAR: Record<string, number> = {
   "BTC-EUR": 32000,
   "EMXC.DE": 25,
-  "IS3Q.DE": 55,
+  "0P00000WLG.F": 55,
   "PPFB.DE": 65,
   "URNU.DE": 22,
   "VVSM.DE": 40,
-  "XNAS.DE": 140,
 };
 
 beforeEach(() => {
@@ -82,13 +79,13 @@ describe("recordBenchmarkSnapshot", () => {
 
     // BTC-EUR: 46000/45000 - 1 = 0.02222 * 0.10 = 0.002222
     // EMXC.DE: 29.8/29.5 - 1 = 0.01017 * 0.10 = 0.001017
-    // IS3Q.DE: 69/68 - 1 = 0.01471 * 0.20 = 0.002941
-    // PPFB.DE: 69.5/70 - 1 = -0.00714 * 0.25 = -0.001786
-    // URNU.DE: 27.2/27 - 1 = 0.00741 * 0.05 = 0.000370
-    // VVSM.DE: 54/53 - 1 = 0.01887 * 0.10 = 0.001887
-    // XNAS.DE: 188/185 - 1 = 0.01622 * 0.20 = 0.003243
-    // Total = 0.00989
-    expect(result!.benchmarkReturn).toBeCloseTo(0.00989, 4);
+    // WLG: 69/68 - 1 = 0.01471 * 0.35 = 0.005149
+    // PPFB.DE: 69.5/70 - 1 = -0.00714 * 0.20 = -0.001429
+    // URNU.DE: 27.2/27 - 1 = 0.00741 * 0.10 = 0.000741
+    // VVSM.DE: 54/53 - 1 = 0.01887 * 0.15 = 0.002831
+    // VVSM: 54/53 - 1 = 0.01887 * 0.15 = 0.002831
+    // Total = 0.01053
+    expect(result!.benchmarkReturn).toBeCloseTo(0.01053, 4);
   });
 
   it("handles bear market scenario", () => {
@@ -173,9 +170,9 @@ describe("getBenchmarkStatus", () => {
 
 describe("getBenchmarkWeight", () => {
   it("returns correct weights for known tickers", () => {
-    expect(getBenchmarkWeight("XNAS.DE")).toBeCloseTo(0.20, 4);
-    expect(getBenchmarkWeight("IS3Q.DE")).toBeCloseTo(0.20, 4);
-    expect(getBenchmarkWeight("PPFB.DE")).toBeCloseTo(0.25, 4);
+    expect(getBenchmarkWeight("0P00000WLG.F")).toBeCloseTo(0.35, 4);
+    expect(getBenchmarkWeight("VVSM.DE")).toBeCloseTo(0.15, 4);
+    expect(getBenchmarkWeight("PPFB.DE")).toBeCloseTo(0.20, 4);
     expect(getBenchmarkWeight("BTC-EUR")).toBeCloseTo(0.10, 4);
   });
 
@@ -187,7 +184,7 @@ describe("getBenchmarkWeight", () => {
 describe("getBenchmarkComposition", () => {
   it("returns sorted composition with all assets", () => {
     const comp = getBenchmarkComposition();
-    expect(comp.length).toBe(7);
+    expect(comp.length).toBe(6);
     expect(comp[0].ticker).toBe("PPFB.DE");
     expect(comp[0].weight).toBeCloseTo(0.25, 4);
     expect(comp[comp.length - 1].ticker).toBe("URNU.DE");

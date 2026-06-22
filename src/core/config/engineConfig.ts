@@ -273,8 +273,8 @@ export const API_CONFIG = {
   },
 } as const;
 
-// ── NOTA IS3Q vs IS3R ─────────────────────────────────────────────────────
-// IS3Q.DE = iShares MSCI World Quality Factor (ISIN: IE00BP3QZ601)
+// ── NOTA: IS3Q y XNAS ELIMINADOS del portfolio (redundantes con WLG) ─────
+// 0P00000WLG.F = Vanguard Global Stock Index Fund (ISIN: IE00B03HD191)
 //   Selección: ROE alto, deuda baja, beneficios estables
 //   Comportamiento: defensivo, baja vol (~15%), buen compounder LP
 //   factorRole: "quality"
@@ -286,6 +286,6 @@ export const API_CONFIG = {
 //   *** NO confundir con Russell 2000 (Small Cap USA) ***
 //
 // Son complementarios: Quality defiende en correcciones, Momentum acelera en tendencias.
-// Si se añade IS3R al portfolio, reducir proporcionalmente VVSM.DE o XNAS.DE
+// Si se añade IS3R al portfolio, reducir proporcionalmente VVSM.DE o WLG
 // para no superar el SECTOR_CAP de tecnología/equity del 35%.
 // ─────────────────────────────────────────────────────────────────────────

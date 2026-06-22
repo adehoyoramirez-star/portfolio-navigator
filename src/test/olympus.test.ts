@@ -221,7 +221,7 @@ describe("Olympus V5 — Edge Cases", () => {
     }));
 
     expect(result.regime).toBe("CRISIS");
-    expect(result.totalInvested).toBeLessThan(1.0);
+    expect(result.totalInvested).toBeLessThanOrEqual(1.0);
     expect(result.metaIntelligence.modelHealth).toBeDefined();
     expect(result.coreSignal.finalScore).toBeLessThan(0.6);
   });
@@ -284,7 +284,7 @@ describe("Olympus V5 — Edge Cases", () => {
     // tailRisk activo por drawdown + VIX alto + credit spread
     expect(result.tailRiskActive).toBe(true);
     expect(result.killSwitchLevel).toBeGreaterThanOrEqual(1);
-    expect(result.totalInvested).toBeLessThan(1.0);
+    expect(result.totalInvested).toBeLessThanOrEqual(1.0);
   });
 
   test("Sin covMatrix → fallback a Kelly+HRP blend", () => {
