@@ -145,7 +145,7 @@ function buildContext(data: {
 RÉGIMEN: ${data.regime} | penalty=${(data.regimePenalty * 100).toFixed(0)}% | P(crisis)=${(data.crisisProb * 100).toFixed(0)}%
 MACRO: VIX=${data.vix.toFixed(1)} MOVE=${data.moveIndex.toFixed(0)} Bond10y=${data.bond10y.toFixed(2)}% Bond2y=${data.bond2y.toFixed(2)}% CreditSpread=${data.creditSpread.toFixed(2)}% M2=${data.m2Growth.toFixed(1)}% DXY=${data.dxy.toFixed(1)} Brent=$${data.wtiOil.toFixed(0)}
 CRYPTO: BTC=€${data.btcPrice.toFixed(0)} RSI_semanal=${data.btcRsiWeekly.toFixed(0)} DOM=${data.btcDominance.toFixed(1)}% MVRV=${data.mvrvRatio.toFixed(2)} FearGreed=${data.fearGreedValue}/50
-PORTFOLIO: €${data.portfolioValue.toFixed(0)} vol=${(data.portfolioVol * 100).toFixed(1)}% drawdown=${(data.portfolioDrawdown * 100).toFixed(1)}% mu=${(Math.min(0.15, data.expectedReturn) * 100).toFixed(1)}%
+PORTFOLIO: €${data.portfolioValue.toFixed(0)} vol=${(data.portfolioVol * 100).toFixed(1)}% drawdown=${(data.portfolioDrawdown * 100).toFixed(1)}% mu=${(Math.min(0.25, data.expectedReturn) * 100).toFixed(1)}%
 ELLIOTT: Onda ${data.elliottWave ?? 'N/D'} | Hash Ribbon: ${data.hashRibbonState ?? 'N/D'} | Puell: ${(data.puellMultiple ?? 0).toFixed(2)}
 ${data.contradictions.length > 0 ? 'CONTRADICCIONES: ' + data.contradictions.join(' | ') : ''}`.trim();
 }

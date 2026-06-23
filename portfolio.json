@@ -2,12 +2,11 @@
   "positions": {
     "BTC-EUR": {"shares": 0.031285, "avg_price": 88010.99},
     "EMXC.DE": {"shares": 31, "avg_price": 28.93},
-    "IS3Q.DE": {"shares": 26, "avg_price": 67.53},
+    "0P00000WLG.F": {"shares": 26, "avg_price": 67.53},
     "PPFB.DE": {"shares": 4, "avg_price": 69.39},
     "URNU.DE": {"shares": 13, "avg_price": 26.48},
-    "VVSM.DE": {"shares": 2, "avg_price": 52.01},
-    "XNAS.DE": {"shares": 0, "avg_price": 0}
+    "VVSM.DE": {"shares": 2, "avg_price": 52.01}
   },
-  "cash_reserve": 150,
-  "last_updated": "2025-01-01"
+  "cash_reserve": 6700,
+  "last_updated": "2026-06-23"
 }

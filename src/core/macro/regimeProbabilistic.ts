@@ -80,7 +80,7 @@ export function detectRegimeProbabilistic(
  *   33/33/33        → 0.70
  */
 export function continuousRegimePenalty(probs: RegimeProbabilities): number {
-  const penalty = probs.expansion * 1.0 + probs.contraction * 0.7 + probs.crisis * 0.4;
+  const penalty = probs.expansion * 1.0 + probs.contraction * 0.70 + probs.crisis * 0.4;
   // Clamp por seguridad: nunca por debajo de 0.4 ni por encima de 1.0
   return Math.max(0.4, Math.min(1.0, penalty));
 }

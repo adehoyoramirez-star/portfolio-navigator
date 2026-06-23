@@ -61,14 +61,14 @@ import type { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { calculateKelly } from "../portfolio/kelly";
 import { correlationPenalty } from "../portfolio/correlation";
 import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBudget";
-import { computeVolTargetMultiplier, DEFAULT_TARGET_VOL } from "../risk/volatilityTarget";
+import { computeVolTargetMultiplier } from "../risk/volatilityTarget";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { runBlackLitterman, generateViewsFromEngine, BLView } from "../portfolio/blackLitterman";
 import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
-import { FACTOR_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, getFactorWeightsByRegime } from "../config/engineConfig";
+import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, getFactorWeightsByRegime } from "../config/engineConfig";
 // FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
 import {
   getTacticalWeights,
@@ -684,7 +684,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   }
 
   const volTarget   = computeVolTargetMultiplier({
-    targetVol:     input.targetVol ?? DEFAULT_TARGET_VOL,
+    targetVol:     input.targetVol ?? VOLATILITY_CONFIG.DEFAULT_TARGET_VOL,
     realizedVol:   coreRealizedVol,  // ← usa vol del CORE (ex-BTC)
     regimePenalty: adjustedRegimePenalty,
   });

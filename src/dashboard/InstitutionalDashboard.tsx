@@ -529,7 +529,7 @@ const InstitutionalDashboard: React.FC = () => {
         btcRsi: btcRsiWeekly ?? 50, btcDominance, mvrv: mvrvRatio ?? 0,
         fearGreed: fearGreedIndex?.value ?? 50, fearGreedLabel: fearGreedIndex?.label ?? 'N/D',
         totalValue: totalPortfolioVal, portfolioVol: portfolioVol ?? 0.18, drawdown: portfolioDrawdown ?? 0,
-        muEffective: Math.min(0.15, expectedReturn),
+        muEffective: Math.min(0.25, expectedReturn),
         contradictions,
       };
 
@@ -1482,7 +1482,7 @@ soxRsiWeekly,
         const muJS = marketData.expectedReturns[i] ?? 0.08;
         return acc + muJS * w;
       }, 0);
-      const capped = Math.min(0.15, Math.max(0.01, weightedJS));
+      const capped = Math.min(0.25, Math.max(0.01, weightedJS));
       return capped * regimePenalty;
     }
 
@@ -1491,7 +1491,7 @@ soxRsiWeekly,
       const r = asset ? (asset.expectedReturn / 100) : 0.10;
       return acc + r * alloc.finalAllocation;
     }, 0);
-    const capped = Math.min(0.15, Math.max(0.01, weightedHardcoded));
+    const capped = Math.min(0.25, Math.max(0.01, weightedHardcoded));
     return capped * regimePenalty;
   }, [engineResult, portfolio.assets, marketData?.expectedReturns]);
 
@@ -1502,7 +1502,7 @@ soxRsiWeekly,
     );
 
   const jumpSim = useMemo(() => {
-    const muCapped = Math.min(0.15, expectedReturn);
+    const muCapped = Math.min(0.25, expectedReturn);
     // FIX-MC-CASH: incluir cashReserve en proyecciones Monte Carlo.
     // El cash no crece ni se deprecia. Se suma flat al final de cada simulacion.
     // mu y sigma se diluyen proporcionalmente para no sobreestimar retornos.
@@ -1924,7 +1924,7 @@ soxRsiWeekly,
                   btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price,
                   btcDominance,
                   allocations: engineResult.allocations.map(a => ({ name: a.name, pct: a.finalAllocation })),
-                  muEffective: Math.min(0.15, expectedReturn),
+                  muEffective: Math.min(0.25, expectedReturn),
                   aiNarrative: aiIntelligence?.gemini?.regimeNarrative ?? undefined,
               });
               if (!ok) throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
@@ -2048,10 +2048,10 @@ soxRsiWeekly,
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>μ MONTE CARLO</div>
             <div style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#818cf8" }}>
-              {(Math.min(0.15, expectedReturn) * 100).toFixed(1)}%
+              {(Math.min(0.25, expectedReturn) * 100).toFixed(1)}%
             </div>
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>
-              anual ajustado régimen · cap 15%
+              anual ajustado régimen · cap 25%
             </div>
           </div>
 
@@ -2887,7 +2887,7 @@ soxRsiWeekly,
           <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "center" }}>
             <div>
               <span style={{ color: "#60a5fa", fontWeight: "bold" }}>μ efectivo: </span>
-              <span style={{ color: "#e5e7eb", fontWeight: "bold", fontSize: "1rem" }}>{(Math.min(0.15, expectedReturn) * 100).toFixed(2)}%</span>
+              <span style={{ color: "#e5e7eb", fontWeight: "bold", fontSize: "1rem" }}>{(Math.min(0.25, expectedReturn) * 100).toFixed(2)}%</span>
               <span style={{ color: "#6b7280" }}> anual</span>
             </div>
             <div>

@@ -39,7 +39,9 @@ export interface VolTargetOutput {
   isScaledUp: boolean;
 }
 
-export const DEFAULT_TARGET_VOL = VOLATILITY_CONFIG.DEFAULT_TARGET_VOL; // 0.20
+// FIX-HOT-CONFIG: ya no capturamos DEFAULT_TARGET_VOL en carga de módulo.
+// El motor (olympusV3) lee VOLATILITY_CONFIG directamente en runtime.
+export { VOLATILITY_CONFIG };
 
 const VOL_MULTIPLIER_MAX = VOLATILITY_CONFIG.MULTIPLIER_MAX; // 1.5
 const VOL_MULTIPLIER_MIN = VOLATILITY_CONFIG.MULTIPLIER_MIN; // 0.3

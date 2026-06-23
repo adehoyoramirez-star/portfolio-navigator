@@ -30,7 +30,7 @@ export const SECTOR_MAP: Record<Asset, string> = {
 export const SECTOR_CAP = 0.50;
 export const TARGET_GOAL = 150000;
 export const DEFAULT_MONTHLY = 400;
-export const STRUCTURAL_RESERVE_PCT = 0.08;
+export const STRUCTURAL_RESERVE_PCT = 0.04;  // FIX-CASH-LEAN: reducido de 8%→4% — menos cash inmovilizado
 
 // Pesos objetivo a largo plazo// por litigios glifosato. Upside asymétrico si se resuelve el riesgo legal.
 export const DEFAULT_POSITIONS = {

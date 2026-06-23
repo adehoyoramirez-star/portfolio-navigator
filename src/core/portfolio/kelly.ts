@@ -31,10 +31,8 @@ export interface KellyResult {
   effectiveCap: number;  // cap realmente usado (capOverride ?? KELLY_CONFIG.CAP)
 }
 
-// Cap institucional (desde config centralizada)
-const KELLY_CAP = KELLY_CONFIG.CAP;
-const KELLY_HALF_FRACTION = KELLY_CONFIG.HALF_FRACTION;
-
+// FIX-HOT-CONFIG: KELLY_CONFIG se lee en runtime en vez de al cargar el módulo.
+// Esto permite que el walk-forward optimizer sobreescriba los valores entre backtests.
 /**
  * Calcula la fracción de Kelly con ajuste institucional (half-Kelly).
  *
@@ -46,14 +44,14 @@ const KELLY_HALF_FRACTION = KELLY_CONFIG.HALF_FRACTION;
  */
 export function calculateKelly(input: KellyInput): KellyResult {
   const { expectedReturn, volatility, capOverride } = input;
-  const effectiveCap = capOverride ?? KELLY_CAP;
+  const effectiveCap = capOverride ?? KELLY_CONFIG.CAP;
   const variance = volatility * volatility;
 
   // Kelly óptimo teórico (puede ser >1, por eso necesita ajuste)
   const rawKelly = variance > 0 ? expectedReturn / variance : 0;
 
   // Half-Kelly: usar la mitad del óptimo teórico
-  const halfKelly = rawKelly * KELLY_HALF_FRACTION;
+  const halfKelly = rawKelly * KELLY_CONFIG.HALF_FRACTION;
 
   // Cap al effectiveCap, floor en 0 (nunca posición corta via Kelly)
   const cappedKelly = Math.max(0, Math.min(effectiveCap, halfKelly));
