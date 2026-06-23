@@ -730,7 +730,9 @@ const InstitutionalDashboard: React.FC = () => {
 
   const portfolioDrawdown = useMemo(() => {
     if (!marketData) return 0;
-    const currentTotal = totalPortfolioValue;
+    // FIX-CASH-DD: incluir cashReserve en currentTotal. Sin esto, la formula
+    // (currentTotal - peak) / peak es inconsistente porque peak SI incluye cash.
+    const currentTotal = totalPortfolioValue + cashReserve;
     if (currentTotal <= 0) return 0;
     let peak = 0;
     const minLen = Math.min(...portfolio.assets.map(a =>
@@ -743,10 +745,11 @@ const InstitutionalDashboard: React.FC = () => {
         const closes = marketData.closesHistory[asset.ticker] ?? [];
         dayValue += (closes[closes.length - minLen + t] ?? 0) * asset.shares;
       }
+      dayValue += cashReserve;  // FIX-CASH-DD: cash no se deprecia
       if (dayValue > peak) peak = dayValue;
     }
     return peak > 0 ? (currentTotal - peak) / peak : 0;
-  }, [marketData, portfolio.assets, totalPortfolioValue]);
+  }, [marketData, portfolio.assets, totalPortfolioValue, cashReserve]);
 
   const effectiveCEWSHistory = useMemo(() => {
     if (cewsHistory.length >= 4) return cewsHistory;
@@ -1500,6 +1503,15 @@ soxRsiWeekly,
 
   const jumpSim = useMemo(() => {
     const muCapped = Math.min(0.15, expectedReturn);
+    // FIX-MC-CASH: incluir cashReserve en proyecciones Monte Carlo.
+    // El cash no crece ni se deprecia. Se suma flat al final de cada simulacion.
+    // mu y sigma se diluyen proporcionalmente para no sobreestimar retornos.
+    const totalEquity = totalPortfolioValue + cashReserve;
+    const investedFraction = totalEquity > 0 ? totalPortfolioValue / totalEquity : 1;
+    const monthlyInvested = monthlyInjection * investedFraction;
+    const monthlyCash = monthlyInjection * (1 - investedFraction);
+    const totalMonths = years * 12;
+    const accumulatedFlatCash = cashReserve + monthlyCash * totalMonths;
 
     const hasCovMatrix = marketData?.covMatrix && marketData.covMatrix.length > 1;
     const hasEngineAllocs = engineResult && engineResult.allocations.length > 0;
@@ -1516,8 +1528,9 @@ soxRsiWeekly,
       const sigmas = ASSETS.map((_, i) => (marketData!.realizedVols?.[i] ?? portfolioVol));
       const btcIdx = ASSETS.indexOf('BTC-EUR' as any);
 
-      return monteCarloJumpDiffusion(
-        totalPortfolioValue, monthlyInjection, muCapped, portfolioVol,
+      // FIX-MC-CASH: usar monthlyInvested (solo parte invertida) y sumar cash al final
+      const multiResult = monteCarloJumpDiffusion(
+        totalPortfolioValue, monthlyInvested, muCapped, portfolioVol,
         jumpIntensity, jumpMean, jumpStd, years, 10000,
         {
           weights, mus, sigmas,
@@ -1528,23 +1541,45 @@ soxRsiWeekly,
         },
         !enableJumps  // FIX-MC-05: disableJumps = !enableJumps
       );
+      multiResult.simulations = multiResult.simulations.map(function(v) { return v + accumulatedFlatCash; });
+      multiResult.mean += accumulatedFlatCash;
+      multiResult.median += accumulatedFlatCash;
+      multiResult.p25 += accumulatedFlatCash;
+      multiResult.p75 += accumulatedFlatCash;
+      multiResult.worst5 += accumulatedFlatCash;
+      multiResult.best95 += accumulatedFlatCash;
+      return multiResult;
     }
 
-    return monteCarloJumpDiffusion(
-      totalPortfolioValue, monthlyInjection, muCapped, portfolioVol,
+    // FIX-MC-CASH: modelar SOLO la parte invertida (no diluir mu/sigma).
+    // El cash no crece → se modela aparte y se suma flat al final.
+    // Usar totalPortfolioValue (solo activos) + monthlyInvested (parte invertida
+    // de la aportacion). mu/sigma SIN diluir porque aplican solo a lo invertido.
+    const uniResult = monteCarloJumpDiffusion(
+      totalPortfolioValue, monthlyInvested,
+      muCapped, portfolioVol,
       jumpIntensityPortfolio, jumpMean, jumpStd, years, 10000,
       undefined,
       !enableJumps  // FIX-MC-05: disableJumps = !enableJumps
     );
-  }, [totalPortfolioValue, monthlyInjection, expectedReturn, portfolioVol,
+    uniResult.simulations = uniResult.simulations.map(function(v) { return v + accumulatedFlatCash; });
+    uniResult.mean += accumulatedFlatCash;
+    uniResult.median += accumulatedFlatCash;
+    uniResult.p25 += accumulatedFlatCash;
+    uniResult.p75 += accumulatedFlatCash;
+    uniResult.worst5 += accumulatedFlatCash;
+    uniResult.best95 += accumulatedFlatCash;
+    return uniResult;
+  }, [totalPortfolioValue, cashReserve, monthlyInjection, expectedReturn, portfolioVol,
     jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, years,
-    marketData?.covMatrix, marketData?.expectedReturns, engineResult, enableJumps]);  // FIX-MC-05: stale-closure fix
+    marketData?.covMatrix, marketData?.expectedReturns, engineResult, enableJumps, cashReserve]);  // FIX-MC-05 + FIX-MC-CASH: cashReserve en deps
 
   const { mean: meanValue, median: medianValue, p25, p75, worst5, best95, simulations } = jumpSim;
 
   const cvarResult = useMemo(() => {
     if (simulations.length === 0) return null;
-    const totalInvested = totalPortfolioValue + monthlyInjection * 12 * years;
+    // FIX-MC-CASH: incluir cashReserve en el capital total invertido para CVaR
+    const totalInvested = totalPortfolioValue + cashReserve + monthlyInjection * 12 * years;
     const sorted = [...simulations].sort((a, b) => a - b);
     const cutoff95 = Math.max(1, Math.floor(sorted.length * 0.05));
     const cutoff99 = Math.max(1, Math.floor(sorted.length * 0.01));
