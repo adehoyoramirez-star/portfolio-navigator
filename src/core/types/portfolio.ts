@@ -180,23 +180,12 @@ export const portfolio: Portfolio = {
       history: generateMockHistory(72.0),
       factorRole: 'defensive'
     },
-    {
-      ticker: "VVSM.DE",
-      name: "NASDAQ 100",
-      weight: 8.6,
-      currentWeight: 10.6,
-      shares: 6,
-      avgPrice: 61.67,
-      price: 65.0,
-      volatility: 25,
-      expectedReturn: 9,
-      sector: "Technology",
-      earningsYield: 0.03,
-      return12m: 0,
-      return3m: 0,
-      return1m: 0,
-      history: generateMockHistory(65.0),
-      factorRole: 'quality'
-    },
+    // ─── FIX-AUDIT-DUPLICATE: entrada "NASDAQ 100" ELIMINADA ──────────
+    // Esta entrada era un fantasma de XNAS.DE (NASDAQ 100), que fue eliminado
+    // del portfolio por redundante con 0P00000WLG.F (MSCI World). Tenía el ticker
+    // cambiado incorrectamente a VVSM.DE, causando que VVSM apareciera DUPLICADO
+    // en DCA, rebalanceo, gráficos, y distorsionando totalPortfolioValue,
+    // corrMatrix (7×7 en vez de 6×6), volatilidad y drawdown.
+    // ────────────────────────────────────────────────────────────────────
   ]
 };

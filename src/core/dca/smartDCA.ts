@@ -120,8 +120,20 @@ function buildAllocations(
   skipTickers: Set<string> = new Set(),
   currentAllocations: Map<string, number> = new Map()
 ): DCAAllocation[] {
+  // FIX-AUDIT-DEDUP: eliminar tickers duplicados antes de procesar.
+  // Si el motor recibe assets duplicados (ej: VVSM.DE aparece 2 veces en el portfolio),
+  // solo se procesa la primera ocurrencia. Esto previene que un mismo activo aparezca
+  // 2 veces en las propuestas de compra del DCA.
+  const seenTickers = new Set<string>();
+  const deduped = assets.filter(a => {
+    const base = a.ticker.split('.')[0];
+    if (seenTickers.has(base)) return false;
+    seenTickers.add(base);
+    return true;
+  });
+
   // 1. Calcular drift para cada activo
-  const withDrift = assets.map(a => {
+  const withDrift = deduped.map(a => {
     const currentWeight = currentAllocations.get(a.ticker) ?? 0;
     const drift = a.finalAllocation - currentWeight;
     return { ...a, drift, currentWeight };
