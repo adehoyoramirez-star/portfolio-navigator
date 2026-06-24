@@ -1267,6 +1267,7 @@ soxRsiWeekly,
       cewsPreviousLevel,
       cycleTopSignals: (cycleTopResult?.signals ?? []).map(s => ({
         ticker: s.ticker,
+        allocationMultiplier: s.allocationMultiplier,
         shouldTrim: s.shouldTrim,
         zone: s.zone,
       })),

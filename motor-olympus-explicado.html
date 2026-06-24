@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Motor Olympus V5.2 — Explicado capa por capa</title>
+<style>
+:root {
+  --bg: #0a0e17;
+  --card: #111827;
+  --card2: #161b28;
+  --border: #1e3a5f;
+  --text: #cbd5e1;
+  --dim: #64748b;
+  --gold: #f59e0b;
+  --green: #10b981;
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --purple: #8b5cf6;
+  --pink: #ec4899;
+  --teal: #14b8a6;
+  --cyan: #06b6d4;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  line-height: 1.7;
+  font-size: 15px;
+}
+.c { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+.hero {
+  text-align: center;
+  padding: 3.5rem 2rem 2.5rem;
+  background: linear-gradient(135deg, #0f1f38 0%, #1a1538 50%, #0f1f38 100%);
+  border-radius: 20px;
+  margin-bottom: 2.5rem;
+  border: 1px solid var(--border);
+}
+.hero .emoji { font-size: 3.5rem; display: block; margin-bottom: .5rem; }
+.hero h1 { font-size: 2.4rem; color: #f0f9ff; margin-bottom: .6rem; font-weight: 800; }
+.hero h1 span { background: linear-gradient(135deg, var(--gold), #f97316); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.hero p { color: var(--dim); font-size: 1.15rem; max-width: 620px; margin: 0 auto; }
+
+.today {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+.today h3 { font-size: .85rem; text-transform: uppercase; letter-spacing: .12em; color: var(--dim); margin-bottom: 1rem; }
+.tg { display: flex; flex-wrap: wrap; gap: .75rem; }
+.ti { background: var(--card2); border-radius: 10px; padding: .7rem 1rem; flex: 1; min-width: 100px; text-align: center; }
+.ti .big { font-size: 1.3rem; font-weight: 700; }
+.ti .lbl { font-size: .7rem; color: var(--dim); margin-top: .15rem; }
+
+.legend {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 2rem;
+  display: flex; flex-wrap: wrap; gap: 1.2rem;
+  align-items: center; justify-content: center;
+  font-size: .78rem;
+}
+.legend-item { display: flex; align-items: center; gap: .4rem; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+.l {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  transition: border-color .2s;
+}
+.l:hover { border-color: #3b5a8f; }
+.l.open { border-color: var(--blue); }
+.lh {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 1rem 1.2rem;
+  cursor: pointer; user-select: none;
+}
+.lh:hover { background: rgba(255,255,255,.02); }
+.ln {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: .9rem; flex-shrink: 0; color: white;
+}
+.lh h2 { font-size: 1rem; flex: 1; font-weight: 600; }
+.lh .s { font-size: .75rem; color: var(--dim); font-weight: 400; }
+.arr { color: var(--dim); font-size: .7rem; transition: transform .3s; }
+.l.open .arr { transform: rotate(180deg); }
+.lb { display: none; padding: 0 1.2rem 1.2rem; }
+.l.open .lb { display: block; }
+
+.ex {
+  background: var(--card2);
+  border-left: 3px solid var(--blue);
+  border-radius: 0 8px 8px 0;
+  padding: 1rem; margin-bottom: .8rem;
+  font-size: .9rem;
+}
+.an {
+  background: rgba(245,158,11,.08);
+  border-left: 3px solid var(--gold);
+  border-radius: 0 8px 8px 0;
+  padding: .85rem 1rem; margin-bottom: .8rem;
+  font-size: .85rem; color: var(--gold);
+}
+.an strong { color: #fbbf24; }
+.data-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .6rem; }
+.data-chip {
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .4rem .75rem;
+  font-size: .78rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+.data-chip .val { color: var(--cyan); font-weight: 600; }
+.data-chip .lab { color: var(--dim); }
+.formula {
+  background: rgba(20,184,166,.06);
+  border: 1px solid rgba(20,184,166,.2);
+  border-radius: 8px;
+  padding: .7rem 1rem; margin: .6rem 0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: .78rem; color: var(--teal);
+  text-align: center;
+}
+.important {
+  background: rgba(239,68,68,.08);
+  border: 1px solid rgba(239,68,68,.25);
+  border-radius: 8px;
+  padding: .7rem 1rem; margin: .6rem 0;
+  font-size: .82rem; color: #fca5a5;
+}
+.flow { text-align: center; color: var(--dim); font-size: 1.2rem; padding: .3rem 0; }
+
+.toc {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+.toc h2 { font-size: 1rem; margin-bottom: .8rem; color: var(--gold); }
+.toc ol { padding-left: 1.5rem; color: var(--dim); font-size: .85rem; }
+.toc li { margin-bottom: .3rem; }
+.toc li span { color: var(--text); }
+
+.result-card {
+  background: linear-gradient(135deg, var(--card2), #0f1a2e);
+  border: 2px solid var(--gold);
+  border-radius: 16px;
+  padding: 2rem;
+  margin-top: 2rem;
+}
+.result-card h2 { font-size: 1.3rem; text-align: center; margin-bottom: 1.5rem; color: var(--gold); }
+.allocs { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .6rem; }
+.alloc {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .8rem;
+  text-align: center;
+}
+.alloc .pct { font-size: 1.4rem; font-weight: 800; color: var(--gold); }
+.alloc .name { font-size: .75rem; color: var(--dim); margin-top: .15rem; }
+.bar-wrap { background: #1a1f35; border-radius: 4px; height: 6px; margin-top: .4rem; overflow: hidden; }
+.bar-fill { background: linear-gradient(90deg, var(--gold), #f97316); height: 100%; border-radius: 4px; }
+
+.footer {
+  text-align: center;
+  color: var(--dim);
+  font-size: .75rem;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 600px) {
+  .hero h1 { font-size: 1.5rem; }
+  .tg { gap: .4rem; }
+  .ti { min-width: 70px; padding: .5rem .6rem; }
+  .ti .big { font-size: 1rem; }
+}
+</style>
+</head>
+<body>
+<div class="c">
+
+<div class="hero">
+  <span class="emoji">🧠</span>
+  <h1>Cómo el <span>Motor Olympus</span> decide<br>en qué invertir tu dinero</h1>
+  <p>Explicado capa por capa, con datos reales de hoy — <strong>24 Junio 2026</strong></p>
+  <p style="font-size:.85rem;margin-top:.6rem;color:var(--dim)">🎯 Nivel: para adolescentes de 15 años (y cualquiera con curiosidad)</p>
+</div>
+
+<div class="today">
+  <h3>📊 Datos macro de hoy — 24 Junio 2026</h3>
+  <div class="tg">
+    <div class="ti"><div class="big" style="color:#10b981">18.66</div><div class="lbl">VIX (índice del miedo)</div></div>
+    <div class="ti"><div class="big" style="color:#10b981">4.72%</div><div class="lbl">M2 Growth (dinero en circulación)</div></div>
+    <div class="ti"><div class="big" style="color:#f59e0b">2.64%</div><div class="lbl">Credit Spread (estrés bancario)</div></div>
+    <div class="ti"><div class="big" style="color:#ef4444">4.41%</div><div class="lbl">Bono USA 10 años</div></div>
+    <div class="ti"><div class="big" style="color:#3b82f6">1.17</div><div class="lbl">MVRV Bitcoin (¿barato o caro?)</div></div>
+    <div class="ti"><div class="big" style="color:#f59e0b">2.17%</div><div class="lbl">Tipo de interés real (oro)</div></div>
+    <div class="ti"><div class="big" style="color:#ef4444">+92%</div><div class="lbl">Semis SIA Sales YoY</div></div>
+    <div class="ti"><div class="big" style="color:#8b5cf6">35.8</div><div class="lbl">BTC RSI Semanal</div></div>
+  </div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:var(--green)"></span> Señal positiva / zona segura</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--gold)"></span> Precaución / zona intermedia</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--red)"></span> Peligro / zona de riesgo</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--purple)"></span> Dato on-chain de Bitcoin</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--teal)"></span> Cálculo matemático</div>
+</div>
+
+<div class="toc">
+  <h2>🗺️ Mapa de las 11 capas del motor</h2>
+  <ol>
+    <li><span>Capa 0:</span> Analizador del ciclo de Bitcoin (¿está caro o barato?)</li>
+    <li><span>Capa 1:</span> Detective del régimen macro (¿expansión, contracción o crisis?)</li>
+    <li><span>Capa 2:</span> Factor Scores — notas de examen para cada activo</li>
+    <li><span>Capa 3:</span> Retornos esperados con James-Stein shrinkage</li>
+    <li><span>Capa 4:</span> Black-Litterman — opiniones informadas + estadística</li>
+    <li><span>Capa 5:</span> HRP — Risk Parity jerárquico (diversificar de verdad)</li>
+    <li><span>Capa 6:</span> Kelly Criterion — cuánto apostar sin arruinarte</li>
+    <li><span>Capa 7:</span> Mezcla Markowitz (Kelly + Min-Varianza + Risk Parity)</li>
+    <li><span>Capa 8:</span> Vol Target — controlar la montaña rusa</li>
+    <li><span>Capa 8.5:</span> Cycle Top Detector — ¿techo de burbuja?</li>
+    <li><span>Capa 9:</span> Kill Switch — freno de emergencia en crisis</li>
+    <li><span>Capa 10:</span> Normalización final y ejecución</li>
+  </ol>
+</div>
+
+<!-- CAPA 0: BTC Cycle Analyzer -->
+<div class="l open" id="c0">
+  <div class="lh" onclick="document.getElementById('c0').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)">0</div>
+    <div><h2>🪙 Capa 0 — ¿Está Bitcoin caro o barato?</h2><div class="s">BTC Cycle Analyzer — datos de la blockchain</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Mira 4 señales que vienen directamente de la blockchain de Bitcoin para saber si está en zona de "ganga" (comprar) o "euforia" (vender).<br><br>
+      🔸 <strong>MVRV Ratio:</strong> Compara el precio actual con lo que la gente pagó por sus bitcoins. Por debajo de 1.5 = infravalorado.<br>
+      🔸 <strong>Puell Multiple:</strong> Mide la rentabilidad de los mineros. Por debajo de 1 = los mineros apenas cubren costes → suelo de ciclo.<br>
+      🔸 <strong>BTC RSI Semanal:</strong> Velocímetro 0-100. 35.8 = casi sobreventa (buen momento de compra).<br>
+      🔸 <strong>BTC Dominance:</strong> Si cae desde más del 58%, el dinero rota hacia altcoins → posible techo de ciclo.
+    </div>
+
+    <div class="data-row">
+      <div class="data-chip"><span class="lab">MVRV</span> <span class="val" style="color:#10b981">1.17</span> <span class="lab">→ acumulación ✅</span></div>
+      <div class="data-chip"><span class="lab">Puell Multiple</span> <span class="val" style="color:#8b5cf6">0.82</span> <span class="lab">→ zona baja</span></div>
+      <div class="data-chip"><span class="lab">BTC RSI Semanal</span> <span class="val" style="color:#f59e0b">35.8</span> <span class="lab">→ casi sobreventa</span></div>
+      <div class="data-chip"><span class="lab">BTC Dominance</span> <span class="val">58.7%</span> <span class="lab">→ estable</span></div>
+    </div>
+
+    <div class="an">
+      <strong>🚲 Analogía:</strong> Como comprar una bici de segunda mano. MVRV es mirar si el precio de venta está por encima o por debajo de lo que la gente pagó. RSI bajo = hay vendedores desesperados = buenas ofertas. Hoy Bitcoin está en zona de acumulación: buen momento para comprar.
+    </div>
+
+    <div class="important">
+      <strong>⚠️ ¿Por qué es importante?</strong> Bitcoin es el activo más volátil del portfolio (72% vol anual). Sin esta capa, el motor podría comprar justo en el techo (como quien compró BTC a $106,000 en enero 2025). Esta capa evita comprar en euforia y anima a comprar en pánico.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 1: Macro Regime -->
+<div class="l open" id="c1">
+  <div class="lh" onclick="document.getElementById('c1').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8)">1</div>
+    <div><h2>🌍 Capa 1 — ¿En qué "modo" está la economía?</h2><div class="s">Detective del régimen macro</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Como un detective, combina 3 modelos para decidir si la economía está en:<br>
+      🟢 <strong style="color:#10b981">EXPANSIÓN</strong> (todo bien, se puede arriesgar) ·
+      🟠 <strong style="color:#f59e0b">CONTRACCIÓN</strong> (se está frenando, precaución) ·
+      🔴 <strong style="color:#ef4444">CRISIS</strong> (problemas serios, defensa total)<br><br>
+
+      🔹 <strong>Modelo 1 — Probabilístico (VIX + M2 + Yield):</strong> Calcula probabilidades de cada régimen usando nivel de miedo, crecimiento del dinero, y curva de tipos.<br>
+      🔹 <strong>Modelo 2 — Credit Spreads:</strong> ¿Los bancos se fían unos de otros? Si el spread es alto (>2%), hay estrés.<br>
+      🔹 <strong>Modelo 3 — Shock petrolero:</strong> Si el petróleo sube >40% en 3 meses, puede forzar CRISIS.<br><br>
+      <strong>Regla de oro:</strong> Gana el modelo más conservador de los 3.
+    </div>
+
+    <div class="data-row">
+      <div class="data-chip"><span class="lab">VIX</span> <span class="val" style="color:#10b981">18.66</span></div>
+      <div class="data-chip"><span class="lab">M2 Growth</span> <span class="val" style="color:#10b981">4.72%</span></div>
+      <div class="data-chip"><span class="lab">Credit Spread</span> <span class="val" style="color:#f59e0b">2.64%</span></div>
+      <div class="data-chip"><span class="lab">WTI</span> <span class="val" style="color:#10b981">$73.74</span></div>
+    </div>
+
+    <div class="formula">
+      crisisScore = VIX×0.4 + creditSpread×3×0.4<br>
+      = 18.66×0.4 + 2.64×3×0.4 = 7.47 + 3.17 = <strong style="color:#fbbf24">10.64</strong><br>
+      → Si > 10: CONTRACCIÓN
+    </div>
+
+    <div class="data-row" style="margin-top:.6rem">
+      <div class="data-chip"><span class="lab">Modelo Prob.</span> <span class="val" style="color:#10b981">EXPANSIÓN 100%</span></div>
+      <div class="data-chip"><span class="lab">Credit Spreads</span> <span class="val" style="color:#f59e0b">→ CONTRACCIÓN</span></div>
+      <div class="data-chip"><span class="lab">Régimen FINAL</span> <span class="val" style="color:#f59e0b">CONTRACTION</span></div>
+      <div class="data-chip"><span class="lab">Penalización</span> <span class="val" style="color:#f59e0b">×0.880</span></div>
+    </div>
+
+    <div class="an">
+      <strong>🚦 Analogía:</strong> Es como el semáforo de tu ciudad. El modelo probabilístico ve tráfico fluido y dice "verde". Pero el modelo de credit spreads ve nerviosismo en los bancos (como un coche frenando más adelante) y dice "amarillo". El motor es prudente: pone el semáforo en amarillo. Penalización ×0.880 = reduce inversiones un 12% por precaución.
+    </div>
+
+    <div class="important">
+      <strong>⚠️ ¿Por qué es crucial?</strong> En EXPANSIÓN invierte agresivo (mucho BTC, semis, emergentes). En CRISIS reduce exposición al 40% y mete el dinero en oro. Equivocarse de régimen puede costar muy caro. Hoy: CONTRACCIÓN leve, casi EXPANSIÓN.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 2: Factor Scores -->
+<div class="l" id="c2">
+  <div class="lh" onclick="document.getElementById('c2').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#14b8a6,#0d9488)">2</div>
+    <div><h2>📊 Capa 2 — Notas de examen para cada activo</h2><div class="s">Factor Scores: momentum, value, quality, low volatility</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Como un boletín de notas, evalúa cada activo en 4 cualidades (0 a 1):<br><br>
+      🔹 <strong>Momentum:</strong> ¿Le ha ido bien en los últimos 3-12 meses? Lo que sube tiende a seguir subiendo.<br>
+      🔹 <strong>Value:</strong> ¿Es barato para lo que vale? P/E bajo, earnings sólidos. El oro no tiene earnings → score 0.<br>
+      🔹 <strong>Quality:</strong> Baja volatilidad, buenos fundamentales, poca deuda.<br>
+      🔹 <strong>Low Vol:</strong> ¿Se mueve poco? Los activos tranquilos puntúan alto.<br><br>
+      Los pesos de estos factores cambian con el régimen: en EXPANSIÓN pesa más momentum (55%), en CRISIS pesa más low vol.
+    </div>
+
+    <div class="data-row">
+      <div class="data-chip"><span class="lab">BTC</span> <span class="val" style="color:#ef4444">Mom -0.35</span> · <span class="val" style="color:#64748b">Val p0</span></div>
+      <div class="data-chip"><span class="lab">Semis</span> <span class="val" style="color:#10b981">Mom 1.27</span> · <span class="val" style="color:#f59e0b">Val p50</span></div>
+      <div class="data-chip"><span class="lab">WLG</span> <span class="val" style="color:#10b981">Mom 0.21</span> · <span class="val" style="color:#10b981">Val p67</span></div>
+      <div class="data-chip"><span class="lab">Uranio</span> <span class="val" style="color:#10b981">Mom 0.25</span> · <span class="val" style="color:#f59e0b">Val p33</span></div>
+      <div class="data-chip"><span class="lab">EM</span> <span class="val" style="color:#10b981">Mom 0.54</span> · <span class="val" style="color:#10b981">Val p83</span></div>
+      <div class="data-chip"><span class="lab">Oro</span> <span class="val" style="color:#10b981">Mom 0.21</span> · <span class="val" style="color:#ef4444">Val p0 ⚠</span></div>
+    </div>
+
+    <div class="an">
+      <strong>🎮 Analogía:</strong> Como elegir personaje en un videojuego. Cada activo tiene stats: Bitcoin = mucho ataque, poca defensa. Oro = tanque (mucha defensa, poco ataque). Tecnológicas = stats equilibrados. El motor elige el equipo según el "nivel" (régimen) en el que estemos.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 3: Expected Returns -->
+<div class="l" id="c3">
+  <div class="lh" onclick="document.getElementById('c3').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#ec4899,#be185d)">3</div>
+    <div><h2>🔮 Capa 3 — ¿Cuánto va a ganar cada activo?</h2><div class="s">Retornos esperados con James-Stein shrinkage</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Estima cuánto va a rendir cada activo el próximo año con una mezcla inteligente:<br><br>
+      🔹 <strong>Retorno histórico:</strong> Lo que ha ganado en los últimos 3-5 años.<br>
+      🔹 <strong>Prior de largo plazo:</strong> Lo que la teoría dice que debería rendir (bolsa ~7-9% anual).<br><br>
+      <strong>James-Stein shrinkage:</strong> truco matemático que dice "si tienes pocos datos, acércate más a la media de todos". Así evitas sobreponderar activos que han tenido una racha de suerte.
+    </div>
+
+    <div class="formula">
+      retornoEstimado = 0.65 × histórico + 0.35 × teórico<br>
+      NUNCA > 25% anual (el motor lo capa automáticamente)
+    </div>
+
+    <div class="an">
+      <strong>🎯 Analogía:</strong> Llevas 3 partidos de fútbol, 5 goles. El "histórico" dice que eres Messi (1.67 goles/partido). El "prior" dice que la media es 0.3. James-Stein: "no sé si eres Messi o tuviste suerte, asumo 0.8 goles/partido hasta tener más datos".
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 4: Black-Litterman -->
+<div class="l" id="c4">
+  <div class="lh" onclick="document.getElementById('c4').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#06b6d4,#0891b2)">4</div>
+    <div><h2>🧩 Capa 4 — Black-Litterman: opiniones + matemáticas</h2><div class="s">Views informadas + prior de mercado</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Resuelve un problema: si preguntas a un optimizador "¿en qué invierto?", te dice "100% al que mejor pinta tiene". Black-Litterman mezcla:<br><br>
+      🔹 <strong>Prior de mercado:</strong> Pesos basados en volatilidad inversa (el activo más tranquilo pesa más).<br>
+      🔹 <strong>Views (opiniones):</strong> El motor opina sobre qué activos superarán a otros.<br><br>
+      ⚠️ <strong>El oro está excluido de las views:</strong> solo recibe el prior de mercado. Si quieres que el motor tenga opiniones sobre oro, hay que añadirlo en blackLitterman.ts.
+    </div>
+
+    <div class="formula">
+      Retorno BL = mezcla(priorDelMercado, viewsDelMotor)<br>
+      Cuanto más incierta la view, menos peso tiene en el resultado final.
+    </div>
+
+    <div class="an">
+      <strong>🗳️ Analogía:</strong> Como un trabajo en grupo. El "prior" es el libro de texto. Las "views" son opiniones de los miembros. Si alguien dice "creo que X" con poca confianza, se le hace poco caso. Si el más listo dice "100% seguro de Y", se le da más peso.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 5: HRP -->
+<div class="l" id="c5">
+  <div class="lh" onclick="document.getElementById('c5').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#10b981,#059669)">5</div>
+    <div><h2>🫂 Capa 5 — HRP: diversificar de verdad</h2><div class="s">Hierarchical Risk Parity de López de Prado</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      "Equal weight" (1/6 a cada activo) no diversifica riesgo de verdad: si BTC y semis se mueven juntos, estás duplicando riesgo, no diversificando.<br><br>
+      HRP hace 3 pasos:<br>
+      🔹 <strong>1. Agrupa activos parecidos</strong> (dendrograma): BTC+semis+uranio en un grupo, oro solo en otro.<br>
+      🔹 <strong>2. Reparte riesgo entre grupos:</strong> el grupo "oro solo" recibe tanto riesgo como "BTC+semis+uranio".<br>
+      🔹 <strong>3. Dentro del grupo, el más tranquilo pesa más.</strong>
+    </div>
+
+    <div class="an">
+      <strong>🍕 Analogía:</strong> Prepara una cena con 6 platos. Equal weight: misma cantidad de cada uno. Pero HRP ve que pizza, pasta y lasaña son "italianas" (grupo 1), sushi es "japonés" (grupo 2). Da el mismo presupuesto a cocina italiana, japonesa y sana. Así tienes variedad de verdad.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 6: Kelly -->
+<div class="l" id="c6">
+  <div class="lh" onclick="document.getElementById('c6').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#f59e0b,#b45309)">6</div>
+    <div><h2>🎰 Capa 6 — Kelly Criterion: cuánto apostar sin arruinarte</h2><div class="s">Half-Kelly con cap del 20%</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Fórmula que usan jugadores profesionales de póker. Responde: "si tengo ventaja, ¿qué % de mi dinero apuesto para crecer al máximo sin arruinarme?"<br><br>
+      🔹 <strong>Half-Kelly:</strong> Usamos la mitad del Kelly completo. Más seguro.<br>
+      🔹 <strong>Cap 20%:</strong> Jamás más del 20% en un solo activo.<br>
+      🔹 <strong>Modulado por régimen:</strong> En CRISIS el cap es aún menor.
+    </div>
+
+    <div class="formula">
+      f* = (retornoEsperado - tipoSinRiesgo) / volatilidad²<br>
+      apuesta = min(f* / 2, 20%)
+    </div>
+
+    <div class="data-row">
+      <div class="data-chip"><span class="lab">WLG</span> <span class="val" style="color:#ef4444">K:26% ⚠cap→20%</span></div>
+      <div class="data-chip"><span class="lab">EM</span> <span class="val" style="color:#ef4444">K:22% ⚠cap→20%</span></div>
+      <div class="data-chip"><span class="lab">Oro</span> <span class="val" style="color:#ef4444">K:27% ⚠cap→20%</span></div>
+      <div class="data-chip"><span class="lab">BTC</span> <span class="val">K:9%</span></div>
+      <div class="data-chip"><span class="lab">Semis</span> <span class="val">K:11%</span></div>
+      <div class="data-chip"><span class="lab">Uranio</span> <span class="val">K:6%</span></div>
+    </div>
+
+    <div class="an">
+      <strong>🎲 Analogía:</strong> Tienes 100€, ganas el 60% de las veces. Kelly dice: apuesta 20€. Si apuestas 50€, tres derrotas seguidas te dejan con 12.50€. El motor usa half-Kelly (10€) para ser aún más seguro.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 7: Markowitz Blend -->
+<div class="l" id="c7">
+  <div class="lh" onclick="document.getElementById('c7').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#ef4444,#b91c1c)">7</div>
+    <div><h2>⚖️ Capa 7 — Mezcla Markowitz: la receta final</h2><div class="s">50% Kelly · 30% Min-Varianza · 20% Risk Parity</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Combina 3 estrategias:<br>
+      🔹 <strong>50% Kelly:</strong> Maximiza crecimiento. Como un Ferrari: rápido pero puede chocar.<br>
+      🔹 <strong>30% Min-Varianza:</strong> Minimiza vaivenes. Como un Toyota Prius: lento pero seguro.<br>
+      🔹 <strong>20% Risk Parity:</strong> Todos los activos aportan el mismo riesgo.<br><br>
+      Luego mezcla esto 50/50 con los "pesos tácticos" (lo que el régimen recomienda):<br>
+      - CONTRACCIÓN: blend 50/50<br>
+      - CRISIS: 30% cuantitativo, 70% táctico (más peso a lo que dice el régimen defensivo)
+    </div>
+
+    <div class="formula">
+      pesosCuantitativos = 0.50×Kelly + 0.30×MinVar + 0.20×RP<br>
+      pesosFinales = 0.50×cuantitativos + 0.50×tácticos (en CONTRACCIÓN)
+    </div>
+
+    <div class="an">
+      <strong>🍳 Analogía:</strong> Receta de tortitas. Kelly: "más harina". MinVar: "más leche". RP: "mitad y mitad". La mezcla: 50% Kelly + 30% MinVar + 20% RP. Luego eso se combina 50/50 con lo que el chef (régimen) recomienda para hoy.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 8: Vol Target -->
+<div class="l" id="c8">
+  <div class="lh" onclick="document.getElementById('c8').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)">8</div>
+    <div><h2>🎢 Capa 8 — Vol Target: controlar la montaña rusa</h2><div class="s">Volatilidad objetivo 20% anual</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Ajusta la exposición para mantener la volatilidad en 20% anual (calibrado por walk-forward optimizer).<br><br>
+      🔹 Si la volatilidad actual es 15% → multiplica ×1.32 (acelera).<br>
+      🔹 Si la volatilidad es 28% → multiplica ×0.71 (frena).<br>
+      🔹 Calcula la volatilidad "core" excluyendo Bitcoin, para que la locura de BTC no opaque al resto.
+    </div>
+
+    <div class="data-row">
+      <div class="data-chip"><span class="lab">Vol Target</span> <span class="val" style="color:#f59e0b">20%</span></div>
+      <div class="data-chip"><span class="lab">Vol actual</span> <span class="val" style="color:#10b981">~15%</span></div>
+      <div class="data-chip"><span class="lab">Multiplicador</span> <span class="val" style="color:#10b981">×1.32</span></div>
+    </div>
+
+    <div class="an">
+      <strong>🎢 Analogía:</strong> El limitador de velocidad de un coche. Lo pones a 120 km/h (20% vol). Si vas a 90, acelera. Si vas a 150, frena. Siempre viajas a la velocidad que querías.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 8.5: Cycle Top Detector -->
+<div class="l open" id="c85">
+  <div class="lh" onclick="document.getElementById('c85').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#ef4444,#b91c1c)">8.5</div>
+    <div><h2>🚨 Capa 8.5 — Cycle Top Detector: ¿techo de burbuja?</h2><div class="s">Detector de burbujas por activo — ¡BUG ARREGLADO HOY!</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Busca señales de burbuja en cada activo por separado:<br><br>
+      🔹 <strong>Oro:</strong> Tipo de interés real = bono 10y - inflación esperada. Si >1.5%, los bonos pagan más que el oro → el oro es menos atractivo. <strong>Hoy: 4.41% - 2.24% = 2.17% → CAUTION, recorte ×0.45.</strong><br><br>
+      🔹 <strong>Semis:</strong> Ventas globales SIA. Si crecen >50% interanual, probable techo de ciclo. <strong>Hoy: +92% → EXTREME, recorte ×0.35.</strong><br><br>
+      🔹 <strong>BTC:</strong> MVRV, Puell, Hash Ribbon. <strong>Hoy: SAFE, sin recorte.</strong><br>
+      🔹 <strong>WLG:</strong> P/E ratio + RSI semanal del MSCI World.<br>
+      🔹 <strong>EMXC:</strong> P/E ratio + RSI semanal de emergentes.<br>
+      🔹 <strong>Uranio:</strong> Precio spot vs contrato largo plazo.
+    </div>
+
+    <div class="important">
+      <strong>🐛 BUG ARREGLADO HOY (24-Jun-2026):</strong> El Cycle Top Detector calculaba el multiplicador pero nunca se lo enviaba al motor. El campo <code>allocationMultiplier</code> faltaba en el mapeo. Oro sobreponderado (31.7% en vez de ~14%), semis también (7.8% en vez de ~2.7%). Corregido en <code>InstitutionalDashboard.tsx</code> línea 1269.
+    </div>
+
+    <div class="data-row">
+      <div class="data-chip"><span class="lab">🥇 Oro</span> <span class="val" style="color:#ef4444">×0.45</span></div>
+      <div class="data-chip"><span class="lab">🟣 Semis</span> <span class="val" style="color:#ef4444">×0.35</span></div>
+      <div class="data-chip"><span class="lab">🟢 BTC</span> <span class="val" style="color:#10b981">×1.00</span></div>
+      <div class="data-chip"><span class="lab">🟢 WLG</span> <span class="val" style="color:#10b981">×1.00</span></div>
+    </div>
+
+    <div class="an">
+      <strong>🏠 Analogía:</strong> Como comprar casa. Tipo real alto = hipotecas caras → no es buen momento para oro (mejor bonos). Ventas de semis +92% = todo el mundo comprando a la vez → probable burbuja → mejor esperar. El motor frena automáticamente.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 9: Kill Switch -->
+<div class="l" id="c9">
+  <div class="lh" onclick="document.getElementById('c9').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#000,#333)">9</div>
+    <div><h2>🛑 Capa 9 — Kill Switch: freno de emergencia</h2><div class="s">5 niveles de reducción forzosa</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Último recurso. Si el portfolio cae más de ciertos umbrales en un mes, reduce exposición drásticamente:<br><br>
+      🔹 <strong>L1 (-12% DD):</strong> overlay ×0.80 (reduce 20%)<br>
+      🔹 <strong>L2 (-15% DD):</strong> overlay ×0.50 (reduce a la mitad)<br>
+      🔹 <strong>L3 (-20% DD):</strong> overlay ×0.30 (solo 30% expuesto)<br>
+      🔹 <strong>L4 (-25% DD):</strong> overlay ×0.15 (casi todo cash)<br>
+      🔹 <strong>L5 (-32% DD):</strong> overlay ×0.05 (liquidación práctica)<br><br>
+      El Kill Switch NUNCA vende automáticamente, pero fuerza pesos defensivos.
+    </div>
+
+    <div class="an">
+      <strong>🧯 Analogía:</strong> El extintor. Si no hay fuego, ni lo miras. Si hay fuego (drawdown >12%), saltas a por él. Cuanto más grande el fuego, más agresivo. En 2008 habría llegado a L4, preservando €3,729 extra.
+    </div>
+  </div>
+</div>
+
+<!-- CAPA 10 -->
+<div class="l" id="c10">
+  <div class="lh" onclick="document.getElementById('c10').classList.toggle('open')">
+    <div class="ln" style="background:linear-gradient(135deg,#10b981,#047857)">10</div>
+    <div><h2>✅ Capa 10 — Normalización: que los pesos sumen 100%</h2><div class="s">Último paso antes de ejecutar</div></div>
+    <span class="arr">▼</span>
+  </div>
+  <div class="lb">
+    <div class="ex">
+      <strong>¿Qué hace esta capa?</strong><br><br>
+      Asegura que todos los pesos sumen 100%. También aplica:<br>
+      🔹 <strong>ERP Trigger:</strong> Si PER S&P 500 >28, recorta renta variable al 77%. <strong>Hoy: PER 31.65 → cap activo.</strong><br>
+      🔹 <strong>Límites por cluster:</strong> BTC no puede superar cierto % del portfolio. BTC+semis+uranio tienen límite conjunto.<br>
+      🔹 <strong>Cash residual:</strong> Lo que no se asigna, va a cash como colchón de seguridad.
+    </div>
+
+    <div class="formula">
+      pesoFinal[i] = pesoBruto[i] / sumaDeTodosLosPesosBrutos<br>
+      → todos los pesos suman 1.00 (100%)
+    </div>
+  </div>
+</div>
+
+<!-- RESULTADO FINAL -->
+<div class="flow" style="margin:2rem 0">▼ ▼ ▼</div>
+
+<div class="result-card">
+  <h2>🎯 Resultado final — 24 Junio 2026</h2>
+
+  <div class="data-row" style="justify-content:center;margin-bottom:1.2rem">
+    <div class="data-chip"><span class="lab">Régimen</span> <span class="val" style="color:#f59e0b">CONTRACTION</span></div>
+    <div class="data-chip"><span class="lab">Penalización</span> <span class="val" style="color:#f59e0b">×0.880</span></div>
+    <div class="data-chip"><span class="lab">Vol Target</span> <span class="val" style="color:#10b981">20%</span></div>
+    <div class="data-chip"><span class="lab">DCA</span> <span class="val" style="color:#10b981">BUY €1,425 (30%)</span></div>
+  </div>
+
+  <div class="allocs">
+    <div class="alloc">
+      <div class="pct">31.7%</div>
+      <div class="name">🥇 Gold (PPFB.DE)</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:100%"></div></div>
+      <div style="font-size:.65rem;color:#ef4444;margin-top:.3rem">⚠ Cycle Top ×0.45 no aplicado (bug arreglado hoy)</div>
+    </div>
+    <div class="alloc">
+      <div class="pct">18.0%</div>
+      <div class="name">🪙 Bitcoin (BTC-EUR)</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:57%"></div></div>
+    </div>
+    <div class="alloc">
+      <div class="pct">10.1%</div>
+      <div class="name">⚛️ Uranium (URNU.DE)</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:32%"></div></div>
+    </div>
+    <div class="alloc">
+      <div class="pct">9.4%</div>
+      <div class="name">🌍 MSCI World Quality</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:30%"></div></div>
+    </div>
+    <div class="alloc">
+      <div class="pct">7.8%</div>
+      <div class="name">🟣 Semiconductors</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:25%"></div></div>
+      <div style="font-size:.65rem;color:#ef4444;margin-top:.3rem">⚠ Cycle Top ×0.35 no aplicado</div>
+    </div>
+    <div class="alloc">
+      <div class="pct">7.8%</div>
+      <div class="name">🌏 Emerging Markets</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:25%"></div></div>
+    </div>
+  </div>
+
+  <div style="margin-top:1.5rem;padding:1rem;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:10px;font-size:.85rem;text-align:center;color:var(--gold)">
+    <strong>⚠️ Con el Cycle Top Detector funcionando (bug arreglado hoy):</strong><br>
+    Oro: 31.7% → ~14.3% &nbsp;|&nbsp; Semis: 7.8% → ~2.7%<br>
+    El ~22% liberado se redistribuye entre WLG, EMXC, URNU y BTC.
+  </div>
+</div>
+
+<div class="footer">
+  <strong>Olympus Engine v5.2.0</strong> &nbsp;·&nbsp; 24 Junio 2026<br>
+  Olympus Capital · Portfolio Navigator<br>
+  <span style="font-size:.7rem">Guía educativa. No es asesoramiento financiero.</span>
+</div>
+
+</div>
+
+<script>
+// Capa 0, 1 y 8.5 abiertas por defecto; el resto cerradas para mejor lectura
+</script>
+
+</body>
+</html>
