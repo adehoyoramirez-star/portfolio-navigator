@@ -448,6 +448,16 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let currentAllocations = equalWeightAllocations();
   let currentRegime: BacktestRegime = "EXPANSION";
   let currentCash = 0;
+  // FIX-BT-1 (look-ahead bias): las nuevas allocations entran en vigor
+  // el día SIGUIENTE del rebalanceo, no el mismo día.
+  // ANTES: currentAllocations se actualizaba en día t y se aplicaba a
+  //   retorno t (closes[t] vs closes[t-1]) → captura el cierre de hoy
+  //   antes de la decisión → inflación sistemática del Sharpe.
+  // AHORA: pendingNewAllocations se calcula en día t pero se aplica
+  //   al retorno del día t+1 (closes[t+1] vs closes[t]).
+  let pendingNewAllocations: Record<string, number> | null = null;
+  let pendingNewCash = 0;
+  let pendingNewRegime: BacktestRegime | null = null;
 
   let benchmarkValue = initialCapital;
   const benchmarkAlloc = equalWeightAllocations();
@@ -481,6 +491,17 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
   for (let t = backtestStart; t < backtestEnd; t++) {
     const dayIndex = t - backtestStart;
+
+    // FIX-BT-1: aplicar las allocations pendientes del rebalanceo ANTERIOR
+    // al retorno de hoy (closes[t] vs closes[t-1]). Sin esto estaríamos
+    // mirando el cierre de hoy antes de decidir cuánto asignar.
+    if (pendingNewAllocations) {
+      currentAllocations = pendingNewAllocations;
+      currentRegime = pendingNewRegime ?? currentRegime;
+      currentCash = pendingNewCash;
+      pendingNewAllocations = null;
+      pendingNewRegime = null;
+    }
 
     if (dayIndex % rebalanceDays === 0) {
       const vix = vixArray[t];
@@ -519,16 +540,19 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         if (cewsHistory.length > 168) cewsHistory.splice(0, cewsHistory.length - 168);
       }
 
-      // ⚠️ FIX BUG-1: guardar oldAllocations ANTES de sobreescribir currentAllocations
+      // FIX-BT-1: guardar allocations como PENDIENTES (siguiente día).
+      // El día de rebalanceo (t) sigue usando las allocations del rebalanceo
+      // anterior para calcular su retorno.
       const oldAllocations = { ...currentAllocations };
-      currentAllocations = result.allocations;
-      currentRegime = result.regime;
-      currentCash = result.cash;
+      pendingNewAllocations = result.allocations;
+      pendingNewRegime = result.regime;
+      pendingNewCash = result.cash;
 
-      // Costes de transacción basados en el giro (turnover) de la cartera
+      // Costes de transacción: se aplican en el momento del rebalanceo
+      // (cuando se decide girar la cartera), no en el día siguiente.
       let turnover = 0;
       for (const ticker of ASSETS) {
-        const newWeight = currentAllocations[ticker] ?? 0;
+        const newWeight = pendingNewAllocations[ticker] ?? 0;
         const oldWeight = oldAllocations[ticker] ?? 0;
         turnover += Math.abs(newWeight - oldWeight);
       }

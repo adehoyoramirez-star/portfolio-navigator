@@ -109,8 +109,12 @@ export const portfolio: Portfolio = {
       factorRole: 'momentum'
     },
     {
+      // FIX-MD-4: 0P00000WLG.F = Vanguard Global Stock Index (ISIN IE00B03HD191).
+      // Cubre MSCI World (developed markets). Heredó el nombre "MSCI World Quality"
+      // del fondo IS3Q.DE eliminado. El tilt quality real lo aplica el motor
+      // internamente vía factor score, no el ETF en sí.
       ticker: "0P00000WLG.F",
-      name: "MSCI World Quality",
+      name: "Vanguard Global Stock Index",
       weight: 20.0,
       currentWeight: 26.6,
       shares: 26,
