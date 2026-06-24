@@ -717,6 +717,7 @@ const InstitutionalDashboard: React.FC = () => {
   const assetInputs: AssetInput[] = useMemo(() => {
     return portfolio.assets.map(asset => ({
       name: asset.name,
+      ticker: asset.ticker,
       returns12m: asset.return12m ?? 0.01,
       returns3m: asset.return3m ?? 0.01,
       returns1m: asset.return1m ?? 0.01,
