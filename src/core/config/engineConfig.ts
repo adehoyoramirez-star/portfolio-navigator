@@ -25,7 +25,7 @@
 //   NO usar ^IRX (T-Bill 3 meses ≈ 5.2%) — son instrumentos distintos.
 // ===============================================
 
-export const ENGINE_CONFIG_VERSION = "3.6.0"; // bump por FIX-SCALE-01
+export const ENGINE_CONFIG_VERSION = "3.7.0"; // FIX MATH-02: credit×3→×2, CONTRACTION threshold 10→12
 
 // ── ERP TRIGGER ────────────────────────────────────────────────────────────
 // Reducción forzada de exposición cuando el Equity Risk Premium está comprimido.
@@ -115,7 +115,10 @@ export const CEWS_CONFIG = {
 // ── MASTER REGIME ──────────────────────────────────────────────────────────
 export const REGIME_CONFIG = {
   CRISIS_SCORE_THRESHOLD: 25,
-  CONTRACTION_THRESHOLD: 10,
+  // FIX MATH-02: subido 10→12 tras reducir credit multiplier 3→2 en crisis.ts.
+  // Con VIX=20 y credit=2.71% el score = 10.18 < 12 → EXPANSION (correcto).
+  // Con VIX=28 y credit=4.5% el score = 14.8 > 12 → CONTRACTION (correcto).
+  CONTRACTION_THRESHOLD: 12,
   PENALTY_MIN: 0.4,
   PENALTY_MAX: 1.0,
   BINARY_WEIGHT: 0.4,
