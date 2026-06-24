@@ -48,7 +48,9 @@
 //   CORRECCIÓN: eliminado de la lista de imports.
 // ===============================================
 
-export const ENGINE_VERSION = "v5.2.0";
+// FIX-V5-7: BL-TICKER-MISMATCH corregido (assetNames usa ticker, no name).
+// FIX-V5-8: ERP-DEFAULT-BOOST corregido (sin dato → neutro, no +5% boost).
+export const ENGINE_VERSION = "v5.2.1";
 
 // ── Imports ─────────────────────────────────────────────────────────────────
 import { calculateMomentum } from "../factors/momentum";
@@ -296,8 +298,13 @@ function computeScenarioProbabilities(
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const { assets, correlationMatrix, macro } = input;
 
-  const erpRaw        = input.erpValue ?? 0.02;
-  const erpMultiplier = Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5));
+  // FIX-ERP-DEFAULT: sin dato explícito del usuario → erpMultiplier = 1.0 (neutro).
+  // ANTES: erpRaw ?? 0.02 producía erpMultiplier=1.05 → +5% boost a equity sin justificación.
+  // AHORA: solo se aplica boost/penalty cuando el usuario introduce ERP explícitamente.
+  const erpRaw        = input.erpValue ?? 0.02;  // 0.02 para display, no para boost
+  const erpMultiplier = input.erpValue !== undefined
+    ? Math.max(0.85, Math.min(1.10, 1 + erpRaw * 2.5))
+    : 1.0;
   // CORRECCIÓN: verificar también que las dimensiones de covMatrix coinciden con assets.length.
   // Antes solo se comprobaba length > 0, lo que provocaba que minimumVarianceWeights,
   // HRP y BL recibieran una matriz de dimensión distinta → warning en cada ejecución
@@ -507,7 +514,11 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       const invVolSum  = invVols.reduce((s, v) => s + v, 0);
       const marketWeights = invVols.map(v => v / invVolSum);
       const blResult = runBlackLitterman({
-        assetNames:    assets.map(a => a.name),
+        // FIX-BL-TICKER: usar ticker (no name) para que las views matcheen.
+        // generateViewsFromEngine crea views con assets: [asset.ticker] (ej: "PPFB.DE").
+        // buildPickingMatrices busca por assetNames.indexOf(ticker) — si recibe "Gold (ETC)"
+        // en vez de "PPFB.DE", la picking matrix queda en ceros → views sin efecto.
+        assetNames:    assets.map(a => a.ticker ?? a.name),
         covMatrix:     input.covMatrix,
         marketWeights,
         views:         blViews,
