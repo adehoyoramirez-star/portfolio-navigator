@@ -867,6 +867,10 @@ soxRsiWeekly,
       totalPortfolioValue,
       avgCorrelation: dynamicCovResult?.avgCorrelation,
       blendWeights: autoBlend,
+      cycleTopSignals: (cycleTopResult?.signals ?? []).map(s => ({
+        ticker: s.ticker,
+        allocationMultiplier: s.allocationMultiplier,
+      })),
       regimeLock,
     });
   // FIX-DCC-01: dynamicCovResult añadido a deps para que el engine reaccione
