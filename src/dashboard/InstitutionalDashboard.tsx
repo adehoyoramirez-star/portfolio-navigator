@@ -2914,7 +2914,7 @@ soxRsiWeekly,
             </div>
           </div>
           <div style={{ marginTop: "0.3rem", color: "#4b5563", fontSize: "0.7rem" }}>
-            Priors LP (Damodaran 2024): BTC 15% · Semis 14% · MSCI Quality 11% · Uranio 10% · EM 8% · Gold 6% · NASDAQ 100 9% — shrinkage 65% hacia prior, 35% histórico Yahoo.
+            Priors LP (Damodaran 2024): BTC 15% · Semis 14% · MSCI World 9% (Portfolio 6 activos desde refactor 22-Jun-2026: IS3Q.DE + XNAS.DE consolidados en 0P00000WLG.F.) — shrinkage 65% hacia prior, 35% histórico Yahoo.
           </div>
         </div>
 
