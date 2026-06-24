@@ -6,7 +6,9 @@
 
 import { ASSETS } from './constants';
 
-const CSV_PATH = '/historical_data_daily.csv';
+// FIX-CSV-AUGMENTED: usar CSV aumentado con MOVE, DXY y BTC_VOL reales
+// en vez de proxies sintéticos. Columnas 13-15 añadidas.
+const CSV_PATH = '/historical_data_daily_augmented.csv';
 
 const COLUMN_MAP: Record<string, number> = {
   'BTC-EUR': 1,
@@ -20,6 +22,9 @@ const COLUMN_MAP: Record<string, number> = {
   '^IRX': 10,
   'HYG': 11,
   'LQD': 12,
+  '^MOVE': 13,
+  'DX-Y.NYB': 14,
+  'BTC_VOL': 15,
 };
 
 export interface CSVBacktestData {
@@ -29,6 +34,9 @@ export interface CSVBacktestData {
   irxHistory: number[];
   hygHistory: number[];
   lqdHistory: number[];
+  moveHistory: number[];     // ^MOVE — CBOE MOVE Index (volatilidad bonos)
+  dxyHistory: number[];      // DX-Y.NYB — DXY Dollar Index
+  btcVolHistory: number[];   // BTC_VOL — volatilidad realizada BTC (pre-calculada)
   totalDays: number;
 }
 
@@ -37,14 +45,14 @@ function parseCSV(text: string): CSVBacktestData {
   const dataLines = lines.slice(1).filter(l => l.trim().length > 0);
 
   const closesHistory: Record<string, number[]> = {};
-  const allTickers = [...ASSETS, '^VIX', '^TNX', '^IRX', 'HYG', 'LQD'];
+  const allTickers = [...ASSETS, '^VIX', '^TNX', '^IRX', 'HYG', 'LQD', '^MOVE', 'DX-Y.NYB', 'BTC_VOL'];
   for (const ticker of allTickers) {
     closesHistory[ticker] = [];
   }
 
   for (const line of dataLines) {
     const parts = line.split(',');
-    if (parts.length < 13) continue;
+    if (parts.length < 16) continue;
     for (const ticker of allTickers) {
       const colIdx = COLUMN_MAP[ticker];
       if (colIdx !== undefined) {
@@ -53,7 +61,18 @@ function parseCSV(text: string): CSVBacktestData {
       }
     }
   }
-  return { closesHistory, vixHistory: closesHistory['^VIX'], tnxHistory: closesHistory['^TNX'], irxHistory: closesHistory['^IRX'], hygHistory: closesHistory['HYG'], lqdHistory: closesHistory['LQD'], totalDays: dataLines.length };
+  return {
+    closesHistory,
+    vixHistory: closesHistory['^VIX'],
+    tnxHistory: closesHistory['^TNX'],
+    irxHistory: closesHistory['^IRX'],
+    hygHistory: closesHistory['HYG'],
+    lqdHistory: closesHistory['LQD'],
+    moveHistory: closesHistory['^MOVE'],
+    dxyHistory: closesHistory['DX-Y.NYB'],
+    btcVolHistory: closesHistory['BTC_VOL'],
+    totalDays: dataLines.length,
+  };
 }
 
 let cachedData: CSVBacktestData | null = null;
@@ -97,48 +116,30 @@ export function buildMacroHistoryFromCSV(csvData: CSVBacktestData, length: numbe
   });
   const avgCorrelation = vix.map(v => 0.30 + Math.min(0.65, v / 50 * 0.65));
 
-  // ── btcVol: volatilidad realizada de BTC desde precios CSV ──
-  const btcPrices = csvData.closesHistory['BTC-EUR']?.slice(-length) ?? [];
-  const btcVol: number[] = [];
-  const VOL_WINDOW = 63; // ~3 meses hábiles
-  for (let i = 0; i < btcPrices.length; i++) {
-    if (i < VOL_WINDOW + 1 || btcPrices[i] <= 0 || btcPrices[i - 1] <= 0) {
-      btcVol.push(0.50); // fallback 50%
-      continue;
-    }
-    let sumLog = 0, sumLog2 = 0;
-    let count = 0;
-    for (let j = i - VOL_WINDOW; j <= i; j++) {
-      if (btcPrices[j] > 0 && btcPrices[j - 1] > 0) {
-        const ret = Math.log(btcPrices[j] / btcPrices[j - 1]);
-        sumLog += ret;
-        sumLog2 += ret * ret;
-        count++;
-      }
-    }
-    if (count < 20) {
-      btcVol.push(0.50);
-    } else {
-      const mean = sumLog / count;
-      const variance = sumLog2 / count - mean * mean;
-      btcVol.push(Math.max(0.20, Math.min(2.0, Math.sqrt(variance * 252))));
-    }
-  }
+  // ── btcVol: usar BTC_VOL pre-calculada del CSV aumentado ──
+  // FIX-CSV-AUGMENTED: antes se calculaba desde precios BTC con rolling 63d.
+  // Ahora usamos BTC_VOL real del CSV (NaN → fallback 0.50).
+  const btcVolRaw = csvData.btcVolHistory.slice(-length);
+  const btcVol = btcVolRaw.map(v => (isFinite(v) && v > 0) ? v : 0.50);
 
-  // ── move: proxy desde VIX (relación empírica MOVE ≈ VIX × 4.5 + 20) ──
-  const move = vix.map(v => Math.max(40, Math.min(300, v * 4.5 + 20)));
+  // ── move: usar ^MOVE real del CSV aumentado ──
+  // FIX-CSV-AUGMENTED: antes era proxy sintético VIX×4.5+20.
+  // Ahora usamos el CBOE MOVE Index real.
+  const moveRaw = csvData.moveHistory.slice(-length);
+  const move = moveRaw.map((v, i) => (isFinite(v) && v > 0) ? v : (vix[i] ?? 20) * 4.5 + 20);
 
-  // ── dxyTrend: proxy desde cambios en yield spread ──
-  // Cuando yield spread se amplía (empinamiento) → USD suele fortalecerse
-  // Usamos el gradiente suavizado del yield spread como proxy
+  // ── dxyTrend: calcular desde DX-Y.NYB real del CSV aumentado ──
+  // FIX-CSV-AUGMENTED: antes era proxy desde yield spread.
+  // Ahora calculamos el momentum del DXY real (cambio 21d normalizado).
+  const dxyRaw = csvData.dxyHistory.slice(-length);
   const dxyTrend: number[] = [];
   const DXY_WINDOW = 21;
-  for (let i = 0; i < yieldSpread.length; i++) {
-    if (i < DXY_WINDOW) {
+  for (let i = 0; i < dxyRaw.length; i++) {
+    if (i < DXY_WINDOW || !isFinite(dxyRaw[i]) || !isFinite(dxyRaw[i - DXY_WINDOW]) || dxyRaw[i - DXY_WINDOW] <= 0) {
       dxyTrend.push(0);
     } else {
-      const change = yieldSpread[i] - yieldSpread[i - DXY_WINDOW];
-      dxyTrend.push(Math.max(-0.05, Math.min(0.05, change * 0.05)));
+      const pctChange = (dxyRaw[i] - dxyRaw[i - DXY_WINDOW]) / dxyRaw[i - DXY_WINDOW];
+      dxyTrend.push(Math.max(-0.05, Math.min(0.05, pctChange)));
     }
   }
 
