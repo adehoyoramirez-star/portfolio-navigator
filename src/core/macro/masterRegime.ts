@@ -20,6 +20,10 @@
 //     - Crisis MATURE (3 meses):  durationAdjustment = -0.05 → conservador normal
 //     - Crisis OLD (>6 meses):    durationAdjustment = +0.08 → preparar ataque
 //     - Expansion YOUNG (1 mes):  durationAdjustment = +0.05 → más agresivo
+//   NOTA (FIX A5): EXPANSION YOUNG +0.05 es matemáticamente inerte porque
+//     en EXPANSION finalPenalty ya está en [0.88, 1.0]. Sumar +0.05 y clampar
+//     a 1.0 produce siempre 1.0. Solo los ajustes negativos de CRISIS (-0.10,
+//     -0.05) y el positivo de CRISIS OLD (+0.08) tienen efecto real.
 // ===============================================
 
 import { detectCrisis, CrisisResult } from "./crisis";
@@ -58,7 +62,7 @@ export interface MasterRegimeOutput {
   crisisDetail: CrisisResult;
   stressDetail: StressResult;
   regimeProbs: RegimeProbabilities;
-  dominantSignal: "CRISIS_MODEL" | "STRESS_MODEL" | "PROBABILISTIC" | "CONSENSUS";
+  dominantSignal: "CRISIS_MODEL" | "STRESS_MODEL" | "PROBABILISTIC" | "CONSENSUS" | "CRISIS_STRESS";
   confidence: "HIGH" | "MEDIUM" | "LOW";
   cews?: import("./crisisEarlyWarning").CEWSOutput;
   // FIX MATH-NEW-02: ahora conectado y activo en el cálculo
@@ -348,8 +352,12 @@ function getBinaryPenalty(regime: MasterRegimeLabel): number {
 
 function getDominantSignal(
   c: MasterRegimeLabel, s: MasterRegimeLabel, p: MasterRegimeLabel, resolved: MasterRegimeLabel
-): "CRISIS_MODEL" | "STRESS_MODEL" | "PROBABILISTIC" | "CONSENSUS" {
+): "CRISIS_MODEL" | "STRESS_MODEL" | "PROBABILISTIC" | "CONSENSUS" | "CRISIS_STRESS" {
   if (c === resolved && s === resolved && p === resolved) return "CONSENSUS";
+  // FIX M7: caso c=CONTRACTION, s=CONTRACTION, p=EXPANSION → resolved=CONTRACTION
+  // ANTES: devolvía "STRESS_MODEL" aunque CRISIS_MODEL también acertó.
+  // AHORA: "CRISIS_STRESS" cuando ambos modelos coinciden.
+  if (c === resolved && s === resolved && p !== resolved) return "CRISIS_STRESS";
   if (c === resolved && s !== resolved && p !== resolved) return "CRISIS_MODEL";
   if (p === resolved && c !== resolved) return "PROBABILISTIC";
   return "STRESS_MODEL";

@@ -39,7 +39,11 @@ export function detectRegimeProbabilistic(
   // ---- CRISIS ----
   // VIX alto + liquidez contractiva
   const crisisVix = Math.min(1, Math.max(0, (vix - 20) / 30));     // 0 en vix=20, 1 en vix=50
-  const crisisLiquidity = m2Growth < 0 ? 0.6 : Math.max(0, (2 - m2Growth) / 10);
+  // FIX A1: función continua sin salto en M2=0.
+  // ANTES: m2Growth < 0 ? 0.6 : Math.max(0, (2 - m2Growth) / 10)
+  //   → salto de 0.19 a 0.60 en M2=0 (discontinuidad artificial)
+  // AHORA: sigmoid suave centrada en M2=1% — sin saltos discretos.
+  const crisisLiquidity = 1 / (1 + Math.exp(-(1 - m2Growth) * 2));
   const crisisRaw = 0.5 * crisisVix + 0.5 * crisisLiquidity;
 
   // ---- CONTRACCIÓN ----

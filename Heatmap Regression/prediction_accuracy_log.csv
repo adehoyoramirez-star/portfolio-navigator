@@ -1,0 +1,2 @@
+check_date,snapshot_date,trading_days_elapsed,n_buy_positions,n_wins,hit_rate,pnl_total_eur,total_invested_eur,roi_pct,ic_realized,ic_predicted,spread_q5_q1
+2026-06-24,2026-06-16,6,7,2,0.2857142857142857,2.6455688136963116,508.5522734050581,0.005202157087967898,0.27588919738819795,0.0112504640377625,0.02271278185169318

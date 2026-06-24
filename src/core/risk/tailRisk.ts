@@ -59,6 +59,7 @@ function computeKillSwitch(drawdown: number): {
   const dd = Math.abs(drawdown);
   const ks = TAIL_RISK_CONFIG.KILL_SWITCH;
 
+  // FIX A2: banda intermedia L1.5 entre L1 y L2.
   if (dd >= ks.L5.threshold) {
     return { level: 5, name: ks.L5.name, overlay: ks.L5.overlay, exposureReduction: ks.L5.reduction };
   }
@@ -70,6 +71,11 @@ function computeKillSwitch(drawdown: number): {
   }
   if (dd >= ks.L2.threshold) {
     return { level: 2, name: ks.L2.name, overlay: ks.L2.overlay, exposureReduction: ks.L2.reduction };
+  }
+  // FIX A2: L1.5 antes de L1
+  if ('L1_5' in ks && dd >= (ks as any).L1_5.threshold) {
+    const l15 = (ks as any).L1_5;
+    return { level: 2, name: l15.name, overlay: l15.overlay, exposureReduction: l15.reduction };
   }
   if (dd >= ks.L1.threshold) {
     return { level: 1, name: ks.L1.name, overlay: ks.L1.overlay, exposureReduction: ks.L1.reduction };

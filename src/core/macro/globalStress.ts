@@ -20,12 +20,13 @@ export interface StressResult {
   wtiPenalty: number;   // multiplicador adicional [0.5, 1.0] por petróleo
 }
 
-// Umbrales Brent calibrados históricamente (Brent cotiza $3-5 sobre WTI):
-// < $75  → normal
-// $75–95 → elevated (tensión geopolítica moderada)
-// $95–115 → shock (conflicto regional — Ucrania 2022 llegó a $130)
-// > $115 → crisis (Suez 1973, Iraq 2003, Iran 2026)
-const WTI_THRESHOLDS = { elevated: 75, shock: 95, crisis: 115 } as const;
+// FIX A3: umbrales recalibrados para Brent (no WTI).
+// Brent cotiza $3-5 sobre WTI — los umbrales antiguos eran para WTI.
+// Brent < $80  → normal
+// Brent $80–100 → elevated (tensión geopolítica moderada)
+// Brent $100–120 → shock (conflicto regional — Ucrania 2022 llegó a $130)
+// Brent > $120 → crisis (Suez 1973, Iraq 2003, Iran 2026)
+const WTI_THRESHOLDS = { elevated: 80, shock: 100, crisis: 120 } as const;
 
 export function computeGlobalStress(inputs: StressInputs): StressResult {
   let score = 0;
@@ -39,9 +40,16 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   if (inputs.move > 140) score += 2;
   else if (inputs.move > 110) score += 1;
 
-  if (inputs.dxyTrend > 0.02) score += 1;
+  // FIX B4: dxyTrend en decimal (0.02 = 2% de apreciación).
+  // El dashboard puede pasar 1.6 (porcentaje) → dividir por 100 internamente.
+  // Para compatibilidad: si dxyTrend > 1.0 asumimos que viene en % y lo convertimos.
+  const dxyDecimal = inputs.dxyTrend > 1.0 ? inputs.dxyTrend / 100 : inputs.dxyTrend;
+  if (dxyDecimal > 0.02) score += 1;
 
-  if (inputs.btcVol > 0.8) score += 1;
+  // FIX B3: threshold reducido 0.80 → 0.65 para que la señal sea operativa.
+  // ANTES: 0.80 solo se activaba en picos extremos (COVID pico).
+  // AHORA: 0.65 captura entornos de estrés moderado-alto (bear markets típicos).
+  if (inputs.btcVol > 0.65) score += 1;
 
   // ── WTI OIL — geopolitical shock multiplier ──────────────────────────
   // El petróleo es el termómetro más rápido de crisis geopolíticas —

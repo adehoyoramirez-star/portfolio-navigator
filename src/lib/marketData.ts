@@ -124,7 +124,7 @@ const LONG_RUN_PRIORS: Record<string, number> = {
   'EMXC.DE':  0.08,   //  8% — EM ex-China: prima EM ~3% sobre DM, China excluida
   'PPFB.DE':  0.06,   //  6% — Oro: retorno real histórico ~2-4%, inflación ~2%
   '0P00000WLG.F': 0.09, // 9% — Vanguard Global Stock Index: MSCI World developed equity
-  'BAYN.DE':  0.12,   // 12% — Bayer: deep value (P/E ~8x), upside resolución litigios
+  // BAYN.DE eliminado — no está en ASSETS. Si se añade al portfolio, añadir su prior aquí.
 };
 
 // Mapa de proxies americanos para ETFs europeos con historia corta
@@ -134,7 +134,7 @@ const PROXY_FALLBACK: Partial<Record<string, string>> = {
   'EMXC.DE': 'EEM',    // EM ex-China → EEM
   'PPFB.DE': 'GLD',    // Gold ETC → GLD
   '0P00000WLG.F': 'URTH', // Vanguard Global Stock Index → iShares MSCI World ETF
-  'BAYN.DE': 'XBI',    // SPDR S&P Biotech ETF — proxy sectorial healthcare/pharma
+  // BAYN.DE eliminado — no está en ASSETS. Si se añade, añadir su proxy aquí.
 };
 
 // ── FIX-LEDOIT-WOLF-CANONICAL (22-Jun-2026) ───────────────────────────────────
@@ -602,11 +602,17 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const piCycleMAs = calculatePiCycleMAs(btcDailyCloses);
 
   // BTC vol realizada anualizada (reusa returnsPerAsset para evitar dailyReturns duplicado)
+  // FIX-C1: usar media real μ en vez de m=0. Con m=0 se sobreestima la varianza
+  // porque (r-0)² > (r-μ)² para cualquier μ ≠ 0. BTC con retorno diario medio de
+  // ~0.15% introducía un sesgo de ~2-3pp en la vol anualizada.
   const btcIdx = ASSETS.indexOf('BTC-EUR');
   const btcReturnsForVol = btcIdx >= 0 ? returnsPerAsset[btcIdx] : [];
   const btcVolRealized = btcReturnsForVol.length > 20
-    ? Math.sqrt(btcReturnsForVol.reduce((s, r) => { const m = 0; return s + (r - m) ** 2; }, 0)
-        / btcReturnsForVol.length * 252)
+    ? (() => {
+        const mu = btcReturnsForVol.reduce((s, r) => s + r, 0) / btcReturnsForVol.length;
+        return Math.sqrt(btcReturnsForVol.reduce((s, r) => s + (r - mu) ** 2, 0)
+          / (btcReturnsForVol.length - 1) * 252);
+      })()
     : 0.60;
 
   // Jump parameters calibrados desde histórico BTC
@@ -821,19 +827,20 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
 }
 
 // Fallback if historical data is incomplete
-// FIX-WLG: portfolio 6 activos + BAYN.DE tactical = 7×7
-// Orden: BTC-EUR, EMXC.DE, PPFB.DE, URNU.DE, VVSM.DE, 0P00000WLG.F, BAYN.DE
+// FIX-C3: matriz 6×6 (sin BAYN.DE). Portfolio real = 6 activos.
+// BAYN.DE eliminado — no está en ASSETS, su presencia aquí causaba
+// dimension mismatch cuando hasRealCovMatrix=true con covMatrix 6×6.
+// Orden: BTC-EUR, EMXC.DE, PPFB.DE, URNU.DE, VVSM.DE, 0P00000WLG.F
 function fallbackCovMatrix(): number[][] {
-  const VOLS = [0.60, 0.18, 0.15, 0.35, 0.25, 0.16, 0.35];
+  const VOLS = [0.60, 0.18, 0.15, 0.35, 0.25, 0.16];
   const CORR = [
-    // BTC   EMXC   PPFB   URNU   VVSM   WLG    BAYN
-    [1.00,  0.15,  0.05,  0.10,  0.30,  0.15,  0.05],  // BTC
-    [0.15,  1.00,  0.10,  0.15,  0.40,  0.65,  0.30],  // EMXC
-    [0.05,  0.10,  1.00,  0.05,  0.05,  0.05,  0.00],  // PPFB (oro — descorrelado)
-    [0.10,  0.15,  0.05,  1.00,  0.20,  0.15,  0.10],  // URNU
-    [0.30,  0.40,  0.05,  0.20,  1.00,  0.50,  0.25],  // VVSM
-    [0.15,  0.65,  0.05,  0.15,  0.50,  1.00,  0.35],  // 0P00000WLG.F (global developed equity)
-    [0.05,  0.30,  0.00,  0.10,  0.25,  0.35,  1.00],  // BAYN (healthcare)
+    // BTC   EMXC   PPFB   URNU   VVSM   WLG
+    [1.00,  0.15,  0.05,  0.10,  0.30,  0.15],  // BTC
+    [0.15,  1.00,  0.10,  0.15,  0.40,  0.65],  // EMXC
+    [0.05,  0.10,  1.00,  0.05,  0.05,  0.05],  // PPFB (oro — descorrelado)
+    [0.10,  0.15,  0.05,  1.00,  0.20,  0.15],  // URNU
+    [0.30,  0.40,  0.05,  0.20,  1.00,  0.50],  // VVSM
+    [0.15,  0.65,  0.05,  0.15,  0.50,  1.00],  // 0P00000WLG.F (global developed equity)
   ];
   return CORR.map((row, i) => row.map((c, j) => c * VOLS[i] * VOLS[j]));
 }

@@ -167,8 +167,12 @@ function analyzeVolClustering(history: CEWSDataPoint[]): CEWSSignal {
 
 // ── EVALUACIÓN GLOBAL ─────────────────────────────────────────────────────
 export function computeCEWS(history: CEWSDataPoint[]): CEWSOutput {
-  if (history.length < 2) {
-    return emptyCEWS();
+  // FIX M6: guard subido de 2 → 4 puntos. Con 2-3 puntos reales,
+  // las funciones de análisis procesan arrays cortos y los scores
+  // están sistemáticamente subestimados. Con 3 puntos, computeTrend
+  // siempre devuelve STABLE (requiere ≥4).
+  if (history.length < 4) {
+    return { ...emptyCEWS(), earlyWarningReason: `Datos insuficientes (${history.length} puntos, mínimo 4).` };
   }
 
   const yieldCurve       = analyzeYieldCurve(history);
@@ -261,6 +265,12 @@ function computeWeeksInWarning(history: CEWSDataPoint[]): number {
   // Ampliamos ventana a 60 días para cubrir ~12 semanas de datos.
   let consecutiveDays = 0;
   const maxPoints = Math.min(history.length, 60);
+  // FIX A6: rolling window en vez de break estricto.
+  // ANTES: un solo día limpio reseteaba consecutiveDays a 0 (break).
+  // AHORA: contar días con ≥2 señales rojas en los últimos 60 días-
+  //   no consecutivos. Un gap de fin de semana o noticia puntual
+  //   ya no revienta semanas de vigilancia acumulada.
+  let totalRedDays = 0;
   for (let i = history.length - 1; i >= history.length - maxPoints; i--) {
     const point = history[i];
     let redSignals = 0;
@@ -268,11 +278,10 @@ function computeWeeksInWarning(history: CEWSDataPoint[]): number {
     if (point.creditSpread > THRESHOLDS.creditSpread.warning)  redSignals++;
     if (point.m2Growth < THRESHOLDS.m2Growth.warning)          redSignals++;
     if (point.vix > THRESHOLDS.vixCluster.warning)             redSignals++;
-    if (redSignals >= 2) consecutiveDays++;
-    else break;
+    if (redSignals >= 2) totalRedDays++;
   }
-  // Convertir días consecutivos a semanas de trading (5 días/semana), redondeo a la baja
-  return Math.floor(consecutiveDays / 5);
+  // Convertir días totales a semanas de trading (5 días/semana)
+  return Math.floor(totalRedDays / 5);
 }
 
 function buildWarningReason(
@@ -387,13 +396,12 @@ export function clearCEWSHistory(): void {
 // syncCEWSHistory y saveCEWSDataPointWithSync han sido eliminadas.
 
 // ── DATOS SINTÉTICOS PARA DEMOSTRACIÓN ───────────────────────────────────
-// Si no hay historial, genera 12 semanas de datos basados en los valores actuales
-// con variación realista para que el CEWS tenga algo que analizar.
-// FIX-DETERMINISTIC-CEWS (22-Jun-2026): Math.random() reemplazado por
-// seed determinista basada en la fecha actual (día). Esto garantiza que
-// el CEWS devuelva las mismas señales durante todo el día, independientemente
-// de recargas de página. Un hedge fund no puede tener alertas que cambien
-// con cada F5. La seed rota cada 24h para mantener variación temporal.
+// FIX B1: los datos sintéticos fuerzan tendencia de deterioro artificial
+// (VIX empieza en 0.7×current y "sube" al valor actual). Esto sesga el CEWS
+// hacia WATCH/WARNING cuando no hay historial real.
+// Solo se usan si el localStorage está vacío (primera ejecución o borrado de caché).
+// En producción con 84+ puntos reales este código no está activo.
+// Si se borra el localStorage, la próxima ejecución usará datos sintéticos sesgados.
 function deterministicNoise(index: number, salt: number): number {
   // Hash simple basado en el día (floor para que no cambie en 24h) + índice
   const daySeed = Math.floor(Date.now() / 86400000);

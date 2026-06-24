@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prediction Check 5D — Olympus</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#080c12;color:#c8d8e8;font-family:-apple-system,'Segoe UI',sans-serif;padding:24px;max-width:1200px;margin:0 auto}
+h1{font-size:22px;color:#fff;margin-bottom:4px}
+.sub{color:#5a7a96;font-size:13px;margin-bottom:24px}
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
+.cd{background:#111927;border:1px solid #1e2d40;border-radius:8px;padding:16px}
+.cl{font-size:10px;color:#5a7a96;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px}
+.cv{font-size:24px;font-weight:700}
+.st{font-size:14px;font-weight:700;color:#fff;margin:24px 0 12px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px}
+th{text-align:left;padding:10px 8px;border-bottom:2px solid #1e2d40;font-size:10px;color:#5a7a96;text-transform:uppercase;letter-spacing:1px}
+td{padding:10px 8px;border-bottom:1px solid #1e2d40}
+tr:hover{background:rgba(0,194,255,0.04)}
+.m{color:#5a7a96;font-size:11px}
+.b-tp{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(0,224,122,0.2);color:#00e07a;border:1px solid #00e07a}
+.b-sl{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(255,64,96,0.15);color:#ff4060;border:1px solid #ff4060}
+.b-open{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(0,194,255,0.1);color:#00c2ff}
+.note{background:rgba(0,194,255,0.06);border:1px solid rgba(0,194,255,0.2);border-radius:8px;padding:16px;margin-bottom:20px;font-size:13px;line-height:1.7}
+.note b{color:#00c2ff}
+.foot{margin-top:32px;padding:16px;background:#111927;border:1px solid #1e2d40;border-radius:8px;font-size:12px;color:#5a7a96}
+</style>
+</head>
+<body>
+
+<h1>Prediction Check 5D — Olympus</h1>
+<div class="sub">Snapshot evaluado: 2026-06-16 (6 dias de trading) &middot; Verificado: 24/06/2026</div>
+
+<div class="sg">
+  <div class="cd"><div class="cl">Posiciones BUY</div><div class="cv" style="color:#fff">7</div></div>
+  <div class="cd"><div class="cl">Hit Rate</div><div class="cv" style="color:#ff4060">29%</div></div>
+  <div class="cd"><div class="cl">P&amp;L Hipotetico</div><div class="cv" style="color:#00e07a">+2.65 EUR</div></div>
+  <div class="cd"><div class="cl">ROI sobre invertido</div><div class="cv" style="color:#00e07a">+0.52%</div></div>
+</div>
+
+<div class="sg">
+  <div class="cd"><div class="cl">TP alcanzado</div><div class="cv" style="color:#00e07a">0</div></div>
+  <div class="cd"><div class="cl">SL alcanzado</div><div class="cv" style="color:#ff4060">0</div></div>
+  <div class="cd"><div class="cl">Abiertas</div><div class="cv" style="color:#00c2ff">7</div></div>
+  <div class="cd"><div class="cl">Capital invertido</div><div class="cv" style="color:#fff">509 EUR</div></div>
+</div>
+
+<div class="note">
+<b>IC realizado (Q1+Q5)</b>: +0.2759
+&mdash; sobre 214 tickers, periodo de 6 dias.<br>
+<b>IC predicho (backtest, ic_monitor.csv)</b>: +0.0113<br>
+<b>Spread Q5 &minus; Q1 (retorno excedente real)</b>: <span style="color:#00e07a">+2.27%</span><br><br>
+Si el IC realizado es claramente menor que el predicho durante varios dias seguidos,
+el modelo se esta degradando respecto al backtest &mdash; reduce tamano o pausa hasta
+que vuelva a alinearse. Este informe no reentrena el modelo; es el feedback
+que te dice CUANDO revisarlo.
+</div>
+
+<div class="st">Resultado de las senales BUY de 2026-06-16</div>
+<table>
+<thead><tr>
+  <th>Ticker</th><th>Sector</th><th>Entry</th><th>Salida</th><th>Resultado</th>
+  <th>Retorno</th><th>Size</th><th>P&amp;L</th><th>Conviccion</th>
+</tr></thead>
+<tbody>
+<tr><td><b>INTC</b></td><td class="m">Other</td><td>120.62</td><td>131.65</td><td><span class="b-open">ABIERTA</span></td><td style="color:#00e07a">+9.14%</td><td>71 EUR</td><td style="color:#00e07a"><b>+6.52 EUR</b></td><td class="m">score 99.6 / z 3.31</td></tr>
+<tr><td><b>DELL</b></td><td class="m">Other</td><td>411.03</td><td>434.06</td><td><span class="b-open">ABIERTA</span></td><td style="color:#00e07a">+5.60%</td><td>86 EUR</td><td style="color:#00e07a"><b>+4.82 EUR</b></td><td class="m">score 99.8 / z 3.32</td></tr>
+<tr><td><b>MU</b></td><td class="m">Other</td><td>1049.37</td><td>1048.51</td><td><span class="b-open">ABIERTA</span></td><td style="color:#ff4060">-0.08%</td><td>76 EUR</td><td style="color:#ff4060"><b>-0.06 EUR</b></td><td class="m">score 99.1 / z 3.27</td></tr>
+<tr><td><b>AMD</b></td><td class="m">Tech</td><td>521.17</td><td>519.74</td><td><span class="b-open">ABIERTA</span></td><td style="color:#ff4060">-0.28%</td><td>87 EUR</td><td style="color:#ff4060"><b>-0.24 EUR</b></td><td class="m">score 99.4 / z 3.30</td></tr>
+<tr><td><b>STX</b></td><td class="m">Other</td><td>1042.50</td><td>993.25</td><td><span class="b-open">ABIERTA</span></td><td style="color:#ff4060">-4.72%</td><td>5 EUR</td><td style="color:#ff4060"><b>-0.26 EUR</b></td><td class="m">score 100.0 / z 3.33</td></tr>
+<tr><td><b>HPE</b></td><td class="m">Other</td><td>49.19</td><td>48.75</td><td><span class="b-open">ABIERTA</span></td><td style="color:#ff4060">-0.89%</td><td>90 EUR</td><td style="color:#ff4060"><b>-0.80 EUR</b></td><td class="m">score 98.9 / z 3.26</td></tr>
+<tr><td><b>WDC</b></td><td class="m">Other</td><td>698.98</td><td>643.83</td><td><span class="b-open">ABIERTA</span></td><td style="color:#ff4060">-7.89%</td><td>93 EUR</td><td style="color:#ff4060"><b>-7.33 EUR</b></td><td class="m">score 99.3 / z 3.28</td></tr>
+</tbody>
+</table>
+
+<div class="st">Historico de verificaciones (ultimas 10)</div>
+<table>
+<thead><tr>
+  <th>Fecha check</th><th>Snapshot</th><th>Posiciones</th><th>Hit rate</th><th>P&amp;L total</th><th>IC realizado</th>
+</tr></thead>
+<tbody>
+<tr><td class="m">2026-06-24</td><td class="m">2026-06-16</td><td>7</td><td>29%</td><td style="color:#00e07a"><b>+2.65 EUR</b></td><td style="color:#00e07a">+0.2759</td></tr>
+</tbody>
+</table>
+
+<div class="foot">
+<b>Metodologia</b><br>
+&bull; SL/TP se evaluan con High/Low diario desde el dia siguiente al snapshot. Si ambos se tocan el mismo dia, se asume SL primero (peor caso).<br>
+&bull; Posiciones sin TP/SL alcanzado se marcan ABIERTA y se valoran al precio de cierre actual (mark-to-market).<br>
+&bull; El P&amp;L es HIPOTETICO: asume que TODAS las ordenes se ejecutaron exactamente al precio y tamano sugeridos. No incluye comisiones, slippage real ni gaps de apertura.<br>
+&bull; El IC realizado compara el score del modelo (en el snapshot) contra el retorno excedente real (vs mediana del subconjunto) 6 dias despues.<br>
+&bull; Genera mas snapshots ejecutando inicio_dia.bat cada dia de mercado &mdash; con &lt;5 dias de historico este informe no puede evaluar nada todavia.
+</div>
+
+</body></html>

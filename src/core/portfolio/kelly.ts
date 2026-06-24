@@ -24,11 +24,12 @@ export interface KellyInput {
 }
 
 export interface KellyResult {
-  kellyFraction: number; // half-kelly con cap [0, KELLY_CAP] — usar esto en el motor
-  rawKelly: number;      // kelly óptimo teórico sin ajustar — para trazabilidad
-  halfKelly: number;     // rawKelly × 0.5 antes del cap — para trazabilidad
-  isCapped: boolean;     // true si el cap estuvo activo
-  effectiveCap: number;  // cap realmente usado (capOverride ?? KELLY_CONFIG.CAP)
+  kellyFraction: number; // half-kelly con cap [0, KELLY_CAP]
+  rawKelly: number;
+  halfKelly: number;
+  isCapped: boolean;     // true si el cap (superior) limitó la asignación
+  isFloored: boolean;    // FIX M1: true si el floor en 0 fue el límite activo (μ negativo)
+  effectiveCap: number;
 }
 
 // FIX-HOT-CONFIG: KELLY_CONFIG se lee en runtime en vez de al cargar el módulo.
@@ -56,13 +57,20 @@ export function calculateKelly(input: KellyInput): KellyResult {
   // Cap al effectiveCap, floor en 0 (nunca posición corta via Kelly)
   const cappedKelly = Math.max(0, Math.min(effectiveCap, halfKelly));
 
+  // FIX M1: isCapped ahora distingue entre cap superior activo y floor en 0.
+  // ANTES: isCapped = halfKelly > effectiveCap && halfKelly > 0
+  //   → cuando μ < 0, halfKelly < 0, isCapped = false (aunque la posición es 0 por floor).
+  // AHORA: isCapped = true si el cap (superior) limitó la asignación. isFloored = true si
+  //   el floor en 0 fue el límite activo (expectativa negativa).
   const isCapped = halfKelly > effectiveCap && halfKelly > 0;
+  const isFloored = halfKelly < 0 && cappedKelly === 0;
 
   return {
     kellyFraction: cappedKelly,
     rawKelly,
     halfKelly,
     isCapped,
+    isFloored,
     effectiveCap,
   };
 }

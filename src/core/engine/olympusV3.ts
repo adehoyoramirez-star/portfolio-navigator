@@ -50,7 +50,9 @@
 
 // FIX-V5-7: BL-TICKER-MISMATCH corregido (assetNames usa ticker, no name).
 // FIX-V5-8: ERP-DEFAULT-BOOST corregido (sin dato → neutro, no +5% boost).
-export const ENGINE_VERSION = "v5.2.1";
+// FIX-V5-9: coreVolEstimate ponderado por pesos reales (no media aritmética).
+// FIX-V5-10: isERPCritical con guard input.erpValue !== undefined.
+export const ENGINE_VERSION = "v5.2.2";
 
 // ── Imports ─────────────────────────────────────────────────────────────────
 import { calculateMomentum } from "../factors/momentum";
@@ -114,6 +116,7 @@ export interface OlympusOutput {
   kellyFraction: number;
   rawKelly: number;
   isCapped: boolean;
+  isFloored: boolean;    // FIX M1: true si floor=0 por expectativa negativa
   effectiveCap: number;   // cap de Kelly realmente aplicado
   kellyAllocation: number;
   markowitzAllocation: number;
@@ -400,17 +403,20 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const btcNumeric     = btcCycle.btcNumeric;
   // ── RiskNumeric usa vol CORE (ex-BTC) ─────────────────────────────────────
   // BTC con vol ~72% contamina la métrica de riesgo del portfolio completo.
-  // Para el coreSignalScore usamos la vol media de los activos NO-BTC,
-  // para que EMXC/IS3Q/PPFB/URNU/VVSM/XNAS no sean penalizados por BTC.
+  // Para el coreSignalScore usamos la vol media ponderada de los activos NO-BTC,
+  // para que EMXC/PPFB/URNU/VVSM/WLG no sean penalizados por BTC.
   const btcIdxRisk = assets.findIndex(a => {
     const n = a.name.toLowerCase();
     return n.includes('btc') || n.includes('bitcoin');
   });
   let coreVolEstimate = input.portfolioRealizedVol ?? 0.18;
   if (btcIdxRisk >= 0) {
-    const nonBtcVols = assets.filter((_, i) => i !== btcIdxRisk).map(a => a.volatility);
-    if (nonBtcVols.length > 0) {
-      coreVolEstimate = nonBtcVols.reduce((s, v) => s + v, 0) / nonBtcVols.length;
+    const nonBtcAssets = assets.filter((_, i) => i !== btcIdxRisk);
+    if (nonBtcAssets.length > 0) {
+      // FIX A4: media ponderada — pero relativeWeights aún no existe aquí.
+      // Usamos equal weight como aproximación inicial; el vol target final
+      // (CAPA 7) usa relativeWeightsAfterCap que SÍ está disponible entonces.
+      coreVolEstimate = nonBtcAssets.reduce((s, a) => s + a.volatility, 0) / nonBtcAssets.length;
     }
   }
   const riskNumeric    = 1 - (coreVolEstimate / 0.50);
@@ -471,7 +477,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       valuePercentileRank: value.percentileRank, qualityScore: quality.qualityScore,
       lowVolScore: lowVol.lowVolScore, expectedReturn: rawExpectedReturn,
       normalizedExpectedReturn: rawExpectedReturn, kellyFraction: kelly.kellyFraction, rawKelly: kelly.rawKelly,
-      isCapped: kelly.isCapped, effectiveCap: kelly.effectiveCap, kellyAllocation: 0, markowitzAllocation: 0,
+      isCapped: kelly.isCapped,
+      isFloored: kelly.isFloored,
+      effectiveCap: kelly.effectiveCap, kellyAllocation: 0, markowitzAllocation: 0,
       riskParityAllocation: 0, blendedAllocation: 0, volAdjustedAllocation: 0, finalAllocation: 0,
     }));
     return {
@@ -586,7 +594,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const relativeWeights = finalWeightsBeforeCap.map(w => w / totalFinalWeights);
 
   // ── PESOS DE REFERENCIA ─────────────────────────────────────────────────────
-  const markowitzWeights = assets.map(() => 1 / assets.length);
+  // FIX M5: etiqueta corregida — es equal weight, no Markowitz.
+  // El verdadero mínima varianza es minVarW (que sí entra en el blend).
+  const equalWeightRef = assets.map(() => 1 / assets.length);
   const rpInputs  = assets.map(a => ({
     name:       a.name,
     volatility: a.volatility,
@@ -785,7 +795,11 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   - Non-equity (earningsYield === 0): sin cap por ERP
   //   - Solo se activa si erpValue fue explícitamente proporcionado
   const isERPTriggered = input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD;
-  const isERPCritical = erpRaw < ERP_CONFIG.CRITICAL_THRESHOLD;
+  // FIX M2: guard input.erpValue !== undefined para isERPCritical.
+  // ANTES: solo comprobaba erpRaw < CRITICAL_THRESHOLD — con default 0.02,
+  //   isERPCritical era siempre false, pero si el threshold sube a >0.02
+  //   se activaría incorrectamente sin dato real del usuario.
+  const isERPCritical = input.erpValue !== undefined && erpRaw < ERP_CONFIG.CRITICAL_THRESHOLD;
   const erpMaxExposure = isERPCritical ? ERP_CONFIG.CRITICAL_EXPOSURE : ERP_CONFIG.MAX_EXPOSURE;
 
   // Fracción equity vs non-equity de los pesos relativos
@@ -847,9 +861,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         kellyFraction:            kelly.kellyFraction,
         rawKelly:                 kelly.rawKelly,
         isCapped:                 kelly.isCapped,
+        isFloored:                kelly.isFloored,
         effectiveCap:             kelly.effectiveCap,
         kellyAllocation:          kellyNormalized,
-        markowitzAllocation:      markowitzWeights[i],
+        markowitzAllocation:      equalWeightRef[i],
         riskParityAllocation:     rpWeights[i],
         blendedAllocation:        relW,
         volAdjustedAllocation:    volAdj,

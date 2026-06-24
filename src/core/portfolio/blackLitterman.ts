@@ -147,7 +147,7 @@ export function runBlackLitterman(input: BLInput): BLOutput {
 
   // Sin views → retornar equilibrio directamente
   if (views.length === 0) {
-    const weights = minimumVarianceBL(covMatrix, equilibriumReturns, n);
+    const weights = minimumVarianceBL(covMatrix, equilibriumReturns, n, riskAversion);
     return {
       equilibriumReturns,
       posteriorReturns: equilibriumReturns,
@@ -205,7 +205,10 @@ export function runBlackLitterman(input: BLInput): BLOutput {
   const posteriorReturns = equilibriumReturns.map((pi, i) => pi + adjustment[i]);
 
   // PASO 4: Pesos óptimos con retornos posteriores
-  const posteriorWeights = minimumVarianceBL(covMatrix, posteriorReturns, n);
+  // FIX-C2: lambda → riskAversion (He & Litterman 1999 canónico).
+  // ANTES: lambda=0.5 hardcodeado, desconectado de δ=2.5.
+  // AHORA: w* = (δΣ)⁻¹ μ_BL con δ = riskAversion del input.
+  const posteriorWeights = minimumVarianceBL(covMatrix, posteriorReturns, n, riskAversion);
 
   // PASO 5: Impacto por view (para UI)
   const viewImpact = views.map((view) => {
@@ -227,14 +230,21 @@ export function runBlackLitterman(input: BLInput): BLOutput {
  * Optimización de mínima varianza sobre los retornos Black-Litterman.
  * Minimiza w^T Σ w - λ × μ^T w mediante gradient descent proyectado al simplex.
  */
+/**
+ * Optimización de mínima varianza con retornos esperados.
+ * FIX-C2: lambda = riskAversion (δ del modelo canónico He & Litterman 1999).
+ * ANTES: lambda=0.5 hardcodeado → pesos no coincidían con w* = (δΣ)⁻¹ μ_BL.
+ * AHORA: el trade-off riesgo/retorno usa el riskAversion del input BL.
+ */
 function minimumVarianceBL(
   covMatrix: number[][],
   expectedReturns: number[],
-  n: number
+  n: number,
+  riskAversion: number
 ): number[] {
   let weights = new Array(n).fill(1 / n);
 
-  const lambda = 0.5;
+  const lambda = riskAversion;
   const learningRate = 0.01;
   const iterations = 200;
 

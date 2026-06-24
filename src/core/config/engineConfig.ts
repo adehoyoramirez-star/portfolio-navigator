@@ -25,7 +25,7 @@
 //   NO usar ^IRX (T-Bill 3 meses ≈ 5.2%) — son instrumentos distintos.
 // ===============================================
 
-export const ENGINE_CONFIG_VERSION = "3.7.0"; // FIX MATH-02: credit×3→×2, CONTRACTION threshold 10→12
+export const ENGINE_CONFIG_VERSION = "3.7.1"; // FIX MATH-02 + A2 intermediate band + A1 M2 sigmoid
 
 // ── ERP TRIGGER ────────────────────────────────────────────────────────────
 // Reducción forzada de exposición cuando el Equity Risk Premium está comprimido.
@@ -163,12 +163,17 @@ export const REGIME_CONFIG = {
 //   0.20 a -25%, 0.05 a -35%. Nuestra calibración es más conservadora
 //   en L2 (0.50 vs 0.40) pero más protectora en L4-L5.
 export const TAIL_RISK_CONFIG = {
+  // FIX A2: banda intermedia L1.5 entre -12% y -15% para suavizar el cliff.
+  // ANTES: L1 (-12% → 0.80) y L2 (-15% → 0.50) tenían gap de solo 3%.
+  // Un mercado cayendo de -12% a -15% en días forzaba ventas masivas.
+  // AHORA: L1.5 (-13.5% → 0.65) como transición gradual.
   KILL_SWITCH: {
-    L1: { threshold: 0.12, name: "REDUCCIÓN PREVENTIVA",  overlay: 0.80, reduction: 0.20 },
-    L2: { threshold: 0.15, name: "REDUCCIÓN MODERADA",    overlay: 0.50, reduction: 0.50 },
-    L3: { threshold: 0.20, name: "MODO DEFENSIVO",        overlay: 0.30, reduction: 0.70 },
-    L4: { threshold: 0.25, name: "SALIDA CASI TOTAL",     overlay: 0.15, reduction: 0.85 },
-    L5: { threshold: 0.32, name: "PROTECCIÓN MÁXIMA",     overlay: 0.05, reduction: 0.95 },
+    L1:   { threshold: 0.12,  name: "REDUCCIÓN PREVENTIVA",  overlay: 0.80, reduction: 0.20 },
+    L1_5: { threshold: 0.135, name: "TRANSICIÓN GRADUAL",    overlay: 0.65, reduction: 0.35 },
+    L2:   { threshold: 0.15,  name: "REDUCCIÓN MODERADA",    overlay: 0.50, reduction: 0.50 },
+    L3:   { threshold: 0.20,  name: "MODO DEFENSIVO",        overlay: 0.30, reduction: 0.70 },
+    L4:   { threshold: 0.25,  name: "SALIDA CASI TOTAL",     overlay: 0.15, reduction: 0.85 },
+    L5:   { threshold: 0.32,  name: "PROTECCIÓN MÁXIMA",     overlay: 0.05, reduction: 0.95 },
   },
   MIN_ALLOCATION: 0.05,
 } as const;
