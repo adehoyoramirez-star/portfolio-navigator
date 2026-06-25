@@ -247,6 +247,8 @@ function minimumVarianceBL(
   const lambda = riskAversion;
   const learningRate = 0.01;
   const iterations = 200;
+  // FIX-AUDIT-R4 R4.2 obs: tracking itercount to log premature convergence (<50 iters).
+  let iterUsed = iterations;
 
   // FIX-AUDIT-R4 R4.2: convergence early break — iteraciones fijas n=200 pueden seguir convergiendo o diverger lentamente.
   // maxDiff < eps implica gradiente ~0 → weights ya son optimos locales.
@@ -264,7 +266,12 @@ function minimumVarianceBL(
     }
     weights = projectToSimplex(weights, n);
     const maxDiff = Math.max(...weights.map((w, i) => Math.abs(w - oldWeights[i])));
-    if (maxDiff < 1e-6) break;
+    if (maxDiff < 1e-6) { iterUsed = iter + 1; break; }
+  }
+  // R4.2 obs: warn cuando el loop corto temprano (<50 iters) → probable premature convergence.
+  // weights devueltos pueden ser subóptimos; conviene revisar la cov matrix manualmente.
+  if (iterUsed < 50) {
+    console.warn(`[R4.2 obs] minimumVarianceBL convergio en ${iterUsed}/${iterations} iters (posible premature convergence)`);
   }
 
   return weights;

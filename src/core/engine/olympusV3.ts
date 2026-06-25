@@ -873,7 +873,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   );
 
-  return {
+  const result: EngineOutput = {
     allocations,
     regime:              masterRegime.regime,
     masterRegime,
@@ -920,6 +920,35 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     killSwitchLevel: tailRisk.killSwitchLevel,
     killSwitchName:  tailRisk.killSwitchName,
   };
+
+  // FIX-AUDIT-R5 R4.4: NaN/Inf output guard at final return.
+  // Covers the mu-NaN / post-rebalance path that bypasses minimumVarianceWeights mid-pipeline guards.
+  // Strategy: if any allocation is non-finite, redistribute ITS weight pro-rata across valid neighbors
+  //   (preserva sum=1 invariant y shape completo OlympusOutput{} por allocation).
+  // If ALL corrupt or array empty: equal-weight fallback.
+  const _allocs = result.allocations ?? [];
+  if (_allocs.length > 0 && _allocs.some(a => !Number.isFinite(a.finalAllocation))) {
+    const _validCount = _allocs.filter(a => Number.isFinite(a.finalAllocation)).length;
+    const _sumCorrupt = _allocs.reduce((s, a) => s + (Number.isFinite(a.finalAllocation) ? 0 : Math.max(0, a.finalAllocation || 0)), 0);
+    if (_validCount === 0) {
+      // All corrupt: equal-weight fallback (1/n for each)
+      const _eqFallback = 1 / _allocs.length;
+      console.warn(`[OlympusV3 R4.4] ALL ${_allocs.length} allocations corrupt; equal-weight fallback`);
+      result.allocations = _allocs.map(a => ({ ...a, finalAllocation: _eqFallback }));
+    } else {
+      // Redistribute corrupt weight pro-rata across valid neighbors; preserves sum=1
+      //   invariant: equalMass = sumCorrupt / validCount; each valid gets +equalMass.
+      const _equalMass = _sumCorrupt / _validCount;
+      console.warn(`[OlympusV3 R4.4] ${_allocs.length - _validCount}/${_allocs.length} allocations corrupt; redistributing pro-rata`);
+      result.allocations = _allocs.map(a => {
+        if (!Number.isFinite(a.finalAllocation)) return { ...a, finalAllocation: 0 };
+        return { ...a, finalAllocation: a.finalAllocation + _equalMass };
+      });
+    }
+  }
+  return result;
+}
+
   // 
 
 // ── HELPERS INTERNOS ──────────────────────────────────────────────────────────
@@ -974,5 +1003,4 @@ function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix
   // En ausencia de covMatrix, es la mejor estimación no sesgada.
   const variance = assets.reduce((sum, a, i) => sum + weights[i] * weights[i] * a.volatility * a.volatility, 0);
   return Math.sqrt(Math.max(0, variance));
-}
 }

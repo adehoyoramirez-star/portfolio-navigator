@@ -91,8 +91,15 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   const cewsRecovering = cewsOutput !== undefined && cewsPreviousLevel !== undefined &&
     (cewsPreviousLevel === "ALERT" || cewsPreviousLevel === "WARNING") &&
     (cewsOutput.level === "WATCH" || cewsOutput.level === "CLEAR");
-  const regimeImproving = (regime === "EXPANSION" && regimePenalty >= 0.80) ||
-    (regime === "CONTRACTION" && regimePenalty > 0.55);
+  // FIX-AUDIT-R5 R5.1: tighten macro signal. Solo fires cuando regimePenalty es explícito + supera threshold elevado.
+  // Previene inflado de attackConfluence cuando el caller upstream olvidó setear regimePenalty (caso típico: defaults de test).
+  //      typeof check   → undefined/NaN NO dispara macro spurio en producción.
+  //      threshold ↑   → 0.80→0.85, 0.55→0.65; solo ciclos con mejora fuerte cuentan como macro.
+  // FIX-AUDIT-R5 R5.1 v2 (post-reviewer): EXPANSION strengthened (0.80→0.85), CONTRACTION changes reverted to original 0.55 to avoid silent breakage en tests existentes.
+  const regimeImproving = (
+    (regime === "EXPANSION" && typeof regimePenalty === "number" && regimePenalty >= 0.85) ||
+    (regime === "CONTRACTION" && typeof regimePenalty === "number" && regimePenalty > 0.55)
+  );
   const momentumDivergence = btcMomentum1m < -0.10 && btcZScore > -2.5;
   const dominanceAccumulation = btcDominance !== undefined && btcDominance > 52;
   const mvrvUndervalued = mvrvRatio !== undefined && mvrvRatio < 1.5;
