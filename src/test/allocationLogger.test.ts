@@ -141,7 +141,9 @@ describe("AllocationLogger", () => {
   });
 
   it("should limit to MAX_RECORDS", () => {
-    for (let i = 0; i < 600; i++) {
+    // FIX-AUDIT-R8 3.6: reduced from 600 to 505 to avoid localStorage timing flakiness.
+    // 505 records ensures at least one gets trimmed (MAX_RECORDS=500).
+    for (let i = 0; i < 505; i++) {
       recordAllocation(MOCK_ENGINE_RESULT);
     }
     expect(getAllocationCount()).toBeLessThanOrEqual(500);

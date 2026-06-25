@@ -72,6 +72,7 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
+import { detectCycleTops } from "../risk/cycleTopDetector";
 import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, getFactorWeightsByRegime } from "../config/engineConfig";
 // FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
 import {
@@ -659,11 +660,41 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     relativeWeightsAfterCap[i] /= relCapTotal;
   });
   // CAPA 8.5: CYCLE TOP OVERLAY (FIX-CYCLE-MOTOR)
-  if (input.cycleTopSignals && input.cycleTopSignals.length > 0) {
+  // FIX-AUDIT-R8 3.4: auto-detect cycle tops when not provided by caller.
+  // Uses available engine data (btcOnChain, macro, btcVol) to build CycleTopInputs.
+  const activeCycleSignals = input.cycleTopSignals ?? (() => {
+    try {
+      // FIX-AUDIT-R8 3.4: BTC gets full cycle top protection (MVRV + RSI-W).
+      // Other assets return SAFE (allocationMultiplier=1.0) until their data
+      // sources are integrated (URNU spot/LT, SOX RSI, WLG P/E, EMXC P/E, etc.)
+      const ctOutput = detectCycleTops({
+        mvrvRatio: input.btcOnChain?.mvrvRatio,
+        btcRsiWeekly: input.btcOnChain?.rsiWeekly,
+        uraniumSpotPrice: undefined,
+        uraniumLTPrice: undefined,
+        siaSalesYoY: undefined,
+        soxRsiWeekly: undefined,
+        bondYield10y: 4.25,    // approx 10y yield; gold detector returns SAFE anyway (no inflationBreakeven)
+        inflationBreakeven: undefined,
+        brentOil: macro.wtiOil,
+        wlgRsiWeekly: undefined,
+        wlgPERatio: undefined,
+        emxcRsiWeekly: undefined,
+        emxcPERatio: undefined,
+      });
+      return ctOutput.signals
+        .filter(s => s.allocationMultiplier < 1.0)
+        .map(s => ({ ticker: s.ticker, allocationMultiplier: s.allocationMultiplier }));
+    } catch (e) {
+      console.warn('[Olympus] CycleTop auto-detect failed:', e);
+      return [];
+    }
+  })();
+  if (activeCycleSignals.length > 0) {
     for (let i = 0; i < assets.length; i++) {
       const ticker = assets[i].ticker ?? assets[i].name;
       const baseTicker = ticker.split(".")[0];
-      const cycleSignal = input.cycleTopSignals.find(function(s) {
+      const cycleSignal = activeCycleSignals.find(function(s) {
         return s.ticker === ticker || s.ticker.split(".")[0] === baseTicker;
       });
       if (cycleSignal && cycleSignal.allocationMultiplier < 1.0) {

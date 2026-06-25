@@ -13,21 +13,18 @@
 // ===============================================
 
 import { ASSETS, RISK_FREE_RATE_DAILY, RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
-import { dailyReturns, mean, variance } from "../../lib/stats";
+import { dailyReturns, tradingDayReturns, mean, variance } from "../../lib/stats";
+import { getProxyUS, getEarningsYield } from "../../lib/assetRegistry";
 import { covarianceMatrix } from "../../lib/marketData";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
 import type { AssetInput } from "../engine/olympusV3";
 
-export const PROXY_MAP: Record<string, string> = {
-  'EMXC.DE': 'EEM',
-  'PPFB.DE': 'GLD',
-  'URNU.DE': 'URA',
-  'VVSM.DE': 'SMH',
-  '0P00000WLG.F': 'URTH',
-  'BAYN.DE': 'XBI',
-  'BTC-EUR': 'BTC-EUR',
-};
+// FIX-AUDIT-R8 3.5: PROXY_MAP now derived from assetRegistry (single source of truth).
+// BAYN.DE removed — not in current portfolio.
+export const PROXY_MAP: Record<string, string> = Object.fromEntries(
+  ["BTC-EUR", "EMXC.DE", "PPFB.DE", "URNU.DE", "VVSM.DE", "0P00000WLG.F"].map(t => [t, getProxyUS(t)])
+);
 
 function getBacktestTicker(realTicker: string, closesHistory: Record<string, number[]>): string {
   const proxy = PROXY_MAP[realTicker];
@@ -39,6 +36,9 @@ function getBacktestTicker(realTicker: string, closesHistory: Record<string, num
 
 export interface BacktestInput {
   closesHistory: Record<string, number[]>;
+  // FIX-AUDIT-R8 3.2: optional timestamps for weekend filtering in backtest.
+  // When provided, tradingDayReturns filters Sat/Sun forward-filled transitions.
+  timestampsHistory?: Record<string, number[]>;
   covMatrix?: number[][];
   macroHistory: {
     vix: number[];
@@ -161,13 +161,22 @@ function computeWindowCovAndCorr(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
   t: number,
-  window: number
+  window: number,
+  timestampsHistory?: Record<string, number[]>
 ): { covMatrix: number[][]; corrMatrix: number[][] } {
   const n = ASSETS.length;
+  // FIX-AUDIT-R8 3.2: use tradingDayReturns when timestamps are available.
+  // Filters weekend forward-filled transitions that dilute volatility ~15-17%.
   const returns = ASSETS.map(ticker => {
     const bticker = backtestTickers[ticker];
     const closes = closesHistory[bticker] ?? [];
-    return dailyReturns(closes.slice(Math.max(0, t - window), t));
+    const slice = closes.slice(Math.max(0, t - window), t);
+    const timestamps = timestampsHistory?.[bticker];
+    if (timestamps && timestamps.length >= closes.length && ticker !== 'BTC-EUR') {
+      const tsSlice = timestamps.slice(Math.max(0, t - window), t);
+      return tradingDayReturns(slice, tsSlice);
+    }
+    return dailyReturns(slice);
   });
 
   // ── FIX: si algún activo tiene 0 retornos válidos, rellenar con un array
@@ -270,7 +279,8 @@ function computeAssetFactors(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
   t: number,
-  lookbackDays: number
+  lookbackDays: number,
+  timestampsHistory?: Record<string, number[]>
 ) {
   const bticker = backtestTickers[ticker];
   const closes = closesHistory[bticker] ?? [];
@@ -278,21 +288,18 @@ function computeAssetFactors(
   const r3m  = periodReturn(closes, t, 63);
   const r1m  = periodReturn(closes, t, 21);
   const window = closes.slice(Math.max(0, t - lookbackDays), t);
-  const dailyRet = dailyReturns(window);
-  const vol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * 252)) : 0.25;
+  // FIX-AUDIT-R8 3.2: filter weekends when timestamps available
+  const timestamps = timestampsHistory?.[bticker];
+  const dailyRet = (timestamps && timestamps.length >= closes.length && ticker !== 'BTC-EUR')
+    ? tradingDayReturns(window, timestamps.slice(Math.max(0, t - lookbackDays), t))
+    : dailyReturns(window);
+  const annualFactor = ticker === 'BTC-EUR' ? 365 : 252;
+  const vol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * annualFactor)) : 0.25;
   // FIX-EY-01: earningsYield ya NO es 0 para todos los activos.
   // Usamos constantes por clase de activo para que Value factor y ERP trigger funcionen en backtest.
   // Sin esto, el backtest era ciego al factor Value y al ERP equity cap.
-  const earningsYieldMap: Record<string, number> = {
-    'BTC-EUR': 0,      // cripto — no tiene earnings
-    'EMXC.DE': 0.05,   // EM equity — ~5% earnings yield
-    'PPFB.DE': 0,      // oro — no tiene earnings
-    'URNU.DE': 0.03,   // uranio — commodity-like, earnings yield bajo
-    'VVSM.DE': 0.04,   // semiconductores — ~4% earnings yield
-    '0P00000WLG.F': 0.05, // Vanguard Global Stock Index — MSCI World developed equity
-    'BAYN.DE': 0.06,   // Bayer — deep value, EY alto (~12.5% P/E 8x, cap 6%)
-  };
-  const earningsYield = earningsYieldMap[ticker] ?? 0;
+  // FIX-AUDIT-R8 3.5: earningsYield now from assetRegistry (single source of truth).
+  const earningsYield = getEarningsYield(ticker);
   return { returns12m: r12m, returns3m: r3m, returns1m: r1m, volatility: vol, earningsYield, ticker, name: ticker };
 }
 
@@ -324,7 +331,8 @@ function computeAllocationsWithRegime(
   currentAllocations: Record<string, number>,
   // Estado tracking para masterRegime
   cewsHistory?: CEWSDataPoint[],
-  regimeHistory?: { timestamp: string; regime: string }[]
+  regimeHistory?: { timestamp: string; regime: string }[],
+  timestampsHistory?: Record<string, number[]>
 ): {
   allocations: Record<string, number>;
   regime: BacktestRegime;
@@ -336,7 +344,7 @@ function computeAllocationsWithRegime(
   // ── 1. Construir AssetInput[] desde datos históricos ──
   const n = ASSETS.length;
   const assets: AssetInput[] = ASSETS.map(ticker => {
-    const fact = computeAssetFactors(ticker, closesHistory, backtestTickers, t, lookbackDays);
+    const fact = computeAssetFactors(ticker, closesHistory, backtestTickers, t, lookbackDays, timestampsHistory);
     return {
       name: ticker,
       ticker,
@@ -349,7 +357,7 @@ function computeAllocationsWithRegime(
   });
 
   // ── 2. Covarianza y correlación ──
-  const { covMatrix, corrMatrix } = computeWindowCovAndCorr(closesHistory, backtestTickers, t, 63);
+  const { covMatrix, corrMatrix } = computeWindowCovAndCorr(closesHistory, backtestTickers, t, 63, timestampsHistory);
 
   // ── 3. Portfolio vol estimada (para engine) ──
   const equalW = assets.map(() => 1 / n);
@@ -459,8 +467,15 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let pendingNewCash = 0;
   let pendingNewRegime: BacktestRegime | null = null;
 
+  // FIX-AUDIT-R8 3.3: TRUE buy-and-hold benchmark (not constant-mix).
+  // Each asset's value drifts with its own price; weights evolve naturally.
+  // benchmarkValue = sum of individual asset values (initial weight × capital tracks own returns).
+  const benchmarkInitWeights = equalWeightAllocations();
+  const benchmarkAssetValues: Record<string, number> = {};
+  for (const ticker of ASSETS) {
+    benchmarkAssetValues[ticker] = (benchmarkInitWeights[ticker] ?? 0) * initialCapital;
+  }
   let benchmarkValue = initialCapital;
-  const benchmarkAlloc = equalWeightAllocations();
 
   const strategyDailyReturns: number[] = [];
   const benchmarkDailyReturns: number[] = [];
@@ -526,7 +541,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         drawdown,
         currentAllocations,
         cewsHistory,
-        regimeHistory
+        regimeHistory,
+        input.timestampsHistory
       );
       // FIX-REGIME-TRACKING (22-Jun-2026): añadir en cada rebalanceo.
       // Usar dayIndex (relativo) para generar timestamps secuenciales sin futuro.
@@ -564,7 +580,6 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
     // Retorno diario: suma de retornos ponderados por pesos (que pueden sumar < 1)
     let portfolioReturn = 0;
-    let benchmarkReturn = 0;
     let activeWeight = 0;
 
     // FIX-USINGPROXY (22-Jun-2026): documentado. Esta fórmula clasifica días
@@ -575,6 +590,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     const usingProxy = t < (maxLen - minProxyLen + lookbackDays);
     if (usingProxy) daysWithProxies++; else daysWithRealData++;
 
+    // FIX-AUDIT-R8 3.3: TRUE buy-and-hold benchmark — each asset tracks its own value.
+    // Weights drift with prices. benchmarkValue = sum of individual asset values.
+    const prevBenchmarkValue = benchmarkValue;
     for (const ticker of ASSETS) {
       const bticker = backtestTickers[ticker];
       const closes = closesHistory[bticker] ?? [];
@@ -584,11 +602,17 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         const dailyRet = c0 / c1 - 1;
         if (isFinite(dailyRet)) {
           portfolioReturn += (currentAllocations[ticker] ?? 0) * dailyRet;
-          benchmarkReturn += (benchmarkAlloc[ticker] ?? 0) * dailyRet;
           activeWeight += (currentAllocations[ticker] ?? 0);
+          // Benchmark: each asset compounds independently (true buy-and-hold)
+          if (benchmarkAssetValues[ticker] !== undefined) {
+            benchmarkAssetValues[ticker] *= (1 + dailyRet);
+          }
         }
       }
     }
+    // Benchmark return = change in total benchmark value
+    benchmarkValue = Object.values(benchmarkAssetValues).reduce((s, v) => s + v, 0);
+    let benchmarkReturn = prevBenchmarkValue > 0 ? benchmarkValue / prevBenchmarkValue - 1 : 0;
 
     // Añadir retorno del efectivo (0%)
     portfolioReturn += currentCash * 0;
@@ -597,7 +621,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     if (!isFinite(benchmarkReturn)) benchmarkReturn = 0;
 
     portfolioValue *= (1 + portfolioReturn);
-    benchmarkValue *= (1 + benchmarkReturn);
+    // FIX-AUDIT-R8 3.3: benchmarkValue already computed from individual asset values (true B&H).
+    // No double-compound with benchmarkReturn.
     if (portfolioValue > peakValue) peakValue = portfolioValue;
     const dd = (portfolioValue - peakValue) / peakValue;
 

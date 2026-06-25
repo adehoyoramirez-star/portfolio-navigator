@@ -806,6 +806,22 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     vixCloses, vixTimestamps, tnxCloses, irxCloses, hygCloses, m2Growth
   );
 
+  // FIX-AUDIT-R8: data freshness validation.
+  // Warns if Yahoo data is older than 24h (stale prices = bad allocations).
+  const now = Date.now();
+  const maxAgeMs = 24 * 60 * 60 * 1000;
+  const staleTickers: string[] = [];
+  for (const ticker of ASSETS) {
+    const timestamps = yfData[ticker]?.timestamps ?? [];
+    if (timestamps.length > 0) {
+      const newestTs = timestamps[timestamps.length - 1] * 1000;
+      if (now - newestTs > maxAgeMs) staleTickers.push(ticker);
+    }
+  }
+  if (staleTickers.length > 0) {
+    console.warn(`[Olympus] ⚠️ STALE DATA: ${staleTickers.join(', ')} — last update >24h ago. Allocations may be based on outdated prices.`);
+  }
+
   return {
     marketData: {
       prices,
