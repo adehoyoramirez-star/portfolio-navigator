@@ -120,6 +120,7 @@ import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
 import walkforwardResults from "@/data/walkforward-results";
 import WalkForwardSection from "@/dashboard/WalkForwardSection";
 import FredManualPanel from "@/dashboard/FredManualPanel";
+import { generateAuditCSV, downloadCSV } from "@/lib/marketDataExport";
 import {
   analyzeBitcoinCycle,
   getPowerLawProjection,
@@ -237,10 +238,6 @@ function randomNormal(): number {
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
-const formatCurrency = (value: number): string => {
-  return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(value);
-};
-
 const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 // ==================== COMPONENTE PRINCIPAL ====================
@@ -279,6 +276,19 @@ const InstitutionalDashboard: React.FC = () => {
   const [mvrvRatio, setMvrvRatio] = useState(1.8);
   const [btcRsiWeekly, setBtcRsiWeekly] = useState<number | undefined>(undefined);
   const [staleDataBlock, setStaleDataBlock] = useState(false);
+  // FEAT: USD/EUR display toggle + exchange rate
+  const [displayCurrency, setDisplayCurrency] = useState<'EUR' | 'USD'>('EUR');
+  const [eurUsdRate, setEurUsdRate] = useState(1.08);
+  // FEAT: Manual forward-looking volatility overrides (per asset, persisted)
+  const [manualVols, setManualVols] = useState<Record<string, number | undefined>>(() => {
+    try { return JSON.parse(localStorage.getItem('olympus_manual_vols') ?? '{}'); } catch { return {}; }
+  });
+
+const formatCurrency = (value: number): string => {
+  const converted = displayCurrency === 'USD' ? value * eurUsdRate : value;
+  return new Intl.NumberFormat("es-ES", { style: "currency", currency: displayCurrency }).format(converted);
+};
+
   const [prevBtcDominance, setPrevBtcDominance] = useState<number | undefined>(undefined);
 
   const [fearGreedIndex, setFearGreedIndex] = useState<{
@@ -490,6 +500,7 @@ const InstitutionalDashboard: React.FC = () => {
             label: cryptoRaw.fearGreedLabel,
             source: cryptoRaw.fearGreedSource,
           });
+          if (cryptoRaw.eurUsd > 0) setEurUsdRate(cryptoRaw.eurUsd);
           // btcVol24h removed - not in direct API
           const hasVol = (cryptoRaw as any).btcVol24h > 0;
           if (hasVol) {
@@ -725,17 +736,24 @@ const InstitutionalDashboard: React.FC = () => {
   );
 
   const assetInputs: AssetInput[] = useMemo(() => {
-    return portfolio.assets.map(asset => ({
-      name: asset.name,
-      ticker: asset.ticker,
-      returns12m: asset.return12m ?? 0.01,
-      returns3m: asset.return3m ?? 0.01,
-      returns1m: asset.return1m ?? 0.01,
-      earningsYield: asset.earningsYield ?? 0,
-      volatility: asset.volatility / 100,
-      sector: asset.sector,
-    }));
-  }, [portfolio.assets]);
+    return portfolio.assets.map(asset => {
+      // FEAT: manual forward-looking vol override
+      const manualVol = manualVols[asset.ticker];
+      const effectiveVol = manualVol !== undefined && manualVol > 0
+        ? manualVol
+        : asset.volatility / 100;
+      return {
+        name: asset.name,
+        ticker: asset.ticker,
+        returns12m: asset.return12m ?? 0.01,
+        returns3m: asset.return3m ?? 0.01,
+        returns1m: asset.return1m ?? 0.01,
+        earningsYield: asset.earningsYield ?? 0,
+        volatility: effectiveVol,
+        sector: asset.sector,
+      };
+    });
+  }, [portfolio.assets, manualVols]);
 
   const yieldSpread = manualBond10y - bond2y;
 
@@ -1345,6 +1363,10 @@ soxRsiWeekly,
   useEffect(() => {
     try { localStorage.setItem('olympus_op_buffer', String(operationalBuffer)); } catch { /* silencio */ }
   }, [operationalBuffer]);
+  // FEAT: persist manual vol overrides
+  useEffect(() => {
+    try { localStorage.setItem('olympus_manual_vols', JSON.stringify(manualVols)); } catch {}
+  }, [manualVols]);
 
   // Cash diagnostic
   const cashDiagnostic = useMemo(() => diagnoseCashState(cashState), [cashState]);
@@ -2073,6 +2095,51 @@ soxRsiWeekly,
         >
           🗑️ Borrar datos guardados
         </button>
+        
+        {/* FEAT: USD/EUR currency toggle */}
+        <button
+          onClick={() => setDisplayCurrency(c => c === "EUR" ? "USD" : "EUR")}
+          style={{
+            ...styles.button,
+            backgroundColor: displayCurrency === "USD" ? "#1e40af" : "#374151",
+            fontSize: "0.85rem",
+            minWidth: "80px",
+          }}
+          title={"Mostrar en " + (displayCurrency === "EUR" ? "USD" : "EUR") + " (EUR/USD = " + eurUsdRate.toFixed(4) + ")"}
+        >
+          {displayCurrency === "EUR" ? "💶 EUR" : "💵 USD"}
+        </button>
+
+        {/* FEAT: CSV export button */}
+        <button
+          onClick={() => {
+            if (!marketData || !engineResult) return;
+            const csv = generateAuditCSV({
+              marketData,
+              portfolioValue: totalPortfolioValue,
+              cashReserve,
+              defensiveLiquidity,
+              regime: engineResult.regime,
+              allocations: engineResult.allocations.map(a => {
+                const asset = portfolio.assets.find(pa => pa.name === a.name);
+                return { name: a.name, ticker: asset?.ticker ?? a.name, finalAllocation: a.finalAllocation, price: asset?.price ?? 0 };
+              }),
+              shares: portfolio.assets.map(a => ({ ticker: a.ticker, name: a.name, shares: a.shares, avgPrice: a.avgPrice })),
+            });
+            downloadCSV(csv);
+          }}
+          style={{
+            ...styles.button,
+            backgroundColor: "#1e3a5f",
+            fontSize: "0.8rem",
+            border: "1px solid #3b82f6",
+          }}
+          disabled={!marketData || !engineResult}
+          title="Exportar datos de mercado a CSV para auditoria externa"
+        >
+          CSV Auditoria
+        </button>
+
         <span style={{ color: "#9ca3af", fontSize: "0.85rem" }}>
           {aiIntelligence && !aiLoading && (
             <span style={{ color: "#818cf8" }}>
@@ -3668,7 +3735,79 @@ soxRsiWeekly,
       {/* FIX-AUDIT-R9 UI: FRED Manual Inputs Panel — editar M2, CAPE, credit spread, breakeven */}
       <FredManualPanel onSaved={refreshMarketData} />
 
-      {/* BTC CYCLE ANALYZER */}
+      
+      {/* FEAT: Manual Forward-Looking Volatility Panel */}
+      <div style={{
+        background: "#0f1f38", border: "1px solid #1e3a5f", borderRadius: "10px",
+        padding: "14px 16px", marginBottom: "12px",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+          <span style={{ fontWeight: 700, color: "#93c5fd", fontSize: "0.88rem" }}>Volatilidad Forward-Looking (manual)</span>
+          <span style={{ fontSize: "0.68rem", color: "#64748b" }}>Sobreescribe la vol realizada si se especifica</span>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          {portfolio.assets.map(asset => {
+            const assetIdx = ASSETS.indexOf(asset.ticker as any);
+            const marketVol = (marketData?.realizedVols?.[assetIdx] ?? asset.volatility / 100) * 100;
+            const manualVol = manualVols[asset.ticker];
+            const displayVol = manualVol !== undefined ? manualVol : marketVol;
+            const isOverridden = manualVol !== undefined;
+            return (
+              <div key={asset.ticker} style={{
+                background: isOverridden ? "#1e293b" : "#0f172a",
+                border: "1px solid " + (isOverridden ? "#f59e0b" : "#1e3a5f"),
+                borderRadius: "6px", padding: "6px 10px",
+                minWidth: "140px",
+              }}>
+                <div style={{ fontSize: "0.65rem", color: "#64748b", marginBottom: "2px" }}>
+                  {asset.name}
+                  <span style={{ color: "#94a3b8", marginLeft: "4px" }}>
+                    {isOverridden ? "edit" : "chart"} {(displayVol).toFixed(1)}%
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                  <input
+                    type="number"
+                    value={manualVol !== undefined ? (manualVol * 100).toFixed(1) : ""}
+                    placeholder={(marketVol).toFixed(1)}
+                    step="0.5"
+                    min="1"
+                    max="150"
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? undefined : Number(e.target.value) / 100;
+                      setManualVols(prev => ({ ...prev, [asset.ticker]: val }));
+                    }}
+                    style={{
+                      width: "55px", background: "#0f172a", border: "1px solid " + (isOverridden ? "#f59e0b" : "#334155"),
+                      color: isOverridden ? "#fbbf24" : "#94a3b8", borderRadius: "3px",
+                      padding: "2px 4px", fontSize: "0.72rem", textAlign: "right",
+                    }}
+                  />
+                  <span style={{ fontSize: "0.6rem", color: "#475569" }}>%</span>
+                  {isOverridden && (
+                    <button
+                      onClick={() => setManualVols(prev => { const n = { ...prev }; delete n[asset.ticker]; return n; })}
+                      style={{
+                        background: "none", border: "none", color: "#f59e0b", cursor: "pointer",
+                        fontSize: "0.65rem", padding: "0 2px",
+                      }}
+                      title="Volver a vol realizada del mercado"
+                    >
+                      reset
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {Object.keys(manualVols).length > 0 && (
+          <div style={{ marginTop: "8px", fontSize: "0.6rem", color: "#f59e0b" }}>
+            {Object.keys(manualVols).length} activo(s) con volatilidad manual - el motor usara estos valores en lugar de la vol realizada.
+          </div>
+        )}
+      </div>
+{/* BTC CYCLE ANALYZER */}
       {btcCycleResult && (() => {
         const c = btcCycleResult;
         const pl = c.powerLaw;
