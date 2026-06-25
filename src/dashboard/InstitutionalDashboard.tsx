@@ -369,11 +369,10 @@ const InstitutionalDashboard: React.FC = () => {
   const [apiError, setApiError] = useState<string | null>(null);
   const [marketData, setMarketData] = useState<MarketData | null>(null);
 
-  useEffect(() => {
-    if (marketData) {
-      (window as any).__marketData = marketData;
-    }
-  }, [marketData]);
+  // FIX-AUDIT-R2 N4: eliminado leak a window.__marketData.
+  // ANTES: cualquier extensión del navegador o XSS podía leer posiciones, allocations y datos macro.
+  // Surface de ataque innecesario en producción. Para debug usar React DevTools.
+  // useEffect removido por completo.
 
   const [activeAlerts, setActiveAlerts] = useState<RegimeAlert[]>([]);
   const [regimeHistory, setRegimeHistory] = useState<RegimeHistoryEntry[]>(() => loadRegimeHistory());
@@ -523,7 +522,10 @@ const InstitutionalDashboard: React.FC = () => {
       const ctxBody = {
         regime: engineResult.regime,
         regimePenalty: engineResult.masterRegime.regimePenalty ?? 1,
-        probCrisis: (engineResult.masterRegime as any).crisisProb ?? 0,
+        // FIX-AUDIT-R2 N6: crisisProb acceso type-safe. Sin "as any".
+        // ANTES: `(engineResult.masterRegime as any).crisisProb ?? 0` — silencioso si el engine renombraba el campo.
+        // AHORA: scenarioProbabilities?.bear (canónico en el output del engine).
+        probCrisis: engineResult.scenarioProbabilities?.bear ?? 0,
         vix, move: moveIndex, bond10y: manualBond10y, bond2y, creditSpread, m2Growth, dxy,
         brent: wtiOil, btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price ?? 0,
         btcRsi: btcRsiWeekly ?? 50, btcDominance, mvrv: mvrvRatio ?? 0,
@@ -1399,7 +1401,15 @@ soxRsiWeekly,
   };
 
   const rebalanceFinal = useMemo(() => {
-    if (!engineResult || engineResult.regime === "ALL_CASH") return null;
+    // FIX-AUDIT-R2 N3 v2: rebalanceFinal en ALL_CASH ahora emite sell-all explícito.
+    // ANTES: guard `if (...regime === "ALL_CASH") return null` → el motor decidía ALL_CASH
+    // (pánico total) y el dashboard quedaba con 0 sugerencias → el usuario permanecía 100% invertido
+    // sin instrucción de vender. v1 sólo quita el guard, pero computeRebalanceSuggestions
+    // NO emite SELL porque depende de cycleTopSignals.shouldTrim. Sin cycle actives + targetPct=0
+    // → deficitValue=0 → no BUY tampoco → 0 sugerencias → mismo bug.
+    // REAL FIX: en ALL_CASH, generar SELL signals manuales para todos los activos con shares>0
+    // a 100% (liquidation total), priority HIGH, descartando BUY suggestions del base output.
+    if (!engineResult) return null;
     const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
       const alloc = engineResult.allocations.find(a => a.name === asset.name);
       return {
@@ -1410,13 +1420,50 @@ soxRsiWeekly,
         targetAllocation: alloc?.finalAllocation ?? 0,
       };
     });
-    return computeRebalanceSuggestions(
+    const baseRebalance = computeRebalanceSuggestions(
       rebalanceAssets,
       availableCash,
       totalPortfolioValue,
       0.02,
       cycleTopResult.signals
     );
+    if (engineResult.regime !== "ALL_CASH") return baseRebalance;
+    // ALL_CASH branch: liquidar todo
+    const liquidationSells: typeof baseRebalance.suggestions = [];
+    for (const asset of rebalanceAssets) {
+      if (asset.shares <= 0 || asset.price <= 0) continue;
+      const sharesToSell = asset.ticker === "BTC-EUR"
+        ? Math.floor(asset.shares * 10000) / 10000
+        : Math.floor(asset.shares);
+      if (sharesToSell <= 0) continue;
+      // #2: drift = currentPct - targetPct; targetPct=0 → drift = currentPct (no constante 100%)
+      const liqCurrentPct = (asset.shares * asset.price) / Math.max(totalPortfolioValue, 1);
+      liquidationSells.push({
+        ticker: asset.ticker, name: asset.name, action: "SELL",
+        sharesToBuy: 0, cost: 0,
+        sharesToSell,
+        proceedsIfSold: sharesToSell * asset.price,
+        trimPct: 100,
+        currentPct: liqCurrentPct,
+        targetPct: 0, drift: liqCurrentPct, // rbalancer(): drift = currentPct - targetPct = currentPct (target=0)
+        priority: "HIGH",
+        reason: `🚨 ALL_CASH — liquidación total ${asset.name} (régimen motor en pánico máximo)`,
+        cycleZone: "EXTREME", // marca explícita que es signal de crisis, no de techo de ciclo
+      });
+    }
+    const totalProceeds = liquidationSells.reduce((s, r) => s + r.proceedsIfSold, 0);
+    return {
+      suggestions: liquidationSells,
+      sellSuggestions: liquidationSells,
+      buySuggestions: [],
+      totalCost: 0,
+      totalProceeds,
+      remainingCash: availableCash + totalProceeds,
+      // #3: isFullyFunded en rebalancer.ts = "BUYs cubiertos por cash". En liquidación no hay BUYs
+      // → marcar false honestamente (no true para evitar badges confusos en dashboard).
+      coverageRatio: 0,
+      isFullyFunded: false,
+    };
   }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult]);
 
   const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {

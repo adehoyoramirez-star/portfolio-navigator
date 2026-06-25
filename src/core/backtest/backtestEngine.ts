@@ -660,7 +660,7 @@ function computeMetrics(dailyRets: number[], initialCapital: number, finalValue:
   if (clean.length === 0) return emptyMetrics(initialCapital);
   const years = clean.length / 252;
   const totalReturn = isFinite(finalValue) && finalValue > 0 ? finalValue / initialCapital - 1 : 0;
-  const cagr = years > 0 ? Math.pow(Math.max(0.001, 1 + totalReturn), 1 / years) - 1 : 0;
+  const cagr = years > 0 ? ((1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
   const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
   const rfDaily = 0.04 / 252;
@@ -700,7 +700,7 @@ function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
   }
   const years = clean.length / 252;
   const totalRet = clean.reduce((acc, r) => acc * (1 + r), 1) - 1;
-  const cagr = years > 0 ? Math.pow(Math.max(0.001, 1 + totalRet), 1 / years) - 1 : 0;
+  const cagr = years > 0 ? ((1 + totalRet) > 0 ? Math.pow(1 + totalRet, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
   const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
   const rfDaily = 0.04 / 252;

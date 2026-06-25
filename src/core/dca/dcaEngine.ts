@@ -88,7 +88,19 @@ export function computeDCADecision(input: DCAEngineInput): DCAEngineOutput {
   // ── GUARDIA: vol pánico ──────────────────────────────────────────────────
   // FIX-BUG-3: portfolioVolatility es vol anualizada. PANIC_VOLATILITY = 0.40.
   // Antes: 0.04 → cualquier portafolio normal (vol 14-25%) activaba venta de emergencia.
-  const isPanic = (portfolioVolatility ?? 0) > DCA_CONFIG.RISK_LIMITS.PANIC_VOLATILITY;
+  // FIX-AUDIT-R2 N5: isPanic ahora default a 0.15 (vol normal máxima) si undefined.
+  // ANTES: ?? 0 -> 0>0.40=false -> panic SIEMPRE off durante data outage -> motor sigue
+  // comprando sin freno de volatilidad. Ahora: si falta dato, asume vol normal
+  // (no dispara panic pero tampoco admite el falso "todo OK"). Log warn para trazabilidad.
+  const usedFallbackVol = portfolioVolatility === undefined;
+  // FIX-AUDIT-R2 N5 v2: console.warn solo en runtime real (NO test ni backtest).
+  // El backtest invoca esta función ~250 veces por run; sin gating serían 250 warns idnticos.
+  // Asume process.env NODE_ENV disponible (Vite, Deno, Node.js). La producción siempre emite; tests/CLI no.
+  if (usedFallbackVol && typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'test') {
+    console.warn('[DCA] portfolioVolatility undefined → asumiendo 15% anual como fallback');
+  }
+  const effectiveVol = portfolioVolatility ?? 0.15;
+  const isPanic = effectiveVol > DCA_CONFIG.RISK_LIMITS.PANIC_VOLATILITY;
 
   if (isPanic && totalPortfolioValue > 100) {
     const sellAmount = totalPortfolioValue * DCA_CONFIG.RISK_LIMITS.LIQUIDATION_RATIO;
@@ -102,8 +114,8 @@ export function computeDCADecision(input: DCAEngineInput): DCAEngineOutput {
       frequencyDays:         30,
       riskConstraintActive:  true,
       cashConstrained:       false,
-      riskConstraintReason: `🚨 VENTA DE EMERGENCIA — vol ${((portfolioVolatility ?? 0) * 100).toFixed(0)}% > umbral ${(DCA_CONFIG.RISK_LIMITS.PANIC_VOLATILITY * 100).toFixed(0)}%`,
-      description:          `Liquidando ${(DCA_CONFIG.RISK_LIMITS.LIQUIDATION_RATIO * 100).toFixed(0)}% por volatilidad extrema (${((portfolioVolatility ?? 0) * 100).toFixed(0)}% anual).`,
+      riskConstraintReason: `🚨 VENTA DE EMERGENCIA — vol ${(effectiveVol * 100).toFixed(0)}% > umbral ${(DCA_CONFIG.RISK_LIMITS.PANIC_VOLATILITY * 100).toFixed(0)}%`,
+      description:          `Liquidando ${(DCA_CONFIG.RISK_LIMITS.LIQUIDATION_RATIO * 100).toFixed(0)}% por volatilidad extrema (${(effectiveVol * 100).toFixed(0)}% anual).`,
     };
   }
 

@@ -324,10 +324,10 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   const hasEnoughData = actualYears >= MIN_BENCHMARK_YEARS;
 
   const engineCagr3m = hasEnoughData
-    ? Math.pow(Math.max(0.001, engineCumRet), 1 / effectiveYears) - 1
+    ? (engineCumRet > 0 ? Math.pow(engineCumRet, 1 / effectiveYears) - 1 : -1)
     : engineCumRet - 1; // retorno simple (no anualizado) si < 30 días
   const benchmarkCagr3m = hasEnoughData
-    ? Math.pow(Math.max(0.001, benchmarkCumRet), 1 / effectiveYears) - 1
+    ? (benchmarkCumRet > 0 ? Math.pow(benchmarkCumRet, 1 / effectiveYears) - 1 : -1)
     : benchmarkCumRet - 1;
 
   const cleanEngineCagr = isFinite(engineCagr3m) ? engineCagr3m : 0;

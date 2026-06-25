@@ -143,7 +143,8 @@ const MONITOR_CONFIG = {
     { drawdown: 0.40, mult: 3.5, label: 'Capitulación — máxima agresividad' },
   ],
 
-  RISK_FREE_DAILY: 0.0385 / 252,
+  // FIX-AUDIT-R2 H1: alineado con el resto del sistema (0.04 = 4% anual). Antes 0.0385 -> numerador de Sharpe distinto al backtest.
+  RISK_FREE_DAILY: 0.04 / 252,
   ROLLING_WINDOW: 20,
 } as const;
 
@@ -219,12 +220,17 @@ function computeRollingMetrics(
   const stdDev = Math.sqrt(variance);
   const annualizedVol = stdDev * Math.sqrt(252);
 
-  const sharpe20d = stdDev > 0 ? (excessMean * Math.sqrt(252)) / annualizedVol : 0;
+  // FIX-AUDIT-R2 N1: Sharpe DES-anualizado. annualizedVol = stdDev*sqrt(252), pero el numerador
+  //  usaba *Math.sqrt(252) -> cancelled out -> reportaba ratio DIARIO (~0.05) en lugar de
+  //  anualizado (~0.80). Ahora anualizamos con *252 en lugar de *sqrt(252).
+  const sharpe20d = stdDev > 0 ? (excessMean * 252) / annualizedVol : 0;
 
   const downReturns = recent.filter(r => r < rf);
   const downsideVariance = downReturns.reduce((s, r) => s + (r - rf) ** 2, 0) / Math.max(n - 1, 1);
   const downsideDev = Math.sqrt(downsideVariance);
-  const sortino20d = downsideDev > 0 ? (excessMean * Math.sqrt(252)) / (downsideDev * Math.sqrt(252)) : 0;
+  // FIX-AUDIT-R2 N1: Sortino mismo bug que Sharpe -> excessMean numerador diario.
+  //  annualized downside = downsideDev * sqrt(252). Para_ratio anualizado: numerator*252/denom*sqrt(252).
+  const sortino20d = downsideDev > 0 ? (excessMean * 252) / (downsideDev * Math.sqrt(252)) : 0;
 
   const sorted = [...recent].sort((a, b) => a - b);
   const varIdx = Math.max(0, Math.floor(0.05 * n) - 1);
