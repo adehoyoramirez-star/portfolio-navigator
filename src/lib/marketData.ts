@@ -1,6 +1,6 @@
 import { fetchYahooBatch, type YahooBatchResponse } from '@/lib/yahooFinance';
 import { ASSETS } from '@/lib/constants';
-import { cleanCloses, dailyReturns, mean, std, percentile } from '@/lib/stats';
+import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { globalLiquiditySignal, fromManualInputs } from '@/core/macro/liquidityCycle';
 
@@ -104,9 +104,17 @@ export interface MarketData {
   // Breakeven inflación 5y (FRED T5YIFR)
   inflationBreakeven: number | null;
   inflationBESource: "FRED" | "MANUAL";
+  // FIX-AUDIT-R7 MD-0: flags de calidad de datos — true = dato real (FRED/Yahoo), false = fallback manual
+  dataQualityFlags: {
+    m2Growth: boolean;
+    cape: boolean;
+    centralBanks: boolean;
+    creditSpread: boolean;
+    breakeven: boolean;
+  };
 }
 
-// Nota: cleanCloses, dailyReturns, mean, std, percentile importados desde @/lib/stats.ts
+// Nota: cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile importados desde @/lib/stats.ts
 
 // ── Constantes de configuración (module-level) ───────────────────────────────
 const DAYS_12M = 252;
@@ -454,12 +462,22 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   }
 
   // Datos de FRED y fundamentales ya no vienen de Supabase — usar fallbacks
+  // FIX-AUDIT-R7 MD-0: exponer warning visible cuando M2/CAPE/creditSpread están en modo manual.
+  // El dashboard puede consumir dataQualityFlags para mostrar ⚠️ al usuario.
   const fredM2 = undefined;
   const fredCAPE = undefined;
   const centralBanks = undefined;
   const fredCreditSpread = undefined;
   const fredBreakeven = undefined;
   const yfFundamentals = undefined;
+  // Flags de calidad: true = dato real, false = fallback manual
+  const dataQualityFlags = {
+    m2Growth: false,
+    cape: false,
+    centralBanks: false,
+    creditSpread: false,
+    breakeven: false,
+  };
   
   // ====== DEBUG: Verificar estructura de datos recibidos (solo dev) ======
   const devMode = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
@@ -576,7 +594,21 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   }
 
   // ====== RETORNOS DIARIOS POR ACTIVO ======
-  const returnsPerAsset = ASSETS.map(ticker => dailyReturns(closesHistory[ticker]));
+  // FIX-AUDIT-R7 MD-1: usar tradingDayReturns para filtrar fines de semana en activos no-cripto.
+  // BTC-EUR cotiza 24/7 → dailyReturns sin filtrar + anualización ×365.
+  // Resto de activos: tradingDayReturns filtra Sat/Sun forward-filled → anualización ×252.
+  const returnsPerAsset = ASSETS.map(ticker => {
+    const closes = closesHistory[ticker];
+    const timestamps = yfData[ticker]?.timestamps ?? [];
+    if (ticker === 'BTC-EUR') {
+      // BTC trades 24/7 — all calendar days are real trading days
+      return dailyReturns(closes);
+    }
+    // Non-crypto: filter weekends to avoid ~28.5% zero-return dilution
+    return timestamps.length === closes.length && timestamps.length > 0
+      ? tradingDayReturns(closes, timestamps)
+      : dailyReturns(closes); // fallback si no hay timestamps
+  });
 
   // ====== BTC INDICADORES TÉCNICOS (desde histórico real, no mock) ======
   const btcCloses = closesHistory['BTC-EUR'];
@@ -602,16 +634,14 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const piCycleMAs = calculatePiCycleMAs(btcDailyCloses);
 
   // BTC vol realizada anualizada (reusa returnsPerAsset para evitar dailyReturns duplicado)
-  // FIX-C1: usar media real μ en vez de m=0. Con m=0 se sobreestima la varianza
-  // porque (r-0)² > (r-μ)² para cualquier μ ≠ 0. BTC con retorno diario medio de
-  // ~0.15% introducía un sesgo de ~2-3pp en la vol anualizada.
+  // FIX-AUDIT-R7 MD-1: BTC anualiza ×365 (cotiza 24/7).
   const btcIdx = ASSETS.indexOf('BTC-EUR');
   const btcReturnsForVol = btcIdx >= 0 ? returnsPerAsset[btcIdx] : [];
   const btcVolRealized = btcReturnsForVol.length > 20
     ? (() => {
         const mu = btcReturnsForVol.reduce((s, r) => s + r, 0) / btcReturnsForVol.length;
         return Math.sqrt(btcReturnsForVol.reduce((s, r) => s + (r - mu) ** 2, 0)
-          / (btcReturnsForVol.length - 1) * 252);
+          / (btcReturnsForVol.length - 1) * 365);
       })()
     : 0.60;
 
@@ -739,29 +769,28 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   });
 
   // ====== EXPECTED RETURNS — James-Stein shrinkage hacia priors de LP ======
+  // FIX-AUDIT-R7 MD-1: BTC anualiza ×365, resto ×252.
   const expectedReturns = ASSETS.map((ticker, idx) => {
     const r = returnsPerAsset[idx];
-    if (r.length < 20) return LONG_RUN_PRIORS[ticker] ?? 0.08; // sin datos: usar prior
-    const mleMu = mean(r) * 252;                                  // estimador histórico crudo
-    const prior = LONG_RUN_PRIORS[ticker] ?? 0.08;               // prior de largo plazo
-    // Shrinkage: combinar MLE con prior — reduce sesgo de recency bias
+    const annualFactor = ticker === 'BTC-EUR' ? 365 : 252;
+    if (r.length < 20) return LONG_RUN_PRIORS[ticker] ?? 0.08;
+    const mleMu = mean(r) * annualFactor;
+    const prior = LONG_RUN_PRIORS[ticker] ?? 0.08;
     const shrunk = (1 - SHRINKAGE_FACTOR) * mleMu + SHRINKAGE_FACTOR * prior;
-    // Cap conservador: no permitir mu > 25% (evita proyecciones absurdas incluso en bull runs)
     return Math.min(0.25, Math.max(0.02, shrunk));
   });
 
   // ====== VOLATILIDADES REALIZADAS ANUALIZADAS ======
-  // Blend 70% EWMA (lambda=0.94, reactivo a régimen reciente) + 30% histórica larga.
-  // El EWMA reacciona 3-4x más rápido que la vol histórica en cambios de régimen,
-  // mejorando la señal de Vol Target y el sizing de Kelly en mercados volátiles.
-  const realizedVols = returnsPerAsset.map(r => {
-    if (r.length < 20) return 0.25;
+  // FIX-AUDIT-R7 MD-1: BTC anualiza ×365 (cotiza 24/7). Resto ×252 (trading days).
+  const realizedVols = returnsPerAsset.map((r, idx) => {
+    const ticker = ASSETS[idx];
+    const annualFactor = ticker === 'BTC-EUR' ? 365 : 252;
+    if (r.length < 20) return ticker === 'BTC-EUR' ? 0.60 : 0.25;
     const m = mean(r);
-    const historicVol = Math.sqrt(r.reduce((s, v) => s + (v - m) ** 2, 0) / (r.length - 1) * 252);
-    // EWMA lambda=0.94 (RiskMetrics standard) — pondera más los retornos recientes
+    const historicVol = Math.sqrt(r.reduce((s, v) => s + (v - m) ** 2, 0) / (r.length - 1) * annualFactor);
     let ewmaVariance = 0;
     for (const ret of r) ewmaVariance = 0.94 * ewmaVariance + 0.06 * ret ** 2;
-    const ewmaVol = Math.sqrt(ewmaVariance * 252);
+    const ewmaVol = Math.sqrt(ewmaVariance * annualFactor);
     return ewmaVol * 0.70 + historicVol * 0.30;
   });
 
@@ -821,6 +850,8 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       piCycleMa350x2: piCycleMAs?.ma350x2 ?? null,
       inflationBreakeven: fredBreakeven?.value ?? null,
       inflationBESource: fredBreakeven ? "FRED" as const : "MANUAL" as const,
+      // FIX-AUDIT-R7 MD-0: flags de calidad para warning visible en dashboard
+      dataQualityFlags,
     },
     fetchErrors,
   };

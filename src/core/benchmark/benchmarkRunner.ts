@@ -17,12 +17,18 @@
 //   Claves: 'olympus_benchmark_snapshots' + 'olympus_benchmark_returns'
 //
 // BENCHMARK 60/40 (usando los mismos assets del portfolio):
-//   60% Equity:   XNAS.DE (20%) + IS3Q.DE (20%) + VVSM.DE (10%) + EMXC.DE (10%)
-//   40% Defensivo: PPFB.DE (25%) + BTC-EUR (10%) + URNU.DE (5%)
+//   60% Equity:   0P00000WLG.F (35%) + VVSM.DE (15%) + EMXC.DE (10%)
+//   40% Defensivo: PPFB.DE (20%) + BTC-EUR (10%) + URNU.DE (10%)
 //
-// Cada activo tiene peso fijo. El benchmark nunca rebalancea.
-// Esto mide: "¿qué tal le habría ido a un hold 60/40 sin rebalancear?"
-// Frente al motor que sí rebalancea, aplica vol target y tail risk.
+// Cada activo tiene peso fijo. El benchmark aplica constant-mix diario
+// (matematicamente equivalente a rebalanceo diario a pesos objetivo).
+// Esto NO es buy-and-hold puro: un verdadero buy-and-hold dejaría que
+// los pesos deriven con los precios. Pero un constant-mix diario es el
+// benchmark mas apropiado porque:
+//   a) Es la implementacion canonica en la literatura (DeMiguel et al. 2009)
+//   b) No paga costes de transaccion (ventaja vs el motor, sesgo conservador)
+//   c) Es computacionalmente predecible y no depende del punto de entrada
+// FIX-AUDIT-R7 BR-2: documentado correctamente como constant-mix, no buy-and-hold.
 // ===============================================
 
 import { ASSETS, RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
