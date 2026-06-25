@@ -248,6 +248,8 @@ function minimumVarianceBL(
   const learningRate = 0.01;
   const iterations = 200;
 
+  // FIX-AUDIT-R4 R4.2: convergence early break — iteraciones fijas n=200 pueden seguir convergiendo o diverger lentamente.
+  // maxDiff < eps implica gradiente ~0 → weights ya son optimos locales.
   for (let iter = 0; iter < iterations; iter++) {
     const grad = new Array(n).fill(0);
     for (let i = 0; i < n; i++) {
@@ -256,10 +258,13 @@ function minimumVarianceBL(
       }
       grad[i] -= lambda * expectedReturns[i];
     }
+    const oldWeights = weights.slice();
     for (let i = 0; i < n; i++) {
       weights[i] -= learningRate * grad[i];
     }
     weights = projectToSimplex(weights, n);
+    const maxDiff = Math.max(...weights.map((w, i) => Math.abs(w - oldWeights[i])));
+    if (maxDiff < 1e-6) break;
   }
 
   return weights;

@@ -920,7 +920,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     killSwitchLevel: tailRisk.killSwitchLevel,
     killSwitchName:  tailRisk.killSwitchName,
   };
-}
+  // 
 
 // ── HELPERS INTERNOS ──────────────────────────────────────────────────────────
 
@@ -974,4 +974,5 @@ function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix
   // En ausencia de covMatrix, es la mejor estimación no sesgada.
   const variance = assets.reduce((sum, a, i) => sum + weights[i] * weights[i] * a.volatility * a.volatility, 0);
   return Math.sqrt(Math.max(0, variance));
+}
 }

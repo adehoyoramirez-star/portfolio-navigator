@@ -708,19 +708,12 @@ export function calcTotalScore(signals: TacticalSignal[]): number {
   
   // Weighted score: each signal contributes its score × weight
   // Normalized so the best possible score is 100
-  let weightedSum = 0;
-  let totalWeight = 0;
-  for (const sig of active) {
-    const w = SIGNAL_WEIGHTS[sig.type] ?? 0.5;
-    weightedSum += sig.score * w;
-    totalWeight += w;
-  }
-  const weightedAvg = totalWeight > 0 ? weightedSum / totalWeight : 0;
   
   // Confluence bonus: capped at +15 for 3+ signals
-  const confluenceBonus = active.length >= 3 ? 10 : active.length === 2 ? 5 : 0;
+  const extraBonus = active.length >= 3 ? 10 : active.length === 2 ? 5 : 0;
   
-  return Math.min(100, Math.round(weightedAvg + confluenceBonus));
+  const baseScore = active.reduce((best, sig) => Math.max(best, sig.score), 0);
+  return Math.min(100, Math.round(baseScore + extraBonus));
 }
 
 // ════════════════════════════════════════════════════════════

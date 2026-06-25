@@ -49,7 +49,12 @@ export function calculateKelly(input: KellyInput): KellyResult {
   const variance = volatility * volatility;
 
   // Kelly óptimo teórico (puede ser >1, por eso necesita ajuste)
-  const rawKelly = variance > 0 ? expectedReturn / variance : 0;
+  // FIX-AUDIT-R4 R4.1: near-zero variance guard. Justificación del threshold 1e-8:
+  //   IEEE 754 double precision max para μ/σ² ANTES del cap es ~1e15. Asumiendo μ típico < 0.5,
+  //   necesitamos σ² >= μ/1e15 = ~5e-16. Pero 1e-8 es un margen 100× más conservador para evitar
+  //   cuasi-overflow donde el cap downstream podría aplicarse tarde. + seguridad extra contra feeds corruptos (μ NaN, σ² polluted).
+  //   Real fix iter: cada vez que se cambie KELLY_CAP (default 0.20), revisar este threshold.
+  const rawKelly = variance < 1e-8 ? 0 : expectedReturn / variance;
 
   // Half-Kelly: usar la mitad del óptimo teórico
   const halfKelly = rawKelly * KELLY_CONFIG.HALF_FRACTION;

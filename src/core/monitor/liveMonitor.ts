@@ -146,7 +146,7 @@ const MONITOR_CONFIG = {
   ],
 
   // FIX-AUDIT-R3 R3-03: importa RISK_FREE_RATE_DAILY de @/lib/constants (centralizado).
-  // Antes: 0.04/252 hardcoded aquí. Otros archivos usaban 0.04 también pero sin garantía de coherencia.
+  // Antes: RISK_FREE_RATE_DAILY centralised en constants.ts (FIX-AUDIT-R3 R3-03). Antes era 0.04/252 hardcoded con riesgo de drift entre archivos.
   // Ahora: edición única en constants.ts propaga a liveMonitor, backtest, benchmark y DCA.
   RISK_FREE_DAILY: RISK_FREE_RATE_DAILY,
   ROLLING_WINDOW: 20,

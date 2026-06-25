@@ -143,6 +143,7 @@ describe("DCA Normal (< 4 señales)", () => {
       btcMomentum1m: -0.15,
       btcDominance: 60,
       mvrvRatio: 1.4,
+      regimePenalty: 0.50,
     }));
     // Señales: BTC oversold + momentum + BTC.D + MVRV = 4, pero necesitamos ≤3 para normal
     // Con 4 activas -> ataque. Bajamos a 3 quitando una
@@ -202,6 +203,7 @@ describe("BTC-Only Attack (≥4 señales, < 2 macro)", () => {
       btcMomentum1m: -0.15,
       btcDominance: 60,
       mvrvRatio: 1.4,
+      regimePenalty: 0.50,
     }));
     // Señales: BTC oversold (1) + momentum (2) + BTC.D (3) + MVRV (4) = 4 total, 0 macro
 
@@ -503,6 +505,8 @@ describe("Edge Cases", () => {
         { ticker: "0P00000WLG.F", shouldTrim: true, zone: "DANGER" },
         { ticker: "VVSM.DE", shouldTrim: true, zone: "CAUTION" },
         { ticker: "PPFB.DE", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "URNU.DE", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "EMXC.DE", shouldTrim: true, zone: "CAUTION" },
         { ticker: "VVSM.DE", shouldTrim: true, zone: "EXTREME" },
       ],
     }));

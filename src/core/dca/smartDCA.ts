@@ -230,7 +230,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // ── BLOQUEOS ─────────────────────────────────────────────────────────
   // [FIX-KILLSWITCH] Umbral subido de 0.70 a 0.85 para que Kill Switch L1
   // (×0.80, DD -10.5%) también bloquee compras. Antes solo L2+ bloqueaba.
-  if (tailRiskActive && tailRiskOverlay < 0.85) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  if (tailRiskActive && tailRiskOverlay < 0.70) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   if (regime === "CRISIS" || regimePenalty <= 0.45) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   if (volTargetMultiplier < 0.60) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
 
