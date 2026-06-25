@@ -119,6 +119,7 @@ import {
 import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
 import walkforwardResults from "@/data/walkforward-results";
 import WalkForwardSection from "@/dashboard/WalkForwardSection";
+import FredManualPanel from "@/dashboard/FredManualPanel";
 import {
   analyzeBitcoinCycle,
   getPowerLawProjection,
@@ -3663,6 +3664,9 @@ soxRsiWeekly,
           </div>
         </div>
       )}
+
+      {/* FIX-AUDIT-R9 UI: FRED Manual Inputs Panel — editar M2, CAPE, credit spread, breakeven */}
+      <FredManualPanel onSaved={refreshMarketData} />
 
       {/* BTC CYCLE ANALYZER */}
       {btcCycleResult && (() => {
