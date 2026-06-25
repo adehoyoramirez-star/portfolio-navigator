@@ -233,6 +233,9 @@ export interface OlympusEngineInput {
   // porque todas las llamadas ocurren en milisegundos.
   bypassHysteresis?: boolean;
   avgCorrelation?: number;
+  // FIX-AUDIT-R9 5: SOX RSI semanal + inflation breakeven para CycleTop detection
+  soxRsiWeekly?: number;
+  inflationBreakeven?: number;
   cycleTopSignals?: { ticker: string; allocationMultiplier: number }[];
   regimeLock?: RegimeLock | null;
   blendWeights?: {
@@ -673,9 +676,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         uraniumSpotPrice: undefined,
         uraniumLTPrice: undefined,
         siaSalesYoY: undefined,
-        soxRsiWeekly: undefined,
+        soxRsiWeekly: input.soxRsiWeekly,
         bondYield10y: 4.25,    // approx 10y yield; gold detector returns SAFE anyway (no inflationBreakeven)
-        inflationBreakeven: undefined,
+        inflationBreakeven: input.inflationBreakeven,
         brentOil: macro.wtiOil,
         wlgRsiWeekly: undefined,
         wlgPERatio: undefined,

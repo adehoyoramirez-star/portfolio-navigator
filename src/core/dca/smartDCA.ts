@@ -48,6 +48,8 @@ export interface SmartDCAInput {
   /** Señales de techo de ciclo por activo. Si un activo tiene shouldTrim=true,
    *  SmartDCA no comprará más de ese activo (redistribuye el cash a los demás). */
   cycleTopSignals?: { ticker: string; shouldTrim: boolean; zone: string }[];
+  /** FIX-AUDIT-R9 4: circuit breaker — true if Yahoo data >72h stale. DCA blocked. */
+  staleDataBlock?: boolean;
 }
 
 export interface DCAAllocation {
@@ -235,6 +237,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   }
 
   // ── BLOQUEOS ─────────────────────────────────────────────────────────
+  // FIX-AUDIT-R9 4: circuit breaker — bloquear DCA si datos Yahoo >72h stale.
+  if (input.staleDataBlock) return emptyOutput("BLOCK_TAIL_RISK", "🔴 Datos Yahoo >72h sin actualizar. DCA bloqueado hasta que se restaure la conexión.", attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   // [FIX-KILLSWITCH] Umbral subido de 0.70 a 0.85 para que Kill Switch L1
   // (×0.80, DD -10.5%) también bloquee compras. Antes solo L2+ bloqueaba.
   if (tailRiskActive && tailRiskOverlay < 0.70) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);

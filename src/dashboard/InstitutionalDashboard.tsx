@@ -277,6 +277,7 @@ const InstitutionalDashboard: React.FC = () => {
   const [btcDominance, setBtcDominance] = useState(57.0);
   const [mvrvRatio, setMvrvRatio] = useState(1.8);
   const [btcRsiWeekly, setBtcRsiWeekly] = useState<number | undefined>(undefined);
+  const [staleDataBlock, setStaleDataBlock] = useState(false);
   const [prevBtcDominance, setPrevBtcDominance] = useState<number | undefined>(undefined);
 
   const [fearGreedIndex, setFearGreedIndex] = useState<{
@@ -402,6 +403,8 @@ const InstitutionalDashboard: React.FC = () => {
     try {
       const { marketData: md, fetchErrors } = await fetchRealMarketData();
       setMarketData(md);
+      // FIX-AUDIT-R9 4: circuit breaker from marketData
+      if (md.staleDataBlock) setStaleDataBlock(true); else setStaleDataBlock(false);
 
       if (md.cewsHistory.length > 0) {
         setCewsHistory(md.cewsHistory);
@@ -433,6 +436,10 @@ const InstitutionalDashboard: React.FC = () => {
       }
       if (md.btcRsiWeekly > 0 && md.btcRsiWeekly !== 50) {
         setBtcRsiWeekly(parseFloat(md.btcRsiWeekly.toFixed(1)));
+      }
+      // FIX-AUDIT-R9 5: SOX RSI semanal para CycleTop de semiconductores
+      if (md.soxRsiWeekly > 0 && md.soxRsiWeekly !== 50) {
+        setSoxRsiWeekly(md.soxRsiWeekly);
       }
       if (md.piCycleMa111 && md.piCycleMa111 > 0) setPiCycleMa111(md.piCycleMa111);
       if (md.piCycleMa350x2 && md.piCycleMa350x2 > 0) setPiCycleMa350x2(md.piCycleMa350x2);
@@ -866,6 +873,9 @@ soxRsiWeekly,
         puellMultiple,
         rsiWeekly: btcRsiWeekly,
       },
+      // FIX-AUDIT-R9 5: SOX RSI + inflation breakeven para CycleTop detection
+      soxRsiWeekly: soxRsiWeekly && soxRsiWeekly !== 50 ? soxRsiWeekly : undefined,
+      inflationBreakeven: inflationBreakeven && inflationBreakeven > 0 ? inflationBreakeven : undefined,
       availableCash,
       totalPortfolioValue,
       avgCorrelation: dynamicCovResult?.avgCorrelation,
@@ -1307,6 +1317,8 @@ soxRsiWeekly,
         shouldTrim: s.shouldTrim,
         zone: s.zone,
       })),
+      // FIX-AUDIT-R9 4: stale data circuit breaker
+      staleDataBlock,
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.

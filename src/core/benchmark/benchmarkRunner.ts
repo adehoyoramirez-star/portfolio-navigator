@@ -32,16 +32,13 @@
 // ===============================================
 
 import { ASSETS, RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
+import { getBenchmarkWeight as assetBenchmarkWeight } from "../../lib/assetRegistry";
 
-// ── Constantes del benchmark ─────────────────────────────────────────
-const BENCHMARK_WEIGHTS: Record<string, number> = {
-  "0P00000WLG.F": 0.35,  // núcleo developed markets (sustituye IS3Q + XNAS)
-  "PPFB.DE": 0.20,
-  "VVSM.DE": 0.15,
-  "EMXC.DE": 0.10,
-  "BTC-EUR": 0.10,
-  "URNU.DE": 0.10,
-};
+// FIX-AUDIT-R9 2+3: BENCHMARK_WEIGHTS derived from assetRegistry (single source of truth).
+// 60/40: 60% Equity (WLG 35% + VVSM 15% + EMXC 10%) + 40% Defensivo (PPFB 20% + BTC 10% + URNU 10%)
+const BENCHMARK_WEIGHTS: Record<string, number> = Object.fromEntries(
+  ASSETS.map(t => [t, assetBenchmarkWeight(t)])
+);
 
 const UNDERPERFORM_THRESHOLD = 0.05; // 5% underperformance → alerta
 const ROLLING_WINDOW_DAYS = 63;     // ~3 meses de trading
@@ -420,13 +417,8 @@ export function clearBenchmarkHistory(): void {
   }
 }
 
-/**
- * Obtiene el peso del benchmark para un ticker específico [0,1].
- * Útil para mostrar la composición del benchmark en el dashboard.
- */
-export function getBenchmarkWeight(ticker: string): number {
-  return BENCHMARK_WEIGHTS[ticker] ?? 0;
-}
+// FIX-AUDIT-R9 2: getBenchmarkWeight re-exported from assetRegistry (single source of truth).
+export { assetBenchmarkWeight as getBenchmarkWeight };
 
 /**
  * Devuelve la composición completa del benchmark para mostrar en UI.

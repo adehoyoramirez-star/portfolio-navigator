@@ -1,4 +1,6 @@
 import { fetchYahooBatch, type YahooBatchResponse } from '@/lib/yahooFinance';
+import { loadFredManual, isFredDataFresh } from '@/lib/fredManualInputs';
+import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/lib/assetRegistry';
 import { ASSETS } from '@/lib/constants';
 import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
@@ -112,6 +114,10 @@ export interface MarketData {
     creditSpread: boolean;
     breakeven: boolean;
   };
+  // FIX-AUDIT-R9 4: circuit breaker — true if Yahoo data >72h stale (DCA blocked).
+  staleDataBlock: boolean;
+  // FIX-AUDIT-R9 5: SOX RSI semanal para CycleTop de semiconductores
+  soxRsiWeekly: number;
 }
 
 // Nota: cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile importados desde @/lib/stats.ts
@@ -124,26 +130,16 @@ const DAYS_1M  = 21;
 const SHRINKAGE_FACTOR = 0.65; // φ — James-Stein estándar para T ≈ 500 días
 
 // Priors de largo plazo calibrados por clase de activo (% anual, en decimal)
+// FIX-AUDIT-R9 2: derivados de assetRegistry.ts (single source of truth).
 // Fuente: Damodaran (NYU) 2024, Vanguard Capital Markets Model 2024, BlackRock BII 2024
-const LONG_RUN_PRIORS: Record<string, number> = {
-  'BTC-EUR':  0.15,   // 15% — prima cripto ajustada ciclo (no bull-run)
-  'VVSM.DE':  0.14,   // 14% — semiconductores: ciclo AI, pero valoración ya alta
-  'URNU.DE':  0.10,   // 10% — Uranio: demanda nuclear estructural, pero ilíquido
-  'EMXC.DE':  0.08,   //  8% — EM ex-China: prima EM ~3% sobre DM, China excluida
-  'PPFB.DE':  0.06,   //  6% — Oro: retorno real histórico ~2-4%, inflación ~2%
-  '0P00000WLG.F': 0.09, // 9% — Vanguard Global Stock Index: MSCI World developed equity
-  // BAYN.DE eliminado — no está en ASSETS. Si se añade al portfolio, añadir su prior aquí.
-};
+const LONG_RUN_PRIORS: Record<string, number> = Object.fromEntries(
+  ASSETS.map(t => [t, getLongRunPrior(t)])
+);
 
-// Mapa de proxies americanos para ETFs europeos con historia corta
-const PROXY_FALLBACK: Partial<Record<string, string>> = {
-  'URNU.DE': 'URA',    // Global X Uranium UCITS → Global X Uranium ETF (US)
-  'VVSM.DE': 'SMH',    // VanEck Semiconductor → SOXX/SMH
-  'EMXC.DE': 'EEM',    // EM ex-China → EEM
-  'PPFB.DE': 'GLD',    // Gold ETC → GLD
-  '0P00000WLG.F': 'URTH', // Vanguard Global Stock Index → iShares MSCI World ETF
-  // BAYN.DE eliminado — no está en ASSETS. Si se añade, añadir su proxy aquí.
-};
+// FIX-AUDIT-R9 2: PROXY_FALLBACK derivado de assetRegistry.ts (single source of truth).
+const PROXY_FALLBACK: Partial<Record<string, string>> = Object.fromEntries(
+  ASSETS.map(t => [t, getProxyUS(t)]).filter(([ticker, proxy]) => proxy !== undefined && proxy !== ticker)
+);
 
 // ── FIX-LEDOIT-WOLF-CANONICAL (22-Jun-2026) ───────────────────────────────────
 // Corrección de auditoría: la implementación anterior usaba un target
@@ -455,28 +451,34 @@ function calibrateJumps(dailyRets: number[], thresholdOverride?: number): { inte
 
 export async function fetchRealMarketData(): Promise<{ marketData: MarketData; fetchErrors: string[] }> {
   // ── Llamada directa a Yahoo Finance (sin Supabase) ──
-  const { data: yfData, errors: fetchErrors } = await fetchYahooBatch([...ASSETS]);
+    // FIX-AUDIT-R9 5: fetch ^SOX for semiconductor CycleTop detection
+  const extraTickers = ["^SOX"];
+  const { data: yfData, errors: fetchErrors } = await fetchYahooBatch([...ASSETS, ...extraTickers]);
 
   if (Object.keys(yfData).length === 0 && fetchErrors.length > 0) {
     throw new Error(`Failed to fetch market data: ${fetchErrors.join(', ')}`);
   }
 
-  // Datos de FRED y fundamentales ya no vienen de Supabase — usar fallbacks
-  // FIX-AUDIT-R7 MD-0: exponer warning visible cuando M2/CAPE/creditSpread están en modo manual.
-  // El dashboard puede consumir dataQualityFlags para mostrar ⚠️ al usuario.
+  // FIX-AUDIT-R9 1: FRED data from manual localStorage inputs (user-updatable).
+  // Sustituye los antiguos hardcoded 5.2% M2 / 29.5 CAPE / 3.0% spread.
+  // El usuario actualiza estos valores en el dashboard cuando quiera.
+  const fredManual = loadFredManual();
+  const fredFresh = isFredDataFresh(7);
+  const yfFundamentals = undefined;
+  // Datos de FRED ya no vienen de Supabase — el usuario los introduce manualmente
   const fredM2 = undefined;
   const fredCAPE = undefined;
   const centralBanks = undefined;
   const fredCreditSpread = undefined;
   const fredBreakeven = undefined;
-  const yfFundamentals = undefined;
   // Flags de calidad: true = dato real, false = fallback manual
+  // FIX-AUDIT-R9 1: ahora indica si el usuario ha actualizado los datos en <7 días
   const dataQualityFlags = {
-    m2Growth: false,
-    cape: false,
+    m2Growth: fredFresh,
+    cape: fredFresh,
     centralBanks: false,
-    creditSpread: false,
-    breakeven: false,
+    creditSpread: fredFresh,
+    breakeven: fredFresh,
   };
   
   // ====== DEBUG: Verificar estructura de datos recibidos (solo dev) ======
@@ -501,11 +503,11 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   }
   
   // M2 real de FRED
-  const m2Growth = fredM2?.growthYoY ?? 5.2;
+  const m2Growth = fredManual.m2GrowthYoY;
 
   // Shiller CAPE (PER ajustado al ciclo)
-  const per = fredCAPE?.cape ?? 29.5;
-  const perSource: "FRED" | "manual" = fredCAPE ? "FRED" : "manual";
+  const per = fredManual.cape;
+  const perSource: "FRED" | "manual" = "manual";
 
   // ====== PRECIOS ACTUALES ======
   // FIX-PRICE-UPDATE: iterar TODOS los tickers devueltos por Yahoo Finance,
@@ -630,6 +632,11 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   // PASO 5: BTC RSI semanal — resamplear diario a semanal con Wilder EMA
   const btcRsiWeekly = calculateWeeklyRSI14(btcDailyCloses, btcTimestamps);
 
+  // FIX-AUDIT-R9 5: SOX RSI semanal para CycleTop de semiconductores (VVSM.DE)
+  const soxDailyCloses = cleanCloses(yfData['^SOX']?.closes ?? []);
+  const soxTimestamps = yfData['^SOX']?.timestamps ?? [];
+  const soxRsiWeekly = calculateWeeklyRSI14(soxDailyCloses, soxTimestamps);
+
   // PASO 5: Pi Cycle MAs — 111DMA y 350DMAx2 calculados desde histórico diario BTC
   const piCycleMAs = calculatePiCycleMAs(btcDailyCloses);
 
@@ -695,7 +702,14 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   let creditSpread = 3.0;
   let creditSpreadSource: "FRED" | "YAHOO_PROXY" | "MANUAL" = "MANUAL";
 
-  if (fredCreditSpread && fredCreditSpread.spread > 0) {
+  // FIX-AUDIT-R9 1: credit spread — manual FRED input takes priority.
+  // If user hasn't changed from default (3.0), fall back to HYG-LQD proxy for automatic estimation.
+  const fredManualSpread = fredManual.creditSpread;
+  const isDefaultSpread = fredManualSpread === 3.0; // default = not user-overridden
+  if (!isDefaultSpread && fredManualSpread > 0) {
+    creditSpread = fredManualSpread;
+    creditSpreadSource = "MANUAL";
+  } else if (fredCreditSpread && fredCreditSpread.spread > 0) {
     // Prioridad 1: FRED BAMLH0A0HYM2 — oficial ICE BofA
     creditSpread = fredCreditSpread.spread;
     creditSpreadSource = "FRED";
@@ -806,19 +820,28 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     vixCloses, vixTimestamps, tnxCloses, irxCloses, hygCloses, m2Growth
   );
 
-  // FIX-AUDIT-R8: data freshness validation.
-  // Warns if Yahoo data is older than 24h (stale prices = bad allocations).
+  // FIX-AUDIT-R9 4: circuit breaker + data freshness validation.
+  // Warns if Yahoo data >24h old. Blocks DCA if >72h (stale prices = bad allocations).
   const now = Date.now();
-  const maxAgeMs = 24 * 60 * 60 * 1000;
+  const maxWarnMs = 24 * 60 * 60 * 1000;
+  const maxBlockMs = 72 * 60 * 60 * 1000;
   const staleTickers: string[] = [];
+  let staleDataBlock = false;
   for (const ticker of ASSETS) {
     const timestamps = yfData[ticker]?.timestamps ?? [];
     if (timestamps.length > 0) {
       const newestTs = timestamps[timestamps.length - 1] * 1000;
-      if (now - newestTs > maxAgeMs) staleTickers.push(ticker);
+      if (now - newestTs > maxBlockMs) {
+        staleTickers.push(ticker);
+        staleDataBlock = true;
+      } else if (now - newestTs > maxWarnMs) {
+        staleTickers.push(ticker);
+      }
     }
   }
-  if (staleTickers.length > 0) {
+  if (staleDataBlock) {
+    console.error(`[Olympus] 🔴 DCA BLOCKED: ${staleTickers.join(', ')} — last update >72h ago. Fix Yahoo connection to resume trading.`);
+  } else if (staleTickers.length > 0) {
     console.warn(`[Olympus] ⚠️ STALE DATA: ${staleTickers.join(', ')} — last update >24h ago. Allocations may be based on outdated prices.`);
   }
 
@@ -841,7 +864,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       covMatrix,
       cewsHistory,
       m2Growth,
-      m2GrowthSource: fredM2 ? "FRED" : "manual",
+      m2GrowthSource: "manual",
       per,
       perSource,
       sp500Rsi,
@@ -864,10 +887,13 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       btcRsiWeekly,
       piCycleMa111:   piCycleMAs?.ma111   ?? null,
       piCycleMa350x2: piCycleMAs?.ma350x2 ?? null,
-      inflationBreakeven: fredBreakeven?.value ?? null,
-      inflationBESource: fredBreakeven ? "FRED" as const : "MANUAL" as const,
+      inflationBreakeven: fredManual.inflationBreakeven5y,
+      inflationBESource: "MANUAL" as const,
       // FIX-AUDIT-R7 MD-0: flags de calidad para warning visible en dashboard
       dataQualityFlags,
+      // FIX-AUDIT-R9 4+5: circuit breaker + SOX RSI
+      staleDataBlock,
+      soxRsiWeekly,
     },
     fetchErrors,
   };
