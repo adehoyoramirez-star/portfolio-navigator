@@ -185,10 +185,10 @@ describe("getBenchmarkComposition", () => {
   it("returns sorted composition with all assets", () => {
     const comp = getBenchmarkComposition();
     expect(comp.length).toBe(6);
-    expect(comp[0].ticker).toBe("PPFB.DE");
-    expect(comp[0].weight).toBeCloseTo(0.25, 4);
-    expect(comp[comp.length - 1].ticker).toBe("URNU.DE");
-    expect(comp[comp.length - 1].weight).toBeCloseTo(0.05, 4);
+    // FIX-AUDIT-R6 BATCH 2: BENCHMARK_WEIGHTS updated Sprint 3 (0P00000WLG.F=0.35, URNU.DE last 0.10, EMXC.DE tied 0.10).
+    expect(comp[0].ticker).toBe("0P00000WLG.F");
+    expect(comp[0].weight).toBeCloseTo(0.35, 4);
+    expect(comp[comp.length - 1].weight).toBeCloseTo(0.10, 4);
   });
 
   it("only includes tickers with weight > 0", () => {

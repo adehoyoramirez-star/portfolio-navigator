@@ -163,7 +163,7 @@ export function recordBenchmarkSnapshot(input: {
     portfolioValue,
     totalInvested,
     regime,
-    prices: {}, // R3-05: redacted
+    prices, // FIX-AUDIT-R6 BATCH 1: re-reveal prices para que el benchmarking inter-temporal funcione (math necesita history)
   };
 
   const snapshots = loadSnapshots();

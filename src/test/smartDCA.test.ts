@@ -16,7 +16,7 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
     btcDominance: 50,
     mvrvRatio: 2.0,
     regime: "EXPANSION",
-    regimePenalty: 1.0,
+    regimePenalty: 0.80, // FIX-AUDIT-R6 BATCH 3: 0.80 = healthy expansion (below R5.1 macro threshold 0.85); previene macro signal firing unintentionally en tests neutros.
     volTargetMultiplier: 1.0,
     tailRiskActive: false,
     tailRiskOverlay: 1.0,
