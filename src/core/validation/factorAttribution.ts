@@ -29,7 +29,7 @@
 //   - Grinold & Kahn (2000) "Active Portfolio Management"
 // ===============================================
 
-import { ASSETS } from '../../lib/constants';
+import { ASSETS, RISK_FREE_RATE_DAILY } from '../../lib/constants';
 import { FACTOR_CONFIG } from '../config/engineConfig';
 
 // ── Interfaces ─────────────────────────────────────────────────────────────
@@ -248,7 +248,8 @@ export function computeBenchmarkMetrics(
   const beta = varB > 0 ? cov / varB : 1;
 
   // Jensen Alpha (anualizado)
-  const rfDaily = 0.04 / 252;
+  // FIX-AUDIT-R3 R3-03 sweep: rf rate centralizado en src/lib/constants
+  const rfDaily = RISK_FREE_RATE_DAILY;
   const jensenAlpha = (pMean - rfDaily - beta * (bMean - rfDaily)) * 252;
 
   // CAGR

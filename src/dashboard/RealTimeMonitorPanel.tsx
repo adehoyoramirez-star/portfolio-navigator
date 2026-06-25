@@ -234,9 +234,11 @@ export default function RealTimeMonitorPanel({
               },
               {
                 label: "CVaR 95%",
-                value: rolling ? fmtPct(rolling.cvar95_20d) : "\u2014",
-                color: (rolling?.cvar95_20d ?? 0) > 0.12 ? "#ef4444"
-                  : (rolling?.cvar95_20d ?? 0) > 0.06 ? "#f59e0b" : "#94a3b8",
+                value: (rolling && rolling.varReliable) ? fmtPct(rolling.cvar95_20d) : "N/A",
+                color: (rolling && rolling.varReliable) ?
+                  ((rolling?.cvar95_20d ?? 0) > 0.12 ? "#ef4444"
+                  : (rolling?.cvar95_20d ?? 0) > 0.06 ? "#f59e0b" : "#94a3b8")
+                  : "#475569",
               },
             ].map((m) => (
               <div key={m.label} style={{

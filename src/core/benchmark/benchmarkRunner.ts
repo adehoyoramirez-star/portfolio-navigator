@@ -25,7 +25,7 @@
 // Frente al motor que sí rebalancea, aplica vol target y tail risk.
 // ===============================================
 
-import { ASSETS } from "../../lib/constants";
+import { ASSETS, RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
 
 // ── Constantes del benchmark ─────────────────────────────────────────
 const BENCHMARK_WEIGHTS: Record<string, number> = {
@@ -56,8 +56,8 @@ export interface BenchmarkSnapshot {
   totalInvested: number;
   /** Régimen actual del engine */
   regime: string;
-  /** Precios de cada activo en esta snapshot */
-  prices: Record<string, number>;
+  /** Precios de cada activo - REDACTADOS por FIX-AUDIT-R3 R3-05 (browser-ext exposure). Optional para compatibilidad con snapshots legacy pre-redaction. */
+  prices?: Record<string, number>;
 }
 
 /** Retornos calculados entre dos snapshots consecutivos */
@@ -163,7 +163,7 @@ export function recordBenchmarkSnapshot(input: {
     portfolioValue,
     totalInvested,
     regime,
-    prices,
+    prices: {}, // R3-05: redacted
   };
 
   const snapshots = loadSnapshots();
@@ -340,7 +340,8 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   // Usar effectiveYears (misma corrección que CAGR) para evitar
   // Sharpe absurdos cuando hay pocas snapshots
   const periodsPerYear = windowSize / effectiveYears;
-  const rfPerPeriod = 0.04 / periodsPerYear;
+  // FIX-AUDIT-R3 R3-03: rf centralizado via RISK_FREE_RATE_ANNUAL en constants.ts
+  const rfPerPeriod = RISK_FREE_RATE_ANNUAL / periodsPerYear;
   const engineExcess = engineReturns.map(r => r - rfPerPeriod);
   const benchmarkExcess = benchmarkReturns.map(r => r - rfPerPeriod);
 

@@ -12,7 +12,7 @@
 //   - Efectivo implícito (la suma de pesos puede ser < 1)
 // ===============================================
 
-import { ASSETS } from "../../lib/constants";
+import { ASSETS, RISK_FREE_RATE_DAILY, RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
 import { dailyReturns, mean, variance } from "../../lib/stats";
 import { covarianceMatrix } from "../../lib/marketData";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
@@ -647,7 +647,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 // ── Funciones métricas (sin cambios) ────────────────────────────────────
 function computeRollingSharpe(window: number[]): number {
   if (window.length < 21) return 0;
-  const rfDaily = 0.04 / 252;
+  // FIX-AUDIT-R3 R3-03: rfDaily centralizado desde src/lib/constants (R2 users may forget to update here)
+  const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = window.map(r => r - rfDaily);
   const m = mean(excess);
   const s = Math.sqrt(variance(excess.map(r => r - m)));
@@ -663,7 +664,8 @@ function computeMetrics(dailyRets: number[], initialCapital: number, finalValue:
   const cagr = years > 0 ? ((1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
   const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
-  const rfDaily = 0.04 / 252;
+  // FIX-AUDIT-R3 R3-03: rfDaily centralizado desde src/lib/constants (R2 users may forget to update here)
+  const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = clean.map(r => r - rfDaily);
   const excessMean = mean(excess);
   const excessStd = Math.sqrt(variance(excess.map(r => r - excessMean)) * 252);
@@ -703,7 +705,8 @@ function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
   const cagr = years > 0 ? ((1 + totalRet) > 0 ? Math.pow(1 + totalRet, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
   const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
-  const rfDaily = 0.04 / 252;
+  // FIX-AUDIT-R3 R3-03: rfDaily centralizado desde src/lib/constants (R2 users may forget to update here)
+  const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = clean.map(r => r - rfDaily);
   const exMean = mean(excess);
   const exStd = Math.sqrt(variance(excess.map(r => r - exMean)) * 252);

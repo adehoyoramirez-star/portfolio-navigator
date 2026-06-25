@@ -15,6 +15,15 @@ export const ASSETS = [
 
 export type Asset = typeof ASSETS[number];
 
+
+// ── FIX-AUDIT-R3 R3-03: centralize risk-free rate. Antes hardcoded 0.04 en 4 archivos
+// distintos (liveMonitor, backtestEngine x3, benchmarkRunner). Si el BCE/BoE/Fed
+// mueven el tipo rector, una única edición cambia la baseline en todo el sistema.
+// Antes del 2022 era ~0%, en JUN-2025 está en ~4.25%, expectativa para QT-end ~3.5-3.75%.
+export const RISK_FREE_RATE_ANNUAL = 0.04; // = BTP 10y expected/var proxy
+export const RISK_FREE_RATE_DAILY = RISK_FREE_RATE_ANNUAL / 252;
+const TRADING_DAYS_PER_YEAR = 252;
+export { TRADING_DAYS_PER_YEAR };
 export const SECTOR_MAP: Record<Asset, string> = {
   "BTC-EUR":  "crypto",
   "EMXC.DE":  "emerging",
@@ -49,3 +58,10 @@ export const DEFAULT_POSITIONS = {
 // dedicados. VVSM.DE mantiene la exposición a semiconductores como tilt
 // de convicción (AI).
 // ──────────────────────────────────────────────────────────────────────────
+
+// ── FIX-AUDIT-R3 R3-02 v3: factor-proxy tickers + min points hoisted from dashboard.
+// Si universo cambia (REFACTOR add/remove), editar SOLO estas dos constantes.
+export const KALMAN_FACTOR_PROXY_TICKERS = [
+  "0P00000WLG.F", "VVSM.DE", "URNU.DE", "EMXC.DE", "PPFB.DE",
+] as const;
+export const KALMAN_FACTOR_MIN_POINTS = 22;

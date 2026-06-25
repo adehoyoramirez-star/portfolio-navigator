@@ -16,7 +16,7 @@
 //   ✓ Circuit breaker ante fallos consecutivos de Yahoo
 // ════════════════════════════════════════════════════════════════
 
-import { DEFAULT_POSITIONS } from '../../lib/constants';
+import { DEFAULT_POSITIONS, RISK_FREE_RATE_DAILY } from '../../lib/constants';
 import { fetchRealMarketData } from '../../lib/marketData';
 
 // ── FUENTE DE DATOS: Yahoo Finance ────────────────────────────
@@ -54,6 +54,8 @@ export interface RollingMetrics {
   volatility20d: number;    // anualizada
   cvar95_20d: number;       // CVaR 95% sobre retornos diarios del portfolio
   var95_20d: number;        // VaR 95%
+  // FIX-AUDIT-R3 R3-04 v2: false cuando muestra insuficiente (<60 obs). UI debe mostrar N/A.
+  varReliable: boolean;
   sharpe_trend: 'UP' | 'DOWN' | 'FLAT';
   risk_trend: 'INCREASING' | 'STABLE' | 'DECREASING';
 }
@@ -143,8 +145,10 @@ const MONITOR_CONFIG = {
     { drawdown: 0.40, mult: 3.5, label: 'Capitulación — máxima agresividad' },
   ],
 
-  // FIX-AUDIT-R2 H1: alineado con el resto del sistema (0.04 = 4% anual). Antes 0.0385 -> numerador de Sharpe distinto al backtest.
-  RISK_FREE_DAILY: 0.04 / 252,
+  // FIX-AUDIT-R3 R3-03: importa RISK_FREE_RATE_DAILY de @/lib/constants (centralizado).
+  // Antes: 0.04/252 hardcoded aquí. Otros archivos usaban 0.04 también pero sin garantía de coherencia.
+  // Ahora: edición única en constants.ts propaga a liveMonitor, backtest, benchmark y DCA.
+  RISK_FREE_DAILY: RISK_FREE_RATE_DAILY,
   ROLLING_WINDOW: 20,
 } as const;
 
@@ -162,7 +166,7 @@ function buildInitialState(): LiveMonitorState {
     totalPnLPct: 0,
     rolling: {
       sharpe20d: 0, sortino20d: 0, volatility20d: 0,
-      cvar95_20d: 0, var95_20d: 0,
+      cvar95_20d: 0, var95_20d: 0, varReliable: false,
       sharpe_trend: 'FLAT', risk_trend: 'STABLE',
     },
     drawdown: {
@@ -206,7 +210,7 @@ function computeRollingMetrics(
   if (recent.length < 5) {
     return {
       sharpe20d: 0, sortino20d: 0, volatility20d: 0,
-      cvar95_20d: 0, var95_20d: 0,
+      cvar95_20d: 0, var95_20d: 0, varReliable: false,
       sharpe_trend: 'FLAT', risk_trend: 'STABLE',
     };
   }
@@ -233,13 +237,18 @@ function computeRollingMetrics(
   const sortino20d = downsideDev > 0 ? (excessMean * 252) / (downsideDev * Math.sqrt(252)) : 0;
 
   const sorted = [...recent].sort((a, b) => a - b);
-  const varIdx = Math.max(0, Math.floor(0.05 * n) - 1);
-  const var95_20d = -sorted[varIdx];
-
-  const tailReturns = sorted.slice(0, varIdx + 1);
-  const cvar95_20d = tailReturns.length > 0
-    ? -tailReturns.reduce((s, r) => s + r, 0) / tailReturns.length
-    : var95_20d;
+  // FIX-AUDIT-R3 R3-04 v2: VaR/CVaR con null-return + flag varReliable.
+  // v1 multiplicaba por 1.25 cuando n<60, amplificando ruido de 1 sola observación.
+  // v2: si n < VAR_MIN_SAMPLES (60 obs = ~3 meses trading), retorna 0 + varReliable=false.
+  // UI debe mostrar "N/A — muestra insuficiente" en vez de fingir precisión.
+  const VAR_MIN_SAMPLES = 60;
+  const varReliable = n >= VAR_MIN_SAMPLES;
+  const varIdx = varReliable ? Math.max(0, Math.floor(0.05 * n) - 1) : 0;
+  const tailSize = varReliable ? Math.max(varIdx + 1, 3) : 0;
+  const var95_20d = varReliable ? -sorted[varIdx] : 0;
+  const cvar95_20d = varReliable && tailSize > 0
+    ? -(sorted.slice(0, tailSize).reduce((s, r) => s + r, 0) / tailSize)
+    : 0;
 
   const firstHalf = recent.slice(0, Math.floor(n / 2));
   const secondHalf = recent.slice(Math.floor(n / 2));
@@ -258,7 +267,7 @@ function computeRollingMetrics(
   return {
     sharpe20d, sortino20d,
     volatility20d: annualizedVol,
-    cvar95_20d, var95_20d,
+    cvar95_20d, var95_20d, varReliable,
     sharpe_trend, risk_trend,
   };
 }

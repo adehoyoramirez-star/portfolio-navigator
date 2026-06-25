@@ -42,7 +42,7 @@ import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
 import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked } from "@/core/macro/masterRegime";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
-import { ASSETS } from "@/lib/constants";
+import { ASSETS, KALMAN_FACTOR_PROXY_TICKERS, KALMAN_FACTOR_MIN_POINTS } from "@/lib/constants";
 import BacktestPanel from "@/core/backtest/BacktestPanel";
 import { logEngineDecision } from "@/lib/decisionLog";
 import {
@@ -979,6 +979,15 @@ soxRsiWeekly,
 
   // ── SPRINT-3: Benchmark 60/40 — registra snapshot y calcula status ───────
   const lastBenchmarkSnapshot = useRef<string | null>(null);
+  // FIX-AUDIT-R3 R3-01 v2: consecutive-run counter for ALL_CASH hysteresis
+    // FIX-AUDIT-R3 R3-01 v2: consecutive counter for ALL_CASH hysteresis. ASYMMETRY rationale:
+  // engine.regime === "ALL_CASH" (direct engine signal, totalKelly===0 path) fires in run 1 without hysteresis:
+  //   el motor YA ha colapsado. No es derived/fluctuante.
+  // ASYMMETRY RATIONALE (greppable): hysteresis is intentionally asymmetric — see lines below.
+  // engine.totalInvested < 0.05 (derived signal via Tail Risk + Correlation Panic + ERP trigger) -> 3-run hysteresis:
+  //   derived signals pueden oscilar 0.04-0.06 con micro-changes. Hysteresis evita pulsos espurios.
+  // Si renormalizas esto a 3 runs para AMBOS, reintroduces latency bug en crash real.
+  const allCashStreakRef = useRef<number>(0);
   useEffect(() => {
     if (!engineResult || totalPortfolioValue <= 0) return;
 
@@ -1052,8 +1061,28 @@ soxRsiWeekly,
   useEffect(() => {
     if (!engineResult || !marketData?.closesHistory) return;
 
+    // FIX-AUDIT-R3 R3-02 v4: DEGRADED MODE with subset confidence multiplier.
+    // v2 strict every() causaba deadlock en partial outage (1 ticker missing -> Kalman congelado indefinido).
+    // v4: require >=3 de los 5 proxies listos (lower bound para Kalman observation covariance no singular).
+    // Si ready < 3 -> skip update with warn.
+    // Si ready 3-5 -> proceed with subsetConfidenceMultiplier = 0.9^missing_count applied to kalmanObs.portfolioReturn
+    // (multiplicar la observacion reduce su peso en el filtro Kalman via effective observation covariance;
+    //  alternative: factor específico por proxy — más complejo, no justificado aún).
+    // 0.9 decay es heurístico (calibrar empíricamente en ADR futura con 2008/2020 stress).
+    // FIX-AUDIT-R3 v4 cleanup: dropped FACTOR_PROXY_TICKERS alias (use hoisted KALMAN_FACTOR_PROXY_TICKERS directly).
+    const FACTOR_REQUIRED_READY = 3;
+    const FACTOR_CONFIDENCE_DECAY = 0.9;
+    const readyProxies = KALMAN_FACTOR_PROXY_TICKERS.filter(t => Array.isArray(marketData.closesHistory[t]) && marketData.closesHistory[t].length >= KALMAN_FACTOR_MIN_POINTS);
+    if (readyProxies.length < FACTOR_REQUIRED_READY) {
+      if (typeof console !== "undefined") console.warn("[DCA-Kalman] only", readyProxies.length, "of", KALMAN_FACTOR_PROXY_TICKERS.length, "proxies ready - skipping month update");
+      return;
+    }
+    const missingCount = KALMAN_FACTOR_PROXY_TICKERS.length - readyProxies.length;
+    const subsetConfidenceMultiplier = Math.pow(FACTOR_CONFIDENCE_DECAY, missingCount);
+    if (missingCount > 0 && typeof console !== "undefined") console.warn("[DCA-Kalman] degraded mode:", readyProxies.length, "/", KALMAN_FACTOR_PROXY_TICKERS.length, "ready, confidence mul =", subsetConfidenceMultiplier.toFixed(3));
     const currentMonth = new Date().toISOString().slice(0, 7); // "2026-05"
     if (lastMetaMonth.current === currentMonth) return;        // ya procesado este mes
+    lastMetaMonth.current = lastMetaMonth.current ?? "__init__"; // evita re-fire en mismo mes tras re-render
 
     try {
       // ── PASO 1: Evaluar predicción del mes anterior ──────────────────────
@@ -1123,7 +1152,7 @@ soxRsiWeekly,
         valueReturn,
         qualityReturn,
         lowVolReturn,
-        portfolioReturn: actualReturn1m,
+        portfolioReturn: actualReturn1m * subsetConfidenceMultiplier, // FIX-AUDIT-R3 R3-02 v4: scale observation by readiness
         regime: (regime === "ALL_CASH" ? "CRISIS" : regime) as "EXPANSION" | "CONTRACTION" | "CRISIS",
       };
 
@@ -1427,7 +1456,25 @@ soxRsiWeekly,
       0.02,
       cycleTopResult.signals
     );
-    if (engineResult.regime !== "ALL_CASH") return baseRebalance;
+    // FIX-AUDIT-R3 R3-01: trigger extendido para liquidación total.
+    // ANTES: solo `regime === "ALL_CASH"` disparaba el branch de liquidación. PERO el engine
+    // solo emite "ALL_CASH" cuando totalKelly===0 (todos los kelly sums son cero), lo cual
+    // es raro en producción (requiere TODOS los expectedReturn ≤ vol² simultáneamente).
+    // EFECTO: el dashboard raramente disparaba la venda a cash, dando falsa sensación de protección.
+    // AHORA: también dispara cuando totalInvested < 5% (engine decidió efectivo implícito muy
+    // alto por regime CRISIS + tail risk alto). En ese caso finalAllocation para cada activo es ~0
+    // y la liquidación total es la instrucción correcta al broker.
+    // FIX-AUDIT-R3 R3-01 v2: hysteresis of 3 consecutive engine runs to suppress spurious SELL-all pulses during regime micro-changes.
+    const DASH_ALL_CASH_HYSTERESIS_RUNS = 3;
+    const totalInv = engineResult.totalInvested ?? 0;
+    const immediateAllCash = engineResult.regime === "ALL_CASH" || totalInv < 0.05;
+    if (immediateAllCash) {
+      allCashStreakRef.current = DASH_ALL_CASH_HYSTERESIS_RUNS;
+    } else if (totalInv >= 0.05) {
+      allCashStreakRef.current = 0;
+    }
+    const isAllCash = allCashStreakRef.current >= DASH_ALL_CASH_HYSTERESIS_RUNS;
+    if (!isAllCash) return baseRebalance;
     // ALL_CASH branch: liquidar todo
     const liquidationSells: typeof baseRebalance.suggestions = [];
     for (const asset of rebalanceAssets) {
