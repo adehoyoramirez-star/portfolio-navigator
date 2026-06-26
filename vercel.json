@@ -4,10 +4,6 @@
   "framework": "vite",
   "devCommand": "npm run dev",
   "installCommand": "npm install",
-  "env": {
-    "VITE_TELEGRAM_BOT_TOKEN": "8256161361:AAFqdfl7uTe02FGf6pCzP5qetDMdK-DUFy0",
-    "VITE_TELEGRAM_CHAT_ID": "8247498069"
-  },
   "rewrites": [
     { "source": "/_proxy/yahoo-finance", "destination": "/api/proxy/yahoo-finance" },
     { "source": "/(.*)", "destination": "/index.html" }

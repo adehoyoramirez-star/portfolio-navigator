@@ -163,8 +163,10 @@ export async function fetchAIIntelligence(ctx: any): Promise<AIIntelligenceOutpu
 }
 
 // ── Telegram Alerts ──────────────────────────────────────────
-const TG_BOT_TOKEN = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELEGRAM_BOT_TOKEN) || '';
-const TG_CHAT_ID = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TELEGRAM_CHAT_ID) || '';
+// Hardcoded en build — Vercel no propaga VITE_ env vars a Vite.
+// Los tokens ya son públicos (cliente), sin diferencia de seguridad.
+const TG_BOT_TOKEN = '8256161361:AAFqdfl7uTe02FGf6pCzP5qetDMdK-DUFy0';
+const TG_CHAT_ID = '8247498069';
 
 export async function sendTelegramAlert(body: any): Promise<{ ok: boolean; error?: string }> {
   if (!TG_BOT_TOKEN || !TG_CHAT_ID) {
