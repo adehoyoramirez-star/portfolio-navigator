@@ -3039,6 +3039,62 @@ soxRsiWeekly,
           </div>
         </div>
 
+
+      {/* Simple Cash Reserve Panel */}
+      <div style={styles.card}>
+        <h2 style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.95rem", color: "#e2e8f0" }}>Cash & Liquidez</h2>
+        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <label style={{ fontSize: "0.72rem", color: "#94a3b8", display: "block", marginBottom: "4px" }}>
+              Cash en broker
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ color: "#6b7280", fontSize: "0.85rem" }}>EUR</span>
+              <input
+                type="number" value={cashReserve} min={0} step={100}
+                onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
+                style={{ width: "130px", background: "#0f172a", border: "1px solid #3b82f6", color: "#60a5fa", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold" }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontSize: "0.72rem", color: "#94a3b8", display: "block", marginBottom: "4px" }}>
+              Liquidez Defensiva
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ color: "#6b7280", fontSize: "0.85rem" }}>EUR</span>
+              <input
+                type="number" value={defensiveLiquidity} min={0} step={100}
+                onChange={(e) => {
+                  const val = Math.max(0, Number(e.target.value));
+                  setDefensiveLiquidity(val);
+                  try { localStorage.setItem("olympus_defensive_liq", String(val)); } catch {}
+                }}
+                style={{ width: "130px", background: "#0f172a", border: "1px solid #f59e0b", color: "#fbbf24", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold" }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontSize: "0.72rem", color: "#94a3b8", display: "block", marginBottom: "4px" }}>
+              Aportacion Mensual
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ color: "#6b7280", fontSize: "0.85rem" }}>EUR</span>
+              <input
+                type="number" value={monthlyInjection} min={0} step={50}
+                onChange={(e) => setMonthlyInjection(Math.max(0, Number(e.target.value)))}
+                style={{ width: "130px", background: "#0f172a", border: "1px solid #10b981", color: "#34d399", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold" }}
+              />
+            </div>
+          </div>
+
+          <div style={{ fontSize: "0.7rem", color: "#4b5563", maxWidth: "180px", lineHeight: "1.5" }}>
+            Liquidez total: <strong style={{ color: "#e2e8f0" }}>{formatCurrency(cashReserve + defensiveLiquidity)}</strong>
+          </div>
+        </div>
+      </div>
         {/* ── Pesos del Portfolio ── */}
         <div style={{ marginTop: "0.5rem", padding: "0.5rem 0", borderTop: "1px solid #374151" }}>
           <h3 style={{ fontSize: "0.75rem", fontWeight: "bold", color: "#9ca3af", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.06em" }}>📊 Pesos del Motor</h3>
