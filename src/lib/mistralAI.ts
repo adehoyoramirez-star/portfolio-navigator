@@ -231,21 +231,21 @@ export async function fetchMistralIntelligence(
       }
     };
 
-    const gemini = parseRole(r1, { regimeNarrative: '', macroValidation: '', btcCycleSummary: '' });
-    const claude = parseRole(r2, { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '' });
-    const grok = parseRole(r3, { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null });
+    const macro = parseRole(r1, { regimeNarrative: '', macroValidation: '', btcCycleSummary: '' });
+    const elliott = parseRole(r2, { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '' });
+    const sentinel = parseRole(r3, { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null });
 
     const result: MistralIntelligence = {
-      regimeNarrative: gemini.regimeNarrative,
-      macroValidation: gemini.macroValidation,
-      btcCycleSummary: gemini.btcCycleSummary,
-      elliottAnalysis: claude.elliottAnalysis,
-      rebalanceAdvice: claude.rebalanceAdvice,
-      contradictionAnalysis: claude.contradictionAnalysis,
-      marketSentiment: grok.marketSentiment,
-      topNarratives: grok.topNarratives,
-      blackSwanAlert: grok.blackSwanAlert,
-      blackSwanReason: grok.blackSwanReason,
+      regimeNarrative: macro.regimeNarrative,
+      macroValidation: macro.macroValidation,
+      btcCycleSummary: macro.btcCycleSummary,
+      elliottAnalysis: elliott.elliottAnalysis,
+      rebalanceAdvice: elliott.rebalanceAdvice,
+      contradictionAnalysis: elliott.contradictionAnalysis,
+      marketSentiment: sentinel.marketSentiment,
+      topNarratives: sentinel.topNarratives,
+      blackSwanAlert: sentinel.blackSwanAlert,
+      blackSwanReason: sentinel.blackSwanReason,
       model: config.model ?? 'mistral-medium-latest',
       cachedAt: ts,
     };

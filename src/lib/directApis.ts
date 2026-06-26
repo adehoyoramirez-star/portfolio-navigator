@@ -70,19 +70,34 @@ export async function fetchCryptoSignals(): Promise<CryptoSignalsOutput> {
   return { fearGreedValue, fearGreedLabel, fearGreedSource, btcDominance, btcDominanceSrc, btcPriceUSD, btcPriceEUR, eurUsd, errors };
 }
 
-// ── AI Intelligence (Gemini directo) ─────────────────────────
+// ── AI Intelligence (motor local — sin dependencia de APIs externas) ────
+// NOTA: Gemini eliminado (Jun 2026). El motor AI usa Mistral Cloud
+// (mistralAI.ts) como fuente principal. Este módulo proporciona
+// el fallback local cuando Mistral no está configurado.
 export interface AIIntelligenceOutput {
-  gemini: { regimeNarrative: string; macroValidation: string; btcCycleSummary: string; model: string; cachedAt: string; error?: string } | null;
-  grok: { marketSentiment: string; topNarratives: string[]; blackSwanAlert: boolean; blackSwanReason: string | null; model: string; cachedAt: string; error?: string } | null;
-  claude: { elliottAnalysis: string; rebalanceAdvice: string; contradictionAnalysis: string; model: string; cachedAt: string; error?: string } | null;
+  // Campo unificado: antes separado en gemini/claude/grok,
+  // ahora un solo objeto con toda la inteligencia combinada
+  ai: {
+    regimeNarrative: string;
+    macroValidation: string;
+    btcCycleSummary: string;
+    marketSentiment: string;
+    topNarratives: string[];
+    blackSwanAlert: boolean;
+    blackSwanReason: string | null;
+    elliottAnalysis?: string;
+    rebalanceAdvice?: string;
+    contradictionAnalysis?: string;
+    model: string;
+    cachedAt: string;
+    error?: string;
+  } | null;
   fetchedAt: string;
   cacheHit: boolean;
 }
 
 let _aiCache: { result: AIIntelligenceOutput; hash: string; expiresAt: number } | null = null;
 const AI_CACHE_TTL = 15 * 60 * 1000;
-
-const GEMINI_KEY = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) || '';
 
 function sf(n: number, d = 1) { return (n != null && isFinite(n) ? Number(n).toFixed(d) : 'N/D'); }
 
@@ -95,82 +110,56 @@ MACRO: VIX=${sf(ctx.vix)} MOVE=${sf(ctx.move,0)} Bond10y=${sf(ctx.bond10y,2)}% B
 CRYPTO: BTC=${sf(ctx.btcPrice,0)} RSI=${sf(ctx.btcRsi,0)} DOM=${sf(ctx.btcDominance)}% MVRV=${sf(ctx.mvrv,2)} FearGreed=${ctx.fearGreed??'N/D'}/${ctx.fearGreedLabel??'N/D'}`.trim();
 }
 
-async function callGemini(prompt: string, maxTokens = 500): Promise<string> {
-  if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada');
-  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-  for (const model of models) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens, temperature: 0.25 } }),
-      });
-      if (res.status === 429 || res.status === 503 || res.status === 404) continue;
-      if (!res.ok) throw new Error(`${model}: ${res.status}`);
-      const json = await res.json();
-      return (json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}').replace(/```json|```/g, '').trim();
-    } catch (e) {
-      if (models.indexOf(model) === models.length - 1) throw e;
-    }
-  }
-  throw new Error('All Gemini models failed');
-}
-
 function emptyAI(): AIIntelligenceOutput {
   const ts = new Date().toISOString();
-  const err = { error: 'Sin API key Gemini (VITE_GEMINI_API_KEY)', model: 'gemini', cachedAt: ts };
   return {
-    gemini: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', ...err },
-    claude: null,
-    grok: { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, ...err },
+    ai: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, model: 'offline', cachedAt: ts, error: 'Motor AI sin API configurada — usando reglas deterministicas' },
     fetchedAt: ts, cacheHit: false,
   };
 }
 
+/**
+ * Fallback deterministico: calcula narrativas basicas desde datos de mercado.
+ * Sin dependencia de APIs externas. El dashboard usa Mistral (mistralAI.ts)
+ * como fuente primaria; esta funcion es el fallback cuando no hay API key.
+ */
 export async function fetchAIIntelligence(ctx: any): Promise<AIIntelligenceOutput> {
-  if (!GEMINI_KEY) return emptyAI();
-
-  const hash = ctxHash(ctx);
-  const now = Date.now();
-  if (_aiCache && _aiCache.expiresAt > now && _aiCache.hash === hash) {
-    return { ..._aiCache.result, cacheHit: true };
-  }
-
   const ts = new Date().toISOString();
-  const summary = macroSummary(ctx);
 
-  try {
-    const macroPrompt = `Eres estratega macro senior de hedge fund. Responde SOLO en JSON sin markdown:
-{"regimeNarrative":"<3 frases>","macroValidation":"<2 frases>","btcCycleSummary":"<2 frases>"}
+  // Reglas deterministicas basicas desde los datos de mercado
+  const regimeNarrative = ctx.regime === 'CRISIS'
+    ? `Regimen CRISIS detectado. VIX=${sf(ctx.vix)}. Exposicion reducida.`
+    : ctx.regime === 'CONTRACTION'
+      ? `Regimen CONTRACTION. VIX=${sf(ctx.vix)}. Precaución activa.`
+      : `Regimen EXPANSION. VIX=${sf(ctx.vix)}. Condiciones favorables.`;
 
-${summary}`;
-    const sentinelPrompt = `Eres analista de riesgo sistemico. Responde SOLO en JSON sin markdown:
-{"marketSentiment":"<2 frases>","topNarratives":["n1","n2","n3"],"blackSwanAlert":false,"blackSwanReason":null}
+  const macroValidation = ctx.vix > 30
+    ? `VIX elevado (${sf(ctx.vix)}): volatilidad por encima de umbral de cautela.`
+    : `VIX en rango normal (${sf(ctx.vix)}). Sin señales de estrés.`;
 
-${summary}`;
+  const btcCycleSummary = ctx.fearGreed
+    ? `Fear & Greed: ${ctx.fearGreed}/100 (${ctx.fearGreedLabel ?? 'N/D'}). RSI: ${sf(ctx.btcRsi, 0)}.`
+    : 'Sin datos on-chain de BTC.';
 
-    const [macroRaw, sentinelRaw] = await Promise.all([
-      callGemini(macroPrompt, 400),
-      callGemini(sentinelPrompt, 400),
-    ]);
+  const marketSentiment = ctx.fearGreed && ctx.fearGreed < 30
+    ? 'Miedo extremo — posible zona de acumulacion.'
+    : ctx.fearGreed && ctx.fearGreed > 70
+      ? 'Codicia extrema — precaucion con nuevas entradas.'
+      : 'Sentimiento neutral.';
 
-    const macro = JSON.parse(macroRaw);
-    const sentinel = JSON.parse(sentinelRaw);
+  const topNarratives: string[] = [];
+  if (ctx.vix > 30) topNarratives.push('Volatilidad elevada');
+  if (ctx.m2Growth < 0) topNarratives.push('Contraccion monetaria');
+  if (ctx.btcDominance > 60) topNarratives.push('Dominancia BTC alta');
+  if (topNarratives.length === 0) topNarratives.push('Sin narrativas dominantes');
 
-    const output: AIIntelligenceOutput = {
-      gemini: { ...macro, model: 'gemini-2.5-flash', cachedAt: ts },
-      claude: null,
-      grok: { ...sentinel, model: 'gemini-2.5-flash', cachedAt: ts },
-      fetchedAt: ts, cacheHit: false,
-    };
+  const output: AIIntelligenceOutput = {
+    ai: { regimeNarrative, macroValidation, btcCycleSummary, marketSentiment, topNarratives, blackSwanAlert: false, blackSwanReason: null, model: 'rules-engine', cachedAt: ts },
+    fetchedAt: ts, cacheHit: false,
+  };
 
-    _aiCache = { result: output, hash, expiresAt: now + AI_CACHE_TTL };
-    return output;
-  } catch (err: any) {
-    console.warn('[AIIntelligence] Gemini error:', err?.message ?? err);
-    return emptyAI();
-  }
+  _aiCache = { result: output, hash: ctxHash(ctx), expiresAt: Date.now() + AI_CACHE_TTL };
+  return output;
 }
 
 // ── Telegram Alerts ──────────────────────────────────────────

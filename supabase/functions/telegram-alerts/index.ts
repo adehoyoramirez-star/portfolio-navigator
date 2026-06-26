@@ -57,7 +57,7 @@ interface TelegramBody {
   btcDominance?: number;
   fearGreed?: number;
   fearGreedLabel?: string;
-  geminiNarrative?: string;
+  aiNarrative?: string;
   // Tactical opportunity fields
   tacticalTicker?: string;
   tacticalName?: string;
@@ -233,8 +233,8 @@ function buildDailySummary(body: TelegramBody): string {
     `📌 <b>Top asignaciones</b>`,
     allocs,
     "",
-    body.geminiNarrative
-      ? `🤖 <b>Gemini:</b> ${body.geminiNarrative.slice(0, 300)}`
+    body.aiNarrative
+      ? `🤖 <b>Olympus AI:</b> ${body.aiNarrative.slice(0, 300)}`
       : "",
     "",
     `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,

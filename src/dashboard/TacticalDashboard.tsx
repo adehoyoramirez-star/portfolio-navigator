@@ -1177,7 +1177,7 @@ export default function TacticalDashboard() {
                     </>
                   ) : (
                     <div style={{ fontSize:'0.7rem', color:'#64748b' }}>
-                      {scanNarrative.error ? `⚠️ ${scanNarrative.error}` : '⏸️ Sin datos de narrativa (Gemini no disponible)'}
+                      {scanNarrative.error ? `⚠️ ${scanNarrative.error}` : '⏸️ Sin datos de narrativa (motor offline)'}
                     </div>
                   )}
                 </div>

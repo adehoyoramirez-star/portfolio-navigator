@@ -6,11 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// === API KEYS ===
-const GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') ?? '';
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-
+// === API KEYS (Gemini eliminado Jun 2026 — usar Claude + Grok) ===
 const CLAUDE_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
 const CLAUDE_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -33,31 +29,6 @@ MACRO: VIX=${sf(ctx.vix)} MOVE=${sf(ctx.move,0)} Bond10y=${sf(ctx.bond10y,2)}% B
 CRYPTO: BTC=${sf(ctx.btcPrice,0)} RSI=${sf(ctx.btcRsi,0)} DOM=${sf(ctx.btcDominance)}% MVRV=${sf(ctx.mvrv,2)} FearGreed=${ctx.fearGreed??'N/D'}/${ctx.fearGreedLabel??'N/D'}
 PORTFOLIO: EUR${sf(ctx.totalValue??0,0)} vol=${sf((ctx.portfolioVol??0)*100)}% dd=${sf((ctx.drawdown??0)*100)}% mu=${sf((ctx.muEffective??0)*100)}%
 ${Array.isArray(ctx.contradictions)&&ctx.contradictions.length>0?'CONTRADICCIONES: '+ctx.contradictions.join(' | '):''}`.trim();
-}
-
-async function callGemini(prompt: string, maxTokens=500) {
-  if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada');
-  for (const model of GEMINI_MODELS) {
-    try {
-      const url = `${GEMINI_BASE}/${model}:generateContent?key=${GEMINI_KEY}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: maxTokens, temperature: 0.25 },
-        }),
-      });
-      if (res.status===429||res.status===503||res.status===404) continue;
-      if (!res.ok) throw new Error(`${model}: ${res.status}`);
-      const json = await res.json();
-      const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
-      return text.replace(/```json|```/g,'').trim();
-    } catch(e) {
-      if (GEMINI_MODELS.indexOf(model)===GEMINI_MODELS.length-1) throw e;
-    }
-  }
-  throw new Error('All Gemini models failed');
 }
 
 async function callClaude(prompt: string, maxTokens=500) {
@@ -105,13 +76,17 @@ async function runMacro(ctx: any) {
 
 ${macroSummary(ctx)}`;
 
-  // Intentar Claude primero, luego Gemini como fallback
+  // Claude es el motor principal de analisis macro
   try {
     const raw = await callClaude(prompt, 400);
     return JSON.parse(raw);
   } catch {
-    const raw = await callGemini(prompt, 400);
-    return JSON.parse(raw);
+    // Sin Claude ni Gemini: devolver analisis deterministico
+    return {
+      regimeNarrative: `Regimen: ${ctx.regime??'N/D'}. VIX: ${sf(ctx.vix)}.`,
+      macroValidation: `Datos macro limitados. VIX=${sf(ctx.vix)}, CreditSpread=${sf(ctx.creditSpread,2)}%.`,
+      btcCycleSummary: `BTC RSI=${sf(ctx.btcRsi,0)}. FearGreed=${ctx.fearGreed??'N/D'}.`,
+    };
   }
 }
 
@@ -121,9 +96,17 @@ async function runElliott(ctx: any) {
 
 ${macroSummary(ctx)}`;
 
-  // Usar Gemini para analisis tecnico
-  const raw = await callGemini(prompt, 400);
-  return JSON.parse(raw);
+  // Claude para analisis tecnico
+  try {
+    const raw = await callClaude(prompt, 400);
+    return JSON.parse(raw);
+  } catch {
+    return {
+      elliottAnalysis: 'Analisis Elliott no disponible sin API key.',
+      rebalanceAdvice: 'Seguir asignaciones del motor Olympus V3.',
+      contradictionAnalysis: 'Sin datos suficientes para analisis de contradicciones.',
+    };
+  }
 }
 
 async function runSentinel(ctx: any) {
@@ -133,13 +116,17 @@ async function runSentinel(ctx: any) {
 
 ${macroSummary(ctx)}`;
 
-  // Intentar Grok primero (mejor para riesgo/black swan), luego Gemini fallback
+  // Grok para riesgo sistemico, con fallback deterministico
   try {
     const raw = await callGrok(prompt, 400);
     return JSON.parse(raw);
   } catch {
-    const raw = await callGemini(prompt, 400);
-    return JSON.parse(raw);
+    return {
+      marketSentiment: ctx.fearGreed && ctx.fearGreed < 30 ? 'Miedo extremo' : ctx.fearGreed && ctx.fearGreed > 70 ? 'Codicia' : 'Neutral',
+      topNarratives: ctx.vix > 30 ? ['Volatilidad elevada'] : ['Sin narrativas dominantes'],
+      blackSwanAlert: bsAlert,
+      blackSwanReason: bsAlert ? 'VIX elevado + credit spread' : null,
+    };
   }
 }
 
@@ -159,32 +146,23 @@ Deno.serve(async (req: Request) => {
 
   const ts = new Date().toISOString();
 
-  // Verificar si al menos una API key está configurada
-  const hasAnyKey = GEMINI_KEY || CLAUDE_KEY || GROK_KEY;
+  // Verificar si al menos una API key esta configurada
+  const hasAnyKey = !!(CLAUDE_KEY || GROK_KEY);
 
   if (!hasAnyKey) {
     return new Response(JSON.stringify({
-      gemini:{error:'Ninguna API key configurada (GEMINI/CLAUDE/GROK)'},
-      claude:null, grok:null,
+      ai:{error:'Ninguna API key configurada (CLAUDE/GROK) — usando reglas deterministicas'},
       fetchedAt:ts, cacheHit:false,
     }),{headers:{...corsHeaders,'Content-Type':'application/json'}});
   }
 
   const [r1,r2,r3] = await Promise.allSettled([runMacro(ctx),runElliott(ctx),runSentinel(ctx)]);
 
-  const gemini = r1.status==='fulfilled'
-    ? {...r1.value, model:'gemini-2.5-flash', cachedAt:ts}
-    : {error:String(r1.reason).slice(0,200), model:'gemini', cachedAt:ts};
+  const ai = r1.status==='fulfilled'
+    ? {...r1.value, model:'claude-sonnet-4-20250514', cachedAt:ts}
+    : {error:String(r1.reason).slice(0,200), model:'claude', cachedAt:ts};
 
-  const claude = r2.status==='fulfilled'
-    ? {...r2.value, model:'claude-sonnet-4-20250514', cachedAt:ts}
-    : {error:String(r2.reason).slice(0,200), model:'claude', cachedAt:ts};
-
-  const grok = r3.status==='fulfilled'
-    ? {...r3.value, model:'grok-2-latest', cachedAt:ts}
-    : {marketSentiment:'', topNarratives:[], blackSwanAlert:false, blackSwanReason:null, error:String(r3.reason).slice(0,200), model:'grok', cachedAt:ts};
-
-  const output = {gemini, claude, grok, fetchedAt:ts, cacheHit:false};
+  const output = {ai, fetchedAt:ts, cacheHit:false};
   cache = {result:output, hash, expiresAt:now+CACHE_TTL};
 
   return new Response(JSON.stringify(output),{headers:{...corsHeaders,'Content-Type':'application/json'}});

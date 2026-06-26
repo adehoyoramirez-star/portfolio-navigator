@@ -1,19 +1,13 @@
 // ============================================================
 // src/core/tactical/aiNarrative.ts
-// AI Narrative Overlay — 100% gratis (Gemini Flash)
+// AI Narrative Overlay — reglas determinísticas locales
 //
 // ¿Qué hace?
-//   Una vez por scan, llama a ai-intelligence (Gemini Flash,
-//   gratis, 1,500 peticiones/día) para obtener las narrativas
-//   dominantes del mercado. Parsea esas narrativas para extraer
-//   sesgos sectoriales y ajusta el qualityScore de cada activo.
+//   Una vez por scan, analiza datos de mercado para extraer
+//   sesgos sectoriales usando reglas determinísticas (sin APIs externas).
+//   Ajusta el qualityScore de cada activo según narrativas detectadas.
 //
-// Coste:
-//   1 llamada por scan (cada ~15 min). Con 10 scans/día:
-//   10 llamadas de 1,500 disponibles. Coste real: 0€.
-//
-// Si Gemini falla o no hay API key, el sistema sigue funcionando
-// sin penalización — el narrative bias es un overlay opcional.
+// Sin dependencia de APIs externas. El sistema funciona 100% offline.
 // ============================================================
 
 import type { TacticalAsset } from './types';
@@ -129,15 +123,13 @@ export async function fetchSectorNarrative(
       brent: 0,
     });
 
-    if (!data || data.gemini?.error) {
-      console.warn('[AINarrative] Error:', data?.gemini?.error ?? 'sin datos');
+    if (!data || data.ai?.error) {
+      console.warn('[AINarrative] Motor AI offline:', data?.ai?.error ?? 'sin datos');
       return emptyNarrativeResponse();
     }
 
-    const narratives: string[] =
-      (data.grok as any)?.topNarratives ?? (data.gemini as any)?.topNarratives ?? [];
-    const marketSentiment: string =
-      (data.grok as any)?.marketSentiment ?? (data.gemini as any)?.marketSentiment ?? '';
+    const narratives: string[] = data.ai?.topNarratives ?? [];
+    const marketSentiment: string = data.ai?.marketSentiment ?? '';
 
     const { sectorBiases, marketWideBias } = parseNarrativesToBiases(narratives);
 

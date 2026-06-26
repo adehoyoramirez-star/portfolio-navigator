@@ -195,9 +195,9 @@ const formatCurrency = (value: number): string => {
   const [elliottPivotsText, setElliottPivotsText] = useState<string>("");
 
   const [aiIntelligence, setAiIntelligence] = useState<{
-    gemini: { regimeNarrative: string; macroValidation: string; btcCycleSummary: string; model: string; cachedAt: string; error?: string } | null;
-    grok: { marketSentiment: string; topNarratives: string[]; blackSwanAlert: boolean; blackSwanReason: string | null; model: string; cachedAt: string; error?: string } | null;
-    claude: { elliottAnalysis: string; rebalanceAdvice: string; contradictionAnalysis: string; model: string; cachedAt: string; error?: string } | null;
+    ai: { regimeNarrative: string; macroValidation: string; btcCycleSummary: string; marketSentiment: string; topNarratives: string[]; blackSwanAlert: boolean; blackSwanReason: string | null; elliottAnalysis?: string; rebalanceAdvice?: string; contradictionAnalysis?: string; model: string; cachedAt: string; error?: string } | null;
+    
+    
     fetchedAt: string;
     cacheHit: boolean;
   } | null>(null);
@@ -432,24 +432,24 @@ const formatCurrency = (value: number): string => {
 
       const data = await fetchAIIntelligence(ctxBody);
 
-      if (!data || data.gemini?.error) {
-        throw new Error(data.gemini?.error || 'No data from Gemini');
+      if (!data || data.ai?.error) {
+        throw new Error(data.ai?.error || 'No data from Olympus AI');
       }
 
       const output = {
-        gemini: data.gemini ?? null,
-        claude: data.claude ?? null,
-        grok: data.grok ?? null,
+        ai: data.ai ?? null,
+        claude: data.ai ?? null,
+        grok: data.ai ?? null,
         fetchedAt: ts,
         cacheHit: data.cacheHit ?? false,
       };
 
-      setAiIntelligence(output);
+      setAiIntelligence({ ai: output.ai ?? null, fetchedAt: output.fetchedAt ?? new Date().toISOString(), cacheHit: output.cacheHit ?? false });
 
-      if (data.grok?.blackSwanAlert && data.grok?.blackSwanReason && !data.grok?.error) {
+      if (data.ai?.blackSwanAlert && data.ai?.blackSwanReason && !data.ai?.error) {
         sendTelegramAlert( {
             type: 'black_swan',
-            blackSwanReason: data.grok.blackSwanReason,
+            blackSwanReason: data.ai.blackSwanReason,
             currentRegime: engineResult.regime,
             vix,
         }).catch(() => {});
@@ -460,12 +460,10 @@ const formatCurrency = (value: number): string => {
       const ts = new Date().toISOString();
       const errResult = {
         error: errMsg.slice(0, 300),
-        model: 'gemini', cachedAt: ts,
+        model: 'ai', cachedAt: ts,
       };
       setAiIntelligence({
-        gemini: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', ...errResult },
-        claude: { elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '', ...errResult },
-        grok: { marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, ...errResult },
+        ai: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '', ...errResult },
         fetchedAt: ts, cacheHit: false,
       });
     } finally {
@@ -1883,7 +1881,7 @@ soxRsiWeekly,
                   btcDominance,
                   allocations: engineResult.allocations.map(a => ({ name: a.name, pct: a.finalAllocation })),
                   muEffective: Math.min(0.25, expectedReturn),
-                  aiNarrative: aiIntelligence?.gemini?.regimeNarrative ?? undefined,
+                  aiNarrative: aiIntelligence?.ai?.regimeNarrative ?? undefined,
               });
               if (!ok) throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
               setTelegramStatus('ok');
@@ -1968,7 +1966,7 @@ soxRsiWeekly,
             <span style={{ color: "#818cf8" }}>
               ✓ AI {aiIntelligence.cacheHit ? "(caché)" : ""}
               {" · "}{new Date(aiIntelligence.fetchedAt).toLocaleTimeString("es-ES")}
-              {" · ✦ "}{aiIntelligence.gemini?.model ?? 'Gemini Flash'}
+              {" · ✦ "}{aiIntelligence.ai?.model ?? 'Olympus AI Flash'}
             </span>
           )}
         </span>
@@ -2682,13 +2680,13 @@ soxRsiWeekly,
       {aiIntelligence && (
         <div style={{ ...styles.card, border: "1px solid #4c1d95", background: "linear-gradient(135deg, #0c0a1f 0%, #111827 100%)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <h2 style={{ color: "#a78bfa", margin: 0 }}>🧠 Motor Intelligence — Gemini Flash</h2>
+            <h2 style={{ color: "#a78bfa", margin: 0 }}>🧠 Motor Intelligence — Olympus AI Flash</h2>
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
               {aiIntelligence.cacheHit && (
                 <span style={{ fontSize: "0.65rem", color: "#6b7280", background: "#1f2937", padding: "2px 8px", borderRadius: 4 }}>caché</span>
               )}
               <span style={{ fontSize: "0.65rem", color: "#6b7280", background: "#1f2937", padding: "2px 8px", borderRadius: 4 }}>
-                ✦ {aiIntelligence.gemini?.model ?? 'Gemini Flash'}
+                ✦ {aiIntelligence.ai?.model ?? 'Olympus AI Flash'}
               </span>
               <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>
                 {new Date(aiIntelligence.fetchedAt).toLocaleString("es-ES")}
@@ -2700,58 +2698,58 @@ soxRsiWeekly,
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
-            {aiIntelligence.gemini && !aiIntelligence.gemini.error && (
+            {aiIntelligence.ai && !aiIntelligence.ai.error && (
               <div style={{ background: "#0c1228", border: "1px solid #1d4ed8", borderRadius: 10, padding: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
                   <span>✦</span>
                   <span style={{ color: "#60a5fa", fontWeight: "bold", fontSize: "0.85rem" }}>Macro Strategist</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.gemini.model}</span>
+                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.ai.model}</span>
                 </div>
                 <div style={{ marginBottom: "0.75rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#3b82f6", fontWeight: "bold", marginBottom: "0.3rem" }}>RÉGIMEN ACTUAL</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.gemini.regimeNarrative}</p>
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.ai.regimeNarrative}</p>
                 </div>
                 <div style={{ marginBottom: "0.75rem", borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#3b82f6", fontWeight: "bold", marginBottom: "0.3rem" }}>VALIDACIÓN MACRO</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.gemini.macroValidation}</p>
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.macroValidation}</p>
                 </div>
                 <div style={{ borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#3b82f6", fontWeight: "bold", marginBottom: "0.3rem" }}>CICLO BTC</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.gemini.btcCycleSummary}</p>
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.btcCycleSummary}</p>
                 </div>
               </div>
             )}
-            {aiIntelligence.gemini?.error && (
+            {aiIntelligence.ai?.error && (
               <div style={{ background: "#1c0a0a", border: "1px solid #374151", borderRadius: 10, padding: "1rem" }}>
                 <span style={{ color: "#ef4444", fontSize: "0.8rem" }}>✦ Macro Strategist — Error</span>
-                <p style={{ color: "#9ca3af", fontSize: "0.75rem", marginTop: "0.5rem", lineHeight: 1.5 }}>{aiIntelligence.gemini.error}</p>
-                {aiIntelligence.gemini.error.includes('Edge Function') && (
+                <p style={{ color: "#9ca3af", fontSize: "0.75rem", marginTop: "0.5rem", lineHeight: 1.5 }}>{aiIntelligence.ai.error}</p>
+                {aiIntelligence.ai.error.includes('Edge Function') && (
                   <p style={{ color: "#6b7280", fontSize: "0.7rem", marginTop: "0.5rem", fontFamily: "monospace", background: "#0f172a", padding: "0.5rem", borderRadius: 4 }}>
-                    Verificar GEMINI_API_KEY en Supabase Secrets
+                    Verificar OlympusAI_API_KEY en Supabase Secrets
                   </p>
                 )}
               </div>
             )}
 
-            {aiIntelligence.grok && !aiIntelligence.grok.error && (
-              <div style={{ background: "#0a0a0a", border: `1px solid ${aiIntelligence.grok.blackSwanAlert ? "#ef4444" : "#374151"}`, borderRadius: 10, padding: "1rem" }}>
+            {aiIntelligence.ai && !aiIntelligence.ai.error && (
+              <div style={{ background: "#0a0a0a", border: `1px solid ${aiIntelligence.ai.blackSwanAlert ? "#ef4444" : "#374151"}`, borderRadius: 10, padding: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
                   <span>🛡</span>
                   <span style={{ color: "#d1d5db", fontWeight: "bold", fontSize: "0.85rem" }}>Market Sentinel</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.grok.model}</span>
+                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.ai.model}</span>
                 </div>
-                {aiIntelligence.grok.blackSwanAlert && (
+                {aiIntelligence.ai.blackSwanAlert && (
                   <div style={{ background: "#1c0a0a", border: "1px solid #ef4444", borderRadius: 6, padding: "0.5rem 0.75rem", marginBottom: "0.75rem", fontSize: "0.78rem", color: "#ef4444" }}>
-                    ⚠️ <strong>ALERTA CISNE NEGRO:</strong> {aiIntelligence.grok.blackSwanReason}
+                    ⚠️ <strong>ALERTA CISNE NEGRO:</strong> {aiIntelligence.ai.blackSwanReason}
                   </div>
                 )}
                 <div style={{ marginBottom: "0.75rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#9ca3af", fontWeight: "bold", marginBottom: "0.3rem" }}>SENTIMENT ACTUAL</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.grok.marketSentiment}</p>
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.ai.marketSentiment}</p>
                 </div>
                 <div style={{ borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#9ca3af", fontWeight: "bold", marginBottom: "0.5rem" }}>NARRATIVAS DOMINANTES</div>
-                  {(aiIntelligence.grok.topNarratives ?? []).map((n, i) => (
+                  {(aiIntelligence.ai.topNarratives ?? []).map((n, i) => (
                     <div key={i} style={{ fontSize: "0.78rem", color: "#d1d5db", marginBottom: "0.3rem", display: "flex", gap: "0.5rem" }}>
                       <span style={{ color: "#6b7280", minWidth: "1rem" }}>{i + 1}.</span>
                       <span>{n}</span>
@@ -2760,34 +2758,34 @@ soxRsiWeekly,
                 </div>
               </div>
             )}
-            {(!aiIntelligence.grok || aiIntelligence.grok.error) && !aiIntelligence.gemini?.error && (
+            {(!aiIntelligence.ai || aiIntelligence.ai.error) && !aiIntelligence.ai?.error && (
               <div style={{ background: "#0a0a0a", border: "1px solid #1f2937", borderRadius: 10, padding: "1rem" }}>
                 <span style={{ color: "#4b5563", fontSize: "0.8rem" }}>🛡 Market Sentinel — sin datos</span>
               </div>
             )}
 
-            {aiIntelligence.claude && !aiIntelligence.claude.error && (
+            {aiIntelligence.ai && !aiIntelligence.ai.error && (
               <div style={{ background: "#0d1117", border: "1px solid #d97706", borderRadius: 10, padding: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
                   <span>📐</span>
                   <span style={{ color: "#f59e0b", fontWeight: "bold", fontSize: "0.85rem" }}>Elliott Wave Analyst</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.claude.model}</span>
+                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.ai.model}</span>
                 </div>
                 <div style={{ marginBottom: "0.75rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#d97706", fontWeight: "bold", marginBottom: "0.3rem" }}>ELLIOTT WAVE</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.claude.elliottAnalysis}</p>
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.ai.elliottAnalysis}</p>
                 </div>
                 <div style={{ marginBottom: "0.75rem", borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#d97706", fontWeight: "bold", marginBottom: "0.3rem" }}>REBALANCEO RECOMENDADO</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.claude.rebalanceAdvice}</p>
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.rebalanceAdvice}</p>
                 </div>
                 <div style={{ borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
                   <div style={{ fontSize: "0.65rem", color: "#d97706", fontWeight: "bold", marginBottom: "0.3rem" }}>SEÑALES CONTRADICTORIAS</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.claude.contradictionAnalysis}</p>
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.contradictionAnalysis}</p>
                 </div>
               </div>
             )}
-            {(!aiIntelligence.claude || aiIntelligence.claude.error) && !aiIntelligence.gemini?.error && (
+            {(!aiIntelligence.ai || aiIntelligence.ai.error) && !aiIntelligence.ai?.error && (
               <div style={{ background: "#0d1117", border: "1px solid #1f2937", borderRadius: 10, padding: "1rem" }}>
                 <span style={{ color: "#4b5563", fontSize: "0.8rem" }}>📐 Elliott Wave Analyst — sin datos</span>
               </div>
