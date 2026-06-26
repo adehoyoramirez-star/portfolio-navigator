@@ -101,146 +101,97 @@ async function sendTelegram(text: string): Promise<void> {
 
 // ── Builders ─────────────────────────────────────────────────────────────
 function buildRegimeChange(body: TelegramBody): string {
-  const emoji = regimeEmoji[body.currentRegime ?? ""] ?? "📊";
+  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const emoji = regimeEmoji[body.currentRegime ?? ''] ?? '📊';
+  const prev = body.previousRegime ?? 'N/D';
+  const curr = body.currentRegime ?? 'N/D';
+  const pen = pct(body.regimePenalty, 0);
+  const vixTxt = body.vix?.toFixed(1) ?? 'N/D';
+  const val = body.portfolioValue ? eur(body.portfolioValue) : '';
+  const dd = body.portfolioDrawdown != null ? pct(body.portfolioDrawdown) : '';
   return [
-    `${emoji} <b>CAMBIO DE RÉGIMEN — HENDE FUND</b>`,
-    "",
-    `<b>Anterior:</b> ${body.previousRegime ?? "N/D"}`,
-    `<b>Nuevo:</b> ${body.currentRegime ?? "N/D"}`,
-    `<b>Penalización:</b> ${pct(body.regimePenalty)}`,
-    `<b>Confianza motor:</b> ${pct(body.confidence)}`,
-    `<b>Señal dominante:</b> ${body.dominantSignal ?? "N/D"}`,
-    "",
-    `📊 <b>Portfolio</b>`,
-    `Valor: ${eur(body.portfolioValue)}`,
-    `Drawdown: ${pct(body.portfolioDrawdown)}`,
-    `VIX: ${body.vix?.toFixed(1) ?? "N/D"}`,
-    "",
-    `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
-  ].join("\n");
+    `${emoji} <b>RÉGIMEN: ${prev} → ${curr}</b>`,
+    `Pen ${pen} · VIX ${vixTxt} · ${body.dominantSignal ?? ''}`,
+    val ? `${val} · DD ${dd}` : '',
+    `⏰ ${now}`,
+  ].filter(Boolean).join('\n');
 }
 
 function buildTailRisk(body: TelegramBody): string {
+  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const volMult = body.volMultiplier != null ? `${body.volMultiplier.toFixed(2)}×` : '';
+  const vixTxt = body.vix?.toFixed(1) ?? 'N/D';
   return [
-    `🛡️ <b>TAIL RISK ACTIVADO — HENDE FUND</b>`,
-    "",
-    `<b>Motivo:</b> ${body.tailRiskReason ?? "N/D"}`,
-    `<b>Régimen:</b> ${body.currentRegime ?? "N/D"}`,
-    `<b>Multiplicador vol:</b> ${body.volMultiplier?.toFixed(2) ?? "N/D"}×`,
-    `<b>VIX:</b> ${body.vix?.toFixed(1) ?? "N/D"}`,
-    "",
-    `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
-  ].join("\n");
+    `🛡️ <b>TAIL RISK</b> · ${body.tailRiskReason ?? 'N/D'}`,
+    `${body.currentRegime ?? 'N/D'}${volMult ? ' · VolTarget ' + volMult : ''} · VIX ${vixTxt}`,
+    `⏰ ${now}`,
+  ].filter(Boolean).join('\n');
 }
 
 function buildBlackSwan(body: TelegramBody): string {
+  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   return [
-    `🦢 <b>⚠️ ALERTA CISNE NEGRO — HENDE FUND</b>`,
-    "",
-    `<b>Análisis IA:</b> ${body.blackSwanReason ?? "N/D"}`,
-    `<b>Régimen:</b> ${body.currentRegime ?? "N/D"}`,
-    `<b>VIX:</b> ${body.vix?.toFixed(1) ?? "N/D"}`,
-    "",
-    `⚡ Revisar coberturas y liquidez inmediatamente.`,
-    `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
-  ].join("\n");
+    `🦢 <b>CISNE NEGRO</b> · VIX ${body.vix?.toFixed(1) ?? 'N/D'}`,
+    `${body.blackSwanReason ?? ''}`,
+    `<b>${body.currentRegime ?? 'N/D'}</b> · Revisar coberturas`,
+    `⏰ ${now}`,
+  ].filter(Boolean).join('\n');
 }
 
 function buildVixSpike(body: TelegramBody): string {
-  const level = (body.vix ?? 0) >= 40 ? "🔴 PÁNICO" : "🟠 ESTRÉS";
+  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const level = (body.vix ?? 0) >= 40 ? '🔴 PÁNICO' : '🟠 ESTRÉS';
+  const vixTxt = body.vix?.toFixed(1) ?? 'N/D';
   return [
-    `📊 <b>VIX SPIKE ${level} — HENDE FUND</b>`,
-    "",
-    `<b>VIX:</b> ${body.vix?.toFixed(1) ?? "N/D"}`,
-    `<b>Régimen:</b> ${body.currentRegime ?? "N/D"}`,
-    `<b>Portfolio:</b> ${eur(body.portfolioValue)}`,
-    "",
-    `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
-  ].join("\n");
+    `📊 <b>VIX ${vixTxt} ${level}</b>`,
+    `${body.currentRegime ?? 'N/D'}${body.portfolioValue ? ' · ' + eur(body.portfolioValue) : ''}`,
+    `⏰ ${now}`,
+  ].filter(Boolean).join('\n');
 }
 
 function buildTacticalOpportunity(body: TelegramBody): string {
-  const typeEmojis: Record<string, string> = {
-    BLOOD_IN_STREETS: "🩸",
-    MEAN_REVERSION: "↩️",
-    MOMENTUM_BREAKOUT: "🚀",
-    OVERSOLD_BOUNCE: "📈",
-    SECTOR_ROTATION: "🔄",
-    EVENT_DRIVEN: "⚡",
-  };
-  const emoji = typeEmojis[body.tacticalType ?? ""] ?? "🎯";
+  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   const score = body.tacticalScore ?? 0;
-  const scoreEmoji = score >= 80 ? "🏆" : score >= 60 ? "✅" : "⚠️";
-
+  const rr = body.tacticalRR != null ? `R:R ${body.tacticalRR.toFixed(1)}:1` : '';
+  const entry = body.tacticalEntry != null ? `Ent ${eur(body.tacticalEntry)}` : '';
+  const stop = body.tacticalStop != null ? `Stop ${eur(body.tacticalStop)}` : '';
+  const tp1 = body.tacticalTP1 != null ? `TP1 ${eur(body.tacticalTP1)}` : '';
+  const tp2 = body.tacticalTP2 != null ? `TP2 ${eur(body.tacticalTP2)}` : '';
   return [
-    `${emoji} <b>OPORTUNIDAD TÁCTICA — ${body.tacticalTicker ?? ""}</b>`,
-    "",
-    `<b>${body.tacticalName ?? ""}</b>`,
-    `<b>Tipo:</b> ${body.tacticalType ?? ""} ${scoreEmoji} Score ${score.toFixed(0)}`,
-    "",
-    `📌 <b>Niveles (EUR)</b>`,
-    `Entrada: ${eur(body.tacticalEntry)}`,
-    `Stop Loss: ${eur(body.tacticalStop)}`,
-    `TP1: ${eur(body.tacticalTP1)}`,
-    `TP2: ${eur(body.tacticalTP2)}`,
-    `R:R: ${body.tacticalRR?.toFixed(2) ?? "N/D"}:1`,
-    "",
-    body.tacticalATR ? `📊 ATR: ${body.tacticalATR}` : "",
-    body.tacticalSignals ? `🧩 Señales: ${body.tacticalSignals}` : "",
-    "",
-    body.tacticalReasoning ? `<i>${body.tacticalReasoning}</i>` : "",
-    "",
-    `🔍 <b>Verificar en TradingView antes de ejecutar</b>`,
-    `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `🎯 <b>${body.tacticalTicker ?? ''}</b> · ${body.tacticalType ?? ''} · Score ${score.toFixed(0)} · ${rr}`,
+    [entry, stop, tp1, tp2].filter(Boolean).join(' · '),
+    body.tacticalSignals ? `🧩 ${body.tacticalSignals}` : '',
+    body.tacticalReasoning?.slice(0, 200) ?? '',
+    `⏰ ${now}`,
+  ].filter(Boolean).join('\n');
 }
 
 function buildDailySummary(body: TelegramBody): string {
-  const emoji = regimeEmoji[body.currentRegime ?? ""] ?? "📊";
+  const emoji = regimeEmoji[body.currentRegime ?? ''] ?? '📊';
+  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const regimeTxt = body.currentRegime ?? 'N/D';
+  const vixTxt = body.vix?.toFixed(1) ?? 'N/D';
+  const val = eur(body.portfolioValue);
+  const dd = pct(body.portfolioDrawdown);
   const allocs = Array.isArray(body.allocations)
     ? body.allocations
         .sort((a, b) => b.pct - a.pct)
         .slice(0, 5)
-        .map((a) => `  • ${a.name}: ${pct(a.pct / 100, 0)}`)
-        .join("\n")
-    : "N/D";
-
+        .map((a) => `${a.name.split(' ')[0]} ${(a.pct * 100).toFixed(0)}%`)
+        .join(' · ')
+    : '';
+  const btcPrice = body.btcPrice ? `BTC ${eur(body.btcPrice)}` : '';
+  const btcDom = body.btcDominance != null ? `DOM ${body.btcDominance.toFixed(1)}%` : '';
+  const fg = body.fearGreed != null ? `F&G ${body.fearGreed}/${body.fearGreedLabel ?? ''}` : '';
+  const mu = body.muEffective != null ? `μ ${(body.muEffective * 100).toFixed(1)}%` : '';
   return [
-    `${emoji} <b>RESUMEN DIARIO — HENDE FUND</b>`,
-    `${new Date().toLocaleDateString("es-ES", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      timeZone: "Europe/Madrid",
-    })}`,
-    "",
-    `📊 <b>Portfolio</b>`,
-    `Valor: ${eur(body.portfolioValue)}`,
-    `Drawdown: ${pct(body.portfolioDrawdown)}`,
-    "",
-    `🧠 <b>Régimen Olympus</b>`,
-    `${body.currentRegime ?? "N/D"} | Penalización: ${pct(body.regimePenalty)}`,
-    `Confianza: ${pct(body.confidence)}`,
-    `Retorno esperado (μ): ${pct(body.muEffective)}`,
-    "",
-    `₿ <b>Crypto</b>`,
-    `BTC: ${eur(body.btcPrice)} | Dominancia: ${body.btcDominance?.toFixed(1) ?? "N/D"}%`,
-    `Fear & Greed: ${body.fearGreed ?? "N/D"} — ${body.fearGreedLabel ?? ""}`,
-    "",
-    `📌 <b>Top asignaciones</b>`,
-    allocs,
-    "",
-    body.aiNarrative
-      ? `🤖 <b>Olympus AI:</b> ${body.aiNarrative.slice(0, 300)}`
-      : "",
-    "",
-    `⏰ ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `🏦 <b>HENDE · ${now}</b>`,
+    `${emoji} <b>${regimeTxt}</b> | VIX ${vixTxt}${mu ? ' | ' + mu : ''}`,
+    [btcPrice, btcDom, fg].filter(Boolean).join(' · '),
+    allocs ? `📍 ${allocs}` : '',
+    `${val} · DD ${dd}`,
+    body.aiNarrative?.slice(0, 150) ?? '',
+  ].filter(Boolean).join('\n');
 }
 
 // ── Main handler ─────────────────────────────────────────────────────────

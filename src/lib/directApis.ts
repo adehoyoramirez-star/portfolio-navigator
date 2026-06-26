@@ -189,21 +189,88 @@ export async function sendTelegramAlert(body: any): Promise<{ ok: boolean; error
   }
 }
 
+// ── Helpers para mensajes compactos ──────────────────────────────────
+const eurFmt = (n?: number): string =>
+  n != null && isFinite(n) ? new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : 'N/D';
+const pctFmt = (n?: number, d = 1): string =>
+  n != null && isFinite(n) ? `${(n * 100).toFixed(d)}%` : 'N/D';
+const regimeEmoji: Record<string, string> = { EXPANSION: '🟢', CONTRACTION: '🟠', CRISIS: '🔴', ALL_CASH: '🚨' };
+
 function buildTelegramMessage(body: any): string {
-  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });
+  const now = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const rEmoji = regimeEmoji[body.currentRegime ?? ''] ?? '📊';
+  const regimeTxt = body.currentRegime ?? 'N/D';
+  const vixTxt = body.vix != null ? body.vix.toFixed(1) : 'N/D';
+
   switch (body.type) {
-    case 'regime_change':
-      return `📊 <b>CAMBIO DE REGIMEN</b>\n\n<b>Anterior:</b> ${body.previousRegime ?? 'N/D'}\n<b>Nuevo:</b> ${body.currentRegime ?? 'N/D'}\n<b>Penalizacion:</b> ${((body.regimePenalty ?? 1) * 100).toFixed(0)}%\n<b>VIX:</b> ${body.vix?.toFixed(1) ?? 'N/D'}\n\n⏰ ${now}`;
+    case 'regime_change': {
+      const prevRegime = body.previousRegime ?? 'N/D';
+      const pen = ((body.regimePenalty ?? 1) * 100).toFixed(0);
+      const val = body.portfolioValue ? eurFmt(body.portfolioValue) : '';
+      const dd = body.portfolioDrawdown != null ? pctFmt(body.portfolioDrawdown) : '';
+      return [
+        `${rEmoji} <b>RÉGIMEN: ${prevRegime} → ${regimeTxt}</b>`,
+        `Pen ${pen}% · VIX ${vixTxt} · ${body.dominantSignal ?? ''}`,
+        val ? `${val} · DD ${dd}` : '',
+        `⏰ ${now}`,
+      ].filter(Boolean).join('\n');
+    }
     case 'black_swan':
-      return `🦢 <b>⚠️ CISNE NEGRO</b>\n\n${body.blackSwanReason ?? 'N/D'}\n<b>Regimen:</b> ${body.currentRegime ?? 'N/D'}\n<b>VIX:</b> ${body.vix?.toFixed(1) ?? 'N/D'}\n\n⏰ ${now}`;
-    case 'tail_risk':
-      return `🛡️ <b>TAIL RISK</b>\n\n<b>Motivo:</b> ${body.tailRiskReason ?? 'N/D'}\n<b>Vol:</b> ${body.volMultiplier?.toFixed(2) ?? 'N/D'}x\n\n⏰ ${now}`;
+      return [
+        `🦢 <b>CISNE NEGRO</b> · VIX ${vixTxt}`,
+        `${body.blackSwanReason ?? ''}`,
+        `${rEmoji} ${regimeTxt} · Revisar coberturas`,
+        `⏰ ${now}`,
+      ].filter(Boolean).join('\n');
+    case 'tail_risk': {
+      const volMult = body.volMultiplier != null ? `${body.volMultiplier.toFixed(2)}×` : '';
+      return [
+        `🛡️ <b>TAIL RISK</b> · ${body.tailRiskReason ?? ''}`,
+        volMult ? `VolTarget ${volMult} · VIX ${vixTxt}` : `VIX ${vixTxt}`,
+        `⏰ ${now}`,
+      ].filter(Boolean).join('\n');
+    }
     case 'vix_spike':
-      return `📊 <b>VIX SPIKE</b>\n\n<b>VIX:</b> ${body.vix?.toFixed(1) ?? 'N/D'}\n<b>Regimen:</b> ${body.currentRegime ?? 'N/D'}\n\n⏰ ${now}`;
-    case 'daily_summary':
-      return `📊 <b>RESUMEN DIARIO</b>\n${new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Europe/Madrid' })}\n\n<b>Regimen:</b> ${body.currentRegime ?? 'N/D'}\n<b>Valor:</b> ${body.portfolioValue ? new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(body.portfolioValue) : 'N/D'}\n<b>Drawdown:</b> ${((body.portfolioDrawdown ?? 0) * 100).toFixed(1)}%\n\n⏰ ${now}`;
-    case 'tactical_opportunity':
-      return `🎯 <b>OPORTUNIDAD TACTICA</b> — ${body.tacticalTicker ?? ''}\n\n<b>${body.tacticalName ?? ''}</b> | ${body.tacticalType ?? ''} | Score ${(body.tacticalScore ?? 0).toFixed(0)}\n<b>R:R:</b> ${(body.tacticalRR ?? 0).toFixed(2)}:1\n\n⏰ ${now}`;
+      return [
+        `📊 <b>VIX ${vixTxt}</b> ${body.vix >= 40 ? '🔴PÁNICO' : '🟠ESTRÉS'}`,
+        `${rEmoji} ${regimeTxt}${body.portfolioValue ? ' · ' + eurFmt(body.portfolioValue) : ''}`,
+        `⏰ ${now}`,
+      ].filter(Boolean).join('\n');
+    case 'daily_summary': {
+      const val = eurFmt(body.portfolioValue);
+      const dd = pctFmt(body.portfolioDrawdown);
+      const allocs = Array.isArray(body.allocations)
+        ? body.allocations.sort((a: any, b: any) => b.pct - a.pct).slice(0, 5)
+            .map((a: any) => `${a.name.split(' ')[0]} ${(a.pct * 100).toFixed(0)}%`).join(' · ')
+        : '';
+      const btcPrice = body.btcPrice ? `BTC ${eurFmt(body.btcPrice)}` : '';
+      const btcDom = body.btcDominance != null ? `DOM ${body.btcDominance.toFixed(1)}%` : '';
+      const fg = body.fearGreed != null ? `F&G ${body.fearGreed}/${body.fearGreedLabel ?? ''}` : '';
+      const mu = body.muEffective != null ? `μ ${(body.muEffective * 100).toFixed(1)}%` : '';
+      const erp = body.erpValue != null ? `ERP ${(body.erpValue * 100).toFixed(1)}%` : '';
+      return [
+        `🏦 <b>HENDE · ${now}</b>`,
+        `${rEmoji} <b>${regimeTxt}</b> | VIX ${vixTxt} | ${[erp, mu].filter(Boolean).join(' | ')}`,
+        [btcPrice, btcDom, fg].filter(Boolean).join(' · '),
+        allocs ? `📍 ${allocs}` : '',
+        `${val} · DD ${dd}`,
+        body.aiNarrative?.slice(0, 150) ?? '',
+      ].filter(Boolean).join('\n');
+    }
+    case 'tactical_opportunity': {
+      const rr = body.tacticalRR != null ? `R:R ${body.tacticalRR.toFixed(1)}:1` : '';
+      const entry = body.tacticalEntry != null ? `Ent ${eurFmt(body.tacticalEntry)}` : '';
+      const stop = body.tacticalStop != null ? `Stop ${eurFmt(body.tacticalStop)}` : '';
+      const tp1 = body.tacticalTP1 != null ? `TP1 ${eurFmt(body.tacticalTP1)}` : '';
+      const tp2 = body.tacticalTP2 != null ? `TP2 ${eurFmt(body.tacticalTP2)}` : '';
+      return [
+        `🎯 <b>${body.tacticalTicker ?? ''}</b> · Score ${(body.tacticalScore ?? 0).toFixed(0)} · ${rr}`,
+        [entry, stop, tp1, tp2].filter(Boolean).join(' · '),
+        body.tacticalSignals ? `🧩 ${body.tacticalSignals}` : '',
+        body.tacticalReasoning?.slice(0, 200) ?? '',
+        `⏰ ${now}`,
+      ].filter(Boolean).join('\n');
+    }
     default:
       return `📱 ${JSON.stringify(body)}`;
   }

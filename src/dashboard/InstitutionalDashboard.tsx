@@ -307,8 +307,9 @@ const formatCurrency = (value: number): string => {
       if (md.dxy > 0) setDxy(parseFloat(md.dxy.toFixed(2)));
       if (md.wtiOil > 0) setWtiOil(parseFloat(md.wtiOil.toFixed(2)));
       if (md.moveIndex && md.moveIndex > 0) setMoveIndex(parseFloat(md.moveIndex.toFixed(1)));
-      if (md.m2GrowthSource === "FRED") setM2Growth(parseFloat(md.m2Growth.toFixed(2)));
-      if (md.perSource === "FRED" && md.per > 0) setManualPER(parseFloat(md.per.toFixed(2)));
+      if (md.m2Growth !== undefined && md.m2Growth !== null) setM2Growth(parseFloat(md.m2Growth.toFixed(2))); // FIX-FRED-SYNC: always sync from FRED panel
+      if (md.per > 0) setManualPER(parseFloat(md.per.toFixed(2))); // FIX-FRED-SYNC
+      if (md.creditSpread > 0) setCreditSpread(parseFloat(md.creditSpread.toFixed(2))); // FIX-FRED-SYNC
 
       const liq = liquidityScore({
         m2Growth: md.m2GrowthSource === "FRED" ? md.m2Growth : m2Growth,
@@ -1875,6 +1876,8 @@ soxRsiWeekly,
                   confidence: engineResult.meta.confidence,
                   portfolioValue: totalVal,
                   portfolioDrawdown: portfolioDrawdown ?? 0,
+                  vix,
+                  erpValue,
                   fearGreed: fearGreedIndex?.value ?? undefined,
                   fearGreedLabel: fearGreedIndex?.label ?? undefined,
                   btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price,
