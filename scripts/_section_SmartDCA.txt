@@ -1,0 +1,326 @@
+      {/* SmartDCA por activo */}
+      {(smartDCAResult?.totalCashToInvest ?? 0) > 0 && (smartDCAResult?.allocationByAsset?.length ?? 0) > 0 && (
+        <div style={styles.card}>
+          <h2>💸 SmartDCA — Distribución por Motor (Nivel 4)</h2>
+          <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{smartDCAResult?.reasoning}</p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #374151", color: "#6b7280" }}>
+                  <th style={{ textAlign: "left", padding: "0.4rem 0.5rem" }}>Activo</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Peso motor</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Participaciones</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Precio</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.5rem" }}>Coste real</th>
+                  <th style={{ textAlign: "left", padding: "0.4rem 0.5rem" }}>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {smartDCAResult?.allocationByAsset.map(a => (
+                  <tr key={a.ticker} style={{ borderBottom: "1px solid #1f2937", opacity: a.skipped ? 0.45 : 1 }}>
+                    <td style={{ padding: "0.5rem", fontWeight: "bold", color: a.skipped ? "#6b7280" : "#f9fafb" }}>
+                      {a.ticker}
+                      {a.isFractional && <span style={{ fontSize: "0.7rem", color: "#6366f1", marginLeft: 4 }}>FRAC</span>}
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#6366f1" }}>{(a.motorWeight * 100).toFixed(1)}%</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: a.skipped ? "#ef4444" : "#f9fafb" }}>
+                      {a.skipped ? "—" : a.isFractional ? a.shares.toFixed(6) : `${a.shares}×`}
+                    </td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#9ca3af" }}>€{a.pricePerShare.toFixed(2)}</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: a.skipped ? "#6b7280" : "#10b981", fontWeight: a.skipped ? "normal" : "bold" }}>
+                      {a.skipped ? "€0" : `€${a.actualCost.toFixed(2)}`}
+                    </td>
+                    <td style={{ padding: "0.5rem", color: "#6b7280", fontSize: "0.75rem" }}>
+                      {a.skipped ? `Necesita €${a.pricePerShare.toFixed(0)} mín.` : a.reason.split("→")[1]?.trim() ?? a.reason}
+                    </td>
+                    {/* MEJORA-9: Ejecutado en DCA */}
+                    <td style={{ padding: "0.5rem" }}>
+                      {!a.skipped && (
+                        <button
+                          onClick={() => {
+                            setPendingTrade({
+                              ticker: a.ticker, name: a.name, action: 'BUY',
+                              suggestedShares: a.shares, suggestedPrice: a.pricePerShare,
+                              source: 'DCA',
+                            });
+                            setExecShares(a.shares);
+                            setExecPrice(a.pricePerShare);
+                          }}
+                          style={{
+                            background: "#052e16", color: "#4ade80", border: "1px solid #16a34a",
+                            borderRadius: 4, padding: "0.2rem 0.5rem", cursor: "pointer",
+                            fontSize: "0.72rem", whiteSpace: "nowrap",
+                          }}
+                        >✓ Ejecutado</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "1px solid #374151", backgroundColor: "#0f172a" }}>
+                  <td colSpan={4} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>Total a desembolsar:</td>
+                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#10b981", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(2)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {smartDCAResult?.action.startsWith("BLOCK") && (
+        <div style={{ backgroundColor: "#78350f", border: "1px solid #f59e0b", padding: "1rem", borderRadius: 8, marginBottom: "1.5rem" }}>
+          <strong>🛑 DCA Bloqueado: {smartDCAResult?.action}</strong>
+          <p style={{ margin: "0.5rem 0 0", color: "#fde68a", fontSize: "0.85rem" }}>{smartDCAResult?.blockReason}</p>
+        </div>
+      )}
+
+      {/* Donut y tabla de activos */}
+      <div key={totalPortfolioValue} style={{ ...styles.card, display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: "250px" }}>
+          <h2>Distribución actual</h2>
+          <ResponsiveContainer width="100%" height={250}>
+            <PieChart>
+              <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                {pieData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+              </Pie>
+              <Tooltip formatter={(value: number) => formatCurrency(value)} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div style={{ flex: 2, overflowX: "auto" }}>
+          <h2>Activos</h2>
+          <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginBottom: "10px" }}>
+            Los pesos objetivo son tus metas de asignación. El motor sugiere compras para acercarte a ellos.
+          </p>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th>Activo</th><th>Precio (€)</th><th>Particip.</th><th>Valor (€)</th><th>Precio compra</th>
+                <th>Earnings Yield %</th><th>Ret 12m %</th><th>Ret 3m %</th><th>Ret 1m %</th>
+                <th>Ganancia/pérdida</th><th>Peso obj.</th><th>Peso act.</th><th>Ataque</th>
+              </tr>
+            </thead>
+            <tbody>
+              {portfolio.assets.map(asset => {
+                const valor = asset.price * asset.shares;
+                const pesoActual = (valor / totalPortfolioValue) * 100;
+                const ganancia = (asset.price - asset.avgPrice) * asset.shares;
+                const gananciaPorcentaje = ((asset.price - asset.avgPrice) / asset.avgPrice) * 100;
+                const attack = isAttackMode(asset);
+                const attackReason = attack ? getAttackReason(asset) : "";
+                const valorCompra = asset.avgPrice * asset.shares;
+                return (
+                  <tr key={asset.ticker}>
+                    <td><div style={{ fontWeight: 500 }}>{asset.name}</div><div style={styles.ticker}>{asset.ticker}</div></td>
+                    <td>{formatCurrency(asset.price)}</td>
+                    <td><input id={`shares-${asset.ticker}`} name={`shares-${asset.ticker}`} type="number" value={asset.shares} onChange={(e) => updateAsset(asset.ticker, "shares", Number(e.target.value))} style={styles.smallInput} step="0.0001" aria-label={`Participaciones de ${asset.name}`} /></td>
+                    <td>{formatCurrency(valor)}</td>
+                    <td><input id={`avgPrice-${asset.ticker}`} name={`avgPrice-${asset.ticker}`} type="number" value={asset.avgPrice} onChange={(e) => updateAsset(asset.ticker, "avgPrice", Number(e.target.value))} style={styles.smallInput} step="0.01" aria-label={`Precio de compra de ${asset.name}`} /></td>
+                    <td>
+                      <input id={`earnings-${asset.ticker}`} name={`earnings-${asset.ticker}`} type="number"
+                        value={asset.earningsYield ?? 0}
+                        onChange={(e) => updateAsset(asset.ticker, "earningsYield", Number(e.target.value))}
+                        style={styles.smallInput} step="0.01" min="0" max="0.5"
+                        aria-label={`Earnings Yield de ${asset.name}`} />
+                    </td>
+                    <td>
+                      <input id={`return12m-${asset.ticker}`} name={`return12m-${asset.ticker}`} type="number"
+                        value={asset.return12m ?? 0}
+                        onChange={(e) => updateAsset(asset.ticker, "return12m", Number(e.target.value))}
+                        style={styles.smallInput} step="0.01" min="-1" max="5"
+                        aria-label={`Retorno 12m de ${asset.name}`} />
+                    </td>
+                    <td>
+                      <input id={`return3m-${asset.ticker}`} name={`return3m-${asset.ticker}`} type="number"
+                        value={asset.return3m ?? 0}
+                        onChange={(e) => updateAsset(asset.ticker, "return3m", Number(e.target.value))}
+                        style={styles.smallInput} step="0.01" min="-1" max="2"
+                        aria-label={`Retorno 3m de ${asset.name}`} />
+                    </td>
+                    <td>
+                      <input id={`return1m-${asset.ticker}`} name={`return1m-${asset.ticker}`} type="number"
+                        value={asset.return1m ?? 0}
+                        onChange={(e) => updateAsset(asset.ticker, "return1m", Number(e.target.value))}
+                        style={styles.smallInput} step="0.01" min="-1" max="1"
+                        aria-label={`Retorno 1m de ${asset.name}`} />
+                    </td>
+                    <td style={{ color: ganancia >= 0 ? "#10b981" : "#ef4444" }}>
+                      <div>{formatCurrency(ganancia)} ({gananciaPorcentaje.toFixed(1)}%)</div>
+                      {asset.ticker === "BTC-EUR" && (
+                        <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>
+                          Compra: {formatCurrency(valorCompra)} | Actual: {formatCurrency(valor)}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {engineResult
+                        ? ((engineResult.allocations.find(a => a.name === asset.name)?.finalAllocation ?? 0) * 100).toFixed(1)
+                        : asset.weight
+                      }%
+                    </td>
+                    <td>{pesoActual.toFixed(1)}%</td>
+                    <td title={attackReason}>{attack ? "⚔️" : ""}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* MEJORA-9: Modal de confirmación de operación ejecutada */}
+      {pendingTrade && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+        }}>
+          <div style={{ background: '#1e293b', borderRadius: 12, padding: 28, width: 380, border: '1px solid #3b82f6' }}>
+            <h3 style={{ color: '#60a5fa', marginBottom: 16, fontSize: '1rem' }}>
+              ✓ Confirmar operación ejecutada en broker
+            </h3>
+            <div style={{ background: '#0f172a', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '0.85rem' }}>
+              <div style={{ color: '#94a3b8', marginBottom: 4 }}>Motor sugería:</div>
+              <div style={{ color: '#e2e8f0', fontWeight: 600 }}>
+                {pendingTrade.action} {pendingTrade.suggestedShares} × {pendingTrade.ticker} @ €{pendingTrade.suggestedPrice.toFixed(2)}
+              </div>
+              <div style={{ color: '#475569', fontSize: '0.72rem', marginTop: 2 }}>
+                Coste estimado: €{(pendingTrade.suggestedShares * pendingTrade.suggestedPrice).toFixed(2)}
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: '0.78rem', color: '#94a3b8', display: 'block', marginBottom: 4 }}>
+                Precio real de ejecución (€/acc)
+              </label>
+              <input type="number" value={execPrice} step="0.01" min={0}
+                onChange={e => setExecPrice(Number(e.target.value))}
+                style={{ width: '100%', boxSizing: 'border-box', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: 6, padding: '8px 12px', fontSize: '0.9rem' }}
+              />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: '0.78rem', color: '#94a3b8', display: 'block', marginBottom: 4 }}>
+                Acciones realmente {pendingTrade.action === 'BUY' ? 'compradas' : 'vendidas'}
+              </label>
+              <input type="number"
+                value={execShares}
+                step={pendingTrade.ticker === 'BTC-EUR' ? '0.000001' : '1'}
+                min={0}
+                onChange={e => setExecShares(Number(e.target.value))}
+                style={{ width: '100%', boxSizing: 'border-box', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: 6, padding: '8px 12px', fontSize: '0.9rem' }}
+              />
+            </div>
+            {execPrice > 0 && execShares > 0 && (
+              <div style={{ background: '#052e16', borderRadius: 6, padding: '8px 12px', marginBottom: 14, fontSize: '0.82rem' }}>
+                <div style={{ color: '#4ade80' }}>
+                  Total {pendingTrade.action === 'BUY' ? 'gastado' : 'recibido'}: <strong>€{(execPrice * execShares).toFixed(2)}</strong>
+                </div>
+                <div style={{ color: '#166534', fontSize: '0.72rem', marginTop: 2 }}>
+                  CashReserve {pendingTrade.action === 'BUY' ? 'bajará' : 'subirá'} a €{pendingTrade.action === 'BUY'
+                    ? Math.max(0, cashReserve - execPrice * execShares).toFixed(2)
+                    : (cashReserve + execPrice * execShares).toFixed(2)}
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={confirmTradeExecution}
+                disabled={execPrice <= 0 || execShares <= 0}
+                style={{
+                  flex: 1, background: execPrice > 0 && execShares > 0 ? '#16a34a' : '#374151',
+                  color: 'white', border: 'none', borderRadius: 6, padding: '10px',
+                  cursor: execPrice > 0 && execShares > 0 ? 'pointer' : 'not-allowed',
+                  fontWeight: 700, fontSize: '0.85rem',
+                }}
+              >Confirmar y actualizar cartera</button>
+              <button
+                onClick={() => { setPendingTrade(null); setExecPrice(0); setExecShares(0); }}
+                style={{ background: '#374151', color: '#9ca3af', border: 'none', borderRadius: 6, padding: '10px 16px', cursor: 'pointer', fontSize: '0.85rem' }}
+              >Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MEJORA-9: Log de operaciones ejecutadas */}
+      {tradeLog.length > 0 && (
+        <div style={styles.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h2 style={{ margin: 0 }}>📒 Historial de Operaciones Ejecutadas</h2>
+            <button
+              onClick={() => {
+                const csv = ['Fecha,Ticker,Acción,Acciones,Precio,Total,Régimen,Fuente',
+                  ...tradeLog.map(t =>
+                    `${new Date(t.date).toLocaleDateString('es-ES')},${t.ticker},${t.action},${t.shares},${t.priceExecuted.toFixed(4)},${t.totalCost.toFixed(2)},${t.regime},${t.source}`
+                  )].join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `olympus_trades_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click(); URL.revokeObjectURL(url);
+              }}
+              style={{ background: '#1e3a5f', color: '#60a5fa', border: '1px solid #3b82f6', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: '0.78rem' }}
+            >⬇ Exportar CSV</button>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #374151', color: '#6b7280' }}>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Fecha</th>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Activo</th>
+                  <th style={{ textAlign: 'center', padding: '0.4rem 0.6rem' }}>Acción</th>
+                  <th style={{ textAlign: 'right', padding: '0.4rem 0.6rem' }}>Acciones</th>
+                  <th style={{ textAlign: 'right', padding: '0.4rem 0.6rem' }}>Precio ejec.</th>
+                  <th style={{ textAlign: 'right', padding: '0.4rem 0.6rem' }}>Total</th>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Régimen</th>
+                  <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem' }}>Fuente</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tradeLog.slice(0, 50).map(t => (
+                  <tr key={t.id} style={{ borderBottom: '1px solid #1f2937' }}>
+                    <td style={{ padding: '0.4rem 0.6rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                      {new Date(t.date).toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' })}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: '#e2e8f0' }}>{t.ticker}</td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>
+                      <span style={{ background: t.action === 'BUY' ? '#052e16' : '#7f1d1d', color: t.action === 'BUY' ? '#4ade80' : '#f87171', padding: '0.1rem 0.5rem', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700 }}>
+                        {t.action}
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', color: '#e2e8f0' }}>
+                      {t.ticker === 'BTC-EUR' ? t.shares.toFixed(6) : t.shares}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', color: '#94a3b8' }}>€{t.priceExecuted.toFixed(2)}</td>
+                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', fontWeight: 600, color: t.action === 'BUY' ? '#ef4444' : '#4ade80' }}>
+                      {t.action === 'BUY' ? '−' : '+'}€{t.totalCost.toFixed(2)}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.72rem', color: t.regime === 'EXPANSION' ? '#4ade80' : t.regime === 'CRISIS' ? '#ef4444' : '#f59e0b' }}>
+                      {t.regime}
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem', fontSize: '0.72rem', color: '#475569' }}>{t.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const styles: { [key: string]: React.CSSProperties } = {
+  container: { padding: "40px", fontFamily: "Inter, sans-serif", backgroundColor: "#0e1117", minHeight: "100vh", color: "white" },
+  title: { marginBottom: "40px" },
+  card: { backgroundColor: "#161b22", padding: "24px", borderRadius: "12px", marginBottom: "24px", boxShadow: "0 4px 12px rgba(0,0,0,0.4)" },
+  label: { display: "block", marginBottom: "8px", color: "#9ca3af", fontSize: "0.9rem" },
+  input: { backgroundColor: "#1f2937", border: "1px solid #374151", color: "white", padding: "8px 12px", borderRadius: "6px", width: "150px" },
+  smallInput: { backgroundColor: "#1f2937", border: "1px solid #374151", color: "white", padding: "4px 6px", borderRadius: "4px", width: "80px" },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: "14px" },
+  ticker: { fontSize: "12px", color: "#6b7280" },
+  button: { backgroundColor: "#3b82f6", color: "white", border: "none", padding: "8px 16px", borderRadius: "6px", cursor: "pointer", fontSize: "14px", fontWeight: "bold" },
+};
+
+export default InstitutionalDashboard;

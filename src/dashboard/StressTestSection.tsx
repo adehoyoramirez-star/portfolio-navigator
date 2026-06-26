@@ -1,0 +1,37 @@
+import type { StressResult } from "@/core/risk/stressTest";
+
+interface Props { stressResults: StressResult[]; cardStyle: React.CSSProperties; }
+
+const StressTestSection: React.FC<Props> = ({ stressResults, cardStyle }) => {
+  if (stressResults.length === 0) return null;
+  return (
+      {/* Stress Scenarios */}
+      {stressResults.length > 0 && (
+        <div style={styles.card}>
+          <h2>🔥 Stress Testing — Escenarios Históricos</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem" }}>
+            {stressResults.map((s: StressResult) => (
+              <div key={s.scenarioId} style={{
+                backgroundColor: s.portfolioReturn < -0.30 ? "#450a0a" : s.portfolioReturn < -0.15 ? "#422006" : "#111827",
+                border: `1px solid ${s.portfolioReturn < -0.30 ? "#ef4444" : s.portfolioReturn < -0.15 ? "#f59e0b" : "#374151"}`,
+                borderRadius: 8, padding: "0.75rem",
+              }}>
+                <p style={{ fontWeight: "bold", fontSize: "0.82rem", marginBottom: "0.4rem", color: "#f9fafb" }}>{s.scenarioName}</p>
+                <div style={{ fontSize: "2rem", fontWeight: "bold", color: s.portfolioReturn < -0.20 ? "#fca5a5" : s.portfolioReturn < -0.10 ? "#fde68a" : "#10b981" }}>
+                  {(s.portfolioReturn * 100).toFixed(1)}%
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "0.25rem" }}>
+                  €{Math.abs(s.portfolioDrawdown).toFixed(0)} {s.portfolioDrawdown < 0 ? "pérdida" : "ganancia"}{" · "}{s.recoveryEstimateMonths}m recuperación
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <WalkForwardSection />
+
+      {/* Historial de régimen */}  );
+};
+
+export default StressTestSection;

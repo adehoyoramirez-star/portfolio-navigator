@@ -1,0 +1,137 @@
+interface Props {
+  btcCycleResult: any;
+  portfolio: any;
+  getPowerLawProjection: (date: Date, channel: string) => number;
+  cardStyle: React.CSSProperties;
+}
+
+const BTCCycleSection: React.FC<Props> = ({ btcCycleResult, portfolio, getPowerLawProjection, cardStyle }) => {
+  if (!btcCycleResult) return null;
+{/* BTC CYCLE ANALYZER */}
+      {btcCycleResult && (() => {
+        const c = btcCycleResult;
+        const pl = c.powerLaw;
+        const hv = c.halvingPhase;
+        const ew = c.elliottWave;
+        const btcPrice = portfolio.assets.find(a => a.ticker === "BTC-EUR")?.price ?? 0;
+        const plFair6m   = getPowerLawProjection(new Date(Date.now() + 180*86400000), "fair")  / 1.08;
+        const plUpper12m = getPowerLawProjection(new Date(Date.now() + 365*86400000), "upper") / 1.08;
+        const plLower12m = getPowerLawProjection(new Date(Date.now() + 365*86400000), "lower") / 1.08;
+        const btcPriceUSD = btcPrice * 1.08;
+        const discountFromFair = pl.fairValue > 0 ? (pl.fairValue - btcPriceUSD) / pl.fairValue : 0;
+        const scoreColor = c.cycleScore >= 75 ? "#10b981" : c.cycleScore >= 55 ? "#3b82f6" : c.cycleScore >= 40 ? "#f59e0b" : "#ef4444";
+        const zoneLabels: Record<string, string> = {
+          BUY_ZONE: "🟢 ZONA DE COMPRA", ACCUMULATION: "🔵 ACUMULACIÓN",
+          NEUTRAL: "🟡 NEUTRAL", CAUTION_ZONE: "🟠 PRECAUCIÓN", SELL_ZONE: "🔴 ZONA DE VENTA"
+        };
+        const waveColors: Record<string, string> = {
+          "1":"#10b981","3":"#10b981","5":"#f59e0b","2":"#6b7280","4":"#6b7280","A":"#ef4444","B":"#f59e0b","C":"#ef4444","UNKNOWN":"#6b7280"
+        };
+        const waveColor = waveColors[ew.currentWave] ?? "#6b7280";
+
+        return (
+          <div style={{ ...styles.card, border: `1px solid ${scoreColor}`, background: "linear-gradient(135deg, #080d1a 0%, #111827 100%)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem", flexWrap: "wrap", gap: "0.5rem" }}>
+              <h2 style={{ margin: 0 }}>₿ BTC Cycle Intelligence</h2>
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: "2.5rem", fontWeight: "bold", color: scoreColor, lineHeight: 1 }}>{c.cycleScore}</div>
+                  <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>/ 100</div>
+                </div>
+                <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "0.4rem 0.75rem", border: `1px solid ${scoreColor}` }}>
+                  <div style={{ color: scoreColor, fontWeight: "bold", fontSize: "0.85rem" }}>{zoneLabels[c.cycleScoreLabel]}</div>
+                  <div style={{ color: "#9ca3af", fontSize: "0.72rem" }}>{c.actionBias}</div>
+                </div>
+              </div>
+            </div>
+            <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid #312e81", borderRadius: 8, padding: "0.75rem 1rem", marginBottom: "1rem" }}>
+              <p style={{ color: "#c7d2fe", fontSize: "0.82rem", margin: 0, lineHeight: 1.6 }}>{c.summary}</p>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem" }}>
+                <div style={{ color: "#818cf8", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>📐 POWER LAW CHANNEL</div>
+                <div style={{ fontSize: "0.82rem", color: "#e5e7eb", marginBottom: "0.3rem" }}>
+                  Precio actual: <strong>€{btcPrice.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</strong>
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                  Valor justo: <span style={{ color: "#f59e0b" }}>€{(pl.fairValue / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span>
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                  Canal: €{(pl.lower / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })} – €{(pl.upper / 1.08).toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                </div>
+                <div style={{ fontSize: "0.78rem", marginTop: "0.3rem", color: discountFromFair > 0.3 ? "#10b981" : discountFromFair > 0 ? "#f59e0b" : "#ef4444" }}>
+                  {discountFromFair > 0
+                    ? `${(discountFromFair * 100).toFixed(0)}% por debajo del valor justo`
+                    : `${(Math.abs(discountFromFair) * 100).toFixed(0)}% por encima del valor justo`}
+                </div>
+                <div style={{ marginTop: "0.5rem", borderTop: "1px solid #1f2937", paddingTop: "0.4rem" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Proyección Power Law:</div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>6m: <span style={{ color: "#d1d5db" }}>€{plFair6m.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span></div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>12m: <span style={{ color: "#d1d5db" }}>€{plLower12m.toLocaleString("es-ES", { maximumFractionDigits: 0 })} – €{plUpper12m.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</span></div>
+                </div>
+              </div>
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem" }}>
+                <div style={{ color: "#f59e0b", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>⛏ HALVING CYCLE</div>
+                <div style={{ fontSize: "0.82rem", color: "#e5e7eb", marginBottom: "0.3rem" }}>
+                  Fase: <strong style={{ color: "#f59e0b" }}>{hv.phase.replace(/_/g, " ")}</strong>
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#9ca3af", lineHeight: 1.5 }}>{hv.phaseDescription}</div>
+                <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.4rem" }}>
+                  {hv.daysSinceHalving > 0
+                    ? `${hv.daysSinceHalving} días desde el halving`
+                    : `${Math.abs(hv.daysSinceHalving)} días para el próximo halving`}
+                </div>
+              </div>
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem" }}>
+                <div style={{ color: "#10b981", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>⚡ ON-CHAIN SIGNALS</div>
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Puell Multiple:</div>
+                  <div style={{ fontSize: "0.78rem", color: c.puellMultiple.zone === "CAPITULATION" ? "#10b981" : c.puellMultiple.zone === "EUPHORIA" ? "#ef4444" : "#f59e0b" }}>
+                    {c.puellMultiple.value === null ? "Sin dato — introduce el valor en los inputs" : c.puellMultiple.description}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Hash Ribbon:</div>
+                  <div style={{ fontSize: "0.78rem", color: c.hashRibbon.buySignalActive ? "#10b981" : c.hashRibbon.state === "CAPITULATION" ? "#ef4444" : "#d1d5db" }}>
+                    {c.hashRibbon.state === "UNKNOWN" ? "Sin dato — selecciona estado en los inputs" : c.hashRibbon.description}
+                  </div>
+                </div>
+                <div style={{ marginTop: "0.5rem" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Pi Cycle Top:</div>
+                  <div style={{ fontSize: "0.78rem", color: c.piCycle.state === "CROSSED" ? "#ef4444" : "#10b981" }}>
+                    {c.piCycle.state === "CROSSED"
+                      ? "⚠️ CRUCE DETECTADO — señal histórica de techo"
+                      : c.piCycle.gapPct !== null
+                        ? `Separación: ${(c.piCycle.gapPct * 100).toFixed(0)}% · sin señal de techo`
+                        : "Sin dato — introduce 111DMA y 350DMA×2"}
+                  </div>
+                </div>
+              </div>
+              <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem", border: `1px solid ${waveColor}40` }}>
+                <div style={{ color: waveColor, fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>🌊 ELLIOTT WAVE</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: "50%",
+                    background: `${waveColor}22`, border: `2px solid ${waveColor}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: "1.1rem", fontWeight: "bold", color: waveColor
+                  }}>{ew.currentWave}</div>
+                  <div>
+                    <div style={{ fontSize: "0.78rem", color: "#e5e7eb", fontWeight: "bold" }}>Onda {ew.currentWave}</div>
+                    <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Dirección: {ew.currentWaveDirection} · Confianza: {ew.confidence}</div>
+                  </div>
+                </div>
+                {ew.invalidationLevel && (
+                  <div style={{ fontSize: "0.72rem", color: "#ef4444", marginTop: "0.3rem" }}>
+                    🛑 Invalidación: &lt;€{ew.invalidationLevel.toLocaleString("es-ES", { maximumFractionDigits: 0 })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* CYCLE TOP */}};
+
+export default BTCCycleSection;
