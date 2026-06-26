@@ -4,7 +4,7 @@ import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/
 import { ASSETS } from '@/lib/constants';
 import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
-import { globalLiquiditySignal, fromManualInputs } from '@/core/macro/liquidityCycle';
+import { fromManualInputs } from '@/core/macro/liquidityCycle';
 
 interface YahooChartResult {
   ticker: string;
@@ -709,10 +709,6 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   if (!isDefaultSpread && fredManualSpread > 0) {
     creditSpread = fredManualSpread;
     creditSpreadSource = "MANUAL";
-  } else if (fredCreditSpread && fredCreditSpread.spread > 0) {
-    // Prioridad 1: FRED BAMLH0A0HYM2 — oficial ICE BofA
-    creditSpread = fredCreditSpread.spread;
-    creditSpreadSource = "FRED";
   } else if (hygPrice > 0 && lqdPrice > 0) {
     // Prioridad 2: proxy HYG-LQD hasta que FRED esté disponible
     const hygYield  = (4.20 / hygPrice) * 100;
@@ -722,19 +718,8 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     creditSpreadSource = "YAHOO_PROXY";
   }
 
-  // ── Liquidez Global REAL (bancos centrales desde FRED) ──────────────────────
-  const liquidityOutput = centralBanks
-    ? globalLiquiditySignal({
-        fedBalance:    centralBanks.fedCurrent,
-        prevFedBalance: centralBanks.fedPrev,
-        ecbBalance:    centralBanks.ecbCurrent,
-        prevEcbBalance: centralBanks.ecbPrev,
-        bojBalance:    1,   // BoJ no disponible — ignorado en ponderación
-        prevBojBalance: 1,
-        dxy,
-        prevDxy: undefined,
-      })
-    : fromManualInputs({ liquidityGrowth: m2Growth, dxy });
+  // ── Liquidez Global desde entradas manuales FRED ──────────────────────
+  const liquidityOutput = fromManualInputs({ liquidityGrowth: m2Growth, dxy });
 
   const liquidityScoreAuto = Math.max(0, Math.min(1,
     (liquidityOutput.liquidityGrowth / 10) * 0.6 +

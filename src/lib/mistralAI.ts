@@ -66,7 +66,7 @@ async function callMistralAPI(
       'Authorization': `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      model: config.model || 'mistral-medium-latest',
+      model: config.model ?? 'mistral-medium-latest',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userContent },
@@ -246,7 +246,7 @@ export async function fetchMistralIntelligence(
       topNarratives: grok.topNarratives,
       blackSwanAlert: grok.blackSwanAlert,
       blackSwanReason: grok.blackSwanReason,
-      model: config.model,
+      model: config.model ?? 'mistral-medium-latest',
       cachedAt: ts,
     };
 
@@ -269,7 +269,7 @@ export async function fetchMistralIntelligence(
       topNarratives: [],
       blackSwanAlert: false,
       blackSwanReason: errMsg.includes('API') ? 'Error conectando con Mistral API' : null,
-      model: config.model,
+      model: config.model ?? 'mistral-medium-latest',
       cachedAt: ts,
       error: errMsg.slice(0, 300),
     };

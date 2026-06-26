@@ -1029,7 +1029,7 @@ export default function TacticalDashboard() {
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
                 <div style={{ fontSize:'0.6rem', color:hClr, fontWeight:700, background: hClr + '22', padding:'2px 6px', borderRadius:4 }}>
-                  {health.action.replace('_',' ')} · conf {health.confidence}%
+                  {(health.action ?? "").replace('_',' ')} · conf {health.confidence}%
                 </div>
                 {health.urgency === 'CRITICAL' && (
                   <div style={{ fontSize:'0.65rem', background:'#450a0a', color:'#fca5a5', padding:'2px 6px', borderRadius:4, fontWeight:700 }}>

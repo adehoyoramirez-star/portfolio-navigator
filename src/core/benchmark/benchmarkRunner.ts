@@ -195,7 +195,7 @@ export function recordBenchmarkSnapshot(input: {
   const MAX_BENCH_RETURN = 0.20;
   let benchmarkReturn = 0;
   for (const ticker of ASSETS) {
-    const oldPrice = prev.prices[ticker] ?? 0;
+    const oldPrice = prev.prices?.[ticker] ?? 0;
     const newPrice = prices[ticker] ?? 0;
     const weight = BENCHMARK_WEIGHTS[ticker] ?? 0;
 

@@ -11,8 +11,8 @@
     "noEmit": true,
     "isolatedModules": true,
 
-    "strict": false,
-    "noImplicitAny": false,
+    "strict": true,
+    "noImplicitAny": true,
 
     "skipLibCheck": true,
 

@@ -2729,16 +2729,16 @@ soxRsiWeekly,
           <h4>Smart DCA — Motor Aware</h4>
           {(() => {
             const dca = smartDCAResult;
-            const isBlocked = dca.action.startsWith("BLOCK");
-            const actionColor = isBlocked ? "#ef4444" : dca.action === "WAIT" ? "#6b7280" : dca.action === "SMALL_BUY" ? "#f59e0b" : dca.action === "BUY" ? "#10b981" : "#6366f1";
+            const isBlocked = dca?.action.startsWith("BLOCK");
+            const actionColor = isBlocked ? "#ef4444" : dca?.action === "WAIT" ? "#6b7280" : dca?.action === "SMALL_BUY" ? "#f59e0b" : dca?.action === "BUY" ? "#10b981" : "#6366f1";
             return (
               <>
-                <p>Acción: <strong style={{ color: actionColor }}>{dca.action}</strong></p>
+                <p>Acción: <strong style={{ color: actionColor }}>{dca?.action}</strong></p>
                 {isBlocked
-                  ? <p style={{ color: "#ef4444", fontSize: "0.8rem" }}>{dca.blockReason}</p>
+                  ? <p style={{ color: "#ef4444", fontSize: "0.8rem" }}>{dca?.blockReason}</p>
                   : <>
-                    <p>Invertir: <strong>{formatCurrency(dca.totalCashToInvest)}</strong> ({(dca.buyFraction * 100).toFixed(0)}%)</p>
-                    <p style={{ color: "#9ca3af", fontSize: "0.78rem" }}>{dca.reasoning}</p>
+                    <p>Invertir: <strong>{formatCurrency(dca?.totalCashToInvest ?? 0)}</strong> ({((dca?.buyFraction ?? 0) * 100).toFixed(0)}%)</p>
+                    <p style={{ color: "#9ca3af", fontSize: "0.78rem" }}>{dca?.reasoning}</p>
                   </>
                 }
               </>
@@ -3575,7 +3575,7 @@ soxRsiWeekly,
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", fontSize: "0.8rem" }}>
                   {Object.entries(perf.regimeDistribution).map(([regime, pct]) => (
                     <div key={regime} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: regimeColors[regime] || "#9ca3af" }}>{regime}</span>
+                      <span style={{ color: regimeColors[regime as keyof typeof regimeColors] || "#9ca3af" }}>{regime}</span>
                       <span style={{ color: "#d1d5db" }}>{(pct * 100).toFixed(0)}%</span>
                     </div>
                   ))}
@@ -4095,32 +4095,32 @@ soxRsiWeekly,
       )}
 
       {/* Modo Ataque */}
-      {smartDCAResult.attackConfluence > 0 && (
+      {(smartDCAResult?.attackConfluence ?? 0) > 0 && (
         <div style={{
           ...styles.card,
-          border: smartDCAResult.attackMode ? "2px solid #22c55e" : "1px solid #374151",
-          background: smartDCAResult.attackMode ? "linear-gradient(135deg, #052e16 0%, #111827 100%)" : undefined,
+          border: smartDCAResult?.attackMode ? "2px solid #22c55e" : "1px solid #374151",
+          background: smartDCAResult?.attackMode ? "linear-gradient(135deg, #052e16 0%, #111827 100%)" : undefined,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
             <h2 style={{ margin: 0 }}>
-              {smartDCAResult.attackMode ? "🚀" : "🎯"} Modo Ataque — Confluencia de Fondo
+              {smartDCAResult?.attackMode ? "🚀" : "🎯"} Modo Ataque — Confluencia de Fondo
             </h2>
             <div style={{
               padding: "0.35rem 0.9rem", borderRadius: 20, fontWeight: "bold", fontSize: "0.85rem",
-              backgroundColor: smartDCAResult.attackConfluence >= 4 ? "#14532d" : smartDCAResult.attackConfluence >= 3 ? "#065f46" : smartDCAResult.attackConfluence >= 2 ? "#1e3a5f" : "#374151",
+              backgroundColor: (smartDCAResult?.attackConfluence ?? 0) >= 4 ? "#14532d" : (smartDCAResult?.attackConfluence ?? 0) >= 3 ? "#065f46" : (smartDCAResult?.attackConfluence ?? 0) >= 2 ? "#1e3a5f" : "#374151",
               color: "#fff",
             }}>
-              {smartDCAResult.attackConfluence}/7 señales · Tramo {smartDCAResult.attackTranche || "—"}
-              {smartDCAResult.attackMultiplier > 1 && ` · ×${smartDCAResult.attackMultiplier} DCA`}
-              {smartDCAResult.action === "BTC_CYCLE_OVERRIDE" && " · ⚡ OVERRIDE"}
+              {smartDCAResult?.attackConfluence ?? 0}/7 señales · Tramo {smartDCAResult?.attackTranche || "—"}
+              {(smartDCAResult?.attackMultiplier ?? 1) > 1 && ` · ×${smartDCAResult?.attackMultiplier ?? 1} DCA`}
+              {smartDCAResult?.action === "BTC_CYCLE_OVERRIDE" && " · ⚡ OVERRIDE"}
             </div>
           </div>
           {/* Indicador de progreso hacia BTC_CYCLE_OVERRIDE */}
           <div style={{ marginBottom: "0.75rem", padding: "0.5rem 0.75rem", borderRadius: 8, backgroundColor: "#0f172a", border: "1px solid #1e3a5f", fontSize: "0.75rem", color: "#6b7280" }}>
             <span style={{ color: "#60a5fa" }}>⚡ Motor B (BTC Ciclo): </span>
-            {smartDCAResult.attackConfluence >= 4
-              ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult.attackConfluence}/7 señales superan umbral de override</span>
-              : <span>Necesita {4 - smartDCAResult.attackConfluence} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS macro si ≥4/7)</span>
+            {(smartDCAResult?.attackConfluence ?? 0) >= 4
+              ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult?.attackConfluence ?? 0}/7 señales superan umbral de override</span>
+              : <span>Necesita {4 - (smartDCAResult?.attackConfluence ?? 0)} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS macro si ≥4/7)</span>
             }
             <br/>
             <span style={{ color: "#9ca3af", fontSize: "0.68rem" }}>
@@ -4129,7 +4129,7 @@ soxRsiWeekly,
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.6rem", marginBottom: "1rem" }}>
-            {smartDCAResult.attackSignals.map(signal => (
+            {smartDCAResult?.attackSignals.map(signal => (
               <div key={signal.name} style={{
                 backgroundColor: signal.active ? "#052e16" : "#111827",
                 border: `1px solid ${signal.active ? "#22c55e" : "#374151"}`,
@@ -4144,30 +4144,30 @@ soxRsiWeekly,
             ))}
           </div>
           {/* BTC_CYCLE_OVERRIDE — display específico */}
-          {smartDCAResult.action === "BTC_CYCLE_OVERRIDE" && (
+          {smartDCAResult?.action === "BTC_CYCLE_OVERRIDE" && (
             <div style={{ backgroundColor: "#0c1a0a", border: "2px solid #16a34a", borderRadius: 8, padding: "0.75rem 1rem", marginBottom: "0.5rem" }}>
               <p style={{ fontWeight: "bold", color: "#4ade80", marginBottom: "0.25rem" }}>
                 ⚡ BTC CYCLE OVERRIDE — Motor B activo en CRISIS macro
               </p>
-              <p style={{ color: "#bbf7d0", fontSize: "0.85rem", margin: 0 }}>{smartDCAResult.reasoning}</p>
+              <p style={{ color: "#bbf7d0", fontSize: "0.85rem", margin: 0 }}>{smartDCAResult?.reasoning}</p>
             </div>
           )}
-          {smartDCAResult.attackMode && smartDCAResult.action !== "BTC_CYCLE_OVERRIDE" && (
+          {smartDCAResult?.attackMode && smartDCAResult?.action !== "BTC_CYCLE_OVERRIDE" && (
             <div style={{ backgroundColor: "#052e16", border: "1px solid #22c55e", borderRadius: 8, padding: "0.75rem 1rem" }}>
               <p style={{ fontWeight: "bold", color: "#86efac", marginBottom: "0.25rem" }}>
-                {smartDCAResult.action === "ATTACK_MAX" ? "🚀 ATAQUE MÁXIMO" : smartDCAResult.action === "ATTACK_STRONG" ? "⚔️ ATAQUE FUERTE" : "🎯 ATAQUE ENTRADA"}
+                {smartDCAResult?.action === "ATTACK_MAX" ? "🚀 ATAQUE MÁXIMO" : smartDCAResult?.action === "ATTACK_STRONG" ? "⚔️ ATAQUE FUERTE" : "🎯 ATAQUE ENTRADA"}
               </p>
-              <p style={{ color: "#d1fae5", fontSize: "0.85rem", margin: 0 }}>{smartDCAResult.reasoning}</p>
+              <p style={{ color: "#d1fae5", fontSize: "0.85rem", margin: 0 }}>{smartDCAResult?.reasoning}</p>
             </div>
           )}
         </div>
       )}
 
       {/* SmartDCA por activo */}
-      {smartDCAResult.totalCashToInvest > 0 && smartDCAResult.allocationByAsset.length > 0 && (
+      {(smartDCAResult?.totalCashToInvest ?? 0) > 0 && (smartDCAResult?.allocationByAsset?.length ?? 0) > 0 && (
         <div style={styles.card}>
           <h2>💸 SmartDCA — Distribución por Motor (Nivel 4)</h2>
-          <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{smartDCAResult.reasoning}</p>
+          <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{smartDCAResult?.reasoning}</p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
               <thead>
@@ -4181,7 +4181,7 @@ soxRsiWeekly,
                 </tr>
               </thead>
               <tbody>
-                {smartDCAResult.allocationByAsset.map(a => (
+                {smartDCAResult?.allocationByAsset.map(a => (
                   <tr key={a.ticker} style={{ borderBottom: "1px solid #1f2937", opacity: a.skipped ? 0.45 : 1 }}>
                     <td style={{ padding: "0.5rem", fontWeight: "bold", color: a.skipped ? "#6b7280" : "#f9fafb" }}>
                       {a.ticker}
@@ -4225,7 +4225,7 @@ soxRsiWeekly,
               <tfoot>
                 <tr style={{ borderTop: "1px solid #374151", backgroundColor: "#0f172a" }}>
                   <td colSpan={4} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>Total a desembolsar:</td>
-                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#10b981", fontSize: "1rem" }}>€{smartDCAResult.totalCashToInvest.toFixed(2)}</td>
+                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#10b981", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(2)}</td>
                   <td></td>
                 </tr>
               </tfoot>
@@ -4234,10 +4234,10 @@ soxRsiWeekly,
         </div>
       )}
 
-      {smartDCAResult.action.startsWith("BLOCK") && (
+      {smartDCAResult?.action.startsWith("BLOCK") && (
         <div style={{ backgroundColor: "#78350f", border: "1px solid #f59e0b", padding: "1rem", borderRadius: 8, marginBottom: "1.5rem" }}>
-          <strong>🛑 DCA Bloqueado: {smartDCAResult.action}</strong>
-          <p style={{ margin: "0.5rem 0 0", color: "#fde68a", fontSize: "0.85rem" }}>{smartDCAResult.blockReason}</p>
+          <strong>🛑 DCA Bloqueado: {smartDCAResult?.action}</strong>
+          <p style={{ margin: "0.5rem 0 0", color: "#fde68a", fontSize: "0.85rem" }}>{smartDCAResult?.blockReason}</p>
         </div>
       )}
 
