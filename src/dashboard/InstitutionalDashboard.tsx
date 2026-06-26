@@ -1231,28 +1231,9 @@ soxRsiWeekly,
   }, [manualVols]);
 
 
-  const handleTransferToDefensive = () => {
-    const amount = Math.min(transferAmount, cashReserve);
-    if (amount <= 0) return;
-    const newCash = Math.round((cashReserve - amount) * 100) / 100;
-    const newDefensive = Math.round((defensiveLiquidity + amount) * 100) / 100;
-    setCashReserve(newCash);
-    setDefensiveLiquidity(newDefensive);
-    try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
-    setTransferAmount(0);
-  };
+
 
   // Botón "Usar Liquidez Defensiva" (después de un ataque manual)
-  const handleDeployDefensive = (amount: number) => {
-    const toUse = Math.min(amount, defensiveLiquidity);
-    if (toUse <= 0) return;
-    const newDefensive = Math.round((defensiveLiquidity - toUse) * 100) / 100;
-    const newCash = Math.round((cashReserve + toUse) * 100) / 100;
-    setDefensiveLiquidity(newDefensive);
-    setCashReserve(newCash);
-    try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
-  };
-
   // MEJORA-9: Confirmar operación ejecutada en broker
   // Actualiza shares, recalcula avgPrice y descuenta del cashReserve automáticamente.
   const confirmTradeExecution = () => {
@@ -3055,6 +3036,50 @@ soxRsiWeekly,
                 onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
                 style={{ width: "130px", background: "#0f172a", border: "1px solid #3b82f6", color: "#60a5fa", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold" }}
               />
+            </div>
+          </div>
+
+          {/* Transfer between Cash and Defensive */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", alignSelf: "flex-end" }}>
+            <input
+              type="number" value={transferAmount} min={0} step={100}
+              onChange={(e) => setTransferAmount(Math.max(0, Number(e.target.value)))}
+              placeholder="Importe"
+              style={{ width: "80px", background: "#0f172a", border: "1px solid #6366f1", color: "#a5b4fc", borderRadius: "4px", padding: "4px 6px", fontSize: "0.75rem", textAlign: "center" }}
+            />
+            <div style={{ display: "flex", gap: "3px" }}>
+              <button
+                onClick={() => {
+                  const amt = Math.min(transferAmount, cashReserve);
+                  if (amt <= 0) return;
+                  setCashReserve(cr => Math.round((cr - amt) * 100) / 100);
+                  setDefensiveLiquidity(dl => {
+                    const nd = Math.round((dl + amt) * 100) / 100;
+                    try { localStorage.setItem("olympus_defensive_liq", String(nd)); } catch {}
+                    return nd;
+                  });
+                  setTransferAmount(0);
+                }}
+                disabled={transferAmount <= 0}
+                title="Mover de Cash a Liquidez Defensiva"
+                style={{ background: transferAmount > 0 ? "#78350f" : "#1f2937", color: transferAmount > 0 ? "#f59e0b" : "#4b5563", border: "1px solid #f59e0b", borderRadius: "4px", padding: "2px 6px", cursor: transferAmount > 0 ? "pointer" : "not-allowed", fontSize: "0.65rem", fontWeight: "bold", whiteSpace: "nowrap" }}
+              >Def</button>
+              <button
+                onClick={() => {
+                  const amt = Math.min(transferAmount, defensiveLiquidity);
+                  if (amt <= 0) return;
+                  setDefensiveLiquidity(dl => {
+                    const nd = Math.round((dl - amt) * 100) / 100;
+                    try { localStorage.setItem("olympus_defensive_liq", String(nd)); } catch {}
+                    return nd;
+                  });
+                  setCashReserve(cr => Math.round((cr + amt) * 100) / 100);
+                  setTransferAmount(0);
+                }}
+                disabled={transferAmount <= 0}
+                title="Mover de Liquidez Defensiva a Cash"
+                style={{ background: transferAmount > 0 ? "#052e16" : "#1f2937", color: transferAmount > 0 ? "#10b981" : "#4b5563", border: "1px solid #10b981", borderRadius: "4px", padding: "2px 6px", cursor: transferAmount > 0 ? "pointer" : "not-allowed", fontSize: "0.65rem", fontWeight: "bold", whiteSpace: "nowrap" }}
+              >Cash</button>
             </div>
           </div>
 
