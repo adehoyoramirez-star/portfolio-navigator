@@ -1,5 +1,5 @@
 import { fetchYahooBatch, type YahooBatchResponse } from '@/lib/yahooFinance';
-import { loadFredManual, isFredDataFresh } from '@/lib/fredManualInputs';
+import { loadFredManual, isFredDataFresh, fetchFredFromServer } from '@/lib/fredManualInputs';
 import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/lib/assetRegistry';
 import { ASSETS } from '@/lib/constants';
 import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile } from '@/lib/stats';
@@ -460,11 +460,13 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     throw new Error(`Failed to fetch market data: ${fetchErrors.join(', ')}`);
   }
 
-  // FIX-AUDIT-R9 1: FRED data from manual localStorage inputs (user-updatable).
-  // Sustituye los antiguos hardcoded 5.2% M2 / 29.5 CAPE / 3.0% spread.
-  // El usuario actualiza estos valores en el dashboard cuando quiera.
-  const fredManual = loadFredManual();
-  const fredFresh = isFredDataFresh(7);
+  // FIX-AUDIT-R9 1: FRED data — intenta server-side (cron), fallback a localStorage manual.
+  // fetchFredFromServer actualiza localStorage automáticamente si el servidor responde.
+  // Si el servidor falla (sin API key, offline), se usa el último valor cached en localStorage.
+  const fredServerData = await fetchFredFromServer();
+  const fredManual = fredServerData ?? loadFredManual();
+  const fredFresh = fredServerData ? true : isFredDataFresh(7);
+  const fredSource: "FRED" | "manual" = fredServerData ? "FRED" : "manual";
   const yfFundamentals = undefined;
   // Datos de FRED ya no vienen de Supabase — el usuario los introduce manualmente
   const fredM2 = undefined;
@@ -503,12 +505,12 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     }
   }
   
-  // M2 real de FRED
+  // M2 real de FRED (server o localStorage)
   const m2Growth = fredManual.m2GrowthYoY;
 
   // Shiller CAPE (PER ajustado al ciclo)
   const per = fredManual.cape;
-  const perSource: "FRED" | "manual" = "manual";
+  const perSource: "FRED" | "manual" = fredSource;
 
   // ====== PRECIOS ACTUALES ======
   // FIX-PRICE-UPDATE: iterar TODOS los tickers devueltos por Yahoo Finance,
@@ -703,8 +705,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   let creditSpread = 3.0;
   let creditSpreadSource: "FRED" | "YAHOO_PROXY" | "MANUAL" = "MANUAL";
 
-  // FIX-AUDIT-R9 1: credit spread — manual FRED input takes priority.
-  // If user hasn't changed from default (3.0), fall back to HYG-LQD proxy for automatic estimation.
+  // FIX-AUDIT-R9 1: credit spread — server FRED data takes priority over HYG-LQD proxy.
   const fredManualSpread = fredManual.creditSpread;
   const isDefaultSpread = fredManualSpread === 3.0; // default = not user-overridden
   if (!isDefaultSpread && fredManualSpread > 0) {
@@ -864,7 +865,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       covMatrix,
       cewsHistory,
       m2Growth,
-      m2GrowthSource: "manual",
+      m2GrowthSource: fredSource,
       per,
       perSource,
       sp500Rsi,
