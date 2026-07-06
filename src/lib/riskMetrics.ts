@@ -15,7 +15,10 @@ export function sortino(dailyRets: number[], rfAnnual: number = 0.04, targetRetu
   const downsideRets = clean.map(r => Math.min(0, r - targetDaily));
   const downVar = downsideRets.reduce((s, v) => s + v * v, 0) / (downsideRets.length - 1);
   const downStd = Math.sqrt(Math.max(0, downVar)) * Math.sqrt(252);
-  return downStd > 1e-10 ? excessReturn / downStd : 0;
+  // Si no hay downside deviation, el Sortino es teoricamente infinito
+  // (no hay riesgo a la baja). Devolvemos un valor grande pero finito.
+  if (downStd <= 1e-10) return excessReturn > 0 ? 999 : 0;
+  return excessReturn / downStd;
 }
 
 export function downsideDeviation(dailyRets: number[], targetReturn: number = 0): number {

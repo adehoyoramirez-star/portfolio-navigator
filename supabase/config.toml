@@ -1,4 +1,11 @@
 project_id = "yrirandgftnuvdzatwgc"
+
+[functions.fred-data]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/fred-data/index.ts"
+schedule = "0 8 * * *"
+
 [functions.yahoo-finance-tactical]
 enabled = true
 verify_jwt = true

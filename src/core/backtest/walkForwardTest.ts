@@ -96,6 +96,8 @@ export interface WFWindowResult {
   inSample: BacktestOutput;
   /** Backtest completo sobre datos OOS (con lookback de burn-in) */
   outOfSample: BacktestOutput;
+  /** Benchmark Equal Weight en la misma ventana OOS */
+  equalWeightBenchmark: BacktestOutput;
   /** Consistencia [0, 1] entre IS y OOS */
   consistencyScore: number;
   /** Degradación de Sharpe (IS - OOS). Positivo = overfitting */
@@ -106,6 +108,10 @@ export interface WFWindowResult {
   maxDdDegradation: number;
   /** Degradación de Win Rate (IS - OOS) */
   winRateDegradation: number;
+  /** ¿Esta ventana OOS cayó en un bull market de BTC >100%? (suerte, no skill) */
+  bullMarketWindow: boolean;
+  /** Si bullMarketWindow es true, cuánto subió BTC en esta ventana */
+  btcReturnWindow: number;
 }
 
 export interface WFTestResult {
@@ -148,6 +154,17 @@ export interface WFTestResult {
     quality: number;
     lowVol: number;
   };
+  // FIX-AUDIT-R11: Deflated Sharpe Ratio (López de Prado 2014)
+  /** Deflated Sharpe Ratio — corrige por múltiples comparaciones */
+  deflatedSharpeRatio: number;
+  /** Probabilistic Sharpe Ratio — P(SR > 0 | datos) */
+  probabilisticSharpeRatio: number;
+  /** Benchmark Equal Weight Sharpe promedio OOS */
+  equalWeightSharpeOosAvg: number;
+  /** ¿El motor bate al Equal Weight en OOS? */
+  beatsEqualWeight: boolean;
+  /** Porcentaje de ventanas OOS en bull market BTC (>100%) */
+  pctBullMarketWindows: number;
 }
 
 // ── Construcción de ventanas walk-forward ────────────────────────────────
@@ -292,6 +309,138 @@ function computeAdaptiveWeights(
   }
 }
 
+// ── Deflated Sharpe Ratio (López de Prado 2014) ──────────────────────────
+// Corrige el Sharpe por el número de pruebas/ventanas.
+// Cuantas más ventanas evaluamos, más probable es encontrar una
+// con Sharpe alto por puro azar (sesgo de selección múltiple).
+//
+// DSR = (SR - E[max(SR)]) / σ[max(SR)]
+//
+// Donde E[max(SR)] y σ[max(SR)] son la media y desviación estándar
+// del máximo Sharpe esperado bajo la hipótesis nula (SR=0),
+// para N ventanas y T observaciones cada una.
+//
+// DSR > 0: el Sharpe es mejor que lo esperado por azar
+// DSR > 1: estadísticamente significativo al 68%
+// DSR > 2: estadísticamente significativo al 95%
+
+/**
+ * Calcula el Deflated Sharpe Ratio (López de Prado 2014).
+ *
+ * @param sharpeOosAvg - Sharpe OOS promedio
+ * @param nWindows - Número de ventanas walk-forward
+ * @param avgObsPerWindow - Observaciones promedio por ventana OOS
+ * @returns DSR value
+ */
+function deflatedSharpeRatio(
+  sharpeOosAvg: number,
+  nWindows: number,
+  avgObsPerWindow: number
+): number {
+  if (nWindows <= 1 || avgObsPerWindow < 20) return sharpeOosAvg;
+
+  // Expected max SR under null (SR=0) for N trials
+  // Approx: E[max(|z|)] ≈ √(2 log N)
+  const expectedMaxSR = Math.sqrt(2 * Math.log(nWindows));
+
+  // Variance of max SR: Var[max(SR)] ≈ 1/T
+  const varianceMaxSR = 1 / avgObsPerWindow;
+  const stdMaxSR = Math.sqrt(varianceMaxSR);
+
+  // DSR = (observed - expected max) / std(max)
+  return (sharpeOosAvg - expectedMaxSR) / (stdMaxSR + 1e-10);
+}
+
+/**
+ * Calcula el Probabilistic Sharpe Ratio (PSR).
+ * PSR = probabilidad de que el Sharpe real sea > 0 dado el Sharpe observado.
+ *
+ * PSR = Φ((SR_obs - 0) / √((1 - γ₃·SR_obs + (γ₄-1)/4·SR_obs²) / T))
+ *
+ * Simplificación para T grande: PSR ≈ Φ(SR_obs × √T)
+ *
+ * @param sharpeOosAvg - Sharpe OOS promedio
+ * @param avgObsPerWindow - Observaciones promedio por ventana
+ * @returns PSR [0, 1]
+ */
+function probabilisticSharpeRatio(
+  sharpeOosAvg: number,
+  avgObsPerWindow: number
+): number {
+  if (avgObsPerWindow < 20) return 0.5;
+
+  // Non-centrality parameter for SR under null = 0
+  const z = sharpeOosAvg * Math.sqrt(avgObsPerWindow);
+
+  // CDF of standard normal (approximation)
+  const cdf = 1 / (1 + Math.exp(-1.702 * z));
+  return Math.max(0, Math.min(1, cdf));
+}
+
+// ── Equal Weight Backtest (quick benchmark por ventana) ─────────────────
+function equalWeightBenchmark(
+  closesHistory: Record<string, number[]>,
+  backtestTickers: Record<string, string>,
+  start: number,
+  end: number,
+  initialCapital: number = 10000
+): { cagr: number; sharpe: number; maxDrawdown: number; finalValue: number; dailyRets: number[] } {
+  const tickers = Object.keys(backtestTickers);
+  const n = tickers.length;
+  const w = 1 / n;
+  const dailyRets: number[] = [];
+  let value = initialCapital;
+  let peak = initialCapital;
+  let maxDD = 0;
+
+  for (let t = start + 1; t <= end; t++) {
+    let dayRet = 0;
+    for (const ticker of tickers) {
+      const bt = backtestTickers[ticker];
+      const closes = closesHistory[bt] ?? [];
+      if (t < closes.length) {
+        const c0 = closes[t - 1];
+        const c1 = closes[t];
+        if (c0 > 0 && c1 > 0 && isFinite(c0) && isFinite(c1)) {
+          dayRet += w * (c1 / c0 - 1);
+        }
+      }
+    }
+    if (isFinite(dayRet)) {
+      dailyRets.push(dayRet);
+      value *= (1 + dayRet);
+      if (value > peak) peak = value;
+      const dd = (value - peak) / peak;
+      if (dd < maxDD) maxDD = dd;
+    }
+  }
+
+  const years = dailyRets.length / 252;
+  const totalReturn = value / initialCapital - 1;
+  const cagr = years > 0 && (1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
+  const m = dailyRets.reduce((s, r) => s + r, 0) / dailyRets.length;
+  const v = dailyRets.reduce((s, r) => s + (r - m) ** 2, 0) / (dailyRets.length - 1);
+  const sharpe = v > 0 ? (m / Math.sqrt(v)) * Math.sqrt(252) : 0;
+
+  return { cagr, sharpe, maxDrawdown: maxDD, finalValue: value, dailyRets };
+}
+
+// ── Bull Market Detection ───────────────────────────────────────────────
+function isBullMarketWindow(
+  closesHistory: Record<string, number[]>,
+  start: number,
+  end: number
+): { isBull: boolean; btcReturn: number } {
+  const btcCloses = closesHistory["BTC-EUR"] ?? closesHistory["BTC-USD"] ?? [];
+  if (btcCloses.length <= end || btcCloses[start] <= 0) return { isBull: false, btcReturn: 0 };
+
+  const btcStart = btcCloses[start];
+  const btcEnd = btcCloses[end];
+  const btcReturn = btcStart > 0 ? btcEnd / btcStart - 1 : 0;
+
+  return { isBull: btcReturn > 1.0, btcReturn }; // >100% = bull market
+}
+
 // ── Recomendación ──────────────────────────────────────────────────────
 
 function buildRecommendation(
@@ -348,6 +497,11 @@ function insufficientDataResult(
     pctWindowsPositiveCagr: 0,
     recommendation: `Datos insuficientes para walk-forward. Se necesitan al menos ${config.nWindows * 100 + config.lookbackDays} días de datos; se tienen ${totalDataDays}.`,
     adaptiveFactorWeights: { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 },
+    deflatedSharpeRatio: 0,
+    probabilisticSharpeRatio: 0.5,
+    equalWeightSharpeOosAvg: 0,
+    beatsEqualWeight: false,
+    pctBullMarketWindows: 0,
   };
 }
 
@@ -392,6 +546,13 @@ export function runWalkForwardTest(
 
   // ── Ejecutar walk-forward por ventana ──────────────────────────────
   const results: WFWindowResult[] = [];
+
+  // ── Backtest tickers (con proxy) ──
+  // Usar PROXY_MAP como runBacktest para que el EW benchmark compare justo
+  const backtestTickers: Record<string, string> = {};
+  for (const ticker of ASSETS) {
+    backtestTickers[ticker] = PROXY_MAP[ticker] ?? ticker;
+  }
 
   // Helper para slicear macroHistory incluyendo campos opcionales
   function sliceMacro(macro: typeof input.macroHistory, start: number, end: number) {
@@ -443,6 +604,15 @@ export function runWalkForwardTest(
     };
     const oosResult = runBacktest(oosInput);
 
+    // ---- Equal Weight Benchmark (misma ventana OOS) ----
+    const ewResult = equalWeightBenchmark(
+      input.closesHistory, backtestTickers,
+      oosStart, win.testEnd, cfg.initialCapital
+    );
+
+    // ---- Bull Market Detection ----
+    const bullCheck = isBullMarketWindow(input.closesHistory, oosStart, win.testEnd);
+
     // ---- Métricas ----
     const consistencyScore = computeConsistency(isResult.metrics, oosResult.metrics);
     const sharpeDegradation = isResult.metrics.sharpe - oosResult.metrics.sharpe;
@@ -454,11 +624,35 @@ export function runWalkForwardTest(
       window: win,
       inSample: isResult,
       outOfSample: oosResult,
+      equalWeightBenchmark: {
+        metrics: {
+          cagr: ewResult.cagr,
+          sharpe: ewResult.sharpe,
+          sortino: 0,
+          maxDrawdown: ewResult.maxDrawdown,
+          calmar: ewResult.maxDrawdown < 0 ? ewResult.cagr / Math.abs(ewResult.maxDrawdown) : 0,
+          totalReturn: ewResult.finalValue / cfg.initialCapital - 1,
+          winRate: 0,
+          volatility: 0,
+          finalValue: ewResult.finalValue,
+          betaVsBenchmark: 1,
+          alphaVsBenchmark: 0,
+          hhi: 0,
+        },
+        dailyRecords: [],
+        benchmarkMetrics: { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, volatility: 0, finalValue: 0, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 },
+        regimeConditional: { EXPANSION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CONTRACTION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CRISIS: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 } },
+        regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
+        daysWithProxies: 0, daysWithRealData: 0,
+        transactionCostBps: 0, totalTransactionCosts: 0, rebalanceCount: 0,
+      },
       consistencyScore,
       sharpeDegradation,
       cagrDegradation,
       maxDdDegradation,
       winRateDegradation,
+      bullMarketWindow: bullCheck.isBull,
+      btcReturnWindow: bullCheck.btcReturn,
     });
   }
 
@@ -477,6 +671,16 @@ export function runWalkForwardTest(
   const cagrOosAvg = results.reduce((s, r) => s + r.outOfSample.metrics.cagr, 0) / results.length;
   const pctWindowsPositiveSharpe = results.filter(r => r.outOfSample.metrics.sharpe > 0).length / results.length;
   const pctWindowsPositiveCagr = results.filter(r => r.outOfSample.metrics.cagr > 0).length / results.length;
+
+  // FIX-AUDIT-R11: Deflated Sharpe Ratio + Equal Weight benchmark
+  const ewSharpeOosAvg = results.reduce((s, r) => s + r.equalWeightBenchmark.metrics.sharpe, 0) / results.length;
+  const beatsEW = sharpeOosAvg > ewSharpeOosAvg;
+  const avgObsPerWindow = results.length > 0
+    ? results.reduce((s, r) => s + r.window.testDays, 0) / results.length
+    : 252;
+  const dsr = deflatedSharpeRatio(sharpeOosAvg, results.length, avgObsPerWindow);
+  const psr = probabilisticSharpeRatio(sharpeOosAvg, avgObsPerWindow);
+  const pctBullWindows = results.filter(r => r.bullMarketWindow).length / results.length;
 
   const { robustnessGrade, overfittingRisk } = gradeResults(
     overallConsistency, avgSharpeDegradation, results
@@ -502,6 +706,11 @@ export function runWalkForwardTest(
       overallConsistency, avgSharpeDegradation, robustnessGrade, results
     ),
     adaptiveFactorWeights: computeAdaptiveWeights(overfittingRisk),
+    deflatedSharpeRatio: dsr,
+    probabilisticSharpeRatio: psr,
+    equalWeightSharpeOosAvg: ewSharpeOosAvg,
+    beatsEqualWeight: beatsEW,
+    pctBullMarketWindows: pctBullWindows,
   };
 }
 
@@ -541,8 +750,16 @@ export function formatWFResult(result: WFTestResult): string {
     '─── ESTABILIDAD POR VENTANA ───',
     ...result.windows.map((w, i) => {
       const emoji = w.consistencyScore >= 0.70 ? '✅' : w.consistencyScore >= 0.50 ? '⚠️' : '❌';
-      return `  V${i + 1}: Sharpe ${w.inSample.metrics.sharpe.toFixed(2)}→${w.outOfSample.metrics.sharpe.toFixed(2)} | CAGR ${(w.inSample.metrics.cagr * 100).toFixed(1)}%→${(w.outOfSample.metrics.cagr * 100).toFixed(1)}% | ${emoji} ${(w.consistencyScore * 100).toFixed(0)}%`;
+      const bullTag = w.bullMarketWindow ? ` 🐂BTC+${(w.btcReturnWindow * 100).toFixed(0)}%` : '';
+      const ewTag = `EW:${w.equalWeightBenchmark.metrics.sharpe.toFixed(2)}`;
+      return `  V${i + 1}: Sharpe ${w.inSample.metrics.sharpe.toFixed(2)}→${w.outOfSample.metrics.sharpe.toFixed(2)} | CAGR ${(w.inSample.metrics.cagr * 100).toFixed(1)}%→${(w.outOfSample.metrics.cagr * 100).toFixed(1)}% | ${emoji} ${(w.consistencyScore * 100).toFixed(0)}% | ${ewTag}${bullTag}`;
     }),
+    '',
+    '─── DSR (Deflated Sharpe Ratio) ───',
+    `  DSR:   ${result.deflatedSharpeRatio.toFixed(3)} ${result.deflatedSharpeRatio > 1 ? '🟢 p<0.32' : result.deflatedSharpeRatio > 0 ? '🟡' : '🔴'}`,
+    `  PSR:   ${(result.probabilisticSharpeRatio * 100).toFixed(1)}% probabilidad de Sharpe > 0`,
+    `  EW OOS: Sharpe ${result.equalWeightSharpeOosAvg.toFixed(3)} — Motor ${result.beatsEqualWeight ? '🟢 BATE' : '🔴 PIERDE'} vs Equal Weight`,
+    `  Bull:   ${(result.pctBullMarketWindows * 100).toFixed(0)}% ventanas en bull market BTC (>100%)`,
     '',
     '─── PESOS ADAPTATIVOS ───',
     `  Momentum: ${(result.adaptiveFactorWeights.momentum * 100).toFixed(0)}%`,

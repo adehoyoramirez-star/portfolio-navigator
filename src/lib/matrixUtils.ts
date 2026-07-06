@@ -38,7 +38,7 @@ export function isPSD(A: number[][], epsilon: number = 1e-8): boolean {
       diagSum += L[j][k] * L[j][k];
     }
     const diag = L[j][j] - diagSum;
-    if (diag <= epsilon) return false;
+    if (diag < -epsilon) return false;  // solo rechazar si es significativamente negativo (tolera eigenvalue=0)
     L[j][j] = Math.sqrt(diag);
 
     for (let i = j + 1; i < n; i++) {
@@ -74,7 +74,7 @@ export function nearestPSD(A: number[][], epsilon: number = 1e-10): number[][] {
   }
 
   const { eigenvalues, eigenvectors } = eigenvaluesSymmetric(A);
-  const posEigenvalues = eigenvalues.map(v => (v > epsilon ? v : 0));
+  const posEigenvalues = eigenvalues.map(v => (v > -epsilon ? v : 0)); // tolera eigenvalue=0
 
   const result: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {

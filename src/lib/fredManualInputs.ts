@@ -1,16 +1,14 @@
 // ===============================================
 // ARCHIVO: src/lib/fredManualInputs.ts
 // FIX-AUDIT-R9 1: FRED MANUAL INPUTS - localStorage-based persistence
+// FIX-AUDIT-R11: + fetchFredFromServer() para cron server-side
 // ===============================================
-// Sustituye los hardcoded 5.2% M2, 29.5 CAPE, 3.0% credit spread.
-// El usuario actualiza estos valores manualmente cuando quiera.
-// El motor los lee automaticamente - sin Supabase, sin API key.
+// El usuario actualiza estos valores manualmente o el cron de Supabase
+// los actualiza automaticamente. El motor lee la fuente mas reciente.
 //
-// Fuentes recomendadas (actualizar semanalmente):
-//   M2 Growth YoY:     fred.stlouisfed.org/series/M2SL -> % cambio 1 ano
-//   Shiller CAPE:      multpl.com/shiller-pe
-//   Credit Spread HY:  fred.stlouisfed.org/series/BAMLH0A0HYM2
-//   Breakeven 5y:      fred.stlouisfed.org/series/T5YIFR
+// Fuentes:
+//   Server (cron):  supabase/functions/fred-data (diario 08:00 UTC)
+//   Manual:         fred.stlouisfed.org, multpl.com
 // ===============================================
 
 export interface FredManualData {
@@ -23,6 +21,9 @@ export interface FredManualData {
 }
 
 const STORAGE_KEY = "olympus_fred_manual";
+
+// URL de la Edge Function desplegada en Supabase
+const FRED_FUNCTION_URL = "https://yrirandgftnuvdzatwgc.supabase.co/functions/v1/fred-data";
 
 const DEFAULTS: FredManualData = {
   m2GrowthYoY: 5.2,
@@ -85,4 +86,46 @@ export function isFredDataFresh(maxAgeDays: number = 7): boolean {
 
 export function getFredDefaults(): FredManualData {
   return { ...DEFAULTS };
+}
+
+// ============================================================
+// FIX-AUDIT-R11: fetchFredFromServer
+// Intenta obtener datos FRED del cron server-side de Supabase.
+// Si falla (sin API key, offline, error de red), devuelve null.
+// El caller debe usar loadFredManual() como fallback.
+// ============================================================
+export async function fetchFredFromServer(): Promise<FredManualData | null> {
+  try {
+    const res = await fetch(FRED_FUNCTION_URL, {
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+
+    // Validar que los campos existen y son números
+    if (
+      typeof json.m2GrowthYoY === "number" &&
+      typeof json.cape === "number" &&
+      typeof json.creditSpread === "number" &&
+      typeof json.inflationBreakeven5y === "number"
+    ) {
+      // Guardar en localStorage como caché offline
+      const data: FredManualData = {
+        m2GrowthYoY: json.m2GrowthYoY,
+        cape: json.cape,
+        creditSpread: json.creditSpread,
+        inflationBreakeven5y: json.inflationBreakeven5y,
+        lastUpdated: json.fetchedAt ?? new Date().toISOString(),
+        updatedBy: `server:${json.source ?? "FRED"}`,
+      };
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch { /* localStorage lleno */ }
+      return data;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
