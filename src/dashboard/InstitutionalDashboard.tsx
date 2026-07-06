@@ -2650,7 +2650,19 @@ soxRsiWeekly,
                 <p style={{ color: "#ef4444", fontSize: "0.8rem" }}>⚠️ Tail Risk: ×{engineResult.tailRiskOverlay.toFixed(2)} — {engineResult.tailRiskReason}</p>
               )}
               <p style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                Markowitz: {engineResult.meta.hasRealCovMatrix ? "✅ activo (50% Kelly + 30% MV + 20% RP)" : "⚠️ sin covMatrix real (50% Kelly + 50% RP)"}
+                Blend: {(() => {
+                  const wfoActive = walkForwardResult?.overfittingRisk === 'HIGH';
+                  const isAggressive = engineResult.regime === 'EXPANSION';
+                  if (engineResult.meta.hasRealCovMatrix) {
+                    if (wfoActive) return "BL×0.20 + HRP×0.55 + MinVar×0.25 (WFO anti-overfitting)";
+                    return isAggressive
+                      ? "BL×0.40 + HRP×0.40 + MinVar×0.20 (aggressive)"
+                      : "BL×0.20 + HRP×0.65 + MinVar×0.15 (conservative)";
+                  }
+                  return isAggressive
+                    ? "KellyNorm×0.40 + HRP×0.60 (sin covMatrix)"
+                    : "KellyNorm×0.25 + HRP×0.75 (sin covMatrix)";
+                })()}
               </p>
             </div>
             <div>
