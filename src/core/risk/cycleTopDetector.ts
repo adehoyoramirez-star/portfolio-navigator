@@ -138,6 +138,12 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
   const ratio = uraniumSpotPrice / uraniumLTPrice;
   // Historial: en 2007 el spot llegó a 136$/lb con LT en 95$/lb → ratio 1.43 → techo
   // Rango normal: spot ≈ LT (ratio ~1.0). Peligro: ratio >1.20
+  //
+  // FIX-URANIUM-VALUE (Jul 2026): añadido boost cuando spot está barato vs LT.
+  //   Spot < LT → contango → mercado anticipa escasez futura. Históricamente,
+  //   ratios < 0.70-0.85 han precedido rallies de +100-300% (2016, 2020).
+  //   El boost es asimétrico: el ratio alto castiga más de lo que el bajo premia,
+  //   porque el uranio es un activo de alta volatilidad (URNU ~35% vol).
 
   let multiplier: number;
   let zone: CycleTopSignal["zone"];
@@ -156,6 +162,16 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
   } else if (ratio > 1.10) {
     multiplier = 0.75; zone = "CAUTION"; trimPct = 15;
     reason = `Spot/LT ${ratio.toFixed(2)} — ligera tensión. Spot empieza a superar al LT.`;
+  } else if (ratio < 0.70) {
+    // FIX-URANIUM-VALUE: descuento profundo — utilities pagan +43% más por contratos LP.
+    // Señal de acumulación agresiva. Raro: solo ha ocurrido en 2016 y brevemente en 2020.
+    multiplier = 1.40; zone = "SAFE"; trimPct = 0;
+    reason = `Spot/LT ${ratio.toFixed(2)} — descuento profundo. Spot muy por debajo del LT: utilities pagan fuerte prima por suministro futuro. Señal de acumulación agresiva.`;
+  } else if (ratio < 0.85) {
+    // FIX-URANIUM-VALUE: spot barato vs contratos LP.
+    // El mercado de futuros anticipa mayor demanda → ventana de acumulación.
+    multiplier = 1.20; zone = "SAFE"; trimPct = 0;
+    reason = `Spot/LT ${ratio.toFixed(2)} — spot barato vs contratos a largo plazo. Contango saludable: el mercado anticipa tightening futuro. Ventana de acumulación.`;
   } else {
     multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
     reason = `Spot/LT ${ratio.toFixed(2)} — equilibrio normal entre spot y contratos a largo plazo.`;
