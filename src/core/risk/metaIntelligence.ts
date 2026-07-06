@@ -14,8 +14,27 @@
 // SOLUCIÓN:
 //   Tracking de las últimas N predicciones del régimen vs resultado real.
 //   Si el modelo falla consistentemente (ej: predice CRISIS pero el mercado
-//   sube >5%), reduce gradualmente la penalización del régimen para
-//   compensar el sesgo excesivamente conservador.
+//   sube >5%), AUMENTA el confidenceMultiplier hacia 1.0 para que
+//   `regimePenalty × confidenceMultiplier` se acerque al regimePenalty puro
+//   (o lo supere ligeramente hacia más exposición) y compensar así el sesgo
+//   excesivamente conservador.
+//
+// FIX-R2-A1 (auditoría institucional ronda 2):
+//   ANTES: confidenceMultiplier = 0.70 cuando el modelo falla.
+//     olympusV3 aplica `regimePenalty × confidenceMultiplier` en CRISIS/CONTRACTION.
+//     Ejemplo: regimePenalty=0.44 (CRISIS), confidence=0.70 → 0.308 → MENOS exposición.
+//     Esto es lo OPUESTO a la intención declarada: si el motor dice CRISIS y el
+//     mercado sube 6 meses (fallo sistemático), hacer el motor aún más
+//     conservador amplifica el coste de oportunidad. Bug conceptual confirmado
+//     en auditoría ronda 2.
+//   AHORA: confidenceMultiplier ahora está en [1.00, 1.30].
+//     - Modelo fiable (sin fallos): multiplier = 1.00 (confianza plena en la señal).
+//     - Modelo degradado: multiplier = 1.15 (15% más exposición de lo que la
+//       señal de régimen sugeriría, para compensar el sesgo).
+//     - Modelo no fiable: multiplier = 1.30 (30% extra — neutraliza casi todo
+//       el efecto del régimen si está sistemáticamente equivocado).
+//     - En olympusV3, regimePenalty se clamp a [0.4, 1.0] tras la multiplicación,
+//       así que un multiplier > 1 solo sube la exposición, nunca la reduce.
 //
 // DEFINICIÓN DE "ACIERTO" del modelo de régimen:
 //   EXPANSION predicho + retorno > 0%  → acierto
@@ -24,17 +43,16 @@
 //   EXPANSION predicho + retorno < -5% → fallo (no protegió)
 //
 // OUTPUTS:
-//   confidenceMultiplier: [0.70, 1.0]
-//     → Si el modelo está fallando, reduce penalización de régimen
-//       para que el sistema no sea demasiado conservador cuando el
-//       mercado contradice la señal macro.
+//   confidenceMultiplier: [1.00, 1.30]  ← FIX-R2-A1: rango invertido
+//     → 1.00 = confiar plenamente en la señal de régimen.
+//     → 1.30 = la señal de régimen está sistemáticamente equivocada; el motor
+//       añade hasta +30% de exposición para compensar el sesgo.
 //   modelHealth: 'RELIABLE' | 'DEGRADED' | 'UNRELIABLE'
 //   consecutiveErrors: número de fallos consecutivos recientes
 //
 // ALMACENAMIENTO:
 //   localStorage key: 'olympus_meta_intelligence_v1'
 //   Persistencia: 90 días de historial máximo
-//   Supabase: pendiente (misma tabla que CEWS history)
 //
 // FILOSOFÍA:
 //   "Un modelo que sabe que puede equivocarse es más robusto
@@ -53,7 +71,10 @@ export interface PredictionRecord {
 }
 
 export interface MetaIntelligenceOutput {
-  confidenceMultiplier: number;  // [0.70, 1.0] — multiplicador sobre la penalización de régimen
+  // FIX-R2-A1: rango [1.00, 1.30] en lugar de [0.70, 1.00].
+  // 1.00 = confianza plena en la señal de régimen.
+  // 1.30 = la señal de régimen está sistemáticamente equivocada; compensa con +30% exposición.
+  confidenceMultiplier: number;
   modelHealth: ModelHealth;
   consecutiveErrors: number;     // fallos consecutivos recientes
   recentAccuracy: number;        // % de aciertos en las últimas N predicciones [0, 1]
@@ -166,21 +187,23 @@ export function computeMetaIntelligence(
   let confidenceMultiplier: number;
 
   if (consecutiveErrors >= 4 || recentAccuracy < 0.35) {
-    // Modelo muy degradado — el mercado contradice sistemáticamente las señales
+    // Modelo muy degradado — el mercado contradice sistemáticamente las señales.
+    // FIX-R2-A1: multiplier=1.30 (antes 0.70, lógica invertida).
+    //   regimePenalty=0.44 × 1.30 = 0.572 (clamped a 1.0) → MÁS exposición.
+    //   Esto compensa el sesgo: si predice CRISIS y el mercado sube, no ser aún más conservador.
     modelHealth = 'UNRELIABLE';
-    confidenceMultiplier = 0.70;  // Reducir penalización de régimen al 70%
-    // Esto significa: si el régimen dice CRISIS (0.44), el motor aplica 0.44*0.70=0.31
-    // → más conservador aún, pero con less weight en la señal de régimen
+    confidenceMultiplier = 1.30;
 
   } else if (consecutiveErrors >= 2 || recentAccuracy < 0.55) {
-    // Modelo degradado — señales poco fiables en periodo reciente
+    // Modelo degradado — señales poco fiables en periodo reciente.
+    // FIX-R2-A1: multiplier=1.15 (antes 0.85).
     modelHealth = 'DEGRADED';
-    confidenceMultiplier = 0.85;  // Reducción moderada
+    confidenceMultiplier = 1.15;
 
   } else {
-    // Modelo fiable
+    // Modelo fiable — confianza plena en la señal de régimen.
     modelHealth = 'RELIABLE';
-    confidenceMultiplier = 1.0;
+    confidenceMultiplier = 1.00;
   }
 
   // ── RECOMENDACIÓN ──────────────────────────────────────────────────────

@@ -5,6 +5,7 @@
 //   ai-intelligence   -> fetchAIIntelligence()
 //   telegram-alerts   -> sendTelegramAlert()
 // ============================================================
+/// <reference types="vite/client" />
 
 // ── Crypto Signals (Alternative.me + CoinGecko) ──────────────
 export interface CryptoSignalsOutput {
@@ -163,10 +164,26 @@ export async function fetchAIIntelligence(ctx: any): Promise<AIIntelligenceOutpu
 }
 
 // ── Telegram Alerts ──────────────────────────────────────────
-// Hardcoded en build — Vercel no propaga VITE_ env vars a Vite.
-// Los tokens ya son públicos (cliente), sin diferencia de seguridad.
-const TG_BOT_TOKEN = '8256161361:AAFqdfl7uTe02FGf6pCzP5qetDMdK-DUFy0';
-const TG_CHAT_ID = '8247498069';
+// FIX-R2-B5 (auditoría institucional ronda 2):
+//   ANTES: token hardcodeado en el frontend (visible en bundle JS).
+//     Cualquiera con las DevTools abiertas podía leer el token y
+//     enviar mensajes fraudulentos al chat de Telegram.
+//   AHORA: el token se lee de variables de entorno de Vite
+//     (VITE_TELEGRAM_BOT_TOKEN, VITE_TELEGRAM_CHAT_ID) o del
+//     localStorage como fallback de desarrollo.
+//   INSTRUCCIÓN: rotar el token en @BotFather INMEDIATAMENTE.
+//     El token anterior (8256161361:AAFqd...) está comprometido
+//     por haber estado en el repositorio.
+//   Las Edge Functions de Supabase usan Deno.env.get("TELEGRAM_BOT_TOKEN")
+//   que son secrets de Supabase — esas SÍ son seguras.
+const TG_BOT_TOKEN =
+  import.meta.env.VITE_TELEGRAM_BOT_TOKEN ||
+  (typeof localStorage !== 'undefined' ? localStorage.getItem('tg_bot_token_dev') : null) ||
+  '';
+const TG_CHAT_ID =
+  import.meta.env.VITE_TELEGRAM_CHAT_ID ||
+  (typeof localStorage !== 'undefined' ? localStorage.getItem('tg_chat_id_dev') : null) ||
+  '';
 
 export async function sendTelegramAlert(body: any): Promise<{ ok: boolean; error?: string }> {
   if (!TG_BOT_TOKEN || !TG_CHAT_ID) {

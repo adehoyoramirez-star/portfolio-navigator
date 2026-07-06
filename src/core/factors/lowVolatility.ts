@@ -10,11 +10,13 @@
 // Explicación conductual: inversores sobreestiman activos "emocionantes"
 // (alta vol) y subestiman los "aburridos" (baja vol).
 //
-// Para tu portfolio:
+// Para tu portfolio (6 activos, Jul 2026):
 //   Oro (PPFB.DE) → vol ~15%, factor muy positivo
-//   NASDAQ 100 (XNAS.DE) → vol ~20%, factor neutral-negativo por alta vol
+//   Vanguard Global (WLG) → vol ~15%, factor positivo por baja vol
 //   BTC → vol ~60%, factor muy negativo (compensado por otros factores)
 //   Uranio (URNU.DE) → vol ~35%, factor neutral
+//   Semis (VVSM.DE) → vol ~30%, factor neutral-negativo
+//   Emergentes (EMXC.DE) → vol ~22%, factor neutral
 //
 // Score: z-score INVERTIDO de la volatilidad del universo
 // Alta vol → score negativo (penalización)

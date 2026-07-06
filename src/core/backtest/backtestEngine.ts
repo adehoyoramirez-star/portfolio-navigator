@@ -16,6 +16,8 @@ import { ASSETS, RISK_FREE_RATE_DAILY, RISK_FREE_RATE_ANNUAL } from "../../lib/c
 import { dailyReturns, tradingDayReturns, mean, variance } from "../../lib/stats";
 import { getProxyUS, getEarningsYield } from "../../lib/assetRegistry";
 import { covarianceMatrix } from "../../lib/marketData";
+// FIX-R2-A3: DCC-GARCH integration for backtest-live alignment
+import { getDynamicCovMatrix } from "../risk/dccGarch";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
 import type { AssetInput } from "../engine/olympusV3";
@@ -41,6 +43,13 @@ export interface BacktestInput {
   // When provided, tradingDayReturns filters Sat/Sun forward-filled transitions.
   timestampsHistory?: Record<string, number[]>;
   covMatrix?: number[][];
+  // FIX-R2-A3 (auditoría institucional ronda 2):
+  //   Si true, el backtest usa DCC-GARCH (covarianza dinámica) en lugar de
+  //   Ledoit-Wolf estático. Esto alinea el backtest con el motor en producción
+  //   (InstitutionalDashboard.tsx usa getDynamicCovMatrix).
+  //   Si false/undefined (default), usa Ledoit-Wolf para backward compatibility.
+  //   ⚠️  DCC-GARCH con calibración MLE por ventana es ~5-10× más lento.
+  useDynamicCovariance?: boolean;
   macroHistory: {
     vix: number[];
     yieldSpread: number[];
@@ -167,7 +176,8 @@ function computeWindowCovAndCorr(
   backtestTickers: Record<string, string>,
   t: number,
   window: number,
-  timestampsHistory?: Record<string, number[]>
+  timestampsHistory?: Record<string, number[]>,
+  useDynamicCovariance?: boolean
 ): { covMatrix: number[][]; corrMatrix: number[][] } {
   const n = ASSETS.length;
   // FIX-AUDIT-R8 3.2: use tradingDayReturns when timestamps are available.
@@ -201,10 +211,31 @@ function computeWindowCovAndCorr(
     }
   }
 
-  // Matriz de covarianza con Ledoit-Wolf shrinkage adaptativo (anualizada ×252 internamente)
-  // FIX-COV-UNIFY: usa covarianceMatrix de marketData.ts (misma función que el motor live)
-  // con shrinkage adaptativo por activo (URNU con 221d recibe más shrinkage que BTC con 1274d).
-  const covMatrix = covarianceMatrix(returns);
+  // Matriz de covarianza
+  // FIX-R2-A3 (auditoría institucional ronda 2):
+  //   Si useDynamicCovariance=true, usa DCC-GARCH (mismo que el motor live en el dashboard)
+  //   en lugar de Ledoit-Wolf estático. Esto alinea el backtest con producción.
+  //   Si false/undefined, usa Ledoit-Wolf canónico (comportamiento actual, backward compatible).
+  let covMatrix: number[][];
+  if (useDynamicCovariance) {
+    // Construir closesHistory para la ventana actual (t-window hasta t)
+    const windowCloses: Record<string, number[]> = {};
+    for (const ticker of ASSETS) {
+      const bticker = backtestTickers[ticker];
+      const closes = closesHistory[bticker] ?? [];
+      windowCloses[ticker] = closes.slice(Math.max(0, t - window), t);
+    }
+    // Usar DCC-GARCH (misma función que el dashboard live)
+    // getDynamicCovMatrix necesita al menos 60 días para calibrar;
+    // si la ventana es menor, fallback a Ledoit-Wolf automáticamente.
+    const staticCov = covarianceMatrix(returns);
+    const { covMatrix: dccCov } = getDynamicCovMatrix(
+      [...ASSETS], windowCloses, staticCov
+    );
+    covMatrix = dccCov;
+  } else {
+    covMatrix = covarianceMatrix(returns);
+  }
 
   // Matriz de correlación derivada de la covarianza shrunk
   const corrMatrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
@@ -337,7 +368,8 @@ function computeAllocationsWithRegime(
   // Estado tracking para masterRegime
   cewsHistory?: CEWSDataPoint[],
   regimeHistory?: { timestamp: string; regime: string }[],
-  timestampsHistory?: Record<string, number[]>
+  timestampsHistory?: Record<string, number[]>,
+  useDynamicCovariance?: boolean
 ): {
   allocations: Record<string, number>;
   regime: BacktestRegime;
@@ -362,7 +394,7 @@ function computeAllocationsWithRegime(
   });
 
   // ── 2. Covarianza y correlación ──
-  const { covMatrix, corrMatrix } = computeWindowCovAndCorr(closesHistory, backtestTickers, t, 63, timestampsHistory);
+  const { covMatrix, corrMatrix } = computeWindowCovAndCorr(closesHistory, backtestTickers, t, 63, timestampsHistory, useDynamicCovariance);
 
   // ── 3. Portfolio vol estimada (para engine) ──
   const equalW = assets.map(() => 1 / n);
@@ -547,7 +579,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         currentAllocations,
         cewsHistory,
         regimeHistory,
-        input.timestampsHistory
+        input.timestampsHistory,
+        input.useDynamicCovariance
       );
       // FIX-REGIME-TRACKING (22-Jun-2026): añadir en cada rebalanceo.
       // Usar dayIndex (relativo) para generar timestamps secuenciales sin futuro.

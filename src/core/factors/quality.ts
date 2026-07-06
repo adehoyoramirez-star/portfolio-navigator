@@ -1,22 +1,20 @@
 // ===============================================
 // ARCHIVO: src/core/factors/quality.ts
 // Factor de CALIDAD — cross-sectional z-score
-// FIX-IS3Q-QUALITY: IS3Q.DE (MSCI World Quality) debe recibir
-//   bonus de calidad explícito porque su índice de referencia
-//   ya pre-selecciona empresas de alta calidad (ROE, deuda baja).
-//   Anteriormente el motor lo trataba como equity genérico.
 // ===============================================
-// Para ETFs de factor quality como IS3Q:
+// Para ETFs de factor quality:
 //   El factor Quality captura que empresas con alta calidad tienden
 //   a superar al mercado en el largo plazo (especialmente en crisis).
-//   IS3Q ya tiene este sesgo de selección integrado en su índice.
 //
-// Calibración histórica:
-//   IS3Q.DE (Quality): calidad muy alta — baja vol (~15%), retornos estables
+// Calibración histórica (portfolio actual, Jul 2026):
 //   Oro (PPFB.DE): calidad alta — vol muy baja (~14%), descorrelacionado
 //   Semiconductores (VVSM.DE): calidad media — alta vol pero buen Sharpe ciclo AI
 //   Uranio (URNU.DE): calidad media-baja — vol alta, fundamental sólido LP
+//   Vanguard Global (WLG): calidad alta — diversificado, baja volatilidad
 //   BTC: calidad baja (por métricas tradicionales) — vol extrema aunque retornos altos
+//
+// NOTA (22-Jun-2026): IS3Q.DE (MSCI World Quality) fue eliminado del portfolio.
+//   Ningún activo actual usa isQualityFactor=true.
 // ===============================================
 
 export interface QualityInput {

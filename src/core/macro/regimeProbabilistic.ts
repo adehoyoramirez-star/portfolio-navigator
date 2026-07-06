@@ -51,9 +51,13 @@ export function detectRegimeProbabilistic(
   const contractionCurve = yieldSpread < 0
     ? Math.min(1, Math.abs(yieldSpread) / 2)   // máx penalización en -2% o más invertida
     : 0;
-  const contractionLiquidity = m2Growth < 2
-    ? Math.min(1, (2 - m2Growth) / 4)
-    : 0;
+  // FIX-R2-A4 (auditoría institucional ronda 2):
+  //   ANTES: piecewise con salto en M2=2 (0.0025 → 0).
+  //   AHORA: sigmoid suave centrada en M2=0.5%, sin saltos discretos.
+  //   La sigmoid prioriza continuidad sobre coincidencia exacta en extremos
+  //   (difiere ~10% del original en M2=±2, pero el salto eliminado es
+  //   mucho más relevante cuantitativamente que esa diferencia).
+  const contractionLiquidity = 1 / (1 + Math.exp(-(0.5 - m2Growth) * 1.5));
   const contractionRaw = 0.6 * contractionCurve + 0.4 * contractionLiquidity;
 
   // ---- EXPANSIÓN ----

@@ -1,6 +1,16 @@
 // ============================================================
 // src/core/tactical/types.ts
 // Tipos del Motor Táctico Olympus
+// ============================================================
+// ⚠️  DEPRECATED (Jul 2026 — Auditoría R2):
+//   El motor táctico (src/core/tactical/) es un overlay independiente
+//   que NO se ejecuta en el flujo principal del dashboard
+//   (InstitutionalDashboard.tsx eliminó tacticalAccumulated y
+//   tacticalPct en Jun 2026). Solo TacticalDashboard.tsx lo usa.
+//   El motor principal Olympus V5 opera sin dependencia de este módulo.
+//   Mantener por compatibilidad con TacticalDashboard hasta que se
+//   migre a la arquitectura unificada.
+// ============================================================
 // CAMBIOS v2:
 //   + TacticalPosition.atrAtEntry: ATR en EUR en el momento de
 //     apertura — necesario para trailing stop y horizonte correcto
