@@ -84,6 +84,11 @@ function computeKillSwitch(drawdown: number): {
 }
 
 // ── FUNCIÓN PRINCIPAL ─────────────────────────────────────────────────────
+// FIX-AUDIT-R10: JSDoc de unidades documentado.
+// Todas las volatilidades están en decimal anualizado (ej: 0.35 = 35% anual).
+// drawdown es decimal negativo (ej: -0.15 = -15%).
+// overlay es multiplicador [0.05, 1.0] que escala la exposición total.
+// volatilityReduction es fracción [0, 1] de reducción sobre el overlay base.
 export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
   const { drawdown, vix, creditSpread, stressScore } = input;
   const portfolioVol = input.portfolioVolatility ?? 0;
@@ -93,8 +98,11 @@ export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
   const killSwitch = computeKillSwitch(drawdown);
 
   // ── 2. VOLATILITY REDUCTION — FIX-VOL-REDUCTION ───────────────────────
-  // BUG ORIGINAL: el tercer else-if repetía portfolioVol > 0.25 (nunca ejecutaba)
-  // Corregido con tres bandas distintas.
+  // BUG ORIGINAL: el tercer else-if repetía portfolioVol > 0.25 (nunca ejecutaba).
+  // Corregido con tres bandas: >35%, >28%, >22%.
+  // UNIDADES: portfolioVol es decimal anualizado (ej: 0.35 = 35% anual).
+  // volatilityReduction es fracción [0, 1] que se aplica como (1 - reduction)
+  // al overlay base (ej: 0.40 → overlay × 0.60).
   let volatilityReduction = 0;
   if (portfolioVol > 0.35) {
     volatilityReduction = 0.40;   // vol extrema: más del 35% anualizado
@@ -128,6 +136,8 @@ export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
   }
 
   // ── 5. OVERLAY FINAL ───────────────────────────────────────────────────
+  // Unidades: overlay ∈ [MIN_ALLOCATION, 1.0]. Multiplica la exposición total.
+  // Ej: overlay=0.50 → 50% invertido, 50% cash. No es reducción aditiva.
   const baseOverlay = Math.min(killSwitch.overlay, systemicCrisisOverlay);
   const afterVol  = baseOverlay * (1 - volatilityReduction);
   const afterCorr = afterVol * (1 - correlationPenalty);

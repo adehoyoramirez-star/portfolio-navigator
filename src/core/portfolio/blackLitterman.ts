@@ -327,20 +327,30 @@ function invertMatrix(M: number[][], n: number): number[][] {
  * Genera views automáticas desde los datos del motor Olympus.
  * Las views se derivan de las señales del motor: momentum fuerte → view positiva.
  *
- * FIX-BL-CIRCULARITY (22-Jun-2026): las views auto-generadas usan los mismos
- * factor scores que producen μ vía calibrateExpectedReturn(), creando un bucle
- * tautológico (el motor se convence a sí mismo de sus propias opiniones).
+ * ⚠️ ADVERTENCIA DE CIRCULARIDAD PARCIAL (FIX-BL-CIRCULARITY):
  *
- * CORRECCIONES:
+ * Las views auto-generadas usan los mismos factor scores que producen μ vía
+ * calibrateExpectedReturn(). Sin mitigaciones, BL amplificaría μ sin añadir
+ * información nueva (bucle tautológico: el motor se convence a sí mismo).
+ *
+ * MITIGACIONES APLICADAS (auditado 22-Jun-2026):
  *   1. Confianza máxima reducida de 0.85 → 0.55 para views individuales.
- *      Las views no son externas (analyst consensus), son derivadas del mismo
+ *      Las views no son externas (analyst consensus), derivan del mismo
  *      modelo que produce μ → menor peso en la actualización bayesiana.
  *   2. Jitter (±10%) en expectedReturn para romper la correlación perfecta
- *      con los factor scores. Sin jitter, BL simplemente amplifica μ sin añadir
- *      información nueva.
+ *      con los factor scores. Sin jitter, BL simplemente amplifica μ.
  *   3. Check contrarian: si momentum Y value son alcistas para el mismo activo,
  *      se reduce confianza adicional (posible overfitting del factor model).
  *   4. Cap de views a 3 (antes 5) para limitar la influencia del bucle.
+ *
+ * RIESGO RESIDUAL: Las views siguen siendo endógenas al modelo. Para
+ * eliminación completa, usar generateViewsExternal() con analyst consensus
+ * o datos cross-sectional externos (no implementado aún). Sin views externas,
+ * BL funciona correctamente con prior solo (línea 149-157 de runBlackLitterman).
+ *
+ * @deprecated Parcialmente — usar con precaución. Las mitigaciones reducen
+ *   la circularidad pero no la eliminan. Preferir generateViewsExternal()
+ *   cuando haya datos externos disponibles.
  */
 export function generateViewsFromEngine(
   assets: { name: string; ticker: string; momentumScore: number; valuePercentileRank: number }[],

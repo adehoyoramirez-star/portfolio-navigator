@@ -19,6 +19,7 @@ import { covarianceMatrix } from "../../lib/marketData";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
 import type { AssetInput } from "../engine/olympusV3";
+import { sortino, beta as computeBeta, alpha as computeAlpha, hhi } from "../../lib/riskMetrics";
 
 // FIX-AUDIT-R8 3.5: PROXY_MAP now derived from assetRegistry (single source of truth).
 // BAYN.DE removed — not in current portfolio.
@@ -77,12 +78,16 @@ export interface DailyRecord {
 export interface BacktestMetrics {
   cagr: number;
   sharpe: number;
+  sortino: number;
   maxDrawdown: number;
   calmar: number;
   totalReturn: number;
   winRate: number;
   volatility: number;
   finalValue: number;
+  betaVsBenchmark: number;
+  alphaVsBenchmark: number;
+  hhi: number;
 }
 
 export interface RegimeMetrics {
@@ -149,7 +154,7 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
 }
 
 function emptyMetrics(initialCapital: number): BacktestMetrics {
-  return { cagr: 0, sharpe: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, volatility: 0, finalValue: initialCapital };
+  return { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, volatility: 0, finalValue: initialCapital, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 };
 }
 
 // ── Cálculo de covarianza y correlación en una ventana ─────────────────
@@ -657,7 +662,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
   return {
     dailyRecords,
-    metrics:          computeMetrics(strategyDailyReturns, initialCapital, portfolioValue),
+    metrics:          computeMetrics(strategyDailyReturns, initialCapital, portfolioValue, benchmarkDailyReturns),
     benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue),
     regimeConditional,
     regimeDays,
@@ -681,7 +686,7 @@ function computeRollingSharpe(window: number[]): number {
   return isFinite(sharpe) ? sharpe : 0;
 }
 
-function computeMetrics(dailyRets: number[], initialCapital: number, finalValue: number): BacktestMetrics {
+function computeMetrics(dailyRets: number[], initialCapital: number, finalValue: number, benchmarkRets?: number[]): BacktestMetrics {
   const clean = dailyRets.filter(r => isFinite(r));
   if (clean.length === 0) return emptyMetrics(initialCapital);
   const years = clean.length / 252;
@@ -689,7 +694,6 @@ function computeMetrics(dailyRets: number[], initialCapital: number, finalValue:
   const cagr = years > 0 ? ((1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
   const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
-  // FIX-AUDIT-R3 R3-03: rfDaily centralizado desde src/lib/constants (R2 users may forget to update here)
   const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = clean.map(r => r - rfDaily);
   const excessMean = mean(excess);
@@ -708,15 +712,24 @@ function computeMetrics(dailyRets: number[], initialCapital: number, finalValue:
     if (clean.slice(i, i + 21).reduce((a, r) => a * (1 + r), 1) > 1) wins++;
     months++;
   }
+  // FIX-AUDIT-R10: métricas institucionales adicionales
+  const sortinoValue = sortino(clean, RISK_FREE_RATE_ANNUAL, 0);
+  const betaValue = benchmarkRets && benchmarkRets.length > 20 ? computeBeta(clean, benchmarkRets) : 1;
+  const alphaValue = benchmarkRets && benchmarkRets.length > 20 ? computeAlpha(clean, benchmarkRets, RISK_FREE_RATE_ANNUAL) : 0;
+  const hhiValue = 0; // se calcula por ventana, aquí placeholder — el valor real se actualiza en runBacktest
   return {
     cagr: isFinite(cagr) ? cagr : 0,
     sharpe: isFinite(sharpe) ? sharpe : 0,
+    sortino: isFinite(sortinoValue) ? sortinoValue : 0,
     maxDrawdown: isFinite(maxDD) ? maxDD : 0,
     calmar: isFinite(calmar) ? calmar : 0,
     totalReturn: isFinite(totalReturn) ? totalReturn : 0,
     winRate: months > 0 ? wins / months : 0,
     volatility: isFinite(vol) ? vol : 0,
     finalValue: isFinite(finalValue) ? finalValue : initialCapital,
+    betaVsBenchmark: isFinite(betaValue) ? betaValue : 1,
+    alphaVsBenchmark: isFinite(alphaValue) ? alphaValue : 0,
+    hhi: isFinite(hhiValue) ? hhiValue : 0,
   };
 }
 

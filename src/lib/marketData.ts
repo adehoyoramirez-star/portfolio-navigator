@@ -5,6 +5,7 @@ import { ASSETS } from '@/lib/constants';
 import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { fromManualInputs } from '@/core/macro/liquidityCycle';
+import { ensurePSD } from '@/lib/matrixUtils';
 
 interface YahooChartResult {
   ticker: string;
@@ -776,7 +777,11 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     const mleMu = mean(r) * annualFactor;
     const prior = LONG_RUN_PRIORS[ticker] ?? 0.08;
     const shrunk = (1 - SHRINKAGE_FACTOR) * mleMu + SHRINKAGE_FACTOR * prior;
-    return Math.min(0.25, Math.max(0.02, shrunk));
+    // FIX-MU-CLAMP: floor -5% (antes 2%) permite casos bearish genuinos
+    // (oro en real rates altos, EM en fuga de capitales, uranio en oversupply).
+    // Cap superior 25% sin cambios. El floor -5% evita μ extremadamente negativos
+    // que llevarían a Kelly=0 para todos los activos simultáneamente.
+    return Math.min(0.25, Math.max(-0.05, shrunk));
   });
 
   // ====== VOLATILIDADES REALIZADAS ANUALIZADAS ======
@@ -796,9 +801,19 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   // ====== MATRIZ DE COVARIANZA ======
   // ── FIX-COV-ADAPTIVE: pasar ASSETS para logging y shrinkage adaptativo ──
   // FIX-NaN-GUARD: fallback si CUALQUIER activo tiene < 2 retornos (no solo < 20)
-  const covMatrix = returnsPerAsset.some(r => r.length < 2)
-    ? fallbackCovMatrix()
+  // FIX-PSD-CHECK: validar PSD y reparar con nearestPSD si es necesario
+  const rawCovMatrix = returnsPerAsset.some(r => r.length < 2)
+    ? diagonalEwmaCovMatrix(returnsPerAsset, realizedVols)
     : covarianceMatrix(returnsPerAsset, ASSETS);
+
+  // FIX-PSD-CHECK: test de Cholesky + reparación Higham (2002) si falla.
+  // Una covMatrix no-PSD rompe BL (inversión), HRP (distancias imaginarias)
+  // y MinVar (divergencia de pesos).
+  const { matrix: covMatrix, wasRepaired } = ensurePSD(rawCovMatrix, ASSETS.join(','));
+  if (wasRepaired) {
+    console.warn('[Olympus] covMatrix reparada (no-PSD) — verificar datos de ' +
+      ASSETS.filter((_, i) => returnsPerAsset[i].length < 20).join(', ') || 'todos los activos');
+  }
 
   // ====== CEWS HISTORY AUTOMÁTICO (5 años semanal desde Yahoo) ======
   const cewsHistory = buildCEWSHistory(
@@ -884,21 +899,43 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   };
 }
 
-// Fallback if historical data is incomplete
-// FIX-C3: matriz 6×6 (sin BAYN.DE). Portfolio real = 6 activos.
-// BAYN.DE eliminado — no está en ASSETS, su presencia aquí causaba
-// dimension mismatch cuando hasRealCovMatrix=true con covMatrix 6×6.
-// Orden: BTC-EUR, EMXC.DE, PPFB.DE, URNU.DE, VVSM.DE, 0P00000WLG.F
-function fallbackCovMatrix(): number[][] {
-  const VOLS = [0.60, 0.18, 0.15, 0.35, 0.25, 0.16];
-  const CORR = [
-    // BTC   EMXC   PPFB   URNU   VVSM   WLG
-    [1.00,  0.15,  0.05,  0.10,  0.30,  0.15],  // BTC
-    [0.15,  1.00,  0.10,  0.15,  0.40,  0.65],  // EMXC
-    [0.05,  0.10,  1.00,  0.05,  0.05,  0.05],  // PPFB (oro — descorrelado)
-    [0.10,  0.15,  0.05,  1.00,  0.20,  0.15],  // URNU
-    [0.30,  0.40,  0.05,  0.20,  1.00,  0.50],  // VVSM
-    [0.15,  0.65,  0.05,  0.15,  0.50,  1.00],  // 0P00000WLG.F (global developed equity)
-  ];
-  return CORR.map((row, i) => row.map((c, j) => c * VOLS[i] * VOLS[j]));
+// FIX-FALLBACK-COV: sustituye la matriz hardcodeada con VOLS/CORR mágicos
+// por una matriz diagonal con varianzas EWMA calculadas desde realizedVols.
+//
+// ANTES: fallbackCovMatrix() usaba arrays VOLS y CORR hardcodeados que:
+//   1. Asumían correlaciones fijas sin evidencia (ej: BTC-VVSM 0.30 siempre)
+//   2. Ignoraban los realizedVols ya calculados (línea ~760)
+//   3. Eran estáticos — no reflejaban cambios de régimen
+//
+// AHORA: diagonal con varianzas EWMA por activo. Si un activo tiene < 2 retornos,
+// usa su realizedVol como varianza. Esto es conservador (correlación=0) pero
+// matemáticamente correcto: en ausencia de datos, no asumimos correlación.
+function diagonalEwmaCovMatrix(
+  returnsPerAsset: number[][],
+  realizedVols: number[]
+): number[][] {
+  const n = returnsPerAsset.length;
+  const variances: number[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const rets = returnsPerAsset[i];
+    if (rets.length >= 2) {
+      // EWMA variance (λ=0.94) anualizada
+      let ewmaVar = 0;
+      for (const r of rets) ewmaVar = 0.94 * ewmaVar + 0.06 * r * r;
+      variances.push(ewmaVar * 252);
+    } else if (i < realizedVols.length && realizedVols[i] > 0) {
+      // Fallback: usar realizedVol (ya calculado con EWMA, línea ~760)
+      variances.push(realizedVols[i] * realizedVols[i]);
+    } else {
+      variances.push(0.04); // último recurso: 20% vol anual
+    }
+  }
+
+  console.warn('[Olympus] Usando matriz diagonal EWMA (datos insuficientes para covarianza completa)');
+
+  // Matriz diagonal: varianzas en diagonal, 0 en off-diagonal
+  return Array.from({ length: n }, (_, i) =>
+    Array.from({ length: n }, (_, j) => (i === j ? variances[i] : 0))
+  );
 }

@@ -75,10 +75,12 @@ import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaInte
 import { detectCycleTops } from "../risk/cycleTopDetector";
 import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, getFactorWeightsByRegime } from "../config/engineConfig";
 // FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
+// FIX-AUDIT-R10: RE-importado para allocationProvenance (transparencia del overlay)
 import {
   getTacticalWeights,
   applyTacticalConstraints,
   enforceClusterCap,
+  REGIME_TACTICAL_ALLOCATIONS,
 } from "./regimeTacticalAllocation";
 
 // ── Blend weights (fuente de verdad dinámica) ───────────────────────────────────
@@ -162,6 +164,14 @@ export interface EngineOutput {
     // Correlation Panic: convergencia de correlaciones
     correlationPanicTriggered: boolean;
     avgCorrelationValue: number;
+    // FIX-AUDIT-R10: transparencia del overlay discrecional
+    allocationProvenance: {
+      quantWeight: number;
+      discretionaryWeight: number;
+      source: 'quant' | 'mixed' | 'overlay';
+      overlayActive: boolean;
+      reason: string;
+    };
   };
   btcCycle?: {
     btcScore: number;
@@ -490,7 +500,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       allocations: empty, regime: "ALL_CASH", masterRegime, correlationPenalty: corrPenalty,
       totalAllocation: 0, totalInvested: 0, volTargetMultiplier: 0, tailRiskOverlay: 1,
       tailRiskActive: false, tailRiskReason: "", engineVersion: ENGINE_VERSION,
-      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0 },
+      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
       coreSignal: { regimeComponent: 0.55 * regimeNumeric, btcComponent: 0.20 * btcNumeric, riskComponent: 0.25 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
@@ -572,6 +582,16 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
   const blendNorm  = blendWeights.map(w => w / totalBlend);
 
+  // ── PRIORITY QUEUE: ORDEN DE REDUCCIÓN DE EXPOSICIÓN ────────────────────
+  // Mayor prioridad (se aplica primero) → Menor prioridad:
+  //   1. Kill Switch L5 (protección de capital, override todo)
+  //   2. tailRisk overlay (VIX + creditSpread sistémico)
+  //   3. Correlation Panic (>0.85)
+  //   4. ERP Trigger (equity-only cap)
+  //   5. Alpha-Boost (solo si 1-4 inactivos)
+  //   6. VolTarget
+  //   7. DCA contracíclico
+  // ─────────────────────────────────────────────────────────────────────────
   // ── CAPA TÁCTICA POR RÉGIMEN ────────────────────────────────────────────────
   // FIX-OVERPERF: blendToTacticalRatio bajado de 0.60 → 0.50
   // Con 0.60 → BL 60% da ~5% BTC → BTC final ~14% (vs benchmark 14.29%)
@@ -929,6 +949,19 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       erpValue:        erpRaw,
       correlationPanicTriggered: isCorrelationPanic,
       avgCorrelationValue: input.avgCorrelation ?? 0,
+      // FIX-AUDIT-R10: transparencia del overlay discrecional
+      // effectiveBlendRatio = blendQuantWeight (fracción del output que viene del motor cuantitativo)
+      allocationProvenance: (() => {
+        const tacticalConfig = REGIME_TACTICAL_ALLOCATIONS[masterRegime.regime] ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];
+        const quantW = tacticalConfig.blendToTacticalRatio;
+        return {
+          quantWeight:       quantW,
+          discretionaryWeight: 1 - quantW,
+          source:            quantW >= 0.70 ? 'quant' as const : quantW <= 0.30 ? 'overlay' as const : 'mixed' as const,
+          overlayActive:     quantW < 0.70,
+          reason:            `${masterRegime.regime}: ${(quantW * 100).toFixed(0)}% cuant / ${((1 - quantW) * 100).toFixed(0)}% discrecional`,
+        };
+      })(),
     },
     btcCycle: {
       btcScore:   btcCycle.btcScore,
