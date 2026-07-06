@@ -4,7 +4,8 @@ project_id = "yrirandgftnuvdzatwgc"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/fred-data/index.ts"
-schedule = "0 8 * * *"
+# Cron schedule require Supabase Pro plan — manual trigger via frontend for now
+# schedule = "0 8 * * *"
 
 [functions.yahoo-finance-tactical]
 enabled = true
