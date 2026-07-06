@@ -460,13 +460,22 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     throw new Error(`Failed to fetch market data: ${fetchErrors.join(', ')}`);
   }
 
-  // FIX-AUDIT-R9 1: FRED data — intenta server-side (cron), fallback a localStorage manual.
-  // fetchFredFromServer actualiza localStorage automáticamente si el servidor responde.
-  // Si el servidor falla (sin API key, offline), se usa el último valor cached en localStorage.
+  // FIX-AUDIT-R12: FRED data — resolución de conflicto server vs manual.
+  //
+  // Prioridad:
+  //   1. Si el usuario tiene override manual activo → usar localStorage (manual)
+  //   2. Si el servidor responde y no hay override → usar servidor (FRED)
+  //   3. Si el servidor falla → usar localStorage como fallback
+  //
+  // fetchFredFromServer() internamente respeta el override:
+  //   - Si manuallyOverridden=true, NO pisa localStorage, guarda datos del
+  //     servidor en _server para que el botón "Sync" del panel pueda aplicarlos.
+  //   - Si manuallyOverridden=false, guarda normalmente en localStorage.
   const fredServerData = await fetchFredFromServer();
-  const fredManual = fredServerData ?? loadFredManual();
+  const fredManual = loadFredManual();
+  const isManualOverride = fredManual.manuallyOverridden === true;
   const fredFresh = fredServerData ? true : isFredDataFresh(7);
-  const fredSource: "FRED" | "manual" = fredServerData ? "FRED" : "manual";
+  const fredSource: "FRED" | "manual" = isManualOverride ? "manual" : (fredServerData ? "FRED" : "manual");
   const yfFundamentals = undefined;
   // Datos de FRED ya no vienen de Supabase — el usuario los introduce manualmente
   const fredM2 = undefined;

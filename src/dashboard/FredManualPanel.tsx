@@ -5,7 +5,7 @@
 // ===============================================
 
 import React, { useState } from "react";
-import { loadFredManual, saveFredManual, isFredDataFresh, getFredDefaults } from "@/lib/fredManualInputs";
+import { loadFredManual, saveFredManual, isFredDataFresh, getFredDefaults, clearManualOverride, hasServerOverride } from "@/lib/fredManualInputs";
 
 interface FredManualPanelProps {
   onSaved?: () => void;
@@ -21,6 +21,8 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
 
   const fresh = isFredDataFresh(7);
   const ageDays = Math.round((Date.now() - new Date(lastUpdated).getTime()) / (24 * 3600 * 1000));
+  const isOverride = loadFredManual().manuallyOverridden === true;
+  const serverAvailable = hasServerOverride();
 
   const handleSave = () => {
     const updated = saveFredManual({ m2GrowthYoY: m2, cape, creditSpread: credit, inflationBreakeven5y: be });
@@ -42,6 +44,22 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
     setTimeout(() => setSaveMsg(null), 2000);
   };
 
+  const handleSyncToServer = () => {
+    const synced = clearManualOverride();
+    if (synced) {
+      setM2(synced.m2GrowthYoY);
+      setCAPE(synced.cape);
+      setCredit(synced.creditSpread);
+      setBE(synced.inflationBreakeven5y);
+      setLastUpdated(synced.lastUpdated);
+      setSaveMsg("Sync a servidor — override desactivado");
+      if (onSaved) onSaved();
+    } else {
+      setSaveMsg("No hay datos de servidor disponibles");
+    }
+    setTimeout(() => setSaveMsg(null), 3000);
+  };
+
   const inp: React.CSSProperties = { backgroundColor: "#1f2937", border: "1px solid #374151", color: "white", padding: "5px 8px", borderRadius: "4px", width: "100%", fontSize: "0.85rem", boxSizing: "border-box" };
   const lbl: React.CSSProperties = { display: "block", marginBottom: "4px", color: "#9ca3af", fontSize: "0.72rem" };
 
@@ -53,9 +71,24 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
           <span style={{ fontSize: "0.68rem", fontWeight: 400, marginLeft: "10px", color: fresh ? "#10b981" : "#f59e0b" }}>
             {fresh ? "🟢 <7d" : "🟠 ~" + ageDays + "d"}
           </span>
+          {isOverride && (
+            <span style={{
+              fontSize: "0.65rem", fontWeight: 600, marginLeft: "8px",
+              color: "#fbbf24", background: "#3b2f0e", padding: "1px 7px", borderRadius: "3px",
+              border: "1px solid #fbbf2440"
+            }}>
+              ⚠️ OVERRIDE ACTIVO
+            </span>
+          )}
         </h3>
         <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-          {saveMsg && <span style={{ fontSize: "0.72rem", color: saveMsg.startsWith("Guardado") ? "#10b981" : "#f59e0b" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ fontSize: "0.72rem", color: saveMsg.startsWith("Guardado") || saveMsg.startsWith("Sync") ? "#10b981" : "#f59e0b" }}>{saveMsg}</span>}
+          {serverAvailable && (
+            <button onClick={handleSyncToServer} title="Usar datos del servidor FRED (descarta override manual)"
+              style={{ background: "#1a3a2a", color: "#10b981", border: "1px solid #10b98140", borderRadius: "5px", padding: "4px 10px", cursor: "pointer", fontSize: "0.7rem", fontWeight: 500 }}>
+              Sync to Server
+            </button>
+          )}
           <button onClick={handleReset} title="Restaurar defaults" style={{ background: "#374151", color: "#9ca3af", border: "1px solid #4b5563", borderRadius: "5px", padding: "4px 10px", cursor: "pointer", fontSize: "0.7rem" }}>Reset</button>
           <button onClick={handleSave} style={{ background: "#2563eb", color: "white", border: "none", borderRadius: "5px", padding: "4px 14px", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600 }}>Guardar</button>
         </div>
@@ -66,7 +99,12 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
         <div><label style={lbl}>Credit Spread HY% <span style={{fontSize:"0.6rem",color:"#64748b"}}>BAMLH0A0HYM2</span></label><input type="number" value={credit} onChange={e => setCredit(Number(e.target.value))} style={inp} step="0.1" /></div>
         <div><label style={lbl}>Breakeven 5y% <span style={{fontSize:"0.6rem",color:"#64748b"}}>T5YIFR</span></label><input type="number" value={be} onChange={e => setBE(Number(e.target.value))} style={inp} step="0.01" /></div>
       </div>
-      <div style={{ marginTop: "8px", fontSize: "0.62rem", color: "#4b5563" }}>Fuentes: M2SL · Shiller CAPE · BAMLH0A0HYM2 · T5YIFR · Actualizado: {new Date(lastUpdated).toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+      <div style={{ marginTop: "8px", fontSize: "0.62rem", color: "#4b5563", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>Fuentes: M2SL · Shiller CAPE · BAMLH0A0HYM2 · T5YIFR · Actualizado: {new Date(lastUpdated).toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
+        <span style={{ color: isOverride ? "#fbbf24" : "#10b981", fontWeight: 600 }}>
+          {isOverride ? "Usando: MANUAL (override)" : "Usando: FRED Server"}
+        </span>
+      </div>
     </div>
   );
 };

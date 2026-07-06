@@ -18,6 +18,8 @@ export interface FredManualData {
   inflationBreakeven5y: number;
   lastUpdated: string;
   updatedBy?: string;
+  /** Si true, el usuario ha editado manualmente → el servidor NO sobrescribe */
+  manuallyOverridden: boolean;
 }
 
 const STORAGE_KEY = "olympus_fred_manual";
@@ -31,6 +33,7 @@ const DEFAULTS: FredManualData = {
   creditSpread: 3.0,
   inflationBreakeven5y: 2.35,
   lastUpdated: new Date().toISOString(),
+  manuallyOverridden: false,
 };
 
 export function loadFredManual(): FredManualData {
@@ -44,7 +47,10 @@ export function loadFredManual(): FredManualData {
       typeof parsed.creditSpread === "number" &&
       typeof parsed.inflationBreakeven5y === "number"
     ) {
-      return parsed as FredManualData;
+      return {
+        ...parsed,
+        manuallyOverridden: parsed.manuallyOverridden === true,
+      } as FredManualData;
     }
     return { ...DEFAULTS };
   } catch {
@@ -61,6 +67,8 @@ export function saveFredManual(data: Partial<FredManualData> & { updatedBy?: str
     inflationBreakeven5y: data.inflationBreakeven5y ?? current.inflationBreakeven5y,
     lastUpdated: new Date().toISOString(),
     updatedBy: data.updatedBy,
+    // Si el usuario guarda manualmente, activamos el override
+    manuallyOverridden: true,
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -71,7 +79,7 @@ export function saveFredManual(data: Partial<FredManualData> & { updatedBy?: str
 }
 
 export function resetFredManual(): FredManualData {
-  const reset = { ...DEFAULTS, lastUpdated: new Date().toISOString() };
+  const reset = { ...DEFAULTS, lastUpdated: new Date().toISOString(), manuallyOverridden: false };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(reset));
   } catch { /* ignore */ }
@@ -86,6 +94,50 @@ export function isFredDataFresh(maxAgeDays: number = 7): boolean {
 
 export function getFredDefaults(): FredManualData {
   return { ...DEFAULTS };
+}
+
+// ============================================================
+// FIX-AUDIT-R12: clearManualOverride
+// Restaura los datos del servidor, descartando el override manual.
+// Usado por el botón "Sync to Server" en FredManualPanel.
+// ============================================================
+export function clearManualOverride(): FredManualData | null {
+  try {
+    const serverRaw = localStorage.getItem(STORAGE_KEY + "_server");
+    if (!serverRaw) return null;
+    const serverData = JSON.parse(serverRaw);
+    if (
+      typeof serverData.m2GrowthYoY === "number" &&
+      typeof serverData.cape === "number" &&
+      typeof serverData.creditSpread === "number" &&
+      typeof serverData.inflationBreakeven5y === "number"
+    ) {
+      serverData.manuallyOverridden = false;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData));
+      localStorage.removeItem(STORAGE_KEY + "_server");
+      return serverData as FredManualData;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// FIX-AUDIT-R12: hasServerOverride
+// Indica si hay datos de servidor más recientes que los manuales.
+// ============================================================
+export function hasServerOverride(): boolean {
+  try {
+    const current = loadFredManual();
+    if (!current.manuallyOverridden) return false;
+    const serverRaw = localStorage.getItem(STORAGE_KEY + "_server");
+    if (!serverRaw) return false;
+    const serverData = JSON.parse(serverRaw);
+    return typeof serverData.lastUpdated === "string";
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================
@@ -110,7 +162,9 @@ export async function fetchFredFromServer(): Promise<FredManualData | null> {
       typeof json.creditSpread === "number" &&
       typeof json.inflationBreakeven5y === "number"
     ) {
-      // Guardar en localStorage como caché offline
+      // Guardar en localStorage como caché offline,
+      // pero NO pisar si el usuario ha hecho override manual.
+      const existing = loadFredManual();
       const data: FredManualData = {
         m2GrowthYoY: json.m2GrowthYoY,
         cape: json.cape,
@@ -118,7 +172,20 @@ export async function fetchFredFromServer(): Promise<FredManualData | null> {
         inflationBreakeven5y: json.inflationBreakeven5y,
         lastUpdated: json.fetchedAt ?? new Date().toISOString(),
         updatedBy: `server:${json.source ?? "FRED"}`,
+        manuallyOverridden: false, // servidor nunca marca override
       };
+
+      // Si el usuario tiene override activo, NO sobreescribir sus valores.
+      // Guardamos los datos del servidor en segundo plano (para el botón "Sync").
+      if (existing.manuallyOverridden) {
+        // Guardar datos del servidor con clave separada para referencia
+        try {
+          localStorage.setItem(STORAGE_KEY + "_server", JSON.stringify(data));
+        } catch { /* ignore */ }
+        // Devolver los datos manuales del usuario (respetando el override)
+        return existing;
+      }
+
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       } catch { /* localStorage lleno */ }
