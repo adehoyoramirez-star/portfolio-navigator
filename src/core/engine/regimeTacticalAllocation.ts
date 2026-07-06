@@ -1,22 +1,21 @@
 // ════════════════════════════════════════════════════════════════════
 // ARCHIVO: src/core/engine/regimeTacticalAllocation.ts
-// OLYMPUS X — Carteras tácticas predefinidas por régimen
+// OLYMPUS X — Overlay Discrecional por Régimen
 // ════════════════════════════════════════════════════════════════════
-// PROBLEMA QUE RESUELVE:
-//   La penalización de régimen actual (×0.616 en CONTRACTION) escala
-//   uniformemente todos los activos. BTC pasa de 11% a 6.8%, pero
-//   sigue siendo la posición más volátil en cartera. El resultado:
-//   -9.3% CAGR y Sharpe -0.75 en CONTRACTION porque el motor mantiene
-//   la misma estructura de riesgo con menos exposición total.
-//
-//   SOLUCIÓN: En CONTRACTION y CRISIS, cambiar los PESOS OBJETIVO,
-//   no solo escalar la exposición. La optimización (BL+HRP+MV) opera
-//   sobre estos pesos base con desviaciones máximas permitidas (±20%).
-//
-// CARTERAS TÁCTICAS (validadas contra literatura académica):
-//   EXPANSION:   cartera "momentum" — perseguir activos con tendencia
-//   CONTRACTION: cartera "defensiva" — reducir riesgo, no solo exposición
-//   CRISIS:      cartera "supervivencia" — preservar capital, minimal BTC
+// FIX-R2-C10 (auditoría institucional ronda 2):
+//   ANTES: REGIME_TACTICAL_ALLOCATIONS — sonaba a "táctico = automático"
+//     cuando en realidad son pesos discrecionales definidos por el gestor.
+//     El blendToTacticalRatio daba más peso al overlay en EXPANSION (70%)
+//     que en CRISIS (30%), lo cual es contraintuitivo: en crisis quieres
+//     MÁS control del motor cuantitativo (BL+HRP+MinVar protegen), no menos.
+//   AHORA: DISCRETIONARY_OVERLAY — nombre honesto. El blend da prioridad
+//     al motor cuantitativo cuando el estrés aumenta:
+//       EXPANSION:    70% cuant / 30% overlay
+//       CONTRACTION:  80% cuant / 20% overlay
+//       CRISIS:      100% cuant / 0% overlay (solo BL+HRP+MinVar)
+//     En crisis, el overlay se desactiva completamente — el motor
+//     cuantitativo con mínima varianza y HRP protege mejor que cualquier
+//     guía discrecional.
 
 // Tickers disponibles en el portfolio
 type AssetTicker =
@@ -25,18 +24,27 @@ type AssetTicker =
 
 export interface RegimeTacticalWeights {
   weights: Partial<Record<AssetTicker, number>>;
-  // FIX-DEAD-CODE (22-Jun-2026): cashReserveForced eliminado.
-  // Estaba definido en los 3 regímenes pero nunca se consumía en olympusV3.ts.
-  // El cash implícito se maneja vía pesos tácticos sumando < 1.0 (ej: CRISIS=0.65).
-  maxSingleAsset: number;        // cap individual (default: 0.25)
-  maxTechCryptoCluster: number;  // cap BTC+VVSM (default: 0.40)
-  kellyCapOverride: number;      // cap Kelly en este régimen
-  blendToTacticalRatio: number;  // blend 0-1: 0=más táctico, 1=más cuantitativo
+  maxSingleAsset: number;
+  maxTechCryptoCluster: number;
+  kellyCapOverride: number;
+  // FIX-R2-C10: blendToTacticalRatio ahora es blendQuantWeight:
+  //   fracción del peso final que viene del motor cuantitativo (BL+HRP+MinVar).
+  //   1 - blendQuantWeight = fracción del overlay discrecional.
+  //   EXPANSION=0.70, CONTRACTION=0.80, CRISIS=1.00 (sin overlay).
+  blendToTacticalRatio: number;
   description: string;
 }
 
-// ── CARTERAS TÁCTICAS POR RÉGIMEN ────────────────────────────────────────────
-export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> = {
+// ── OVERLAY DISCRECIONAL POR RÉGIMEN ────────────────────────────────────────
+// FIX-R2-C10: renombrado de REGIME_TACTICAL_ALLOCATIONS a DISCRETIONARY_OVERLAY.
+// El overlay es una guía de pesos definida por el gestor, no una asignación
+// táctica automática. Su peso en el blend DECRECE con el estrés:
+//   EXPANSION:    70% cuantitativo / 30% overlay (más margen para convicción)
+//   CONTRACTION:  80% cuantitativo / 20% overlay
+//   CRISIS:      100% cuantitativo / 0% overlay (solo BL+HRP+MinVar)
+// En CRISIS el overlay se desactiva: el motor cuantitativo con MinVar+HRP
+// es más rápido reaccionando a correlaciones extremas que cualquier guía fija.
+export const DISCRETIONARY_OVERLAY: Record<string, RegimeTacticalWeights> = {
   EXPANSION: {
     // Cartera de crecimiento — WLG como núcleo developed equity, VVSM como tilt tech/semis
     // IS3Q y XNAS eliminados (redundantes con WLG). Sus pesos redistribuidos.
@@ -49,10 +57,10 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
       'PPFB.DE':  0.11,   // oro — hedge subido (0.08→0.11, más peso sin IS3Q)
     },
     maxSingleAsset: 0.30,
-    maxTechCryptoCluster: 0.55,     // BTC+VVSM ≤ 55% — benchmark da ~31%, damos margen
-    kellyCapOverride: 0.25,         // Kelly cap 25% — permite BTC hasta ~22% post-restricciones
-    blendToTacticalRatio: 0.30,     // 70% táctico — más agresivo
-    description: 'Cartera crecimiento: WLG 22% núcleo, BTC 25%, VVSM 18% tilt AI',
+    maxTechCryptoCluster: 0.55,
+    kellyCapOverride: 0.25,
+    blendToTacticalRatio: 0.70,     // 70% cuant / 30% overlay (FIX-R2-C10: antes 0.30)
+    description: 'Overlay EXPANSION: WLG 22% núcleo, BTC 25%, VVSM 18% tilt AI',
   },
 
   // FIX-PORTFOLIO-6: IS3Q y XNAS eliminados. WLG = núcleo developed equity.
@@ -68,10 +76,10 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
       'EMXC.DE':  0.12,   // EM — subido de 0.10, diversificación geográfica
     },
     maxSingleAsset: 0.30,
-    maxTechCryptoCluster: 0.40,     // BTC+VVSM ≤ 40%
+    maxTechCryptoCluster: 0.40,
     kellyCapOverride: 0.18,
-    blendToTacticalRatio: 0.50,     // 50/50 — balance entre protección y crecimiento
-    description: 'Cartera equilibrada: WLG 28% núcleo, gold 18%, BTC+VVSM 30%',
+    blendToTacticalRatio: 0.80,     // 80% cuant / 20% overlay (FIX-R2-C10: antes 0.50)
+    description: 'Overlay CONTRACTION: WLG 28% núcleo, gold 18%, BTC+VVSM 30%',
   },
 
   CRISIS: {
@@ -85,10 +93,10 @@ export const REGIME_TACTICAL_ALLOCATIONS: Record<string, RegimeTacticalWeights> 
       'VVSM.DE':  0.02,   // semis — mínimo
     },
     maxSingleAsset: 0.35,
-    maxTechCryptoCluster: 0.10,     // BTC+VVSM ≤ 10% — mínimo en crisis
-    kellyCapOverride: 0.08,         // Kelly máximo 8% en CRISIS
-    blendToTacticalRatio: 0.70,     // 70% cuantitativo — conservador: gold y WLG dominan
-    description: 'Cartera supervivencia: 35% gold + 35% cash, WLG 15%, BTC+VVSM 5%',
+    maxTechCryptoCluster: 0.10,
+    kellyCapOverride: 0.08,
+    blendToTacticalRatio: 1.00,     // 100% cuant / 0% overlay (FIX-R2-C10: antes 0.70)
+    description: 'Overlay CRISIS: desactivado — 100% motor cuantitativo (BL+HRP+MinVar)',
   },
 };
 
@@ -183,8 +191,8 @@ export function getTacticalWeights(
   btcMVRV?: number,         // FIX-BTC-GATE: opcional, para filtrar por on-chain
   vvsmReturns12m?: number   // FIX-VVSM-GATE: opcional, retorno 12m de semis
 ): number[] {
-  const tacticalConfig = REGIME_TACTICAL_ALLOCATIONS[regime]
-    ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];
+  const tacticalConfig = DISCRETIONARY_OVERLAY[regime]
+    ?? DISCRETIONARY_OVERLAY['EXPANSION'];
 
   // Aplicar gates: BTC on-chain + VVSM momentum exhaustion
   // (ambas manejan internamente el caso undefined → no-op)
@@ -205,16 +213,17 @@ export function applyTacticalConstraints(
   regime: string,
   blendToTacticalRatio?: number,  // Opcional — si no se pasa, se lee del config por régimen
 ): number[] {
-  const tacticalConfig = REGIME_TACTICAL_ALLOCATIONS[regime]
-    ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];
+  const tacticalConfig = DISCRETIONARY_OVERLAY[regime]
+    ?? DISCRETIONARY_OVERLAY['EXPANSION'];
 
-  // FIX-BIMODAL (30-May-2026): blendToTacticalRatio ahora es dinámico por régimen.
-  // EXPANSION: 0.30 → 70% táctico (más agresivo, BTC 22% guía)
-  // CONTRACTION: 0.50 → 50/50 balance
-  // CRISIS: 0.70 → 70% cuantitativo (más conservador, gold/quality pesan menos)
-  // Si no se pasa el ratio, se obtiene del config del régimen.
+  // FIX-R2-C10: blendToTacticalRatio ahora es blendQuantWeight — fracción
+  // del peso final que viene del motor cuantitativo (BL+HRP+MinVar).
+  // 1 - blendQuantWeight = fracción del overlay discrecional.
+  // EXPANSION: 0.70 → 70% cuant / 30% overlay
+  // CONTRACTION: 0.80 → 80% cuant / 20% overlay
+  // CRISIS: 1.00 → 100% cuant / 0% overlay (sin overlay en crisis)
   const effectiveBlendRatio = blendToTacticalRatio
-    ?? (REGIME_TACTICAL_ALLOCATIONS[regime]?.blendToTacticalRatio ?? 0.50);
+    ?? (DISCRETIONARY_OVERLAY[regime]?.blendToTacticalRatio ?? 0.70);
 
   const blended = blendNorm.map((w, i) =>
     w * effectiveBlendRatio + tacticalWeights[i] * (1 - effectiveBlendRatio)
@@ -243,8 +252,8 @@ export function enforceClusterCap(
   assets: { name: string; ticker?: string }[],
   regime: string,
 ): number[] {
-  const config = REGIME_TACTICAL_ALLOCATIONS[regime]
-    ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];
+  const config = DISCRETIONARY_OVERLAY[regime]
+    ?? DISCRETIONARY_OVERLAY['EXPANSION'];
   const clusterCap = config.maxTechCryptoCluster;
 
   const clusterIdxs = assets.reduce((acc, a, i) => {

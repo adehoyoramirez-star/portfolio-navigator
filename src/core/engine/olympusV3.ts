@@ -44,7 +44,9 @@
 //   Si totalPortfolioValue no se pasa, el default 0 produce investAmount=0 siempre.
 //   CORRECCIÓN: warning explícito en output + señal isDataMissing para el dashboard.
 //
-// FIX-V5-6 (audit ronda 2): REGIME_TACTICAL_ALLOCATIONS — import no usado (dead code)
+// FIX-R2-C10 (audit ronda 2): DISCRETIONARY_OVERLAY — renamed from REGIME_TACTICAL_ALLOCATIONS.
+// Blend ahora da prioridad al motor cuantitativo cuando el estrés aumenta:
+//   EXPANSION: 70% cuant / 30% overlay, CONTRACTION: 80%/20%, CRISIS: 100%/0%.
 //   CORRECCIÓN: eliminado de la lista de imports.
 // ===============================================
 
@@ -67,20 +69,21 @@ import { correlationPenalty } from "../portfolio/correlation";
 import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBudget";
 import { computeVolTargetMultiplier } from "../risk/volatilityTarget";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
-import { runBlackLitterman, generateViewsFromEngine, BLView } from "../portfolio/blackLitterman";
+import { runBlackLitterman, generateViewsFromEngine, generateViewsExternal, BLView } from "../portfolio/blackLitterman";
 import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 import { detectCycleTops } from "../risk/cycleTopDetector";
 import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, getFactorWeightsByRegime } from "../config/engineConfig";
-// FIX-V5-6: eliminado REGIME_TACTICAL_ALLOCATIONS del import (importado pero nunca usado en este archivo)
-// FIX-AUDIT-R10: RE-importado para allocationProvenance (transparencia del overlay)
+// FIX-R2-C10: renombrado DISCRETIONARY_OVERLAY. Import usado para allocationProvenance.
+// FIX-AUDIT-R10: allocationProvenance (transparencia del overlay discrecional)
+// FIX-R2-C10: REGIME_TACTICAL_ALLOCATIONS → DISCRETIONARY_OVERLAY
 import {
   getTacticalWeights,
   applyTacticalConstraints,
   enforceClusterCap,
-  REGIME_TACTICAL_ALLOCATIONS,
+  DISCRETIONARY_OVERLAY,
 } from "./regimeTacticalAllocation";
 
 // ── Blend weights (fuente de verdad dinámica) ───────────────────────────────────
@@ -520,12 +523,16 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   let blWeights: number[] = assets.map(() => 1 / assets.length);
   if (hasRealCovMatrix && input.covMatrix) {
     try {
-      const blViews = input.blViews ?? generateViewsFromEngine(
+      // FIX-R2-B9: generateViewsExternal usa ranking cross-sectional (no scores del motor).
+      // Rompe el bucle tautológico identificado en auditoría ronda 2.
+      // generateViewsFromEngine se mantiene como fallback legacy.
+      const blViews = input.blViews ?? generateViewsExternal(
         rawScores.map(s => ({
           name:               s.asset.name,
           ticker:             s.asset.ticker ?? s.asset.name,
-          momentumScore:      s.momentum.momentumScore,
-          valuePercentileRank: s.value.percentileRank,
+          returns12m:         s.asset.returns12m,
+          earningsYield:      s.asset.earningsYield,
+          volatility:         s.asset.volatility,
         })),
         masterRegime.regime,
         input.liquidityGrowth ?? 0
@@ -952,7 +959,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       // FIX-AUDIT-R10: transparencia del overlay discrecional
       // effectiveBlendRatio = blendQuantWeight (fracción del output que viene del motor cuantitativo)
       allocationProvenance: (() => {
-        const tacticalConfig = REGIME_TACTICAL_ALLOCATIONS[masterRegime.regime] ?? REGIME_TACTICAL_ALLOCATIONS['EXPANSION'];
+        const tacticalConfig = DISCRETIONARY_OVERLAY[masterRegime.regime] ?? DISCRETIONARY_OVERLAY['EXPANSION'];
         const quantW = tacticalConfig.blendToTacticalRatio;
         return {
           quantWeight:       quantW,

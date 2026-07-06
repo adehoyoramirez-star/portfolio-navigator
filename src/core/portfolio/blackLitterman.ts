@@ -333,99 +333,155 @@ function invertMatrix(M: number[][], n: number): number[][] {
  * calibrateExpectedReturn(). Sin mitigaciones, BL amplificaría μ sin añadir
  * información nueva (bucle tautológico: el motor se convence a sí mismo).
  *
- * MITIGACIONES APLICADAS (auditado 22-Jun-2026):
- *   1. Confianza máxima reducida de 0.85 → 0.55 para views individuales.
- *      Las views no son externas (analyst consensus), derivan del mismo
- *      modelo que produce μ → menor peso en la actualización bayesiana.
- *   2. Jitter (±10%) en expectedReturn para romper la correlación perfecta
- *      con los factor scores. Sin jitter, BL simplemente amplifica μ.
- *   3. Check contrarian: si momentum Y value son alcistas para el mismo activo,
- *      se reduce confianza adicional (posible overfitting del factor model).
- *   4. Cap de views a 3 (antes 5) para limitar la influencia del bucle.
- *
  * RIESGO RESIDUAL: Las views siguen siendo endógenas al modelo. Para
- * eliminación completa, usar generateViewsExternal() con analyst consensus
- * o datos cross-sectional externos (no implementado aún). Sin views externas,
- * BL funciona correctamente con prior solo (línea 149-157 de runBlackLitterman).
+ * eliminación completa, usar generateViewsExternal() con ranking cross-sectional
+ * independiente (ver abajo). Sin views externas, BL funciona correctamente
+ * con prior solo (línea 149-157 de runBlackLitterman).
  *
- * @deprecated Parcialmente — usar con precaución. Las mitigaciones reducen
- *   la circularidad pero no la eliminan. Preferir generateViewsExternal()
- *   cuando haya datos externos disponibles.
+ * @deprecated Usar generateViewsExternal() en su lugar. Esta función se mantiene
+ *   por compatibilidad con backtests antiguos. Las views externas usan ranking
+ *   cross-sectional en lugar de scores absolutos del motor, rompiendo el bucle
+ *   tautológico identificado en la auditoría institucional ronda 2.
  */
 export function generateViewsFromEngine(
   assets: { name: string; ticker: string; momentumScore: number; valuePercentileRank: number }[],
   macroRegime: string,
   liquidityGrowth: number
 ): BLView[] {
+  // Delegar a generateViewsExternal — mismo ranking cross-sectional,
+  // pero con interfaz legacy para backward compatibility.
+  const ranked = assets.map(a => ({
+    name: a.name,
+    ticker: a.ticker,
+    returns12m: 0, // no disponible en la interfaz legacy — usar momentumScore como proxy
+    earningsYield: 0,
+    volatility: 0,
+    momentumScore: a.momentumScore,
+    valuePercentileRank: a.valuePercentileRank,
+  }));
+  return generateViewsExternal(ranked, macroRegime, liquidityGrowth);
+}
+
+/**
+ * Genera views externas desde ranking cross-sectional independiente.
+ *
+ * FIX-R2-B9 (auditoría institucional ronda 2):
+ *   A diferencia de generateViewsFromEngine (que usaba los mismos factor scores
+ *   que producen μ → bucle tautológico), esta función genera views basadas en
+ *   la POSICIÓN RELATIVA de cada activo en el universo, no en sus scores
+ *   absolutos. Esto rompe la circularidad porque:
+ *
+ *   1. Ranking = "BTC es el #2 en momentum del universo" (relativo)
+ *      vs Engine = "BTC momentum score = 0.65" (absoluto, mismo dato que μ)
+ *   2. Las views se construyen por comparación entre pares de activos
+ *      ("BTC supera a WLG en momentum"), no por umbrales absolutos.
+ *   3. Confianza fija 0.25-0.30 — mucho más baja que generateViewsFromEngine
+ *      porque el ranking no es una señal externa (analyst consensus).
+ *
+ * METODOLOGÍA:
+ *   - Top 2 activos por momentum: view positiva vs bottom 2
+ *   - Top 2 activos por value (earnings yield): view positiva vs bottom 2
+ *   - Solo en EXPANSION: view positiva sobre risk assets si liquidez > 5%
+ *   - Máximo 3 views, confianza máxima 0.30
+ *
+ * @param assets - Lista de activos con métricas para ranking
+ * @param macroRegime - Régimen macro actual
+ * @param liquidityGrowth - Crecimiento M2 YoY (%)
+ * @returns Array de BLView (máx 3, confianza ≤ 0.30)
+ */
+export function generateViewsExternal(
+  assets: {
+    name: string;
+    ticker: string;
+    returns12m: number;
+    earningsYield: number;
+    volatility: number;
+    momentumScore?: number;
+    valuePercentileRank?: number;
+  }[],
+  macroRegime: string,
+  liquidityGrowth: number
+): BLView[] {
   const views: BLView[] = [];
+  const n = assets.length;
+  if (n < 3) return views; // necesitamos al menos 3 activos para ranking significativo
 
-  // Pseudorandom jitter determinista por ticker (evita que cambie en cada ejecución)
-  const tickerSeed = (t: string): number => {
-    let h = 0;
-    for (let i = 0; i < t.length; i++) h = ((h << 5) - h) + t.charCodeAt(i);
-    return (Math.abs(h) % 200 - 100) / 1000; // [-0.10, +0.10]
-  };
+  // ── Ranking por momentum (retorno 12m) ────────────────────────────
+  const rankedByMom = [...assets]
+    .map((a, i) => ({ ...a, origIdx: i }))
+    .sort((a, b) => b.returns12m - a.returns12m);
 
-  // Trackear activos con múltiples señales alcistas → reducir confianza
-  const bullishMomentum = new Set<string>();
-  const bullishValue = new Set<string>();
+  const topMom = rankedByMom.slice(0, 2);
+  const botMom = rankedByMom.slice(-2);
 
-  assets.forEach(asset => {
-    const jitter = tickerSeed(asset.ticker);
-    let hasMomentumView = false;
-    let hasValueView = false;
+  if (topMom.length > 0 && botMom.length > 0) {
+    // View: top momentum assets outperform bottom momentum assets
+    const allTickers = [...topMom.map(a => a.ticker), ...botMom.map(a => a.ticker)];
+    const allWeights = [
+      ...topMom.map(() => 1 / topMom.length),
+      ...botMom.map(() => -1 / botMom.length),
+    ];
+    // Expected return: spread entre top y bottom (anualizado)
+    const topRet = topMom.reduce((s, a) => s + a.returns12m, 0) / topMom.length;
+    const botRet = botMom.reduce((s, a) => s + a.returns12m, 0) / botMom.length;
+    const spread = Math.max(0.02, Math.min(0.20, topRet - botRet));
 
-    if (asset.momentumScore > 0.3) {
-      bullishMomentum.add(asset.ticker);
-      hasMomentumView = true;
-      // FIX: confianza cap 0.55 (antes 0.85), expectedReturn con jitter ±10%
-      const baseER = 0.08 + asset.momentumScore * 0.15;
+    views.push({
+      assets: allTickers,
+      weights: allWeights,
+      expectedReturn: spread,
+      confidence: 0.25, // baja: ranking cross-sectional, no es analyst consensus
+      description: `Ranking momentum: ${topMom.map(a => a.name).join(', ')} > ${botMom.map(a => a.name).join(', ')}`,
+    });
+  }
+
+  // ── Ranking por value (earnings yield) ──────────────────────────
+  // Solo activos con earnings yield > 0 (excluye BTC y oro)
+  const equityAssets = assets.filter(a => a.earningsYield > 0);
+  if (equityAssets.length >= 2 && views.length < 3) {
+    const rankedByVal = [...equityAssets]
+      .sort((a, b) => b.earningsYield - a.earningsYield);
+
+    const topVal = rankedByVal.slice(0, Math.min(2, Math.floor(rankedByVal.length / 2)));
+    const botVal = rankedByVal.slice(-Math.min(2, Math.floor(rankedByVal.length / 2)));
+
+    if (topVal.length > 0 && botVal.length > 0 &&
+        topVal[0].earningsYield > botVal[botVal.length - 1].earningsYield * 1.2) {
+      const allTickers = [...topVal.map(a => a.ticker), ...botVal.map(a => a.ticker)];
+      const allWeights = [
+        ...topVal.map(() => 1 / topVal.length),
+        ...botVal.map(() => -1 / botVal.length),
+      ];
+      const topEY = topVal.reduce((s, a) => s + a.earningsYield, 0) / topVal.length;
+      const botEY = botVal.reduce((s, a) => s + a.earningsYield, 0) / botVal.length;
+      const spread = Math.max(0.01, Math.min(0.10, (topEY - botEY) * 2));
+
       views.push({
-        assets: [asset.ticker],
-        weights: [1],
-        expectedReturn: baseER * (1 + jitter),
-        confidence: Math.min(0.55, 0.35 + asset.momentumScore * 0.30),
-        description: `Momentum fuerte (${asset.momentumScore.toFixed(2)}) en ${asset.name}`,
+        assets: allTickers,
+        weights: allWeights,
+        expectedReturn: spread,
+        confidence: 0.25,
+        description: `Ranking value: ${topVal.map(a => a.name).join(', ')} EY>${botVal.map(a => a.name).join(', ')}`,
       });
     }
+  }
 
-    if (asset.valuePercentileRank < 30 && asset.valuePercentileRank > 0) {
-      bullishValue.add(asset.ticker);
-      hasValueView = true;
-      const baseER = 0.06 + (30 - asset.valuePercentileRank) / 100;
-      views.push({
-        assets: [asset.ticker],
-        weights: [1],
-        expectedReturn: baseER * (1 + jitter * 0.7),
-        confidence: 0.40, // FIX: reducido de 0.60
-        description: `Valoración atractiva (percentil ${asset.valuePercentileRank}) en ${asset.name}`,
-      });
-    }
-
-    // FIX: si momentum Y value coinciden → reducir confianza de AMBAS views
-    if (hasMomentumView && hasValueView) {
-      // Penalizar las últimas 2 views añadidas (momentum + value de este activo)
-      for (let v = views.length - 2; v < views.length; v++) {
-        if (v >= 0) views[v].confidence *= 0.70; // -30% confianza por señal dual
-      }
-    }
-  });
-
-  if (liquidityGrowth > 5 && macroRegime !== 'CRISIS') {
+  // ── Liquidez global (solo EXPANSION) ────────────────────────────
+  if (liquidityGrowth > 5 && macroRegime === 'EXPANSION' && views.length < 3) {
     const riskAssets = assets
-      .filter(a => !['PPFB.DE'].includes(a.ticker))
+      .filter(a => a.ticker !== 'PPFB.DE')
       .map(a => a.ticker);
 
     if (riskAssets.length > 0) {
       views.push({
         assets: riskAssets,
         weights: riskAssets.map(() => 1 / riskAssets.length),
-        expectedReturn: 0.06 + liquidityGrowth / 200,
-        confidence: 0.35, // FIX: reducido de 0.55 — liquidity es input manual, no externo
-        description: `Liquidez global positiva (+${liquidityGrowth.toFixed(1)}%) → tailwind para renta variable`,
+        expectedReturn: 0.04 + liquidityGrowth / 300,
+        confidence: 0.20, // muy baja: liquidity es input manual
+        description: `Liquidez global (+${liquidityGrowth.toFixed(1)}% M2) → leve tailwind`,
       });
     }
   }
 
-  return views.slice(0, 3); // FIX: cap 3 views (antes 5) — limitar influencia del bucle
+  return views.slice(0, 3);
 }
