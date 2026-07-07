@@ -9,7 +9,7 @@
 
 **MES 2 (Ago 2026): Semi-automatizacion**
 - Activar cron jobs de refresco de datos
-- Activar alertas Telegram
+- Validar consistencia de senales vs backtest
 
 **MES 3 (Sep 2026): Validacion pre-produccion**
 - Ejecutar WFO con datos de los 2 meses de paper trading

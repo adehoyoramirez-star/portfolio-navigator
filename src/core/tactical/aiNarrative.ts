@@ -11,7 +11,6 @@
 // ============================================================
 
 import type { TacticalAsset } from './types';
-import { fetchAIIntelligence } from '@/lib/directApis';
 
 // ── Mapa de palabras/sectores que buscamos en narrativas ─────
 // Cada entrada tiene: palabras clave, sector a ajustar, dirección
@@ -78,6 +77,27 @@ function parseNarrativesToBiases(narratives: string[]): {
   return { sectorBiases, marketWideBias };
 }
 
+/**
+ * Genera narrativas determinísticas basadas en datos de mercado locales.
+ * Sin dependencia de APIs externas.
+ */
+function deriveNarrativesFromContext(context: {
+  regime: string;
+  vix: number;
+}): string[] {
+  const narratives: string[] = [];
+  
+  if (context.vix > 30) narratives.push('crash risk-off volatility spike');
+  else if (context.vix > 20) narratives.push('elevated uncertainty cautious');
+  else narratives.push('low volatility complacency');
+
+  if (context.regime === 'EXPANSION') narratives.push('bull rally risk-on optimism recovery');
+  else if (context.regime === 'CONTRACTION') narratives.push('correction bear market risk-off');
+  else if (context.regime === 'CRISIS' || context.regime === 'ALL_CASH') narratives.push('recession crash risk-off defensive');
+
+  return narratives;
+}
+
 export async function fetchSectorNarrative(
   marketContext: {
     regime: string;
@@ -103,40 +123,24 @@ export async function fetchSectorNarrative(
   }
 
   try {
-    const data = await fetchAIIntelligence({
+    // Deterministic local narrative derivation — no external API needed
+    const narratives: string[] = deriveNarrativesFromContext({
       regime: marketContext.regime,
       vix: marketContext.vix,
-      btcPrice: 0,
-      btcRsi: 50,
-      btcDominance: 0,
-      mvrv: 0,
-      fearGreed: 50,
-      fearGreedLabel: 'NEUTRAL',
-      regimePenalty: 0,
-      probCrisis: 0,
-      move: 0,
-      bond10y: 0,
-      bond2y: 0,
-      creditSpread: 0,
-      m2Growth: 0,
-      dxy: 0,
-      brent: 0,
     });
 
-    if (!data || data.ai?.error) {
-      console.warn('[AINarrative] Motor AI offline:', data?.ai?.error ?? 'sin datos');
-      return emptyNarrativeResponse();
-    }
-
-    const narratives: string[] = data.ai?.topNarratives ?? [];
-    const marketSentiment: string = data.ai?.marketSentiment ?? '';
+    const marketSentiment = marketContext.vix > 30
+      ? 'Bearish: elevated volatility signals risk-off environment'
+      : marketContext.vix > 20
+        ? 'Neutral-Cautious: moderate volatility, watch for regime shifts'
+        : 'Bullish: low volatility environment, risk-on conditions';
 
     const { sectorBiases, marketWideBias } = parseNarrativesToBiases(narratives);
 
     _narrativeCache = {
       sectorBiases,
       marketWideBias,
-      marketSentiment: marketSentiment.slice(0, 200),
+      marketSentiment,
       topNarratives: narratives,
       fetchedAt: new Date().toISOString(),
       expiresAt: now + NARRATIVE_CACHE_TTL,
@@ -150,16 +154,16 @@ export async function fetchSectorNarrative(
 
     if (activeSectors) {
       console.log(
-        `[AINarrative] Sesgos: ${activeSectors}` +
+        `[AINarrative] Sesgos locales: ${activeSectors}` +
         `${marketWideBias !== 0 ? ` | Market: ${marketWideBias > 0 ? '+' : ''}${marketWideBias}` : ''}` +
-        ` | Narrativas: ${narratives.join(' | ')}`
+        ` | Régimen: ${marketContext.regime} VIX: ${marketContext.vix}`
       );
     }
 
     return {
       sectorBiases,
       marketWideBias,
-      marketSentiment: marketSentiment.slice(0, 200),
+      marketSentiment,
       topNarratives: narratives,
       narrativeActive: true,
     };

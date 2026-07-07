@@ -127,14 +127,7 @@ async function main() {
       errors.push('VITE_SUPABASE_ANON_KEY faltante o inválida');
     }
 
-    // Telegram
-    if (checkEnvVar(env, 'TELEGRAM_BOT_TOKEN')) {
-      log(COLORS.green, `  ✓ TELEGRAM_BOT_TOKEN: configurado`);
-      successes.push('Telegram Bot Token configurado');
-    } else {
-      log(COLORS.yellow, `  ⚠ TELEGRAM_BOT_TOKEN: No configurado`);
-      warnings.push('Telegram no funcionará sin token');
-    }
+    // GEMINI_API_KEY removed
   } catch (e: any) {
     log(COLORS.red, `  Error leyendo .env: ${e.message}`);
     errors.push(`Error leyendo .env: ${e.message}`);

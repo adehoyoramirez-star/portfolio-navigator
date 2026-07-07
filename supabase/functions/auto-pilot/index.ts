@@ -72,7 +72,6 @@ Deno.serve(async (req: Request) => {
   const btcCloses    = yahooRaw.data?.['BTC-EUR']?.closes ?? [];
   const creditSpread = yahooRaw.creditSpread?.spread ?? 3.0;
   const fearGreed    = cryptoRaw?.fearGreedValue ?? 50;
-  const fearGreedLabel = cryptoRaw?.fearGreedLabel ?? 'Neutral';
   const btcDominance = cryptoRaw?.btcDominance ?? 54;
   const m2Growth     = yahooRaw.m2?.growthYoY ?? 4.3;
 
@@ -96,57 +95,45 @@ Deno.serve(async (req: Request) => {
   if (prev) {
     if (prev.regime !== currentRegime) {
       alerts.push('regime_change');
-      await callFunction('telegram-alerts', {
         type: 'regime_change',
         previousRegime: prev.regime, newRegime: currentRegime,
         regimePenalty: currentRegime === 'CRISIS' ? 0.55 : currentRegime === 'CONTRACTION' ? 0.75 : 1.0,
         confidence: 'MEDIUM',
         dominantSignal: `VIX ${vix.toFixed(1)} · Spread ${creditSpread.toFixed(2)}%`,
-        vix, fearGreed, fearGreedLabel,
       });
     }
     if (prev.vix < 30 && vix >= 30) {
       alerts.push('vix_spike');
-      await callFunction('telegram-alerts', {
         type: 'cews_alert', cewsLevel: 'WATCH', cewsScore: 0.65,
         cewsDetails: `VIX cruzó 30 — subió de ${prev.vix.toFixed(1)} a ${vix.toFixed(1)}`,
-        fearGreed, fearGreedLabel,
       });
     }
     if (vix > 40 && prev.vix <= 40) {
       alerts.push('black_swan');
-      await callFunction('telegram-alerts', {
         type: 'black_swan',
         blackSwanReason: `VIX > 40 (${vix.toFixed(1)}) — volatilidad extrema sistémica`,
-        currentRegime, vix, fearGreed, fearGreedLabel,
       });
     }
     if (fearGreed < 15 && prev.fearGreed >= 15 && currentRegime !== 'CRISIS') {
       alerts.push('dca_signal');
-      await callFunction('telegram-alerts', {
         type: 'dca_signal', dcaScore: 0.85, dcaRecommendedAmount: 400,
         dcaReason: `Fear & Greed en ${fearGreed} — miedo extremo histórico`,
-        fearGreed, fearGreedLabel,
       });
     }
     if (btcRsi < 25 && prev.btc_rsi >= 25) {
       alerts.push('btc_oversold');
-      await callFunction('telegram-alerts', {
         type: 'dca_signal', dcaScore: 0.90, dcaRecommendedAmount: 400,
         dcaReason: `BTC RSI en ${btcRsi.toFixed(0)} — sobreventa extrema`,
-        fearGreed, fearGreedLabel,
       });
     }
     if (prev.credit_spread < 5 && creditSpread >= 5) {
       alerts.push('credit_stress');
-      await callFunction('telegram-alerts', {
         type: 'cews_alert', cewsLevel: 'WARNING', cewsScore: 0.80,
         cewsDetails: `Credit spread cruzó 5% — ${creditSpread.toFixed(2)}%`,
       });
     }
   }
 
-  // ── TACTICAL SCAN → Alertas Telegram ────────────────────────────
   // FIX CRÍTICO: tactical-scan devuelve 'topOpportunities', no 'topPicks'
   const tacticalOpportunities = tacticalScan?.topOpportunities ?? [];
   if (tacticalOpportunities.length > 0) {
@@ -155,7 +142,6 @@ Deno.serve(async (req: Request) => {
       const prevOpps = prev?.last_tactical_tickers ?? [];
       if (!prevOpps.includes(opp.ticker)) {
         alerts.push(`tactical_${opp.ticker}`);
-        await callFunction('telegram-alerts', {
           type: 'tactical_opportunity',
           tacticalTicker: opp.ticker,
           tacticalName: opp.name,

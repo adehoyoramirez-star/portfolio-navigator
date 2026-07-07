@@ -153,7 +153,6 @@ El proyecto ahora usa exclusivamente Yahoo Finance via Supabase Edge Functions. 
 
 1. **Monitorización**: Configurar alerts en Supabase para Edge Functions
 2. **Backtesting**: Ejecutar walk-forward optimization con nuevos datos
-3. **Telegram Alerts**: Configurar bot para notificaciones de señales
 
 ---
 

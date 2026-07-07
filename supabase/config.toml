@@ -41,17 +41,7 @@ entrypoint = "./functions/glassnode-onchain/index.ts"
 # Cron: métricas on-chain cada 2 horas (rate limit Glassnode)
 # schedule = "0 */2 * * *"
 
-[functions.ai-intelligence]
-enabled = true
-verify_jwt = false
-entrypoint = "./functions/ai-intelligence/index.ts"
-# Cron: análisis AI cada 4 horas
-# schedule = "0 */4 * * *"
 
-[functions.telegram-alerts]
-enabled = true
-verify_jwt = false
-entrypoint = "./functions/telegram-alerts/index.ts"
 
 [functions.tactical-scan]
 enabled = true

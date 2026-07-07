@@ -25,7 +25,10 @@
 
 // ── Core React ──────────────────────────────────────────────────────────
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { fetchCryptoSignals, fetchAIIntelligence, sendTelegramAlert } from "@/lib/directApis";
+import { fetchCryptoSignals } from "@/lib/directApis";
+// NOTE: Telegram, Gemini, Mistral/AI-intelligence removed per R3 cleanup (July 2026).
+// All AI intelligence features (telegram-alerts, ai-intelligence, mistralAI) have been eliminated.
+// See MIFID_II_AUDIT.md for the rationale.
 
 // ── UI / charting ────────────────────────────────────────────────────────
 import {
@@ -194,16 +197,7 @@ const formatCurrency = (value: number): string => {
   const [elliottCurrentWave, setElliottCurrentWave] = useState<ElliottWaveLabel | undefined>(undefined);
   const [elliottPivotsText, setElliottPivotsText] = useState<string>("");
 
-  const [aiIntelligence, setAiIntelligence] = useState<{
-    ai: { regimeNarrative: string; macroValidation: string; btcCycleSummary: string; marketSentiment: string; topNarratives: string[]; blackSwanAlert: boolean; blackSwanReason: string | null; elliottAnalysis?: string; rebalanceAdvice?: string; contradictionAnalysis?: string; model: string; cachedAt: string; error?: string } | null;
-    
-    
-    fetchedAt: string;
-    cacheHit: boolean;
-  } | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [telegramStatus, setTelegramStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
-  const [telegramError, setTelegramError] = useState<string>('');
+
 
   const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
     try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
@@ -403,74 +397,7 @@ const formatCurrency = (value: number): string => {
     }
   };
 
-    const refreshAIIntelligence = async () => {
-    if (!engineResult) return;
-    setAiLoading(true);
-    try {
-      const contradictions: string[] = [];
-      if (dxy > 103 && wtiOil > 90) contradictions.push('DXY alto + Brent alto (senales opuestas)');
-      if (vix > 28 && rsi > 65) contradictions.push('VIX panico + RSI sobrecompra (incoherente)');
-      if (creditSpread > 4.5 && manualPER > 26) contradictions.push('Credit spread elevado + PER caro');
 
-      const totalPortfolioVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
-      const ts = new Date().toISOString();
-
-      const ctxBody = {
-        regime: engineResult.regime,
-        regimePenalty: engineResult.masterRegime.regimePenalty ?? 1,
-        // FIX-AUDIT-R2 N6: crisisProb acceso type-safe. Sin "as any".
-        // ANTES: `(engineResult.masterRegime as any).crisisProb ?? 0` — silencioso si el engine renombraba el campo.
-        // AHORA: scenarioProbabilities?.bear (canónico en el output del engine).
-        probCrisis: engineResult.scenarioProbabilities?.bear ?? 0,
-        vix, move: moveIndex, bond10y: manualBond10y, bond2y, creditSpread, m2Growth, dxy,
-        brent: wtiOil, btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price ?? 0,
-        btcRsi: btcRsiWeekly ?? 50, btcDominance, mvrv: mvrvRatio ?? 0,
-        fearGreed: fearGreedIndex?.value ?? 50, fearGreedLabel: fearGreedIndex?.label ?? 'N/D',
-        totalValue: totalPortfolioVal, portfolioVol: portfolioVol ?? 0.18, drawdown: portfolioDrawdown ?? 0,
-        muEffective: Math.min(0.25, expectedReturn),
-        contradictions,
-      };
-
-      const data = await fetchAIIntelligence(ctxBody);
-
-      if (!data || data.ai?.error) {
-        throw new Error(data.ai?.error || 'No data from Olympus AI');
-      }
-
-      const output = {
-        ai: data.ai ?? null,
-        claude: data.ai ?? null,
-        grok: data.ai ?? null,
-        fetchedAt: ts,
-        cacheHit: data.cacheHit ?? false,
-      };
-
-      setAiIntelligence({ ai: output.ai ?? null, fetchedAt: output.fetchedAt ?? new Date().toISOString(), cacheHit: output.cacheHit ?? false });
-
-      if (data.ai?.blackSwanAlert && data.ai?.blackSwanReason && !data.ai?.error) {
-        sendTelegramAlert( {
-            type: 'black_swan',
-            blackSwanReason: data.ai.blackSwanReason,
-            currentRegime: engineResult.regime,
-            vix,
-        }).catch(() => {});
-      }
-
-    } catch (e: any) {
-      const errMsg = e?.message ?? String(e);
-      const ts = new Date().toISOString();
-      const errResult = {
-        error: errMsg.slice(0, 300),
-        model: 'ai', cachedAt: ts,
-      };
-      setAiIntelligence({
-        ai: { regimeNarrative: '', macroValidation: '', btcCycleSummary: '', marketSentiment: '', topNarratives: [], blackSwanAlert: false, blackSwanReason: null, elliottAnalysis: '', rebalanceAdvice: '', contradictionAnalysis: '', ...errResult },
-        fetchedAt: ts, cacheHit: false,
-      });
-    } finally {
-      setAiLoading(false);
-    }
-  };
 
   useEffect(() => {
     const savedPortfolio = loadPortfolio();
@@ -841,39 +768,7 @@ soxRsiWeekly,
 
       const totalValue = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
 
-      if (currentRegime !== previousRegimeRef.current && previousRegimeRef.current !== null) {
-        sendTelegramAlert( {
-            type: 'regime_change',
-            previousRegime: previousRegimeRef.current,
-            currentRegime,
-            regimePenalty: engineResult.masterRegime.regimePenalty,
-            confidence: engineResult.meta.confidence,
-            dominantSignal: engineResult.meta.dominantSignal,
-            vix,
-            portfolioValue: totalValue,
-            portfolioDrawdown: portfolioDrawdown ?? 0,
-        }).catch(() => {});
-      }
 
-      if (engineResult.tailRiskActive) {
-        sendTelegramAlert( {
-            type: 'tail_risk',
-            tailRiskReason: engineResult.tailRiskReason,
-            volMultiplier: engineResult.volTargetMultiplier,
-            currentRegime,
-            vix,
-        }).catch(() => {});
-      }
-
-      const hasVixAlert = newAlerts.some(a => a.id.startsWith('vix'));
-      if (hasVixAlert) {
-        sendTelegramAlert( {
-            type: 'vix_spike',
-            vix,
-            currentRegime,
-            portfolioValue: totalValue,
-        }).catch(() => {});
-      }
     }
     previousRegimeRef.current = currentRegime;
   }, [engineResult, vix, portfolioDrawdown, portfolio]);
@@ -1846,72 +1741,7 @@ soxRsiWeekly,
           {loading ? "Actualizando..." : "🔄 Actualizar precios y datos macro"}
         </button>
 
-        <button
-          onClick={refreshAIIntelligence}
-          disabled={aiLoading || !engineResult}
-          style={{
-            ...styles.button,
-            background: aiLoading
-              ? "#374151"
-              : "linear-gradient(135deg, #1e3a5f 0%, #312e81 50%, #1e1b4b 100%)",
-            border: "1px solid #6366f1",
-            fontSize: "0.85rem",
-            opacity: !engineResult ? 0.5 : 1,
-          }}
-        >
-          {aiLoading ? "⏳ Analizando..." : "🧠 Motor Intelligence AI"}
-        </button>
 
-        <button
-          onClick={async () => {
-            if (!engineResult) return;
-            setTelegramStatus('sending');
-            setTelegramError('');
-            try {
-              const totalVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
-              const { ok, error } = await sendTelegramAlert( {
-                  type: 'daily_summary',
-                  currentRegime: engineResult.regime,
-                  regimePenalty: engineResult.masterRegime.regimePenalty,
-                  confidence: engineResult.meta.confidence,
-                  portfolioValue: totalVal,
-                  portfolioDrawdown: portfolioDrawdown ?? 0,
-                  vix,
-                  erpValue,
-                  fearGreed: fearGreedIndex?.value ?? undefined,
-                  fearGreedLabel: fearGreedIndex?.label ?? undefined,
-                  btcPrice: portfolio.assets.find(a => a.ticker === 'BTC-EUR')?.price,
-                  btcDominance,
-                  allocations: engineResult.allocations.map(a => ({ name: a.name, pct: a.finalAllocation })),
-                  muEffective: Math.min(0.25, expectedReturn),
-                  aiNarrative: aiIntelligence?.ai?.regimeNarrative ?? undefined,
-              });
-              if (!ok) throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
-              setTelegramStatus('ok');
-              setTimeout(() => setTelegramStatus('idle'), 4000);
-            } catch (e: any) {
-              const msg = e?.message ?? String(e);
-              setTelegramError(msg.slice(0, 120));
-              setTelegramStatus('error');
-              setTimeout(() => setTelegramStatus('idle'), 6000);
-            }
-          }}
-          disabled={!engineResult || telegramStatus === 'sending'}
-          style={{
-            ...styles.button,
-            backgroundColor: telegramStatus === 'ok' ? '#059669' : telegramStatus === 'error' ? '#b91c1c' : '#0a7d4f',
-            fontSize: '0.8rem',
-            opacity: !engineResult ? 0.5 : 1,
-          }}
-          title="Enviar resumen del portfolio a Telegram"
-        >
-          {telegramStatus === 'sending' ? '⏳ Enviando...' : telegramStatus === 'ok' ? '✅ Enviado' : telegramStatus === 'error' ? '❌ Error' : '📱 Resumen Telegram'}
-        </button>
-        {telegramStatus === 'error' && telegramError && (
-          <div style={{ color: '#fca5a5', fontSize: '0.72rem', marginTop: '0.25rem', maxWidth: 260 }}>
-            ⚠️ {telegramError}
-          </div>
-        )}
 
         <button
           onClick={() => { clearAll(); window.location.reload(); }}
@@ -1964,15 +1794,7 @@ soxRsiWeekly,
           CSV Auditoria
         </button>
 
-        <span style={{ color: "#9ca3af", fontSize: "0.85rem" }}>
-          {aiIntelligence && !aiLoading && (
-            <span style={{ color: "#818cf8" }}>
-              ✓ AI {aiIntelligence.cacheHit ? "(caché)" : ""}
-              {" · "}{new Date(aiIntelligence.fetchedAt).toLocaleTimeString("es-ES")}
-              {" · ✦ "}{aiIntelligence.ai?.model ?? 'Olympus AI Flash'}
-            </span>
-          )}
-        </span>
+
       </div>
       {apiError && <div style={{ color: "#ef4444", marginBottom: "10px" }}>{apiError}</div>}
 
@@ -2692,122 +2514,6 @@ soxRsiWeekly,
         </div>
       )}
 
-      {aiIntelligence && (
-        <div style={{ ...styles.card, border: "1px solid #4c1d95", background: "linear-gradient(135deg, #0c0a1f 0%, #111827 100%)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <h2 style={{ color: "#a78bfa", margin: 0 }}>🧠 Motor Intelligence — Olympus AI Flash</h2>
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              {aiIntelligence.cacheHit && (
-                <span style={{ fontSize: "0.65rem", color: "#6b7280", background: "#1f2937", padding: "2px 8px", borderRadius: 4 }}>caché</span>
-              )}
-              <span style={{ fontSize: "0.65rem", color: "#6b7280", background: "#1f2937", padding: "2px 8px", borderRadius: 4 }}>
-                ✦ {aiIntelligence.ai?.model ?? 'Olympus AI Flash'}
-              </span>
-              <span style={{ fontSize: "0.65rem", color: "#6b7280" }}>
-                {new Date(aiIntelligence.fetchedAt).toLocaleString("es-ES")}
-              </span>
-              <button onClick={refreshAIIntelligence} disabled={aiLoading}
-                style={{ ...styles.button, fontSize: "0.7rem", padding: "4px 10px", background: "#312e81" }}>
-                {aiLoading ? "..." : "↻ Actualizar"}
-              </button>
-            </div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
-            {aiIntelligence.ai && !aiIntelligence.ai.error && (
-              <div style={{ background: "#0c1228", border: "1px solid #1d4ed8", borderRadius: 10, padding: "1rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                  <span>✦</span>
-                  <span style={{ color: "#60a5fa", fontWeight: "bold", fontSize: "0.85rem" }}>Macro Strategist</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.ai.model}</span>
-                </div>
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#3b82f6", fontWeight: "bold", marginBottom: "0.3rem" }}>RÉGIMEN ACTUAL</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.ai.regimeNarrative}</p>
-                </div>
-                <div style={{ marginBottom: "0.75rem", borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#3b82f6", fontWeight: "bold", marginBottom: "0.3rem" }}>VALIDACIÓN MACRO</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.macroValidation}</p>
-                </div>
-                <div style={{ borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#3b82f6", fontWeight: "bold", marginBottom: "0.3rem" }}>CICLO BTC</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.btcCycleSummary}</p>
-                </div>
-              </div>
-            )}
-            {aiIntelligence.ai?.error && (
-              <div style={{ background: "#1c0a0a", border: "1px solid #374151", borderRadius: 10, padding: "1rem" }}>
-                <span style={{ color: "#ef4444", fontSize: "0.8rem" }}>✦ Macro Strategist — Error</span>
-                <p style={{ color: "#9ca3af", fontSize: "0.75rem", marginTop: "0.5rem", lineHeight: 1.5 }}>{aiIntelligence.ai.error}</p>
-                {aiIntelligence.ai.error.includes('Edge Function') && (
-                  <p style={{ color: "#6b7280", fontSize: "0.7rem", marginTop: "0.5rem", fontFamily: "monospace", background: "#0f172a", padding: "0.5rem", borderRadius: 4 }}>
-                    Verificar OlympusAI_API_KEY en Supabase Secrets
-                  </p>
-                )}
-              </div>
-            )}
-
-            {aiIntelligence.ai && !aiIntelligence.ai.error && (
-              <div style={{ background: "#0a0a0a", border: `1px solid ${aiIntelligence.ai.blackSwanAlert ? "#ef4444" : "#374151"}`, borderRadius: 10, padding: "1rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                  <span>🛡</span>
-                  <span style={{ color: "#d1d5db", fontWeight: "bold", fontSize: "0.85rem" }}>Market Sentinel</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.ai.model}</span>
-                </div>
-                {aiIntelligence.ai.blackSwanAlert && (
-                  <div style={{ background: "#1c0a0a", border: "1px solid #ef4444", borderRadius: 6, padding: "0.5rem 0.75rem", marginBottom: "0.75rem", fontSize: "0.78rem", color: "#ef4444" }}>
-                    ⚠️ <strong>ALERTA CISNE NEGRO:</strong> {aiIntelligence.ai.blackSwanReason}
-                  </div>
-                )}
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#9ca3af", fontWeight: "bold", marginBottom: "0.3rem" }}>SENTIMENT ACTUAL</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.ai.marketSentiment}</p>
-                </div>
-                <div style={{ borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#9ca3af", fontWeight: "bold", marginBottom: "0.5rem" }}>NARRATIVAS DOMINANTES</div>
-                  {(aiIntelligence.ai.topNarratives ?? []).map((n, i) => (
-                    <div key={i} style={{ fontSize: "0.78rem", color: "#d1d5db", marginBottom: "0.3rem", display: "flex", gap: "0.5rem" }}>
-                      <span style={{ color: "#6b7280", minWidth: "1rem" }}>{i + 1}.</span>
-                      <span>{n}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(!aiIntelligence.ai || aiIntelligence.ai.error) && !aiIntelligence.ai?.error && (
-              <div style={{ background: "#0a0a0a", border: "1px solid #1f2937", borderRadius: 10, padding: "1rem" }}>
-                <span style={{ color: "#4b5563", fontSize: "0.8rem" }}>🛡 Market Sentinel — sin datos</span>
-              </div>
-            )}
-
-            {aiIntelligence.ai && !aiIntelligence.ai.error && (
-              <div style={{ background: "#0d1117", border: "1px solid #d97706", borderRadius: 10, padding: "1rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                  <span>📐</span>
-                  <span style={{ color: "#f59e0b", fontWeight: "bold", fontSize: "0.85rem" }}>Elliott Wave Analyst</span>
-                  <span style={{ fontSize: "0.6rem", color: "#374151", marginLeft: "auto" }}>✦ {aiIntelligence.ai.model}</span>
-                </div>
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#d97706", fontWeight: "bold", marginBottom: "0.3rem" }}>ELLIOTT WAVE</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#e5e7eb", lineHeight: 1.6 }}>{aiIntelligence.ai.elliottAnalysis}</p>
-                </div>
-                <div style={{ marginBottom: "0.75rem", borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#d97706", fontWeight: "bold", marginBottom: "0.3rem" }}>REBALANCEO RECOMENDADO</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.rebalanceAdvice}</p>
-                </div>
-                <div style={{ borderTop: "1px solid #1f2937", paddingTop: "0.6rem" }}>
-                  <div style={{ fontSize: "0.65rem", color: "#d97706", fontWeight: "bold", marginBottom: "0.3rem" }}>SEÑALES CONTRADICTORIAS</div>
-                  <p style={{ margin: 0, fontSize: "0.82rem", color: "#d1d5db", lineHeight: 1.6 }}>{aiIntelligence.ai.contradictionAnalysis}</p>
-                </div>
-              </div>
-            )}
-            {(!aiIntelligence.ai || aiIntelligence.ai.error) && !aiIntelligence.ai?.error && (
-              <div style={{ background: "#0d1117", border: "1px solid #1f2937", borderRadius: 10, padding: "1rem" }}>
-                <span style={{ color: "#4b5563", fontSize: "0.8rem" }}>📐 Elliott Wave Analyst — sin datos</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       <BacktestPanel
         marketData={marketData}
