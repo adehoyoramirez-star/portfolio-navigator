@@ -25,7 +25,7 @@
 //   AHORA (CORRECTO):   "../config/engineConfig.ts"     (llega a src/core/config/)
 // ===============================================
 
-import { TAIL_RISK_CONFIG } from "../config/engineConfig";
+import { TAIL_RISK_CONFIG, CEWS_CONFIG, CORRELATION_PANIC_CONFIG } from "../config/engineConfig";
 
 export interface TailRiskInput {
   drawdown: number;
@@ -114,25 +114,30 @@ export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
   // Por debajo del 22% no hay penalización por volatilidad
 
   // ── 3. CRISIS SISTÉMICA (VIX + Credit Spread simultáneos) ─────────────
+  // FIX-AUDIT-C6: thresholds centralizados en CEWS_CONFIG.SYSTEMIC_CRISIS.
+  // Antes hardcodeados como vix>40/creditSpread>5, vix>35/creditSpread>3.5, etc.
   let systemicCrisisOverlay = 1.0;
   let systemicReason = '';
-  if (vix > 40 && creditSpread > 5) {
-    systemicCrisisOverlay = 0.35;
+  const sc = CEWS_CONFIG.SYSTEMIC_CRISIS;
+  if (vix > sc.DISFUNCTIONAL.vix && creditSpread > sc.DISFUNCTIONAL.creditSpread) {
+    systemicCrisisOverlay = sc.DISFUNCTIONAL.overlay;
     systemicReason = `VIX ${vix.toFixed(0)} + Spread ${creditSpread.toFixed(1)}% — mercado disfuncional`;
-  } else if (vix > 35 && creditSpread > 3.5) {
-    systemicCrisisOverlay = 0.45;
+  } else if (vix > sc.SYSTEMIC_STRESS.vix && creditSpread > sc.SYSTEMIC_STRESS.creditSpread) {
+    systemicCrisisOverlay = sc.SYSTEMIC_STRESS.overlay;
     systemicReason = `VIX ${vix.toFixed(0)} + Spread ${creditSpread.toFixed(1)}% — stress sistémico`;
-  } else if (vix > 30 && stressScore >= 7) {
-    systemicCrisisOverlay = 0.60;
+  } else if (vix > sc.ELEVATED.vix && stressScore >= sc.ELEVATED.stressScore) {
+    systemicCrisisOverlay = sc.ELEVATED.overlay;
     systemicReason = `VIX ${vix.toFixed(0)} + Stress ${stressScore}/9 — presión elevada`;
   }
 
   // ── 4. PENALIZACIÓN POR CORRELACIÓN → 1 ───────────────────────────────
+  // FIX-AUDIT-C6: thresholds centralizados en CORRELATION_PANIC_CONFIG.
+  // Antes hardcodeados como avgCorr>0.85 y avgCorr>0.70.
   let correlationPenalty = 0;
-  if (avgCorr > 0.85) {
+  if (avgCorr > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD) {
     correlationPenalty = 0.20;
-  } else if (avgCorr > 0.70) {
-    correlationPenalty = 0.10;
+  } else if (avgCorr > CORRELATION_PANIC_CONFIG.DIVERSIFICATION_COLLAPSE) {
+    correlationPenalty = CORRELATION_PANIC_CONFIG.DIVERSIFICATION_PENALTY;
   }
 
   // ── 5. OVERLAY FINAL ───────────────────────────────────────────────────

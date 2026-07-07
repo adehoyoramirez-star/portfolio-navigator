@@ -75,7 +75,7 @@ import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 import { detectCycleTops } from "../risk/cycleTopDetector";
-import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, getFactorWeightsByRegime } from "../config/engineConfig";
+import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, BOND_YIELD_10Y, getFactorWeightsByRegime } from "../config/engineConfig";
 // FIX-R2-C10: renombrado DISCRETIONARY_OVERLAY. Import usado para allocationProvenance.
 // FIX-AUDIT-R10: allocationProvenance (transparencia del overlay discrecional)
 // FIX-R2-C10: REGIME_TACTICAL_ALLOCATIONS → DISCRETIONARY_OVERLAY
@@ -230,6 +230,9 @@ export interface OlympusEngineInput {
   targetVol?: number;
   erpValue?: number;
   blViews?: BLView[];
+  // FIX-AUDIT-C3: liquidityGrowth está en PUNTOS PORCENTUALES (ej: 3.2 = 3.2%), no decimal.
+  // Esta es la convención histórica del dashboard y de liquidityCycle.ts.
+  // Internamente, computeScenarioProbabilities escala los umbrales acordemente.
   liquidityGrowth?: number;
   cewsHistory?: CEWSDataPoint[];
   regimeHistory?: RegimeHistoryEntry[];
@@ -465,9 +468,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
   const riskNumeric    = 1 - (coreVolEstimate / 0.50);
-  const coreSignalScore = 0.55 * regimeNumeric
-                        + 0.20 * btcNumeric
-                        + 0.25 * Math.max(0, riskNumeric);
+  const coreSignalScore = CORE_SIGNAL_WEIGHTS.REGIME * regimeNumeric
+                        + CORE_SIGNAL_WEIGHTS.BTC * btcNumeric
+                        + CORE_SIGNAL_WEIGHTS.RISK * Math.max(0, riskNumeric);
 
   // ====== ESCENARIOS PROBABILÍSTICOS ======
   const scenarioProbabilities = computeScenarioProbabilities(
@@ -534,7 +537,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
-      coreSignal: { regimeComponent: 0.55 * regimeNumeric, btcComponent: 0.20 * btcNumeric, riskComponent: 0.25 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
+      coreSignal: { regimeComponent: CORE_SIGNAL_WEIGHTS.REGIME * regimeNumeric, btcComponent: CORE_SIGNAL_WEIGHTS.BTC * btcNumeric, riskComponent: CORE_SIGNAL_WEIGHTS.RISK * Math.max(0, riskNumeric), finalScore: coreSignalScore },
       scenarioProbabilities,
       metaIntelligence: { modelHealth: metaIntelligence.modelHealth, confidenceMultiplier: metaIntelligence.confidenceMultiplier, consecutiveErrors: metaIntelligence.consecutiveErrors, recommendation: metaIntelligence.recommendation },
       killSwitchLevel: 0, killSwitchName: 'SIN TRIGGER',
@@ -739,7 +742,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //                 |       | Límite a 10% → drawdown máximo de -8% total.
   //
   const mvrv = input.btcOnChain?.mvrvRatio ?? 0;
-  let dynamicBtcCap = 0.20; // Default
+  // FIX-AUDIT-C7: BTC caps dinámicos centralizados en BTC_CAPS_BY_REGIME.
+  // Antes hardcodeados como 0.20, 0.35, 0.10.
+  let dynamicBtcCap = BTC_CAPS_BY_REGIME[masterRegime.regime] ?? 0.20;
   if (btcCycle.signal === 'STRONG_BUY' && mvrv < 3.0) {
     dynamicBtcCap = 0.35; // Permite correr el rally
   } else if (mvrv > 3.5) {
@@ -785,7 +790,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         uraniumLTPrice: input.uraniumLTPrice,
         siaSalesYoY: input.siaSalesYoY,
         soxRsiWeekly: input.soxRsiWeekly,
-        bondYield10y: 4.25,
+        bondYield10y: BOND_YIELD_10Y,  // FIX-AUDIT-C4,C10: % desde config (4.25%), detectCycleTops espera notación %
         inflationBreakeven: input.inflationBreakeven,
         brentOil: macro.wtiOil,
         wlgRsiWeekly: input.wlgRsiWeekly,
@@ -820,7 +825,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // FIX-V5-7 (audit ronda 2): realizedVol usa relativeWeightsAfterCap (post-BTC-cap)
   //   ANTES: se computaba con relativeWeights (pre-cap), ignorando el ajuste de BTC cap
   //   AHORA: se computa después del BTC cap, usando los pesos reales del portfolio
-  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, relativeWeightsAfterCap, input.covMatrix);
+  const realizedVol = input.portfolioRealizedVol ?? estimatePortfolioVol(assets, relativeWeightsAfterCap, input.covMatrix, input.avgCorrelation); // FIX-AUDIT-C2
 
   // ── Core realized vol (ex-BTC) ──────────────────────────────────────────────
   // BTC con vol ~72% anual contamina el VolTarget: si BTC es ~50% del portfolio,
@@ -888,7 +893,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     (input.liquidityGrowth ?? 0) > 0 &&
     tailRisk.killSwitchLevel === 0   // FIX-ALPHA-01: Kill Switch activo → Alpha-Boost deshabilitado
   );
-  const totalInvested_alpha = isAlphaMode ? Math.max(totalInvested_raw, 0.95) : totalInvested_raw;
+  const totalInvested_alpha = isAlphaMode ? Math.max(totalInvested_raw, ALPHA_BOOST_CONFIG.EXPOSURE) : totalInvested_raw;  // FIX-AUDIT-C9: antes 0.95 hardcodeado
 
   // 📉 CAPA 8b: CORRELATION PANIC TRIGGER — Convergencia de correlaciones
   // ================================================================
@@ -1082,9 +1087,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     },
     dca,
     coreSignal: {
-      regimeComponent: 0.55 * regimeNumeric,
-      btcComponent:    0.20 * btcNumeric,
-      riskComponent:   0.25 * Math.max(0, riskNumeric),
+      regimeComponent: CORE_SIGNAL_WEIGHTS.REGIME * regimeNumeric,
+      btcComponent:    CORE_SIGNAL_WEIGHTS.BTC * btcNumeric,
+      riskComponent:   CORE_SIGNAL_WEIGHTS.RISK * Math.max(0, riskNumeric),
       finalScore:      coreSignalScore,
     },
     scenarioProbabilities,
@@ -1168,7 +1173,11 @@ function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
   return weights;
 }
 
-function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix?: number[][]): number {
+// FIX-AUDIT-C2: el fallback sin covMatrix asumía correlación=0 (cota inferior).
+// Con avgCorrelation (opcional), se usa como correlación off-diagonal implícita:
+//   portfolioVar = sum(w_i² * σ_i²) + avgCorr * sum_{i≠j}(w_i * w_j * σ_i * σ_j)
+// Esto da una estimación más realista que el peor/mejor caso.
+function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix?: number[][], avgCorrelation?: number): number {
   if (covMatrix && covMatrix.length === assets.length) {
     let portfolioVar = 0;
     for (let i = 0; i < assets.length; i++) {
@@ -1178,10 +1187,23 @@ function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix
     }
     return Math.sqrt(Math.max(0, portfolioVar));
   }
-  // FIX-VOLFALLBACK: antes sum(wi * σi) asumía correlación=1 (worst-case sobreestimado).
-  // Ahora usa descomposición de varianza sin correlación: sqrt(sum(wi² * σi²))
-  // Esta es la cota inferior (correlación=0), más realista que corr=1.
-  // En ausencia de covMatrix, es la mejor estimación no sesgada.
-  const variance = assets.reduce((sum, a, i) => sum + weights[i] * weights[i] * a.volatility * a.volatility, 0);
-  return Math.sqrt(Math.max(0, variance));
+  // Fallback sin covMatrix: usar avgCorrelation si está disponible
+  const n = assets.length;
+  let diagonalVar = 0;
+  for (let i = 0; i < n; i++) {
+    diagonalVar += weights[i] * weights[i] * assets[i].volatility * assets[i].volatility;
+  }
+  // FIX-AUDIT-C2: añadir off-diagonal con correlación media si está disponible
+  if (avgCorrelation !== undefined && avgCorrelation > 0 && n > 1) {
+    let offDiagVar = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i !== j) {
+          offDiagVar += weights[i] * weights[j] * assets[i].volatility * assets[j].volatility;
+        }
+      }
+    }
+    return Math.sqrt(Math.max(0, diagonalVar + avgCorrelation * offDiagVar));
+  }
+  return Math.sqrt(Math.max(0, diagonalVar));
 }

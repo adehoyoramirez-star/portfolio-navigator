@@ -92,6 +92,9 @@ export const KELLY_CONFIG = {
   // Cap 20% — reducido de 0.25 per walk-forward optimizer (overfitting HIGH)
   CAP: 0.20,
   HALF_FRACTION: 0.5,
+  // FIX-AUDIT-C11: James-Stein prior centralizado (antes hardcodeado 0.08 en kelly.ts).
+  // 8% anual = retorno esperado neutro del "activo promedio".
+  PRIOR_RETURN: 0.08,
 } as const;
 
 // ── VOLATILITY TARGETING ───────────────────────────────────────────────────
@@ -141,6 +144,14 @@ export const CEWS_CONFIG = {
 
   MAX_HISTORY_DAYS: 168,
   STORAGE_KEY: "olympus_cews_history_v1",
+
+  // FIX-AUDIT-C6: Systemic crisis thresholds for tail risk overlay.
+  // Antes hardcodeados en tailRisk.ts (VIX>40, creditSpread>5, etc.).
+  SYSTEMIC_CRISIS: {
+    DISFUNCTIONAL:   { vix: 40, creditSpread: 5.0, overlay: 0.35 },
+    SYSTEMIC_STRESS: { vix: 35, creditSpread: 3.5, overlay: 0.45 },
+    ELEVATED:        { vix: 30, stressScore: 7,  overlay: 0.60 },
+  },
 } as const;
 
 // ── MASTER REGIME ──────────────────────────────────────────────────────────
@@ -221,6 +232,44 @@ export const SECTOR_RISK_BUDGET: Record<string, number> = {
   technology:  1.0,
   energy:      0.9,
 } as const;
+
+// ── CORE SIGNAL WEIGHTS (FIX-AUDIT-C8) ────────────────────────────────────
+// Pesos del core signal score que combina régimen, BTC cycle, y risk.
+// Antes hardcodeados en olympusV3.ts (0.55, 0.20, 0.25).
+export const CORE_SIGNAL_WEIGHTS = {
+  REGIME: 0.55,
+  BTC: 0.20,
+  RISK: 0.25,
+} as const;
+
+// ── ALPHA BOOST (FIX-AUDIT-C9) ────────────────────────────────────────────
+// Exposición forzada cuando el core signal es favorable.
+// Antes hardcodeado a 0.95 incondicional en olympusV3.ts.
+export const ALPHA_BOOST_CONFIG = {
+  EXPOSURE: 0.95,         // exposición cuando alpha boost se activa
+  SIGNAL_THRESHOLD: 0.60, // coreSignalScore mínimo para activar el boost
+} as const;
+
+// ── DYNAMIC BTC CAPS (FIX-AUDIT-C7) ───────────────────────────────────────
+// Caps dinámicos para BTC según el régimen de mercado.
+// Antes hardcodeados en olympusV3.ts (0.20, 0.35, 0.10).
+// EXPANSION: cap más alto (35%) — permite correr rallies en tendencia alcista.
+// CONTRACTION: cap por defecto (20%) — protección estándar.
+// CRISIS: cap mínimo (10%) — protección máxima en stress.
+export const BTC_CAPS_BY_REGIME: Record<string, number> = {
+  EXPANSION:    0.35,
+  CONTRACTION:  0.20,
+  CRISIS:       0.10,
+} as const;
+
+// ── BOND YIELD REFERENCE (FIX-AUDIT-C4, C10) ───────────────────────────────
+// Yield del bono a 10 años de referencia en NOTACIÓN PORCENTAJE (no decimal).
+// Ej: 4.25 = 4.25%. El ciclo top detector lo espera en esta unidad para
+// calcular realRate = bondYield10y - inflationBreakeven (ambos en %).
+// Antes hardcodeado como 4.25 en olympusV3.ts.
+// NOTA: esto difiere de RISK_FREE_RATE_ANNUAL que usa decimal (0.04).
+// Ambos son correctos en sus respectivos contextos de consumo.
+export const BOND_YIELD_10Y = 4.25; // 4.25% en notación porcentaje
 
 // ── FACTOR CALIBRATION (primas AQR) ───────────────────────────────────────
 export const FACTOR_CONFIG = {

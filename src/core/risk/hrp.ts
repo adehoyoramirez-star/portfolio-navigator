@@ -107,17 +107,43 @@ function quasiDiagonalize(cov: number[][], order: number[]): number[][] {
 
 // ── PASO 3: RECURSIVE BISECTION ─────────────────────────────────────────────
 // Distribuir los pesos recursivamente entre sub-clusters
+
+// FIX-AUDIT-C1: IVP (Inverse Variance Portfolio) weights para cluster variance.
+// El algoritmo canónico de López de Prado usa w_i ∝ 1/σ²_i, no equal-weight (1/n).
+// Equal-weight subestima la varianza del cluster cuando activos dentro del mismo
+// tienen volatilidades muy distintas (ej: BTC 60% vs bonos 15%).
+// Con IVP, los activos menos volátiles pesan más → varianza del cluster más realista.
 function getClusterVar(cov: number[][], indices: number[]): number {
-  // Varianza del cluster igual-ponderado
   const n = indices.length;
   if (n === 0) return 0;
+
+  // IVP weights: w_i ∝ 1/σ²_i, normalizados a suma = 1
+  const invVars = indices.map(i => {
+    const v = cov[i][i];
+    return v > 1e-10 ? 1 / v : 0;
+  });
+  const totalInvVar = invVars.reduce((s, v) => s + v, 0);
+
+  // Fallback a equal-weight si no hay varianzas válidas
+  if (totalInvVar <= 0) {
+    let variance = 0;
+    for (const i of indices) {
+      for (const j of indices) {
+        variance += cov[i][j];
+      }
+    }
+    return variance / (n * n);
+  }
+
+  // w^T Σ w con IVP weights
+  const w = invVars.map(v => v / totalInvVar);
   let variance = 0;
-  for (const i of indices) {
-    for (const j of indices) {
-      variance += cov[i][j];
+  for (let a = 0; a < n; a++) {
+    for (let b = 0; b < n; b++) {
+      variance += w[a] * w[b] * cov[indices[a]][indices[b]];
     }
   }
-  return variance / (n * n);
+  return variance;
 }
 
 function recursiveBisection(

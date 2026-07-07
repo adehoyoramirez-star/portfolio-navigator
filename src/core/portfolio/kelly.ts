@@ -67,7 +67,7 @@ export interface KellyResult {
 export function calculateKelly(input: KellyInput): KellyResult {
   const { expectedReturn, volatility, capOverride } = input;
   const phi = input.shrinkagePhi ?? 0.65;  // James-Stein φ calibrado (Jorion 1986)
-  const muPrior = input.priorReturn ?? 0.08; // 8% anual — retorno esperado neutro
+  const muPrior = input.priorReturn ?? KELLY_CONFIG.PRIOR_RETURN; // FIX-AUDIT-C11: centralizado en config (antes 0.08 hardcodeado)
   const effectiveCap = capOverride ?? KELLY_CONFIG.CAP;
   const variance = volatility * volatility;
 
