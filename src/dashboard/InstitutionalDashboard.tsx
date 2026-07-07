@@ -302,7 +302,10 @@ const formatCurrency = (value: number): string => {
       if (md.wtiOil > 0) setWtiOil(parseFloat(md.wtiOil.toFixed(2)));
       if (md.moveIndex && md.moveIndex > 0) setMoveIndex(parseFloat(md.moveIndex.toFixed(1)));
       if (md.m2Growth !== undefined && md.m2Growth !== null) setM2Growth(parseFloat(md.m2Growth.toFixed(2))); // FIX-FRED-SYNC: always sync from FRED panel
-      if (md.per > 0) setManualPER(parseFloat(md.per.toFixed(2))); // FIX-FRED-SYNC
+      // FIX-PER-MANUAL: PER S&P 500 ahora es 100% manual (P/E Ratio TTM, no Shiller CAPE).
+      // El CAPE de FRED usa beneficios promedio 10 años → sobrestima el PER → subestima el ERP.
+      // El motor necesita el P/E trailing de 12 meses para calcular ERP = 1/PER - BondYield correctamente.
+      // if (md.per > 0) setManualPER(parseFloat(md.per.toFixed(2))); // FIX-FRED-SYNC — DESACTIVADO
       if (md.creditSpread > 0) setCreditSpread(parseFloat(md.creditSpread.toFixed(2))); // FIX-FRED-SYNC
 
       const liq = liquidityScore({
@@ -1960,10 +1963,8 @@ soxRsiWeekly,
 
       <div style={{ ...styles.card, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem" }}>
         <div>
-          <label style={styles.label}>PER S&P 500 {" "}
-            <span style={{ fontSize: "0.65rem", color: marketData?.perSource === "FRED" ? "#10b981" : "#ef4444", fontWeight: "normal" }}>
-              {marketData?.perSource === "FRED" ? "● FRED auto (CAPE)" : "● manual"}
-            </span>
+          <label style={styles.label}>P/E Ratio S&P 500 (TTM) {" "}
+            <span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● manual</span>
           </label>
           <input type="number" value={manualPER} onChange={(e) => setManualPER(Number(e.target.value))} style={styles.smallInput} step="0.1" min="1" />
         </div>
