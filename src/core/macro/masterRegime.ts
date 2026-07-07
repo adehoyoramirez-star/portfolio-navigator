@@ -245,13 +245,13 @@ export function getMasterRegime(
 
   // WTI OIL: penalización geopolítica multiplicativa
   if (stress.wtiPenalty < 1.0) {
-    finalPenalty = Math.max(0.75, finalPenalty * stress.wtiPenalty);
+    finalPenalty = Math.max(0.4, finalPenalty * stress.wtiPenalty);
   }
 
-  // En CRISIS el cap es 0.85 — cap elevado para mantener exposicion en crisis
+  // En CRISIS el cap es 0.55 — nunca demasiado laxo aunque la crisis sea vieja
   // (el +0.08 de durationAdjustment puede llevarnos a 0.53, que es correcto)
   if (regime === "CRISIS") {
-    finalPenalty = Math.min(finalPenalty, 0.85);
+    finalPenalty = Math.min(finalPenalty, 0.55);
   }
 
   // ── REGIME LOCK: si el usuario ha congelado el régimen, lo respetamos ─────
@@ -345,8 +345,8 @@ function resolveRegime(a: MasterRegimeLabel, b: MasterRegimeLabel): MasterRegime
 }
 
 function getBinaryPenalty(regime: MasterRegimeLabel): number {
-  if (regime === "CRISIS")      return 0.75;
-  if (regime === "CONTRACTION") return 0.90;
+  if (regime === "CRISIS")      return 0.4;
+  if (regime === "CONTRACTION") return 0.70;
   return 1.0;
 }
 

@@ -869,7 +869,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   La exposición total (totalInvested) = volTarget × tailRisk, clamped a [0.05, 1.0].
   //   finalAllocation[i] = relativeWeight[i] × totalInvested
   //   La parte no invertida (1 - totalInvested) es cash implícito.
-  const totalInvested_raw = Math.max(0.50, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
+  const totalInvested_raw = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
 
   // 🚀 ALPHA-BOOST: "The Perfect Storm"
   // Si Régimen=EXPANSION, BTC=STRONG_BUY y Liquidez M2 > 0 → Forzamos exposición máxima.
