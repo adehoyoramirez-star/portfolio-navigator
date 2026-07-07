@@ -681,6 +681,7 @@ export function runWalkForwardTest(
       rebalanceDays: cfg.rebalanceDays,
       initialCapital: cfg.initialCapital,
       transactionCostBps: cfg.transactionCostBps,
+      useDynamicCovariance: true,
     };
     const isResult = runBacktest(isInput);
 
@@ -696,6 +697,7 @@ export function runWalkForwardTest(
       rebalanceDays: cfg.rebalanceDays,
       initialCapital: cfg.initialCapital,
       transactionCostBps: cfg.transactionCostBps,
+      useDynamicCovariance: true,
     };
     const oosResult = runBacktest(oosInput);
 
