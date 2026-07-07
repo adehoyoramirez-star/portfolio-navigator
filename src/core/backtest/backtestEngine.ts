@@ -504,14 +504,12 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let pendingNewCash = 0;
   let pendingNewRegime: BacktestRegime | null = null;
 
-  // FIX-AUDIT-R8 3.3: TRUE buy-and-hold benchmark (not constant-mix).
-  // Each asset's value drifts with its own price; weights evolve naturally.
-  // benchmarkValue = sum of individual asset values (initial weight × capital tracks own returns).
-  const benchmarkInitWeights = equalWeightAllocations();
-  const benchmarkAssetValues: Record<string, number> = {};
-  for (const ticker of ASSETS) {
-    benchmarkAssetValues[ticker] = (benchmarkInitWeights[ticker] ?? 0) * initialCapital;
-  }
+  // FIX-BENCH-EQ-REBAL: Equal Weight with periodic rebalancing (same frequency as engine).
+  // Weights drift with prices between rebalancing events.
+  // At each rebalanceDay, reset to 1/N and apply turnover costs (same txCostRate as engine).
+  // This is a true equal-weight benchmark, not a buy-and-hold (which gets dominated by BTC).
+  const eqWeight = 1 / ASSETS.length;
+  let benchmarkWeights: Record<string, number> = equalWeightAllocations();
   let benchmarkValue = initialCapital;
 
   const strategyDailyReturns: number[] = [];
@@ -613,11 +611,23 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const costThisRebalance = portfolioValue * txCostRate * turnover;
       portfolioValue -= costThisRebalance;
       totalTransactionCosts += costThisRebalance;
+
+      // ── Benchmark rebalance ──
+      // Reset to equal weights. Apply the same transaction costs for fair comparison.
+      let benchTurnover = 0;
+      for (const ticker of ASSETS) {
+        benchTurnover += Math.abs(eqWeight - (benchmarkWeights[ticker] ?? 0));
+      }
+      const benchCost = benchmarkValue * txCostRate * benchTurnover;
+      benchmarkValue -= benchCost;
+      benchmarkWeights = equalWeightAllocations();
+
       rebalanceCount++;
     }
 
     // Retorno diario: suma de retornos ponderados por pesos (que pueden sumar < 1)
     let portfolioReturn = 0;
+    let benchmarkReturn = 0;
     let activeWeight = 0;
 
     // FIX-USINGPROXY (22-Jun-2026): documentado. Esta fórmula clasifica días
@@ -628,9 +638,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     const usingProxy = t < (maxLen - minProxyLen + lookbackDays);
     if (usingProxy) daysWithProxies++; else daysWithRealData++;
 
-    // FIX-AUDIT-R8 3.3: TRUE buy-and-hold benchmark — each asset tracks its own value.
-    // Weights drift with prices. benchmarkValue = sum of individual asset values.
-    const prevBenchmarkValue = benchmarkValue;
+    // Benchmark: Equal Weight with periodic rebalancing.
+    // Weights drift between rebalances; reset to 1/N at each rebalanceDay.
     for (const ticker of ASSETS) {
       const bticker = backtestTickers[ticker];
       const closes = closesHistory[bticker] ?? [];
@@ -641,16 +650,10 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         if (isFinite(dailyRet)) {
           portfolioReturn += (currentAllocations[ticker] ?? 0) * dailyRet;
           activeWeight += (currentAllocations[ticker] ?? 0);
-          // Benchmark: each asset compounds independently (true buy-and-hold)
-          if (benchmarkAssetValues[ticker] !== undefined) {
-            benchmarkAssetValues[ticker] *= (1 + dailyRet);
-          }
+          benchmarkReturn += (benchmarkWeights[ticker] ?? 0) * dailyRet;
         }
       }
     }
-    // Benchmark return = change in total benchmark value
-    benchmarkValue = Object.values(benchmarkAssetValues).reduce((s, v) => s + v, 0);
-    let benchmarkReturn = prevBenchmarkValue > 0 ? benchmarkValue / prevBenchmarkValue - 1 : 0;
 
     // Añadir retorno del efectivo (0%)
     portfolioReturn += currentCash * 0;
@@ -659,8 +662,25 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     if (!isFinite(benchmarkReturn)) benchmarkReturn = 0;
 
     portfolioValue *= (1 + portfolioReturn);
-    // FIX-AUDIT-R8 3.3: benchmarkValue already computed from individual asset values (true B&H).
-    // No double-compound with benchmarkReturn.
+    benchmarkValue *= (1 + benchmarkReturn);
+
+    // Benchmark weight drift (between rebalances): each weight evolves with its asset return
+    let bwSum = 0;
+    for (const ticker of ASSETS) {
+      const bticker = backtestTickers[ticker];
+      const closes = closesHistory[bticker] ?? [];
+      const c0 = closes[t], c1 = closes[t - 1];
+      const dailyRet = (c0 != null && c1 != null && isFinite(c0) && isFinite(c1) && c1 > 0 && c0 > 0)
+        ? c0 / c1 - 1 : 0;
+      benchmarkWeights[ticker] = (benchmarkWeights[ticker] ?? 0) * (1 + dailyRet);
+      bwSum += benchmarkWeights[ticker] ?? 0;
+    }
+    if (bwSum > 0) {
+      for (const ticker of ASSETS) benchmarkWeights[ticker] = (benchmarkWeights[ticker] ?? 0) / bwSum;
+    } else {
+      benchmarkWeights = equalWeightAllocations();
+    }
+
     if (portfolioValue > peakValue) peakValue = portfolioValue;
     const dd = (portfolioValue - peakValue) / peakValue;
 

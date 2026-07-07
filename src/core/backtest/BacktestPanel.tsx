@@ -357,7 +357,7 @@ export default function BacktestPanel({
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", margin: "1rem 0" }}>
         <MetricsCard title="🟣 Olympus Engine" metrics={m} color={COLORS.strategy} />
-        <MetricsCard title="⚖️ Equal Weight B&H" metrics={b} color={COLORS.benchmark} />
+        <MetricsCard title="⚖️ Equal Weight (rebalanceo)" metrics={b} color={COLORS.benchmark} />
       </div>
 
       <div style={styles.alphaBar}>
