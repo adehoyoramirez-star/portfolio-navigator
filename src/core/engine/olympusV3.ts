@@ -253,6 +253,15 @@ export interface OlympusEngineInput {
   // FIX-AUDIT-R9 5: SOX RSI semanal + inflation breakeven para CycleTop detection
   soxRsiWeekly?: number;
   inflationBreakeven?: number;
+  // FIX-CYCLE-DATA (09-Jul-2026): activar cycle top detectors para los 5 activos no-BTC.
+  // Los datos vienen del pipeline marketData → dashboard → engine.
+  uraniumSpotPrice?: number;
+  uraniumLTPrice?: number;
+  siaSalesYoY?: number;
+  wlgRsiWeekly?: number;
+  wlgPERatio?: number;
+  emxcRsiWeekly?: number;
+  emxcPERatio?: number;
   cycleTopSignals?: { ticker: string; allocationMultiplier: number }[];
   regimeLock?: RegimeLock | null;
   blendWeights?: {
@@ -320,7 +329,22 @@ function computeScenarioProbabilities(
 
 // ── MOTOR PRINCIPAL ───────────────────────────────────────────────────────────
 export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
-  const { assets, correlationMatrix, macro } = input;
+  // FIX-R4.4b (09-Jul-2026): sanitizar NaN/Inf en assets ANTES de que
+  // contaminen momentum → Kelly → blend → toda la cadena de allocations.
+  // Sin este guard, un solo returns12m=NaN produce finalAllocation=NaN
+  // para TODOS los activos, y el guard R4.4 al final corrige allocations
+  // pero no totalInvested (que ya fue calculado con pesos corruptos).
+  const sanityAssets = input.assets.map(a => ({
+    ...a,
+    returns12m:     Number.isFinite(a.returns12m)     ? a.returns12m     : 0,
+    returns3m:      Number.isFinite(a.returns3m)      ? a.returns3m      : 0,
+    returns1m:      Number.isFinite(a.returns1m)      ? a.returns1m      : 0,
+    earningsYield:  Number.isFinite(a.earningsYield)  ? a.earningsYield  : 0,
+    volatility:     Number.isFinite(a.volatility) && a.volatility > 0 && a.volatility < 10
+                      ? a.volatility : 0.25,
+  }));
+  const assets = sanityAssets;
+  const { correlationMatrix, macro } = input;
 
   // FIX-ERP-DEFAULT: sin dato explícito del usuario → erpMultiplier = 1.0 (neutro).
   // ANTES: erpRaw ?? 0.02 producía erpMultiplier=1.05 → +5% boost a equity sin justificación.
@@ -757,17 +781,17 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       const ctOutput = detectCycleTops({
         mvrvRatio: input.btcOnChain?.mvrvRatio,
         btcRsiWeekly: input.btcOnChain?.rsiWeekly,
-        uraniumSpotPrice: undefined,
-        uraniumLTPrice: undefined,
-        siaSalesYoY: undefined,
+        uraniumSpotPrice: input.uraniumSpotPrice,
+        uraniumLTPrice: input.uraniumLTPrice,
+        siaSalesYoY: input.siaSalesYoY,
         soxRsiWeekly: input.soxRsiWeekly,
-        bondYield10y: 4.25,    // approx 10y yield; gold detector returns SAFE anyway (no inflationBreakeven)
+        bondYield10y: 4.25,
         inflationBreakeven: input.inflationBreakeven,
         brentOil: macro.wtiOil,
-        wlgRsiWeekly: undefined,
-        wlgPERatio: undefined,
-        emxcRsiWeekly: undefined,
-        emxcPERatio: undefined,
+        wlgRsiWeekly: input.wlgRsiWeekly,
+        wlgPERatio: input.wlgPERatio,
+        emxcRsiWeekly: input.emxcRsiWeekly,
+        emxcPERatio: input.emxcPERatio,
       });
       return ctOutput.signals
         .filter(s => s.allocationMultiplier < 1.0)
@@ -1079,6 +1103,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // Strategy: if any allocation is non-finite, redistribute ITS weight pro-rata across valid neighbors
   //   (preserva sum=1 invariant y shape completo OlympusOutput{} por allocation).
   // If ALL corrupt or array empty: equal-weight fallback.
+  // FIX-R4.4b: también recalcula totalInvested y totalAllocation post-guard.
   const _allocs = result.allocations ?? [];
   if (_allocs.length > 0 && _allocs.some(a => !Number.isFinite(a.finalAllocation))) {
     const _validCount = _allocs.filter(a => Number.isFinite(a.finalAllocation)).length;
@@ -1098,6 +1123,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         return { ...a, finalAllocation: a.finalAllocation + _equalMass };
       });
     }
+    // Recalcular totalInvested y totalAllocation tras el fix de allocations
+    result.totalAllocation = result.allocations.reduce((s, a) => s + a.finalAllocation, 0);
+    result.totalInvested = result.totalAllocation;
   }
   return result;
 }

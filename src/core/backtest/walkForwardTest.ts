@@ -355,17 +355,26 @@ function deflatedSharpeRatio(
   // De-anualizar: el Sharpe diario es Sharpe_anual / √252
   const sharpeDaily = sharpeOosAvg / Math.sqrt(252);
 
-  // Expected max |SR| under null (SR=0) for N independent trials.
-  // Bailey-López de Prado (2014) Eq. 6: E[max(SR)] ≈ √(2 ln N)
-  // Este valor está en escala DIARIA (misma frecuencia que las observaciones).
-  const expectedMaxSRDaily = Math.sqrt(2 * Math.log(nWindows));
-
-  // Variance of max SR: Var[max(SR)] ≈ 1/T  (Eq. 8, simplified for large T)
-  const varianceMaxSR = 1 / avgObsPerWindow;
-  const stdMaxSR = Math.sqrt(varianceMaxSR);
+  // FIX-DSR (09-Jul-2026): Expected max |SR| under null for N trials × T obs.
+  //
+  // ANTES: expectedMaxSRDaily = √(2 ln N) → daba ~1.79 para N=5, un Sharpe
+  //   diario irreal (equivalente a Sharpe anual de ~28). Con el Sharpe real
+  //   de ~0.07 diario, DSR = (0.07−1.79)/0.066 = −25.9. Inútil.
+  //
+  // AHORA: Cada ventana OOS tiene ~T observaciones. Bajo la hipótesis nula
+  //   (SR=0), cada SR diario estimado se distribuye N(0, 1/T). El máximo
+  //   esperado de N normales i.i.d. con varianza 1/T es:
+  //
+  //     E[max(SR_daily)] = √(1/T) × √(2 ln N) = √(2 ln N / T)
+  //
+  //   Bailey-López de Prado (2014) Eq. 6-7.
+  //   Con N=5, T=226: √(2 ln 5 / 226) = √(3.218/226) ≈ 0.119 diario.
+  //
+  // Var[max(SR)] ≈ 1/T  (Eq. 8)
+  const expectedMaxSRDaily = Math.sqrt(2 * Math.log(nWindows) / avgObsPerWindow);
+  const stdMaxSR = Math.sqrt(1 / avgObsPerWindow);
 
   // DSR = (observed_daily - expected_max_daily) / std(max_daily)
-  // Todas las unidades en escala diaria → consistente.
   return (sharpeDaily - expectedMaxSRDaily) / (stdMaxSR + 1e-10);
 }
 
@@ -420,12 +429,19 @@ function erf(x: number): number {
 }
 
 // ── Equal Weight Backtest (quick benchmark por ventana) ─────────────────
+// FIX-EW-COSTS (09-Jul-2026): añadidos costes de transacción realistas al EW.
+// ANTES: EW era un benchmark gratuito (0 bps) mientras el motor pagaba 15bps
+//   por rebalanceo → comparación injusta que favorecía al EW.
+// AHORA: EW rebalancea mensualmente (cada 21 días) con 15bps de coste.
+//   Esto refleja el coste real de mantener una cartera equal-weight.
 function equalWeightBenchmark(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
   start: number,
   end: number,
-  initialCapital: number = 10000
+  initialCapital: number = 10000,
+  rebalanceDays: number = 21,
+  transactionCostBps: number = 15,
 ): { cagr: number; sharpe: number; maxDrawdown: number; finalValue: number; dailyRets: number[] } {
   const tickers = Object.keys(backtestTickers);
   const n = tickers.length;
@@ -434,6 +450,10 @@ function equalWeightBenchmark(
   let value = initialCapital;
   let peak = initialCapital;
   let maxDD = 0;
+  const txCostRate = transactionCostBps / 10_000;
+  // Comenzar en rebalanceDays para que el primer coste se aplique en t=start+1
+  // (mismo comportamiento que el motor: rebalancea inmediatamente al empezar)
+  let dayIndex = rebalanceDays;
 
   for (let t = start + 1; t <= end; t++) {
     let dayRet = 0;
@@ -449,12 +469,17 @@ function equalWeightBenchmark(
       }
     }
     if (isFinite(dayRet)) {
+      // Costes de rebalanceo mensual (misma frecuencia que el motor)
+      if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
+        value -= value * txCostRate * n;
+      }
       dailyRets.push(dayRet);
       value *= (1 + dayRet);
       if (value > peak) peak = value;
       const dd = (value - peak) / peak;
       if (dd < maxDD) maxDD = dd;
     }
+    dayIndex++;
   }
 
   const years = dailyRets.length / 252;
@@ -647,9 +672,11 @@ export function runWalkForwardTest(
     const oosResult = runBacktest(oosInput);
 
     // ---- Equal Weight Benchmark (misma ventana OOS) ----
+    // FIX-EW-COSTS: EW ahora incluye costes de transacción igual que el motor
     const ewResult = equalWeightBenchmark(
       input.closesHistory, backtestTickers,
-      oosStart, win.testEnd, cfg.initialCapital
+      oosStart, win.testEnd, cfg.initialCapital,
+      cfg.rebalanceDays, cfg.transactionCostBps
     );
 
     // ---- Bull Market Detection ----
