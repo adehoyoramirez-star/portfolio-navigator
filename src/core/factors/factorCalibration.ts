@@ -78,7 +78,9 @@ export function calibrateExpectedReturn(
 
   const factorAlpha = momentumContrib + valueContrib + qualityContrib + lowVolContrib;
 
-  const expectedReturn = Math.max(-0.30, Math.min(0.80, RISK_FREE_RATE_EUR + factorAlpha));
+  // FIX-AUDIT-B5: cap alineado con marketData.ts [-0.05, 0.30].
+  // El cap +80% era irreal (implicaba alpha de 77.5%).
+  const expectedReturn = Math.max(-0.05, Math.min(0.30, RISK_FREE_RATE_EUR + factorAlpha));
 
   return {
     expectedReturn,

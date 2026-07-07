@@ -265,12 +265,19 @@ export function covarianceMatrix(returnsSeries: number[][], assetTickers?: reado
   }
   rho = Math.max(0, Math.min(1, rho));
 
-  // ── Paso 4: Mix S + F, luego anualizar (×252) ────────────────────────
+  // ── Paso 4: Mix S + F, luego anualizar (×252 equity, ×365 BTC) ──────
+  // FIX-AUDIT-B1: BTC cotiza 24/7 (365 días/año), no 252. Anualizar su
+  // varianza con ×365. Para covarianzas mixtas (BTC+equity), usar ×252
+  // porque el equity no cotiza fines de semana (los días solapados son 252).
   const covLW: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  const btcTickerIdx = assetTickers ? assetTickers.indexOf('BTC-EUR') : -1;
   for (let i = 0; i < n; i++) {
+    const isBtcRow = i === btcTickerIdx;
     for (let j = 0; j < n; j++) {
+      const isBtcCol = j === btcTickerIdx;
+      const annualFactor = (isBtcRow && isBtcCol) ? 365 : 252;
       const dailyShrunk = (1 - rho) * S[i][j] + rho * F[i][j];
-      covLW[i][j] = isFinite(dailyShrunk) ? dailyShrunk * 252 : (i === j ? 0.04 : 0);
+      covLW[i][j] = isFinite(dailyShrunk) ? dailyShrunk * annualFactor : (i === j ? 0.04 : 0);
     }
   }
 
@@ -618,8 +625,11 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       // BTC trades 24/7 — all calendar days are real trading days
       return dailyReturns(closes);
     }
-    // Non-crypto: filter weekends to avoid ~28.5% zero-return dilution
-    return timestamps.length === closes.length && timestamps.length > 0
+    // Non-crypto: filter weekends to avoid ~28.5% zero-return dilution.
+    // FIX-AUDIT-B6: when timestamps are missing, dailyReturns includes weekend
+    // zeros → use ×365 annualization to compensate. Flagged via _usesDailyFallback.
+    const hasTimestamps = timestamps.length === closes.length && timestamps.length > 0;
+    return hasTimestamps
       ? tradingDayReturns(closes, timestamps)
       : dailyReturns(closes); // fallback si no hay timestamps
   });
@@ -789,16 +799,21 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     const shrunk = (1 - SHRINKAGE_FACTOR) * mleMu + SHRINKAGE_FACTOR * prior;
     // FIX-MU-CLAMP: floor -5% (antes 2%) permite casos bearish genuinos
     // (oro en real rates altos, EM en fuga de capitales, uranio en oversupply).
-    // Cap superior 25% sin cambios. El floor -5% evita μ extremadamente negativos
-    // que llevarían a Kelly=0 para todos los activos simultáneamente.
-    return Math.min(0.25, Math.max(-0.05, shrunk));
+    // FIX-AUDIT-B5: cap alineado con factorCalibration [-0.05, 0.30]
+    // James-Stein shrinkage → expected return en el mismo rango que factor alphas.
+    return Math.min(0.30, Math.max(-0.05, shrunk));
   });
 
   // ====== VOLATILIDADES REALIZADAS ANUALIZADAS ======
   // FIX-AUDIT-R7 MD-1: BTC anualiza ×365 (cotiza 24/7). Resto ×252 (trading days).
+  // FIX-AUDIT-B6: when timestamps are missing for non-BTC assets,
+  // dailyReturns includes weekend zeros → use ×365 to compensate.
   const realizedVols = returnsPerAsset.map((r, idx) => {
     const ticker = ASSETS[idx];
-    const annualFactor = ticker === 'BTC-EUR' ? 365 : 252;
+    const timestamps = yfData[ticker]?.timestamps ?? [];
+    const closesLen = closesHistory[ticker]?.length ?? 0;
+    const hasTimestamps = timestamps.length === closesLen && timestamps.length > 0;
+    const annualFactor = ticker === 'BTC-EUR' ? 365 : (hasTimestamps ? 252 : 365);
     if (r.length < 20) return ticker === 'BTC-EUR' ? 0.60 : 0.25;
     const m = mean(r);
     const historicVol = Math.sqrt(r.reduce((s, v) => s + (v - m) ** 2, 0) / (r.length - 1) * annualFactor);
@@ -931,9 +946,11 @@ function diagonalEwmaCovMatrix(
     const rets = returnsPerAsset[i];
     if (rets.length >= 2) {
       // EWMA variance (λ=0.94) anualizada
+      // FIX-AUDIT-B7: BTC usa ×365 (cotiza 24/7), resto ×252
       let ewmaVar = 0;
       for (const r of rets) ewmaVar = 0.94 * ewmaVar + 0.06 * r * r;
-      variances.push(ewmaVar * 252);
+      const isBtc = ASSETS[i] === 'BTC-EUR';
+      variances.push(ewmaVar * (isBtc ? 365 : 252));
     } else if (i < realizedVols.length && realizedVols[i] > 0) {
       // Fallback: usar realizedVol (ya calculado con EWMA, línea ~760)
       variances.push(realizedVols[i] * realizedVols[i]);

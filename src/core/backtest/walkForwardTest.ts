@@ -469,9 +469,11 @@ function equalWeightBenchmark(
       }
     }
     if (isFinite(dayRet)) {
-      // Costes de rebalanceo mensual (misma frecuencia que el motor)
+      // FIX-AUDIT-B2: coste realista de rebalanceo EW (~5% turnover típico).
+      // ANTES: value * txCostRate * n → 90bps (6× sobrecoste).
+      // AHORA: coste basado en turnover real (~5% del portafolio × txCostRate).
       if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
-        value -= value * txCostRate * n;
+        value -= value * txCostRate * 0.05;
       }
       dailyRets.push(dayRet);
       value *= (1 + dayRet);

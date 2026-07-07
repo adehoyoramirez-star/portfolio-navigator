@@ -250,8 +250,9 @@ export const FACTOR_CONFIG = {
     lowVol:   0.015,
   },
 
-  EXPECTED_RETURN_MIN: -0.30,
-  EXPECTED_RETURN_MAX: 0.80,
+  // FIX-AUDIT-B5: alineados con marketData.ts y factorCalibration.ts [-0.05, 0.30]
+  EXPECTED_RETURN_MIN: -0.05,
+  EXPECTED_RETURN_MAX: 0.30,
 } as const;
 
 // ── FACTOR WEIGHTS DINÁMICOS POR RÉGIMEN ──────────────────────────────────

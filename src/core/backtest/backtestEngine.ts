@@ -504,6 +504,13 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let pendingNewCash = 0;
   let pendingNewRegime: BacktestRegime | null = null;
 
+  // FIX-AUDIT-B3: benchmark también deferre la aplicación de nuevos pesos
+  // al día siguiente, igual que la estrategia (FIX-BT-1).
+  // ANTES: el benchmark reseteaba a EW y usaba esos pesos para el retorno del MISMO día
+  //   → look-ahead bias (capturaba el retorno del día con pesos del cierre).
+  // AHORA: pendingBenchmarkWeights guarda los nuevos pesos para el día siguiente.
+  let pendingBenchmarkWeights: Record<string, number> | null = null;
+
   // FIX-BENCH-EQ-REBAL: Equal Weight with periodic rebalancing (same frequency as engine).
   // Weights drift with prices between rebalancing events.
   // At each rebalanceDay, reset to 1/N and apply turnover costs (same txCostRate as engine).
@@ -551,6 +558,12 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       currentCash = pendingNewCash;
       pendingNewAllocations = null;
       pendingNewRegime = null;
+    }
+
+    // FIX-AUDIT-B3: aplicar pesos del benchmark pendientes (mismo patrón que la estrategia).
+    if (pendingBenchmarkWeights) {
+      benchmarkWeights = pendingBenchmarkWeights;
+      pendingBenchmarkWeights = null;
     }
 
     if (dayIndex % rebalanceDays === 0) {
@@ -620,7 +633,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       }
       const benchCost = benchmarkValue * txCostRate * benchTurnover;
       benchmarkValue -= benchCost;
-      benchmarkWeights = equalWeightAllocations();
+      // FIX-AUDIT-B3: guardar pesos como PENDIENTES (se aplican al día siguiente),
+      // igual que pendingNewAllocations para la estrategia.
+      pendingBenchmarkWeights = equalWeightAllocations();
 
       rebalanceCount++;
     }
@@ -713,9 +728,16 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     CRISIS:      computeRegimeMetrics(regimeReturns.CRISIS),
   };
 
+  // FIX-AUDIT-B4: computar HHI real desde las allocations finales.
+  const finalAllocArray = ASSETS.map(t => currentAllocations[t] ?? 0);
+  const finalHhi = finalAllocArray.some(w => w > 0) ? hhi(finalAllocArray) : 0;
+
+  const strategyMetrics = computeMetrics(strategyDailyReturns, initialCapital, portfolioValue, benchmarkDailyReturns);
+  strategyMetrics.hhi = isFinite(finalHhi) ? finalHhi : 0;
+
   return {
     dailyRecords,
-    metrics:          computeMetrics(strategyDailyReturns, initialCapital, portfolioValue, benchmarkDailyReturns),
+    metrics:          strategyMetrics,
     benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue),
     regimeConditional,
     regimeDays,
@@ -769,7 +791,9 @@ function computeMetrics(dailyRets: number[], initialCapital: number, finalValue:
   const sortinoValue = sortino(clean, RISK_FREE_RATE_ANNUAL, 0);
   const betaValue = benchmarkRets && benchmarkRets.length > 20 ? computeBeta(clean, benchmarkRets) : 1;
   const alphaValue = benchmarkRets && benchmarkRets.length > 20 ? computeAlpha(clean, benchmarkRets, RISK_FREE_RATE_ANNUAL) : 0;
-  const hhiValue = 0; // se calcula por ventana, aquí placeholder — el valor real se actualiza en runBacktest
+  // FIX-AUDIT-B4: HHI computado en runBacktest desde las allocations finales.
+  // Se pasa como parámetro; el placeholder 0 es sobreescrito por el caller.
+  const hhiValue = 0;
   return {
     cagr: isFinite(cagr) ? cagr : 0,
     sharpe: isFinite(sharpe) ? sharpe : 0,
