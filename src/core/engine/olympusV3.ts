@@ -75,7 +75,7 @@ import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 import { detectCycleTops } from "../risk/cycleTopDetector";
-import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, getFactorWeightsByRegime } from "../config/engineConfig";
+import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, getFactorWeightsByRegime } from "../config/engineConfig";
 // FIX-R2-C10: renombrado DISCRETIONARY_OVERLAY. Import usado para allocationProvenance.
 // FIX-AUDIT-R10: allocationProvenance (transparencia del overlay discrecional)
 // FIX-R2-C10: REGIME_TACTICAL_ALLOCATIONS → DISCRETIONARY_OVERLAY
@@ -167,6 +167,10 @@ export interface EngineOutput {
     // Correlation Panic: convergencia de correlaciones
     correlationPanicTriggered: boolean;
     avgCorrelationValue: number;
+    // FIX-POSTMORTEM: absolute trend gates (Oct 2026)
+    absoluteTrendGateActive: boolean;
+    absoluteTrendGateMultiplier: number;
+    absoluteTrendGateReason: string;
     // FIX-AUDIT-R10: transparencia del overlay discrecional
     allocationProvenance: {
       quantWeight: number;
@@ -503,7 +507,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       allocations: empty, regime: "ALL_CASH", masterRegime, correlationPenalty: corrPenalty,
       totalAllocation: 0, totalInvested: 0, volTargetMultiplier: 0, tailRiskOverlay: 1,
       tailRiskActive: false, tailRiskReason: "", engineVersion: ENGINE_VERSION,
-      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
+      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
       coreSignal: { regimeComponent: 0.55 * regimeNumeric, btcComponent: 0.20 * btcNumeric, riskComponent: 0.25 * Math.max(0, riskNumeric), finalScore: coreSignalScore },
@@ -589,16 +593,69 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const totalBlend = blendWeights.reduce((s, w) => s + w, 0) || 1;
   const blendNorm  = blendWeights.map(w => w / totalBlend);
 
-  // ── PRIORITY QUEUE: ORDEN DE REDUCCIÓN DE EXPOSICIÓN ────────────────────
-  // Mayor prioridad (se aplica primero) → Menor prioridad:
-  //   1. Kill Switch L5 (protección de capital, override todo)
-  //   2. tailRisk overlay (VIX + creditSpread sistémico)
-  //   3. Correlation Panic (>0.85)
-  //   4. ERP Trigger (equity-only cap)
-  //   5. Alpha-Boost (solo si 1-4 inactivos)
-  //   6. VolTarget
-  //   7. DCA contracíclico
-  // ─────────────────────────────────────────────────────────────────────────
+  // CAPA 8.7: ABSOLUTE TREND GATES (Post-Mortem Oct 2026) ──────────────────
+// FIX-POSTMORTEM: cierra la brecha entre el motor cross-sectional (BL+HRP)
+// y el riesgo de mercado absoluto. El motor rankea activos relativamente —
+// el "mejor" activo en un bear market sigue teniendo retorno negativo.
+//
+// Tres señales absolutas que el motor ignoraba hasta ahora:
+//   1. AbsTrend Gate: si TODOS los activos tienen returns3m < 0, la
+//      diversificación no protege → cap exposición al 50%
+//   2. BTC Bear Gate: si BTC returns12m < -30% (proxy de BTC < MA200),
+//      el activo más volátil del portfolio está en bear market confirmado
+//      → cap adicional al 35%
+//   3. DXY Risk-Off: si DXY acelera >5% en 3 meses, es tightening
+//      financiero global → -10pp adicional
+//   4. Corr Convergence: si avgCorrelation > 0.60, la diversificación
+//      ya está erosionada → -5pp (antes de llegar al panic >0.85)
+//
+// Floor: 25% — los gates no van a 0; Tail Risk + Kill Switch deciden si
+// hay que ir a cash total.
+// ==========================================================================
+  function computeAbsoluteTrendGates(
+    assets: AssetInput[],
+    dxyTrend: number,
+    avgCorrelation: number | undefined,
+  ): { multiplier: number; reason: string; active: boolean } {
+    let multiplier = 1.0;
+    const reasons: string[] = [];
+
+    // Encontrar BTC para obtener returns12m
+    const btcAsset = assets.find(a => {
+      const n = (a.ticker ?? a.name).toLowerCase();
+      return n.includes('btc') || n.includes('bitcoin');
+    });
+    const btcReturns12m = btcAsset?.returns12m;
+
+    // Gate 1: Absolute Trend — todos los activos negativos en 3 meses
+    if (assets.length > 0 && assets.every(a => a.returns3m < 0)) {
+      multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP);
+      reasons.push(`abs-trend: todos los activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP * 100).toFixed(0)}%`);
+    }
+
+    // Gate 2: BTC Bear Market — returns12m < -30%
+    if (btcReturns12m !== undefined && btcReturns12m < ABSOLUTE_TREND_GATE.BTC_BEAR_THRESHOLD) {
+      multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.BTC_BEAR_CAP);
+      reasons.push(`btc-bear: returns12m ${(btcReturns12m * 100).toFixed(0)}% < ${(ABSOLUTE_TREND_GATE.BTC_BEAR_THRESHOLD * 100).toFixed(0)}% → cap ${(ABSOLUTE_TREND_GATE.BTC_BEAR_CAP * 100).toFixed(0)}%`);
+    }
+
+    // Gate 3: DXY Risk-Off Accelerometer
+    if (dxyTrend > ABSOLUTE_TREND_GATE.DXY_RISK_OFF_THRESHOLD) {
+      multiplier = Math.max(ABSOLUTE_TREND_GATE.FLOOR, multiplier - ABSOLUTE_TREND_GATE.DXY_PENALTY);
+      reasons.push(`dxy-risk-off: DXY +${(dxyTrend * 100).toFixed(1)}% → -${(ABSOLUTE_TREND_GATE.DXY_PENALTY * 100).toFixed(0)}pp`);
+    }
+
+    // Gate 4: Correlation Convergence — early warning (antes de panic >0.85)
+    if (avgCorrelation !== undefined && avgCorrelation > CORRELATION_PANIC_CONFIG.DIVERSIFICATION_COLLAPSE && avgCorrelation <= CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD) {
+      multiplier = Math.max(ABSOLUTE_TREND_GATE.FLOOR, multiplier - ABSOLUTE_TREND_GATE.CORR_EARLY_PENALTY);
+      reasons.push(`corr-convergence: ${(avgCorrelation * 100).toFixed(0)}% → -${(ABSOLUTE_TREND_GATE.CORR_EARLY_PENALTY * 100).toFixed(0)}pp diversificación`);
+    }
+
+    const active = multiplier < 1.0;
+    const reason = reasons.length > 0 ? reasons.join(' | ') : 'all-clear';
+
+    return { multiplier, reason, active };
+  }
   // ── CAPA TÁCTICA POR RÉGIMEN ────────────────────────────────────────────────
   // FIX-OVERPERF: blendToTacticalRatio bajado de 0.60 → 0.50
   // Con 0.60 → BL 60% da ~5% BTC → BTC final ~14% (vs benchmark 14.29%)
@@ -835,6 +892,20 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     : CORRELATION_PANIC_CONFIG.MAX_EXPOSURE;
 
   // ================================================================
+  // 🛡 CAPA 8.7: ABSOLUTE TREND GATES (Post-Mortem Oct 2026)
+  // ================================================================
+  // Aplica multiplicadores sobre totalInvested_alpha basados en señales
+  // de mercado absolutas (no cross-sectional). Detecta "bear market
+  // silencioso": mercado cae -2%/mes sin picos de VIX → el motor
+  // sigue en EXPANSION sin saber que todo baja.
+  const absTrendGate = computeAbsoluteTrendGates(
+    assets,
+    macro.dxyTrend,
+    input.avgCorrelation,
+  );
+  const totalInvested_afterGate = totalInvested_alpha * absTrendGate.multiplier;
+
+  // ================================================================
   // 📉 CAPA 8c: ERP TRIGGER — Equity-Only Cap (FIX-ERP-EQUITY)
   // ============================================================
   // Cuando el ERP cae por debajo del umbral, forzamos una reducción
@@ -869,14 +940,18 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   // ERP cap factor: escala DOWN los activos equity para que equity total ≤ erpMaxExposure.
   // Ej: equityWeight=52%, base=1.0, erpMax=35% → capFactor = 0.35/0.52 = 0.673
-  const erpCapFactor = (isERPTriggered && equityWeight > 0 && totalInvested_alpha > 0)
-    ? Math.min(1.0, erpMaxExposure / (equityWeight * totalInvested_alpha))
+  // FIX-POSTMORTEM: ERP denominator uses totalInvested_afterGate (not _alpha) to prevent
+  // double-reduction when both Absolute Trend Gate and ERP Trigger are active simultaneously.
+  // When the gate already reduced exposure to 50%, ERP should not further reduce from
+  // that already-lowered base — the gate already accounts for the bearish environment.
+  const erpCapFactor = (isERPTriggered && equityWeight > 0 && totalInvested_afterGate > 0)
+    ? Math.min(1.0, erpMaxExposure / (equityWeight * totalInvested_afterGate))
     : 1.0;
 
   // Correlation panic aplica a TODOS los activos (en pánico todo correlaciona)
   const totalInvested_base = isCorrelationPanic
-    ? Math.min(totalInvested_alpha, corrMaxExposure)
-    : totalInvested_alpha;
+    ? Math.min(totalInvested_afterGate, corrMaxExposure)
+    : totalInvested_afterGate;
 
   // totalInvested real: equity usa erpCapFactor, non-equity sin cap
   const actualTotalInvested = relativeWeightsAfterCap.reduce((sum, w, i) =>
@@ -956,6 +1031,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       erpValue:        erpRaw,
       correlationPanicTriggered: isCorrelationPanic,
       avgCorrelationValue: input.avgCorrelation ?? 0,
+      // FIX-POSTMORTEM: absolute trend gates metadata
+      absoluteTrendGateActive: absTrendGate.active,
+      absoluteTrendGateMultiplier: absTrendGate.multiplier,
+      absoluteTrendGateReason: absTrendGate.reason,
       // FIX-AUDIT-R10: transparencia del overlay discrecional
       // effectiveBlendRatio = blendQuantWeight (fracción del output que viene del motor cuantitativo)
       allocationProvenance: (() => {

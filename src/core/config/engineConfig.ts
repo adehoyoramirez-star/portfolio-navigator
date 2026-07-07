@@ -54,6 +54,37 @@ export const CORRELATION_PANIC_CONFIG = {
   MAX_EXPOSURE: 0.50,         // cap forzado al 50%
   CRITICAL_THRESHOLD: 0.95,  // correlación > 95% → peligro extremo
   CRITICAL_EXPOSURE: 0.35,   // cap forzado al 35% en peligro extremo
+  // FIX-POSTMORTEM: diversification collapse at lower threshold (0.60).
+  // When BTC-WLG rolling correlation crosses 0.60, the portfolio's
+  // diversification benefit has already eroded by >50%. This is an
+  // early-warning gate that reduces exposure BEFORE panic levels.
+  DIVERSIFICATION_COLLAPSE: 0.60,      // correlación BTC-WLG > 60% → early convergence
+  DIVERSIFICATION_PENALTY: 0.05,       // -5pp sobre exposure base por debajo de 0.60
+} as const;
+
+// ── ABSOLUTE TREND GATES (Post-Mortem Oct 2026) ──────────────────────────
+// Estos gates cierran la brecha entre el motor cross-sectional (BL+HRP) y
+// el riesgo de mercado real. El motor rankea activos relativamente — el
+// "mejor" activo en un bear market sigue teniendo retorno esperado negativo.
+//
+// Tres señales de mercado absoluto que el motor ignoraba:
+//   1. Todos los activos negativos 3m → la diversificación no protege
+//   2. BTC en bear market (returns12m < -30%) → proxy de BTC < MA200
+//   3. DXY acelerándose (+5%) → dólar fuerte = risk-off global
+//
+// Lógica:
+//   - All-bearish 3m → cap exposición al 50% (cross-sectional useless)
+//   - BTC bear market → cap adicional al 35% (BTC arrastra al portfolio)
+//   - DXY risk-off → -10pp adicional (tightening financiero global)
+//   - Floor absoluto: 25% (nunca ir a 0 por estos gates, Tail Risk decide)
+export const ABSOLUTE_TREND_GATE = {
+  ALL_BEARISH_CAP: 0.50,        // todos los activos returns3m < 0 → max 50%
+  BTC_BEAR_CAP: 0.35,           // BTC returns12m < -30% → max 35%
+  BTC_BEAR_THRESHOLD: -0.30,    // umbral de bear market BTC (12 meses)
+  DXY_RISK_OFF_THRESHOLD: 0.05, // DXY tendencia > 5% → risk-off
+  DXY_PENALTY: 0.10,            // -10pp reduction per DXY gate
+  CORR_EARLY_PENALTY: 0.05,     // -5pp when avgCorrelation > 0.60
+  FLOOR: 0.25,                  // floor absoluto (Tail Risk + Kill Switch deciden más abajo)
 } as const;
 
 // ── KELLY CRITERION ───────────────────────────────────────────────────────
