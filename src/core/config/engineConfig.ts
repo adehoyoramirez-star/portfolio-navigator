@@ -33,9 +33,9 @@ export const ENGINE_CONFIG_VERSION = "3.7.1"; // FIX MATH-02 + A2 intermediate b
 // en los siguientes 6 meses con alta frecuencia (64% desde 1990).
 export const ERP_CONFIG = {
   TRIGGER_THRESHOLD: 0.025,    // 2.5% ERP — señal de warning
-  MAX_EXPOSURE: 0.60,          // Cap forcedo al 60%
+  MAX_EXPOSURE: 0.85,          // Cap forcedo al 85%
   CRITICAL_THRESHOLD: 0.01,    // 1.0% ERP — señal de peligro extremo
-  CRITICAL_EXPOSURE: 0.35,     // Cap forzado al 35% en peligro extremo
+  CRITICAL_EXPOSURE: 0.50,     // Cap forzado al 50% en peligro extremo
 } as const;
 
 // ── CORRELATION PANIC TRIGGER ────────────────────────────────────────────
@@ -51,9 +51,9 @@ export const ERP_CONFIG = {
 //   - No incrementa exposición si ya está por debajo del cap
 export const CORRELATION_PANIC_CONFIG = {
   PANIC_THRESHOLD: 0.85,     // correlación media > 85% → señal de pánico
-  MAX_EXPOSURE: 0.50,         // cap forzado al 50%
+  MAX_EXPOSURE: 0.80,         // cap forzado al 80%
   CRITICAL_THRESHOLD: 0.95,  // correlación > 95% → peligro extremo
-  CRITICAL_EXPOSURE: 0.35,   // cap forzado al 35% en peligro extremo
+  CRITICAL_EXPOSURE: 0.50,   // cap forzado al 80% en peligro extremo
   // FIX-POSTMORTEM: diversification collapse at lower threshold (0.60).
   // When BTC-WLG rolling correlation crosses 0.60, the portfolio's
   // diversification benefit has already eroded by >50%. This is an
