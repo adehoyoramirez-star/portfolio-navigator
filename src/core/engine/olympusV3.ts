@@ -1177,7 +1177,7 @@ function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
 // Con avgCorrelation (opcional), se usa como correlación off-diagonal implícita:
 //   portfolioVar = sum(w_i² * σ_i²) + avgCorr * sum_{i≠j}(w_i * w_j * σ_i * σ_j)
 // Esto da una estimación más realista que el peor/mejor caso.
-function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix?: number[][], avgCorrelation?: number): number {
+export function estimatePortfolioVol(assets: AssetInput[], weights: number[], covMatrix?: number[][], avgCorrelation?: number): number {
   if (covMatrix && covMatrix.length === assets.length) {
     let portfolioVar = 0;
     for (let i = 0; i < assets.length; i++) {

@@ -9,6 +9,8 @@ import { runOlympusEngine, type OlympusEngineInput } from "../core/engine/olympu
 import { calculateQuality, computeQualityUniverseStats, type QualityInput } from "../core/factors/quality";
 import { calculateMomentum } from "../core/factors/momentum";
 import { getMasterRegime, type MasterRegimeInput } from "../core/macro/masterRegime";
+import { getClusterVar } from "../core/risk/hrp";
+import { estimatePortfolioVol, type AssetInput } from "../core/engine/olympusV3";
 
 describe("Pruebas del Motor Olympus Predator", () => {
 
@@ -540,5 +542,266 @@ describe("Hysteresis — aislamiento entre regímenes", () => {
     // Sin hysteresis, penalty debe ser ~1.0 (EXPANSION puro)
     expect(result.regimePenalty).toBeGreaterThan(0.80);
     expect(result.confidence).toBe("HIGH");
+  });
+});
+
+// =====================================================
+// AUDIT C1 — HRP getClusterVar con IVP weights
+// =====================================================
+// Validación matemática del fix C1: Inverse Variance Portfolio (IVP)
+// en vez de equal-weight para calcular la varianza del cluster.
+// Referencia: López de Prado (2016), Hierarchical Risk Parity.
+describe("HRP getClusterVar — IVP weights (audit C1)", () => {
+
+  test("IVP asigna más peso a activos de baja volatilidad", () => {
+    // BTC 60% vol, Bond 15% vol, correlación 0.2
+    const cov = [
+      [0.36, 0.018],   // σ²_BTC = 0.36, cov = 0.60*0.15*0.20 = 0.018
+      [0.018, 0.0225], // σ²_Bond = 0.0225
+    ];
+    // IVP weights: invVar = [1/0.36, 1/0.0225] = [2.78, 44.44]
+    // normalized: [0.0588, 0.9412]
+    // w^T Σ w = 0.0588²*0.36 + 0.9412²*0.0225 + 2*0.0588*0.9412*0.018
+    //        = 0.001244 + 0.019937 + 0.001993 = 0.0232
+    // √0.0232 ≈ 0.152 (15.2% vol del cluster)
+    const varIVP = getClusterVar(cov, [0, 1]);
+    expect(varIVP).toBeGreaterThan(0.02);
+    expect(varIVP).toBeLessThan(0.04);
+
+    // Equal-weight para comparar: w=[0.5, 0.5]
+    // varEW = 0.25*0.36 + 0.25*0.0225 + 2*0.25*0.018
+    //       = 0.09 + 0.005625 + 0.009 = 0.1046
+    // IVP debe ser MUCHO menor (~4.5x) por el peso extremo en bonds (94%)
+    const covEW = [
+      [0.36, 0.018],
+      [0.018, 0.0225],
+    ];
+    // Equal weight: w^T Σ w with w=[0.5, 0.5]
+    let varEW = 0;
+    for (let i = 0; i < 2; i++) {
+      for (let j = 0; j < 2; j++) {
+        varEW += 0.5 * 0.5 * covEW[i][j];
+      }
+    }
+    // IVP debería dar menor varianza que equal-weight
+    expect(varIVP).toBeLessThan(varEW);
+  });
+
+  test("IVP con activos de volatilidad similar → similar a equal-weight", () => {
+    // Dos activos con misma volatilidad (20%), correlación 0.5
+    const cov = [
+      [0.04, 0.02],
+      [0.02, 0.04],
+    ];
+    // invVar = [1/0.04, 1/0.04] = [25, 25]
+    // weights = [0.5, 0.5] (idéntico a equal-weight)
+    const varIVP = getClusterVar(cov, [0, 1]);
+    // Equal-weight: 0.5²*0.04 + 0.5²*0.04 + 2*0.5*0.5*0.02 = 0.01+0.01+0.01 = 0.03
+    expect(varIVP).toBeCloseTo(0.03, 5);
+  });
+
+  test("n=1 → devuelve la varianza del único activo", () => {
+    const cov = [[0.36]];
+    const varIVP = getClusterVar(cov, [0]);
+    // Con n=1, IVP: w=[1.0], var = 1² * 0.36 = 0.36
+    expect(varIVP).toBeCloseTo(0.36, 5);
+  });
+
+  test("n=0 → devuelve 0", () => {
+    const cov = [
+      [0.36, 0.018],
+      [0.018, 0.0225],
+    ];
+    const varIVP = getClusterVar(cov, []);
+    expect(varIVP).toBe(0);
+  });
+
+  test("varianzas near-zero → fallback a equal-weight", () => {
+    // Varianzas casi nulas pero no exactamente cero
+    const cov = [
+      [1e-12, 0],
+      [0, 1e-12],
+    ];
+    const varIVP = getClusterVar(cov, [0, 1]);
+    // 1/1e-12 = 1e12, ambos iguales → weights ≈ [0.5, 0.5]
+    // var = 0.25*1e-12 + 0.25*1e-12 ≈ 5e-13
+    expect(varIVP).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(varIVP)).toBe(true);
+  });
+
+  test("varianza exactamente cero en un activo → ese activo recibe peso 0 en IVP", () => {
+    // Un activo con varianza 0 (imposible en práctica, pero edge case)
+    const cov = [
+      [0.36, 0],
+      [0, 0],     // varianza = 0
+    ];
+    const varIVP = getClusterVar(cov, [0, 1]);
+    // invVar = [1/0.36, 0] = [2.78, 0], totalInvVar=2.78
+    // w = [1.0, 0.0]
+    // var = 1.0² * 0.36 = 0.36 (todo el peso en el activo con varianza > 0)
+    expect(varIVP).toBeCloseTo(0.36, 5);
+  });
+
+  test("todos los activos con varianza near-zero → fallback equal-weight", () => {
+    const cov = [
+      [0, 0],
+      [0, 0],
+    ];
+    const varIVP = getClusterVar(cov, [0, 1]);
+    // Todas las varianzas ≤ 1e-10 → totalInvVar = 0 → fallback equal-weight
+    // var = (0+0+0+0) / 4 = 0
+    expect(varIVP).toBe(0);
+  });
+
+  test("3 activos con distintas volatilidades → IVP correcto", () => {
+    // BTC 60%, SP500 18%, Gold 15%, correlaciones típicas
+    const cov = [
+      [0.36, 0.0432, 0.0135],
+      [0.0432, 0.0324, 0.0054],
+      [0.0135, 0.0054, 0.0225],
+    ];
+    const varIVP = getClusterVar(cov, [0, 1, 2]);
+    // invVar = [1/0.36, 1/0.0324, 1/0.0225] = [2.78, 30.86, 44.44]
+    // totalInvVar = 78.08
+    // w = [0.0356, 0.3953, 0.5691]
+    // Gold (15% vol) recibe más peso, BTC (60% vol) menos
+    expect(varIVP).toBeGreaterThan(0.01);
+    expect(varIVP).toBeLessThan(0.03); // debe ser baja por el peso en Gold
+    expect(Number.isFinite(varIVP)).toBe(true);
+  });
+});
+
+// =====================================================
+// AUDIT C2 — estimatePortfolioVol con avgCorrelation
+// =====================================================
+// Validación matemática del fix C2: el fallback sin covMatrix
+// ahora usa avgCorrelation como off-diagonal implícita en vez
+// de asumir correlación = 0.
+describe("estimatePortfolioVol — avgCorrelation fallback (audit C2)", () => {
+
+  function makeAsset(vol: number): AssetInput {
+    return {
+      name: `Asset_${vol}`,
+      returns12m: 0.10,
+      returns3m: 0.03,
+      returns1m: 0.01,
+      earningsYield: 0.03,
+      volatility: vol,
+      sector: "equity",
+    };
+  }
+
+  test("con covMatrix completa → calcula w^T Σ w exacto", () => {
+    const assets = [makeAsset(0.20), makeAsset(0.15)];
+    const weights = [0.6, 0.4];
+    const cov = [
+      [0.04, 0.009],    // σ²₁=0.04, cov=0.20*0.15*0.30=0.009
+      [0.009, 0.0225],
+    ];
+    // w^T Σ w = 0.6²*0.04 + 0.4²*0.0225 + 2*0.6*0.4*0.009
+    //         = 0.0144 + 0.0036 + 0.00432 = 0.02232
+    // √0.02232 ≈ 0.1494
+    const vol = estimatePortfolioVol(assets, weights, cov);
+    expect(vol).toBeCloseTo(Math.sqrt(0.02232), 5);
+  });
+
+  test("sin covMatrix, sin avgCorrelation → solo diagonal (caso base)", () => {
+    const assets = [makeAsset(0.20), makeAsset(0.15)];
+    const weights = [0.6, 0.4];
+    // Solo diagonal: 0.6²*0.04 + 0.4²*0.0225 = 0.0144 + 0.0036 = 0.018
+    // √0.018 ≈ 0.1342
+    const vol = estimatePortfolioVol(assets, weights);
+    expect(vol).toBeCloseTo(Math.sqrt(0.018), 5);
+  });
+
+  test("sin covMatrix, con avgCorrelation=0.3 → incluye off-diagonal", () => {
+    const assets = [makeAsset(0.20), makeAsset(0.15)];
+    const weights = [0.6, 0.4];
+    const avgCorr = 0.3;
+    // diagonalVar = 0.6²*0.04 + 0.4²*0.0225 = 0.018
+    // offDiagVar = w0*w1*σ0*σ1 + w1*w0*σ1*σ0 (i≠j, ambos pares)
+    //            = 0.6*0.4*0.20*0.15 + 0.4*0.6*0.15*0.20 = 0.0072 + 0.0072 = 0.0144
+    // totalVar = 0.018 + 0.3 * 0.0144 = 0.018 + 0.00432 = 0.02232
+    // √0.02232 ≈ 0.1494
+    const vol = estimatePortfolioVol(assets, weights, undefined, avgCorr);
+    expect(vol).toBeCloseTo(Math.sqrt(0.02232), 5);
+  });
+
+  test("sin covMatrix, con avgCorrelation=0 → mismo que sin avgCorrelation", () => {
+    const assets = [makeAsset(0.20), makeAsset(0.15)];
+    const weights = [0.6, 0.4];
+    // avgCorrelation=0: el guard `avgCorrelation > 0` es false → mismo que sin avgCorr
+    const volWithZero = estimatePortfolioVol(assets, weights, undefined, 0);
+    const volWithout = estimatePortfolioVol(assets, weights);
+    expect(volWithZero).toBeCloseTo(volWithout, 8);
+  });
+
+  test("con avgCorrelation=0.5 la vol es mayor que con avgCorrelation=0.3", () => {
+    const assets = [makeAsset(0.20), makeAsset(0.15)];
+    const weights = [0.6, 0.4];
+    const vol03 = estimatePortfolioVol(assets, weights, undefined, 0.3);
+    const vol05 = estimatePortfolioVol(assets, weights, undefined, 0.5);
+    // Mayor correlación → mayor vol del portafolio
+    expect(vol05).toBeGreaterThan(vol03);
+  });
+
+  test("n=1 → avgCorrelation es irrelevante (no hay off-diagonal)", () => {
+    const assets = [makeAsset(0.25)];
+    const weights = [1.0];
+    // diagonalVar = 1² * 0.0625 = 0.0625, √ = 0.25
+    const volNoAvgCorr = estimatePortfolioVol(assets, weights);
+    const volWithAvgCorr = estimatePortfolioVol(assets, weights, undefined, 0.8);
+    // Con n=1, no hay off-diagonal → ambos deben dar lo mismo
+    expect(volNoAvgCorr).toBeCloseTo(0.25, 5);
+    expect(volWithAvgCorr).toBeCloseTo(0.25, 5);
+  });
+
+  test("avgCorrelation negativo se ignora (guard > 0)", () => {
+    const assets = [makeAsset(0.20), makeAsset(0.15)];
+    const weights = [0.6, 0.4];
+    // avgCorrelation = -0.2 < 0 → mismo que sin avgCorr
+    const volNeg = estimatePortfolioVol(assets, weights, undefined, -0.2);
+    const volNone = estimatePortfolioVol(assets, weights);
+    expect(volNeg).toBeCloseTo(volNone, 8);
+  });
+
+  test("covMatrix con dimensión incorrecta → fallback a diagonal + avgCorrelation", () => {
+    const assets = [makeAsset(0.20), makeAsset(0.15), makeAsset(0.10)];
+    const weights = [0.5, 0.3, 0.2];
+    // covMatrix de 2x2 para 3 assets → no coincide → fallback
+    const badCov = [
+      [0.04, 0.009],
+      [0.009, 0.0225],
+    ];
+    const vol = estimatePortfolioVol(assets, weights, badCov, 0.25);
+    // Debe usar el fallback con avgCorrelation, no romperse
+    expect(vol).toBeGreaterThan(0.05);
+    expect(vol).toBeLessThan(0.30);
+  });
+
+  test("3 activos con avgCorrelation típica → vol coherente", () => {
+    const assets = [makeAsset(0.60), makeAsset(0.18), makeAsset(0.15)];
+    const weights = [0.2, 0.5, 0.3];
+    // Sin correlación: 0.2²*0.36 + 0.5²*0.0324 + 0.3²*0.0225 = 0.0144+0.0081+0.002025 = 0.024525
+    // √0.024525 ≈ 0.1566
+    const volNoCorr = estimatePortfolioVol(assets, weights);
+    expect(volNoCorr).toBeCloseTo(Math.sqrt(0.024525), 5);
+
+    // Con avgCorrelation=0.3:
+    // offDiagVar = sum_{i≠j} w_i * w_j * σ_i * σ_j = ...
+    // offDiagVar:
+    //   i=0,j=1: 0.2*0.5*0.60*0.18 = 0.0108
+    //   i=0,j=2: 0.2*0.3*0.60*0.15 = 0.0054
+    //   i=1,j=0: 0.5*0.2*0.18*0.60 = 0.0108
+    //   i=1,j=2: 0.5*0.3*0.18*0.15 = 0.00405
+    //   i=2,j=0: 0.3*0.2*0.15*0.60 = 0.0054
+    //   i=2,j=1: 0.3*0.5*0.15*0.18 = 0.00405
+    // total offDiagVar = 0.0405
+    // totalVar = 0.024525 + 0.3*0.0405 = 0.024525 + 0.01215 = 0.036675
+    // √0.036675 ≈ 0.1915
+    const volWithCorr = estimatePortfolioVol(assets, weights, undefined, 0.3);
+    expect(volWithCorr).toBeCloseTo(Math.sqrt(0.036675), 5);
+    // Con correlación positiva, la vol debe ser mayor
+    expect(volWithCorr).toBeGreaterThan(volNoCorr);
   });
 });

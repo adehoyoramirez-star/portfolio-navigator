@@ -113,7 +113,7 @@ function quasiDiagonalize(cov: number[][], order: number[]): number[][] {
 // Equal-weight subestima la varianza del cluster cuando activos dentro del mismo
 // tienen volatilidades muy distintas (ej: BTC 60% vs bonos 15%).
 // Con IVP, los activos menos volátiles pesan más → varianza del cluster más realista.
-function getClusterVar(cov: number[][], indices: number[]): number {
+export function getClusterVar(cov: number[][], indices: number[]): number {
   const n = indices.length;
   if (n === 0) return 0;
 
