@@ -988,15 +988,48 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   // ====== CAPA 9: DCA CONTRACÍCLICO ======
   // FIX-V5-5: warning cuando totalPortfolioValue no fue proporcionado.
+  // FIX-R2-F (auditoría institucional ronda 2): DCA guard en Kill Switch L4-L5.
+  //   ANTES: computeDCADecision se llamaba incondicionalmente. En L4 (DD -25%)
+  //     o L5 (DD -32%) el boost podía acelerar compras cuando el motor está
+  //     en "SALIDA CASI TOTAL" / "PROTECCIÓN MÁXIMA" → contradicción con el
+  //     kill switch. El DCA contracíclico NO debe acelerar entradas cuando el
+  //     sistema está en modo preservación de capital extrema.
+  //   AHORA: si killSwitchLevel >= 4, el DCA se desactiva (investAmount=0,
+  //     effectiveIntensity=0, reason explícito). L1-L3 siguen operando
+  //     porque son reducciones preventivas donde comprar la caída tiene sentido.
+  //   Prioridad documentada (mayor → menor):
+  //     1. Kill Switch L5 (protección de capital, override todo)
+  //     2. Kill Switch L4 (salida casi total)
+  //     3. tailRisk overlay (VIX+creditSpread sistémico)
+  //     4. Correlation Panic (>0.85)
+  //     5. ERP Trigger (equity-only cap)
+  //     6. Alpha-Boost (solo si 1-5 inactivos)
+  //     7. VolTarget
+  //     8. DCA contracíclico (desactivado si L4+)
   const dcaDataMissing = (input.totalPortfolioValue === undefined || input.totalPortfolioValue === null);
-  const dcaDecision = computeDCADecision({
-    regime:               (masterRegime.regime as PortfolioRegime) === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime as 'EXPANSION' | 'CONTRACTION' | 'CRISIS',
-    btcCycle,
-    totalPortfolioValue:  input.totalPortfolioValue ?? 0,
-    availableCash:        input.availableCash ?? 0,
-    portfolioVolatility:  coreRealizedVol ?? input.portfolioRealizedVol ?? 0.18,
-    portfolioDrawdown:    input.portfolioDrawdown ?? 0,
-  });
+  const dcaBlockedByKillSwitch = tailRisk.killSwitchLevel >= 4;
+  const dcaDecision = dcaBlockedByKillSwitch
+    ? {
+        investAmount:         0,
+        investPercent:        0,
+        baseIntensity:        0,
+        boostMultiplier:      0,
+        effectiveIntensity:   0,
+        frequency:            'monthly' as const,
+        frequencyDays:        30,
+        riskConstraintActive: true,
+        riskConstraintReason: `🛑 DCA desactivado por Kill Switch L${tailRisk.killSwitchLevel} (${tailRisk.killSwitchName}). Preservación de capital máxima — no acelerar entradas.`,
+        cashConstrained:      false,
+        description:          `DCA bloqueado en Kill Switch L${tailRisk.killSwitchLevel}.`,
+      }
+    : computeDCADecision({
+        regime:               (masterRegime.regime as PortfolioRegime) === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime as 'EXPANSION' | 'CONTRACTION' | 'CRISIS',
+        btcCycle,
+        totalPortfolioValue:  input.totalPortfolioValue ?? 0,
+        availableCash:        input.availableCash ?? 0,
+        portfolioVolatility:  coreRealizedVol ?? input.portfolioRealizedVol ?? 0.18,
+        portfolioDrawdown:    input.portfolioDrawdown ?? 0,
+      });
   const dca = {
     investPercent:      dcaDecision.effectiveIntensity,
     investAmount:       dcaDecision.investAmount,
