@@ -11,12 +11,18 @@ export interface MacroInputs {
   creditSpread: number;
 }
 
+// FIX-AUDIT-T7: tipos legacy — DEPRECATED.
+// AssetInput canónico está en src/core/engine/olympusV3.ts.
+// Estos tipos se mantienen por backward compat; no usar en código nuevo.
+
+/** @deprecated Usar AssetInput de @/core/engine/olympusV3 */
 export interface AssetInput {
   name: string;
   volatility: number;
   riskBudget: number;
 }
 
+/** @deprecated Usar OlympusEngineInput de @/core/engine/olympusV3 */
 export interface EngineInput {
   macro: MacroInputs;
   erp: number;
@@ -27,6 +33,7 @@ export interface EngineInput {
   assets: AssetInput[];
 }
 
+/** @deprecated Usar EngineOutput de @/core/engine/olympusV3 */
 export interface EngineOutput {
   regime: {
     regime: Regime;

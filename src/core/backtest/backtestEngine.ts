@@ -70,6 +70,12 @@ export interface BacktestInput {
   rebalanceDays?: number;
   initialCapital?: number;
   transactionCostBps?: number;
+  // FIX-AUDIT-T4: blendWeights opcionales para simular autocorrección del motor.
+  // El dashboard los inyecta cuando WFO detecta overfitting.
+  blendWeights?: {
+    BL?: number; HRP?: number; MIN_VAR?: number; KELLY?: number;
+    kelly?: number; hrp?: number; markowitz?: number;
+  };
 }
 
 export type BacktestRegime = "EXPANSION" | "CONTRACTION" | "CRISIS";
@@ -329,8 +335,14 @@ function computeAssetFactors(
   const dailyRet = (timestamps && timestamps.length >= closes.length && ticker !== 'BTC-EUR')
     ? tradingDayReturns(window, timestamps.slice(Math.max(0, t - lookbackDays), t))
     : dailyReturns(window);
+  // FIX-AUDIT-T2: alinear cálculo de vol con dashboard (70% EWMA + 30% histórica).
+  // ANTES: solo std dev histórica → subestimaba clustering de volatilidad.
   const annualFactor = ticker === 'BTC-EUR' ? 365 : 252;
-  const vol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * annualFactor)) : 0.25;
+  const historicVol = dailyRet.length > 20 ? Math.sqrt(Math.max(0, variance(dailyRet) * annualFactor)) : 0.25;
+  let ewmaVariance = 0;
+  for (const r of dailyRet) ewmaVariance = 0.94 * ewmaVariance + 0.06 * r * r;
+  const ewmaVol = Math.sqrt(Math.max(0, ewmaVariance * annualFactor));
+  const vol = dailyRet.length > 20 ? ewmaVol * 0.70 + historicVol * 0.30 : 0.25;
   // FIX-EY-01: earningsYield ya NO es 0 para todos los activos.
   // Usamos constantes por clase de activo para que Value factor y ERP trigger funcionen en backtest.
   // Sin esto, el backtest era ciego al factor Value y al ERP equity cap.
@@ -369,7 +381,8 @@ function computeAllocationsWithRegime(
   cewsHistory?: CEWSDataPoint[],
   regimeHistory?: { timestamp: string; regime: string }[],
   timestampsHistory?: Record<string, number[]>,
-  useDynamicCovariance?: boolean
+  useDynamicCovariance?: boolean,
+  blendWeights?: BacktestInput['blendWeights'],
 ): {
   allocations: Record<string, number>;
   regime: BacktestRegime;
@@ -440,6 +453,7 @@ function computeAllocationsWithRegime(
     cewsHistory: updatedCews,
     regimeHistory,
     avgCorrelation: macro.avgCorrelation,
+    blendWeights,
   });
 
   // ── 6. Extraer allocations del engine output ──
@@ -591,7 +605,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         cewsHistory,
         regimeHistory,
         input.timestampsHistory,
-        input.useDynamicCovariance
+        input.useDynamicCovariance,
+        input.blendWeights
       );
       // FIX-REGIME-TRACKING (22-Jun-2026): añadir en cada rebalanceo.
       // Usar dayIndex (relativo) para generar timestamps secuenciales sin futuro.

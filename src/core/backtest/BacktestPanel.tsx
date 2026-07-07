@@ -89,7 +89,8 @@ export default function BacktestPanel({
         lookbackDays,
         rebalanceDays,
         initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
-        transactionCostBps: 10,
+        transactionCostBps: 15,
+        useDynamicCovariance: false,
       });
     }
 
@@ -219,7 +220,8 @@ export default function BacktestPanel({
       lookbackDays,
       rebalanceDays,
       initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
-      transactionCostBps: 10,
+      transactionCostBps: 15,
+      useDynamicCovariance: false,
     });
   }, [marketData, lookbackDays, rebalanceDays, currentVix, currentCreditSpread, portfolioInitialValue, currentErpValue, currentAvgCorrelation, csvData, dataSource]);
 

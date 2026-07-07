@@ -33,13 +33,16 @@
 
 // FIX-CRÍTICO-2: importar FACTOR_CONFIG desde engineConfig como única fuente de verdad.
 import { FACTOR_CONFIG } from "../config/engineConfig";
+import { RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
 
 // Re-exportar para compatibilidad con código que importaba FACTOR_PREMIA directamente
 // DEPRECATED: usar FACTOR_CONFIG.FACTOR_PREMIUMS en código nuevo
 export const FACTOR_PREMIA = FACTOR_CONFIG.FACTOR_PREMIUMS;
 
-// Tasa libre de riesgo de referencia (EUR, short-term)
-const RISK_FREE_RATE_EUR = 0.025; // 2.5% — euribor promedio largo plazo
+// FIX-AUDIT-T1: tasa libre de riesgo unificada con constants.ts.
+// ANTES: RISK_FREE_RATE_EUR = 0.025 hardcodeado → inconsistente con constants.ts (0.04).
+// AHORA: importada de constants.ts → misma rf para expected returns y Sharpe ratio.
+const RISK_FREE_RATE_EUR = RISK_FREE_RATE_ANNUAL; // 0.04 — fuente única de verdad en constants.ts
 
 // ── FUNCIÓN PRINCIPAL ──────────────────────────────────────────────────────
 

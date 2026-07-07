@@ -451,8 +451,10 @@ function equalWeightBenchmark(
   let peak = initialCapital;
   let maxDD = 0;
   const txCostRate = transactionCostBps / 10_000;
-  // Comenzar en rebalanceDays para que el primer coste se aplique en t=start+1
-  // (mismo comportamiento que el motor: rebalancea inmediatamente al empezar)
+  // FIX-AUDIT-T5: coste basado en turnover EXACTO como backtestEngine.ts.
+  // ANTES: value * txCostRate * 0.05 (5% fijo) → inconsistente.
+  // AHORA: calcula ∑|eqWeight - driftedWeight| (misma fórmula que backtestEngine).
+  let currentBenchWeights: Record<string, number> = Object.fromEntries(tickers.map(t => [t, w]));
   let dayIndex = rebalanceDays;
 
   for (let t = start + 1; t <= end; t++) {
@@ -469,11 +471,35 @@ function equalWeightBenchmark(
       }
     }
     if (isFinite(dayRet)) {
-      // FIX-AUDIT-B2: coste realista de rebalanceo EW (~5% turnover típico).
-      // ANTES: value * txCostRate * n → 90bps (6× sobrecoste).
-      // AHORA: coste basado en turnover real (~5% del portafolio × txCostRate).
+      // FIX-AUDIT-T5: coste basado en turnover EXACTO como backtestEngine.ts.
+      // ANTES: value * txCostRate * 0.05 (5% fijo) → inconsistente.
+      // AHORA: ∑|eqWeight - driftedWeight| cada rebalanceo.
       if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
-        value -= value * txCostRate * 0.05;
+        let benchTurnover = 0;
+        for (const ticker of tickers) {
+          benchTurnover += Math.abs(w - (currentBenchWeights[ticker] ?? 0));
+        }
+        value -= value * txCostRate * benchTurnover;
+        currentBenchWeights = Object.fromEntries(tickers.map(t => [t, w]));
+      }
+      // Drift weights with daily returns
+      let bwSum = 0;
+      for (const ticker of tickers) {
+        const bt = backtestTickers[ticker];
+        const closes = closesHistory[bt] ?? [];
+        if (t < closes.length) {
+          const c0 = closes[t - 1];
+          const c1 = closes[t];
+          if (c0 > 0 && c1 > 0 && isFinite(c0) && isFinite(c1)) {
+            currentBenchWeights[ticker] = (currentBenchWeights[ticker] ?? 0) * (c1 / c0);
+            bwSum += currentBenchWeights[ticker] ?? 0;
+          }
+        }
+      }
+      if (bwSum > 0) {
+        for (const ticker of tickers) currentBenchWeights[ticker] = (currentBenchWeights[ticker] ?? 0) / bwSum;
+      } else {
+        currentBenchWeights = Object.fromEntries(tickers.map(t => [t, w]));
       }
       dailyRets.push(dayRet);
       value *= (1 + dayRet);
