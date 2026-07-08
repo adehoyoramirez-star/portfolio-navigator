@@ -57,8 +57,10 @@ export interface MarketData {
   // VIX percentiles para contexto histórico
   vixPercentile80: number;
   vixPercentile20: number;
-  // Retornos esperados anualizados por activo (orden = ASSETS)
+  // Retornos esperados anualizados por activo (orden = ASSETS) — James-Stein shrunk (φ=0.65)
   expectedReturns: number[];
+  // Retornos históricos MLE sin shrinkage (orden = ASSETS) — para Monte Carlo y proyecciones forward-looking
+  mleReturns: number[];
   // Retornos históricos por períodos por activo (orden = ASSETS)
   returns12m: number[];
   returns3m: number[];
@@ -804,6 +806,20 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     return Math.min(0.30, Math.max(-0.05, shrunk));
   });
 
+  // ====== MLE RETURNS — sin shrinkage, para Monte Carlo y proyecciones ======
+  // El James-Stein shrinkage es una herramienta de regularización para el optimizador
+  // (evita over-betting en activos con μ histórico ruidoso). Pero el Monte Carlo
+  // debe proyectar con la mejor estimación forward-looking: la media histórica (MLE).
+  // Usar μ shrunk en Monte Carlo subestima el retorno esperado en ~40-60%.
+  const mleReturns = ASSETS.map((ticker, idx) => {
+    const r = returnsPerAsset[idx];
+    const annualFactor = ticker === 'BTC-EUR' ? 365 : 252;
+    if (r.length < 20) return LONG_RUN_PRIORS[ticker] ?? 0.08;
+    const mleMu = mean(r) * annualFactor;
+    // Mismo clamp que expectedReturns [-0.05, 0.30] pero SIN shrinkage
+    return Math.min(0.30, Math.max(-0.05, mleMu));
+  });
+
   // ====== VOLATILIDADES REALIZADAS ANUALIZADAS ======
   // FIX-AUDIT-R7 MD-1: BTC anualiza ×365 (cotiza 24/7). Resto ×252 (trading days).
   // FIX-AUDIT-B6: when timestamps are missing for non-BTC assets,
@@ -881,6 +897,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       vixPercentile80: vixP80,
       vixPercentile20: vixP20,
       expectedReturns,
+      mleReturns,
       returns12m,
       returns3m,
       returns1m,

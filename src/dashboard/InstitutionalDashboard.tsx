@@ -1329,13 +1329,19 @@ soxRsiWeekly,
     const regimePenalty = engineResult.masterRegime.regimePenalty ?? 1;
 
     if (marketData?.expectedReturns && marketData.expectedReturns.length > 0) {
+      // FIX-MC-MLE: usar mleReturns (MLE sin shrinkage) para Monte Carlo.
+      // James-Stein es para el optimizador (evitar over-betting).
+      // Monte Carlo proyecta con la mejor estimación forward-looking: μ histórico real.
+      const muSource = marketData.mleReturns && marketData.mleReturns.length > 0
+        ? marketData.mleReturns
+        : marketData.expectedReturns;
       const weightedJS = ASSETS.reduce((acc, ticker, i) => {
         const alloc = engineResult.allocations.find(
           a => a.name === portfolio.assets.find(p => p.ticker === ticker)?.name
         );
         const w = alloc?.finalAllocation ?? (1 / ASSETS.length);
-        const muJS = marketData.expectedReturns[i] ?? 0.08;
-        return acc + muJS * w;
+        const mu = muSource[i] ?? 0.08;
+        return acc + mu * w;
       }, 0);
       const capped = Math.min(0.25, Math.max(0.01, weightedJS));
       return capped * regimePenalty;
@@ -1377,7 +1383,8 @@ soxRsiWeekly,
         return alloc?.finalAllocation ?? (1 / ASSETS.length);
       });
       const mus = ASSETS.map((_, i) => {
-        const raw = marketData!.expectedReturns?.[i] ?? muCapped;
+        // FIX-MC-MLE: ruta multivariante también usa mleReturns (sin shrinkage)
+        const raw = marketData!.mleReturns?.[i] ?? marketData!.expectedReturns?.[i] ?? muCapped;
         return Math.min(0.25, Math.max(-0.05, raw));
       });
       const sigmas = ASSETS.map((_, i) => (marketData!.realizedVols?.[i] ?? portfolioVol));
@@ -1880,7 +1887,7 @@ soxRsiWeekly,
               {(Math.min(0.25, expectedReturn) * 100).toFixed(1)}%
             </div>
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>
-              anual ajustado régimen · cap 25%
+              MLE histórico (sin shrinkage) · cap 25%
             </div>
           </div>
 
