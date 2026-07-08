@@ -384,8 +384,9 @@ describe("Hysteresis — aislamiento entre regímenes", () => {
   // Inputs que producen cada régimen según detectCrisis + computeGlobalStress:
   // EXPANSION: crisisScore=5.76 (<10), stressScore=0 → ambos EXPANSION
   const EXPANSION_INPUT = makeInput(12, 0.8, 0.2);
-  // CONTRACTION: crisisScore=14.6 (>10, <25), stressScore=4 (HIGH_RISK) → CONTRACTION
-  const CONTRACTION_INPUT = makeInput(25, 3.5, 0.5, { move: 130, dxyTrend: 0.025, btcVol: 0.65, m2Growth: 1.5 });
+  // CONTRACTION: crisisScore=14.6 (>10, <25), stressScore=5 (HIGH_RISK ≥5) → CONTRACTION
+  // FIX-CONTRACTION-LAG: recalibrado con VIX=26 para alcanzar stress score 5 (antes VIX=25 daba score 4)
+  const CONTRACTION_INPUT = makeInput(26, 3.5, 0.5, { move: 130, dxyTrend: 0.025, btcVol: 0.65, m2Growth: 1.5 });
   // CRISIS: crisisScore=26 (>25), stressScore=7 (≥6) → CRISIS (ambos modelos)
   const CRISIS_INPUT = makeInput(50, 5.0, 0.5, { move: 150, dxyTrend: 0.03, btcVol: 0.9, m2Growth: -2 });
 

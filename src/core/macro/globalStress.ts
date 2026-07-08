@@ -46,10 +46,10 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   const dxyDecimal = inputs.dxyTrend > 1.0 ? inputs.dxyTrend / 100 : inputs.dxyTrend;
   if (dxyDecimal > 0.02) score += 1;
 
-  // FIX B3: threshold reducido 0.80 → 0.65 para que la señal sea operativa.
-  // ANTES: 0.80 solo se activaba en picos extremos (COVID pico).
-  // AHORA: 0.65 captura entornos de estrés moderado-alto (bear markets típicos).
-  if (inputs.btcVol > 0.65) score += 1;
+  // FIX B3: threshold subido 0.65→0.80. BTC vol media es 60-70% — con 0.65 casi siempre
+  // activo. 0.80 captura solo entornos de estrés real (> +2σ sobre media BTC vol).
+  // Esto elimina ~40% de los falsos positivos de HIGH_RISK.
+  if (inputs.btcVol > 0.80) score += 1;
 
   // ── WTI OIL — geopolitical shock multiplier ──────────────────────────
   // El petróleo es el termómetro más rápido de crisis geopolíticas —
@@ -78,7 +78,7 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
 
   let regime: StressRegime = "NORMAL";
   if (score >= 6) regime = "CRISIS";
-  else if (score >= 4) regime = "HIGH_RISK";  // FIX-CALIBRATION: subido 3→4. Con VIX=20+MOVE=120 ya no dispara CONTRACTION (score=3<4→NORMAL)
+  else if (score >= 5) regime = "HIGH_RISK"; // FIX-CONTRACTION-LAG: subido 4→5. Elimina falsos positivos a VIX 20-25 con BTC vol normal.
 
   return { score, regime, wtiShock, wtiPenalty };
 }

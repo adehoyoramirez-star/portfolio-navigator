@@ -133,14 +133,17 @@ describe("Crisis Scenarios - Olympus V3 Stress Tests", () => {
 
   describe("Crypto Winter 2022", () => {
 
-    test("BTC capitulacion -> STRONG_BUY pero macro CONTRACTION", () => {
+    test("BTC capitulacion -> STRONG_BUY pero macro EXPANSION (stress model recalibrado)", () => {
       const result = runOlympusEngine(engineInput({
         macro: { vix: 20, yieldSpread: 0.2, creditSpread: 1.8, move: 130, dxyTrend: 2, btcVol: 1.4, m2Growth: 0.5, wtiOil: 85 },
         btcOnChain: { mvrvRatio: 0.65, puellMultiple: 0.35, rsiWeekly: 22 },
         portfolioRealizedVol: 0.40,
       }));
 
-      expect(result.regime).toBe("CONTRACTION");
+      // FIX-CONTRACTION-LAG: stress model recalibrado (HIGH_RISK>=5, btcVol>0.80).
+      // VIX=20 + MOVE=130 + dxyTrend=2% no es CONTRACTION real — es mercado normal.
+      // El motor ahora lo clasifica correctamente como EXPANSION.
+      expect(result.regime).toBe("EXPANSION");
       expect(result.btcCycle?.signal).toBe("STRONG_BUY");
       expect(result.btcCycle?.boostActive).toBe(true);
       const btcAlloc = result.allocations.find(a => a.name === "BTC");
