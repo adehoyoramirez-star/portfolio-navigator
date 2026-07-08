@@ -24,7 +24,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Core React ──────────────────────────────────────────────────────────
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { fetchCryptoSignals } from "@/lib/directApis";
 // NOTE: Telegram, Gemini, Mistral/AI-intelligence removed per R3 cleanup (July 2026).
 // All AI intelligence features (telegram-alerts, ai-intelligence, mistralAI) have been eliminated.
@@ -256,9 +256,24 @@ const formatCurrency = (value: number): string => {
   // 100% = todo Olympus. 80% = 80% Olympus + 20% BTC directo.
   // Este slider controla la EJECUCIÓN REAL: afecta rebalanceo, Monte Carlo y
   // sugerencias de trading. NO es solo visualización histórica.
-  const [olympusPct, setOlympusPct] = useState(() => {
-    try { const v = localStorage.getItem('olympus_composite_pct'); return v ? Number(v) : 100; } catch { return 100; }
+  const [olympusPct, setOlympusPctRaw] = useState(() => {
+    try { const v = Number(localStorage.getItem('olympus_composite_pct')); return (v >= 0 && v <= 100) ? v : 100; } catch { return 100; }
   });
+
+  // GUARD: evitar liquidación accidental al bajar olympusPct de 10%
+  const setOlympusPct = useCallback((newPct: number) => {
+    const safePct = Math.min(100, Math.max(0, newPct));
+    if (safePct < 10 && olympusPct >= 10) {
+      const confirmed = window.confirm(
+        `⚠️ Composite Strategy: ${safePct}% Olympus\n\n` +
+        `Esto movería ${100 - safePct}% de tu cartera a BTC directo (buy & hold),\n` +
+        `lo que puede implicar vender otros activos para comprar BTC.\n\n` +
+        `¿Confirmas este cambio?`
+      );
+      if (!confirmed) return;
+    }
+    setOlympusPctRaw(safePct);
+  }, [olympusPct]);
 
   // FIX-AUDIT-R2 N4: eliminado leak a window.__marketData.
   // ANTES: cualquier extensión del navegador o XSS podía leer posiciones, allocations y datos macro.
@@ -1400,9 +1415,14 @@ soxRsiWeekly,
     const hasEngineAllocs = engineResult && engineResult.allocations.length > 0;
 
     if (hasCovMatrix && hasEngineAllocs && ASSETS.length > 1) {
-      const weights = ASSETS.map(ticker => {
+      // COMPOSITE STRATEGY: pesos compuestos con BTC satellite para Monte Carlo
+      const olyPct = olympusPct / 100;
+      const btcSat = (100 - olympusPct) / 100;
+      const btcIdx = ASSETS.indexOf('BTC-EUR' as any);
+      const weights = ASSETS.map((ticker, i) => {
         const alloc = engineResult!.allocations.find(a => a.name === portfolio.assets.find(p => p.ticker === ticker)?.name);
-        return alloc?.finalAllocation ?? (1 / ASSETS.length);
+        const engineW = alloc?.finalAllocation ?? (1 / ASSETS.length);
+        return i === btcIdx ? (engineW * olyPct) + btcSat : engineW * olyPct;
       });
       const mus = ASSETS.map((_, i) => {
         // FIX-MC-MLE: ruta multivariante también usa mleReturns (sin shrinkage)
@@ -1410,7 +1430,6 @@ soxRsiWeekly,
         return Math.min(0.25, Math.max(-0.05, raw));
       });
       const sigmas = ASSETS.map((_, i) => (marketData!.realizedVols?.[i] ?? portfolioVol));
-      const btcIdx = ASSETS.indexOf('BTC-EUR' as any);
 
       // FIX-MC-CASH: usar monthlyInvested (solo parte invertida) y sumar cash al final
       const multiResult = monteCarloJumpDiffusion(
@@ -1456,7 +1475,7 @@ soxRsiWeekly,
     return uniResult;
   }, [totalPortfolioValue, cashReserve, monthlyInjection, expectedReturn, portfolioVol,
     jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, years,
-    marketData?.covMatrix, marketData?.expectedReturns, engineResult, enableJumps, cashReserve]);  // FIX-MC-05 + FIX-MC-CASH: cashReserve en deps
+    marketData?.covMatrix, marketData?.expectedReturns, engineResult, enableJumps, cashReserve, olympusPct]);  // FIX-MC-05 + FIX-MC-CASH: cashReserve en deps + olympusPct para composite
 
   const { mean: meanValue, median: medianValue, p25, p75, worst5, best95, simulations } = jumpSim;
 
@@ -1985,6 +2004,17 @@ soxRsiWeekly,
             </div>
             <div style={{ fontSize: "0.62rem", color: "#6b7280" }}>
               {marketData ? "precios + covMatrix reales" : "pendiente actualización"}
+            </div>
+          </div>
+          <div style={{ background: olympusPct < 100 ? "#1a1a0a" : "#111827", border: olympusPct < 100 ? "2px solid #f59e0b" : "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem", gridColumn: "span 2" }}>
+            <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>🚀 COMPOSITE STRATEGY</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+              <span style={{ color: "#818cf8", fontSize: "0.75rem", fontWeight: "bold" }}>{olympusPct}% Olympus</span>
+              <input type="range" min={0} max={100} value={olympusPct} onChange={e => setOlympusPct(Number(e.target.value))} style={{ flex: 1, accentColor: "#6366f1", height: 6 }} />
+              <span style={{ color: "#f59e0b", fontSize: "0.75rem", fontWeight: "bold" }}>{100 - olympusPct}% BTC</span>
+            </div>
+            <div style={{ fontSize: "0.58rem", color: olympusPct < 100 ? "#f59e0b" : "#6b7280" }}>
+              {olympusPct === 100 ? "100% motor — sin BTC satellite" : olympusPct + "% motor + " + (100-olympusPct) + "% BTC buy & hold"}
             </div>
           </div>
         </div>
