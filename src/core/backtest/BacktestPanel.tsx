@@ -21,6 +21,8 @@ interface BacktestPanelProps {
   portfolioInitialValue: number;
   erpValue: number;
   avgCorrelation?: number;
+  olympusPct?: number;
+  setOlympusPct?: (v: number) => void;
 }
 
 const COLORS = {
@@ -37,6 +39,8 @@ export default function BacktestPanel({
   marketData, currentVix, currentCreditSpread, portfolioInitialValue,
   erpValue: currentErpValue,
   avgCorrelation: currentAvgCorrelation,
+  olympusPct: olympusPctProp,
+  setOlympusPct: setOlympusPctProp,
 }: BacktestPanelProps) {
 
   const [rebalanceDays, setRebalanceDays] = useState(126);
@@ -45,7 +49,10 @@ export default function BacktestPanel({
   const [dataSource, setDataSource]       = useState<"yahoo" | "csv">("csv");
   const [csvData, setCsvData]             = useState<CSVBacktestData | null>(null);
   const [csvLoading, setCsvLoading]       = useState(false);
-  const [olympusPct, setOlympusPct]       = useState(80); // % Olympus en Composite Strategy (resto = BTC directo)
+  // COMPOSITE STRATEGY: usar prop del padre si existe, si no usar estado interno
+  const [olympusPctLocal, setOlympusPctLocal] = useState(80);
+  const olympusPct = olympusPctProp ?? olympusPctLocal;
+  const setOlympusPct = setOlympusPctProp ?? setOlympusPctLocal;
 
   // Load CSV data when dataSource switches to "csv"
   useEffect(() => {

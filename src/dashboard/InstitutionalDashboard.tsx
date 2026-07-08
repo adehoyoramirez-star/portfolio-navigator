@@ -251,6 +251,15 @@ const formatCurrency = (value: number): string => {
   const [apiError, setApiError] = useState<string | null>(null);
   const [marketData, setMarketData] = useState<MarketData | null>(null);
 
+  // ── COMPOSITE STRATEGY: Olympus Core + BTC Satellite ──────────────────
+  // Controla qué % del capital gestiona Olympus (resto = BTC buy & hold).
+  // 100% = todo Olympus. 80% = 80% Olympus + 20% BTC directo.
+  // Este slider controla la EJECUCIÓN REAL: afecta rebalanceo, Monte Carlo y
+  // sugerencias de trading. NO es solo visualización histórica.
+  const [olympusPct, setOlympusPct] = useState(() => {
+    try { const v = localStorage.getItem('olympus_composite_pct'); return v ? Number(v) : 100; } catch { return 100; }
+  });
+
   // FIX-AUDIT-R2 N4: eliminado leak a window.__marketData.
   // ANTES: cualquier extensión del navegador o XSS podía leer posiciones, allocations y datos macro.
   // Surface de ataque innecesario en producción. Para debug usar React DevTools.
@@ -1127,6 +1136,11 @@ soxRsiWeekly,
     try { localStorage.setItem('olympus_manual_vols', JSON.stringify(manualVols)); } catch {}
   }, [manualVols]);
 
+  // Persist Composite Strategy olympusPct
+  useEffect(() => {
+    try { localStorage.setItem('olympus_composite_pct', String(olympusPct)); } catch {}
+  }, [olympusPct]);
+
 
 
 
@@ -1194,14 +1208,22 @@ soxRsiWeekly,
     // REAL FIX: en ALL_CASH, generar SELL signals manuales para todos los activos con shares>0
     // a 100% (liquidation total), priority HIGH, descartando BUY suggestions del base output.
     if (!engineResult) return null;
+    // COMPOSITE STRATEGY: calcular composite allocations inline
+    const olyPct = olympusPct / 100;
+    const btcSat = (100 - olympusPct) / 100;
     const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
       const alloc = engineResult.allocations.find(a => a.name === asset.name);
+      const engineAlloc = alloc?.finalAllocation ?? 0;
+      const isBtc = asset.ticker === 'BTC-EUR';
+      const compositeAlloc = isBtc
+        ? (engineAlloc * olyPct) + btcSat
+        : engineAlloc * olyPct;
       return {
         ticker: asset.ticker,
         name: asset.name,
         price: asset.price,
         shares: asset.shares,
-        targetAllocation: alloc?.finalAllocation ?? 0,
+        targetAllocation: compositeAlloc,
       };
     });
     const baseRebalance = computeRebalanceSuggestions(
@@ -2530,6 +2552,8 @@ soxRsiWeekly,
         portfolioInitialValue={totalPortfolioValue}
         erpValue={erpValue}
         avgCorrelation={dynamicCovResult?.avgCorrelation}
+        olympusPct={olympusPct}
+        setOlympusPct={setOlympusPct}
       />
 
       {portfolioAnalytics && (
