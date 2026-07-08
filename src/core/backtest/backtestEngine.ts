@@ -630,6 +630,13 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       pendingNewRegime = result.regime;
       pendingNewCash = result.cash;
 
+      // FIX-FAST-EXIT: si VIX lleva 5+ dias < 22, forzar EXPANSION aunque el motor diga CONTRACTION.
+      // El stress model genera falsos positivos (HIGH_RISK a VIX 20-25). Si VIX ya bajo,
+      // la contraccion termino — no quedarse atrapado perdiendo el rebote.
+      if (pendingNewRegime === 'CONTRACTION' && computeLowVixStreak(vixArray, t, 22, 5)) {
+        pendingNewRegime = 'EXPANSION';
+      }
+
       // Costes de transacción: se aplican en el momento del rebalanceo
       // (cuando se decide girar la cartera), no en el día siguiente.
       let turnover = 0;
@@ -742,6 +749,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const labels: BacktestRegime[] = [crisisResult.regime, stressLabel, 'EXPANSION'];
       const dailyRegime = labels.reduce((a, b) => prio[a] >= prio[b] ? a : b);
       currentRegime = dailyRegime;
+
+      // FIX-FAST-EXIT: mismo override diario — no esperar al proximo rebalanceo para salir de CONTRACTION
+      if (currentRegime === 'CONTRACTION' && computeLowVixStreak(vixArray, t, 22, 5)) {
+        currentRegime = 'EXPANSION';
+      }
     }
 
     regimeReturns[currentRegime].push(portfolioReturn);
@@ -886,6 +898,16 @@ function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
 }
 
 // Mínima varianza (réplica del helper en olympusV3)
+// ── FAST EXIT: helper para contar dias consecutivos VIX < umbral ──
+function computeLowVixStreak(vixArray: number[], t: number, threshold: number, minDays: number): boolean {
+  if (t < minDays - 1) return false;
+  for (let i = 0; i < minDays; i++) {
+    const v = vixArray[t - i];
+    if (v === undefined || !isFinite(v) || v >= threshold) return false;
+  }
+  return true;
+}
+
 function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
   if (covMatrix.some(row => row.some(v => !isFinite(v))) || covMatrix.length !== n) {
     return Array(n).fill(1 / n);

@@ -53,6 +53,7 @@ export interface MasterRegimeInput {
   btcVol: number;
   m2Growth: number;
   wtiOil?: number;
+  lowVixStreak?: boolean;  // FIX-FAST-EXIT: true si VIX lleva 5+ dias < 22 → forzar EXPANSION si el motor dice CONTRACTION
 }
 
 // FIX MATH-NEW-02: el output ahora expone regimeDuration para el dashboard
@@ -317,9 +318,20 @@ export function getMasterRegime(
     }
   }
 
+  // FIX-FAST-EXIT: si VIX lleva 5+ dias < 22 y el motor dice CONTRACTION → forzar EXPANSION.
+  // El stress model genera falsos positivos (HIGH_RISK a VIX 20-25). Si VIX ya bajo,
+  // la contraccion termino — no quedarse atrapado perdiendo el rebote.
+  // Solo aplica a CONTRACTION (no a CRISIS — las crisis genuinas tienen VIX > 35).
+  let finalRegime = effectiveRegime;
+  let finalPenaltyForReturn = effectivePenalty;
+  if (input.lowVixStreak && effectiveRegime === 'CONTRACTION') {
+    finalRegime = 'EXPANSION';
+    finalPenaltyForReturn = 1.0;  // EXPANSION = sin penalizacion
+  }
+
   return {
-    regime: effectiveRegime,
-    regimePenalty: effectivePenalty,
+    regime: finalRegime,
+    regimePenalty: finalPenaltyForReturn,
     crisisDetail: crisis,
     stressDetail: stress,
     regimeProbs,
