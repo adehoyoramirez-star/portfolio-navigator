@@ -42,9 +42,10 @@ export default function BacktestPanel({
   const [rebalanceDays, setRebalanceDays] = useState(126);
   const [lookbackDays, setLookbackDays]   = useState(252);
   const [activeTab, setActiveTab]         = useState<"equity" | "regime" | "rolling">("equity");
-  const [dataSource, setDataSource]       = useState<"yahoo" | "csv">("csv");  // FIX-CALIBRATION: CSV por defecto (11 años reales, VIX correcto 9-83). Yahoo puede caer en proxy SPX que suaviza crisis.
+  const [dataSource, setDataSource]       = useState<"yahoo" | "csv">("csv");
   const [csvData, setCsvData]             = useState<CSVBacktestData | null>(null);
   const [csvLoading, setCsvLoading]       = useState(false);
+  const [olympusPct, setOlympusPct]       = useState(80); // % Olympus en Composite Strategy (resto = BTC directo)
 
   // Load CSV data when dataSource switches to "csv"
   useEffect(() => {
@@ -363,6 +364,15 @@ export default function BacktestPanel({
         <MetricsCard title="🏛️ Institutional (BTC 10%)" metrics={im} color="#fbbf24" />
       </div>
 
+      {/* ── COMPOSITE STRATEGY: Olympus Core + BTC Satellite ── */}
+      <CompositeStrategy
+        olympusPct={olympusPct}
+        setOlympusPct={setOlympusPct}
+        result={result}
+        initialCapital={portfolioInitialValue > 0 ? portfolioInitialValue : 10_000}
+        btcPrices={csvData?.closesHistory?.['BTC-EUR'] ?? marketData?.closesHistory?.['BTC-EUR'] ?? []}
+      />
+
       <div style={styles.alphaBar}>
         <span>Alpha vs Institutional Benchmark (BTC 10%):</span>
         <span style={{ color: m.cagr > im.cagr ? "#10b981" : "#ef4444", fontWeight: "bold", marginLeft: "0.5rem" }}>
@@ -548,6 +558,107 @@ function MetricsCard({ title, metrics: m, color }: { title: string; metrics: Bac
       <p>Win rate mensual: <strong style={ok(m.winRate, 0.5)}>{fmt(m.winRate)}</strong></p>
       <p>Retorno total: <strong style={ok(m.totalReturn, 0)}>{fmt(m.totalReturn)}</strong></p>
       <p style={{ color: "#6b7280", fontSize: "0.8rem" }}>Capital final: €{m.finalValue.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</p>
+    </div>
+  );
+}
+
+
+// ── COMPOSITE STRATEGY: Olympus Core + BTC Satellite ──────────────────
+function CompositeStrategy({
+  olympusPct, setOlympusPct, result, initialCapital, btcPrices
+}: {
+  olympusPct: number;
+  setOlympusPct: (v: number) => void;
+  result: BacktestOutput;
+  initialCapital: number;
+  btcPrices: number[];
+}) {
+  const fmt = (v: number) => `${(v * 100).toFixed(1)}%`;
+
+  const metrics = useMemo(() => {
+    const btcPct = (100 - olympusPct) / 100;
+    const olyPct = olympusPct / 100;
+
+    const olympusRets = result.dailyRecords.map((r, i) => {
+      const prev = i === 0 ? initialCapital : result.dailyRecords[i-1].portfolioValue;
+      return prev > 0 ? r.portfolioValue / prev - 1 : 0;
+    });
+
+    // BTC daily returns from REAL prices (aligned with backtest window)
+    const btcLen = btcPrices.length;
+    const recLen = result.dailyRecords.length;
+    const btcStart = Math.max(0, btcLen - recLen - 252); // rough alignment with lookback offset
+    const btcRets: number[] = [];
+    for (let i = 0; i < recLen; i++) {
+      const idx = btcStart + i;
+      if (idx > 0 && idx < btcLen && btcPrices[idx-1] > 0 && btcPrices[idx] > 0) {
+        btcRets.push(btcPrices[idx] / btcPrices[idx-1] - 1);
+      } else {
+        btcRets.push(0);
+      }
+    }
+
+    const compositeRets = olympusRets.map((or, i) => olyPct * or + btcPct * (btcRets[i] ?? 0));
+
+    let value = initialCapital;
+    let peak = initialCapital;
+    let maxDD = 0;
+    for (const r of compositeRets) {
+      value *= (1 + r);
+      if (value > peak) peak = value;
+      const dd = (value - peak) / peak;
+      if (dd < maxDD) maxDD = dd;
+    }
+
+    const years = compositeRets.length / 252;
+    const totalRet = value / initialCapital - 1;
+    const cagr = years > 0 && totalRet > -1 ? Math.pow(1 + totalRet, 1 / years) - 1 : 0;
+    const mean = compositeRets.reduce((a, b) => a + b, 0) / compositeRets.length;
+    const vol = Math.sqrt(compositeRets.reduce((s, r) => s + (r - mean) ** 2, 0) / compositeRets.length * 252);
+    const rfDaily = 0.04 / 252;
+    const excess = compositeRets.map(r => r - rfDaily);
+    const exMean = excess.reduce((a, b) => a + b, 0) / excess.length;
+    const exStd = Math.sqrt(excess.reduce((s, r) => s + (r - exMean) ** 2, 0) / excess.length * 252);
+    const sharpe = exStd > 0 ? (exMean * 252) / exStd : 0;
+    const calmar = maxDD < 0 ? cagr / Math.abs(maxDD) : 0;
+
+    return { cagr, sharpe, maxDrawdown: maxDD, calmar, volatility: vol, finalValue: value, totalReturn: totalRet, winRate: 0, sortino: 0, betaVsBenchmark: 0, alphaVsBenchmark: 0, hhi: 0 };
+  }, [olympusPct, result, initialCapital, btcPrices]);
+
+  return (
+    <div style={{ backgroundColor: "#1f2937", borderRadius: 8, padding: "1rem", marginBottom: "1rem", border: "2px solid #6366f1" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <p style={{ fontWeight: "bold", color: "#f9fafb", margin: 0, fontSize: "0.95rem" }}>
+          🚀 Composite Strategy: Olympus Core + BTC Satellite
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span style={{ color: "#818cf8", fontSize: "0.85rem", fontWeight: "bold" }}>{olympusPct}% Olympus</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={olympusPct}
+            onChange={e => setOlympusPct(Number(e.target.value))}
+            style={{ width: 120, accentColor: "#6366f1" }}
+          />
+          <span style={{ color: "#f59e0b", fontSize: "0.85rem", fontWeight: "bold" }}>{100 - olympusPct}% BTC</span>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+        <div style={{ fontSize: "0.82rem", lineHeight: 1.8, color: "#9ca3af" }}>
+          <p>CAGR: <strong style={{ color: metrics.cagr >= 0.08 ? "#10b981" : "#f59e0b" }}>{fmt(metrics.cagr)}</strong></p>
+          <p>Sharpe: <strong style={{ color: metrics.sharpe >= 0.5 ? "#10b981" : "#f59e0b" }}>{metrics.sharpe.toFixed(2)}</strong></p>
+          <p>MaxDD: <strong style={{ color: metrics.maxDrawdown > -0.25 ? "#10b981" : "#f59e0b" }}>{fmt(metrics.maxDrawdown)}</strong></p>
+        </div>
+        <div style={{ fontSize: "0.82rem", lineHeight: 1.8, color: "#9ca3af" }}>
+          <p>Calmar: <strong>{metrics.calmar.toFixed(2)}</strong></p>
+          <p>Vol: <strong>{fmt(metrics.volatility)}</strong></p>
+          <p style={{ color: "#f9fafb", fontWeight: "bold" }}>Capital final: €{metrics.finalValue.toLocaleString("es-ES", { maximumFractionDigits: 0 })}</p>
+        </div>
+      </div>
+      <p style={{ color: "#6b7280", fontSize: "0.7rem", marginTop: "0.5rem" }}>
+        Olympus gestiona el riesgo y la diversificación. BTC captura el upside asimétrico. Ajusta el slider para encontrar tu balance óptimo.
+      </p>
     </div>
   );
 }
