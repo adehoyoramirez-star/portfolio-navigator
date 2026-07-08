@@ -307,6 +307,46 @@ export const FACTOR_CONFIG = {
   EXPECTED_RETURN_MAX: 0.30,
 } as const;
 
+// ── REGIME-CONDITIONAL ASSET TILTING ────────────────────────────────────────
+// Multiplicadores suaves (±10-15%) por sector y régimen que tiltan los pesos
+// relativos hacia activos favorables en cada entorno macro. El tilt multiplica
+// el peso base y luego se renormaliza para preservar totalInvested.
+//
+// DISEÑO: nudges suaves, no martillazos. El motor ya tiene capas defensivas
+// (factor weights dinámicos, regime penalty, vol target, tail risk). El tilt
+// solo inclina la balanza — las capas existentes hacen el trabajo pesado.
+//
+// EXPANSION: ligera sobreponderación a growth (crypto, semis, uranium)
+// CONTRACTION: ligera sobreponderación a defensivos (gold, equity)
+// CRISIS: inclinación moderada hacia safe havens (gold)
+
+export const REGIME_TILT: Record<string, Record<string, number>> = {
+  EXPANSION: {
+    crypto:    1.15,   // BTC +15% — capturar rallies sin forzar el cap
+    semis:     1.10,   // VVSM +10% — beta alto en expansion
+    uranium:   1.10,   // URNU +10% — commodity growth
+    emerging:  1.05,   // EMXC +5% — emergentes en risk-on
+    gold:      0.90,   // PPFB -10% — menos hedge necesario
+    equity:    1.00,   // WLG neutral — core global sin tilt
+  },
+  CONTRACTION: {
+    crypto:    0.85,   // BTC -15% — reducir vol, sin eliminar exposicion
+    semis:     0.90,   // VVSM -10% — ciclicos ligeramente reducidos
+    uranium:   0.85,   // URNU -15% — commodity beta alto
+    emerging:  0.90,   // EMXC -10% — emergentes vulnerables
+    gold:      1.15,   // PPFB +15% — safe haven moderado
+    equity:    1.10,   // WLG +10% — calidad global como ancla
+  },
+  CRISIS: {
+    crypto:    0.70,   // BTC -30% — riesgo extremo en crisis
+    semis:     0.70,   // VVSM -30% — tech sufre en flight-to-safety
+    uranium:   0.65,   // URNU -35% — risk assets fuera
+    emerging:  0.75,   // EMXC -25% — emergentes colapsan en crisis
+    gold:      1.30,   // PPFB +30% — hedge significativo
+    equity:    0.90,   // WLG -10% — calidad global resiste mejor
+  },
+} as const;
+
 // ── FACTOR WEIGHTS DINÁMICOS POR RÉGIMEN ──────────────────────────────────
 // FIX-BIMODAL (30-May-2026): Factor weights cambian según el régimen macro.
 // EXPANSION: máximo momentum (perseguir tendencia alcista), mínimo quality.

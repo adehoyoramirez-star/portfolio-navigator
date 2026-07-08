@@ -75,7 +75,7 @@ import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 import { detectCycleTops } from "../risk/cycleTopDetector";
-import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, BOND_YIELD_10Y, getFactorWeightsByRegime } from "../config/engineConfig";
+import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, BOND_YIELD_10Y, getFactorWeightsByRegime, REGIME_TILT } from "../config/engineConfig";
 // FIX-R2-C10: renombrado DISCRETIONARY_OVERLAY. Import usado para allocationProvenance.
 // FIX-AUDIT-R10: allocationProvenance (transparencia del overlay discrecional)
 // FIX-R2-C10: REGIME_TACTICAL_ALLOCATIONS → DISCRETIONARY_OVERLAY
@@ -708,6 +708,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // relativeWeights: pesos relativos normalizados a 1.0 (fracción del tramo invertido)
   const relativeWeights = finalWeightsBeforeCap.map(w => w / totalFinalWeights);
 
+  // ── CAPA 6.5: REGIME-CONDITIONAL ASSET TILTING ──────────────────────────────
+  // Multiplica los pesos relativos por el tilt del sector/régimen y renormaliza.
+  // EXPANSION: +40% crypto, +30% semis, -20% gold → tilt hacia growth
+  // CONTRACTION: +40% gold, +15% equity, -40% crypto → tilt hacia defensivos
+  // CRISIS: +60% gold, -70% crypto → concentracion en safe havens
+  const tiltedRelativeWeights = applyRegimeTilt(relativeWeights, assets, masterRegime.regime);
+
   // ── PESOS DE REFERENCIA ─────────────────────────────────────────────────────
   // FIX M5: etiqueta corregida — es equal weight, no Markowitz.
   // El verdadero mínima varianza es minVarW (que sí entra en el blend).
@@ -751,7 +758,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     dynamicBtcCap = 0.10; // Protección contra euforia
   }
 
-  const relativeWeightsAfterCap = [...relativeWeights];
+  const relativeWeightsAfterCap = [...tiltedRelativeWeights];
   const btcIdx = relativeWeightsAfterCap.findIndex(
     (_, i) => {
       const name = assets[i].name.toLowerCase();
@@ -1171,6 +1178,34 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // 
 
 // ── HELPERS INTERNOS ──────────────────────────────────────────────────────────
+
+/**
+ * Aplica tilting de pesos por régimen macro.
+ * Multiplica cada peso por el multiplicador correspondiente a su sector/régimen
+ * y renormaliza para que la suma siga siendo 1.0 (preservando totalInvested).
+ *
+ * EXPANSION: +40% crypto, +30% semis, -20% gold → tilt hacia growth
+ * CONTRACTION: +40% gold, -40% crypto → tilt hacia defensivos
+ * CRISIS: +60% gold, -70% crypto → concentración en safe havens
+ */
+function applyRegimeTilt(
+  weights: number[],
+  assets: AssetInput[],
+  regime: string
+): number[] {
+  const tilts = (REGIME_TILT as Record<string, Record<string, number>>)[regime]
+    ?? (REGIME_TILT as Record<string, Record<string, number>>)['EXPANSION'];
+
+  const tilted = weights.map((w, i) => {
+    const sector = assets[i].sector ?? 'equity';
+    const multiplier = tilts[sector] ?? 1.0;
+    return w * multiplier;
+  });
+
+  const total = tilted.reduce((s, w) => s + w, 0);
+  if (total <= 0 || !isFinite(total)) return weights; // safety fallback
+  return tilted.map(w => w / total);
+}
 
 function minimumVarianceWeights(covMatrix: number[][], n: number): number[] {
   // Guardia: NaN / Inf
