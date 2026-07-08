@@ -97,21 +97,11 @@ export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
   // ── 1. DRAWDOWN KILL SWITCH ────────────────────────────────────────────
   const killSwitch = computeKillSwitch(drawdown);
 
-  // ── 2. VOLATILITY REDUCTION — FIX-VOL-REDUCTION ───────────────────────
-  // BUG ORIGINAL: el tercer else-if repetía portfolioVol > 0.25 (nunca ejecutaba).
-  // Corregido con tres bandas: >35%, >28%, >22%.
-  // UNIDADES: portfolioVol es decimal anualizado (ej: 0.35 = 35% anual).
-  // volatilityReduction es fracción [0, 1] que se aplica como (1 - reduction)
-  // al overlay base (ej: 0.40 → overlay × 0.60).
+  // ── 2. VOLATILITY REDUCTION — FIX-CALIBRATION: desactivado (redundante con Vol Target) ──
+  // El Vol Target (CAPA 7) ya gestiona la exposición basada en volatilidad.
+  // Aplicar una segunda penalización aquí era doble-contar el mismo riesgo.
+  // Se mantiene la estructura por si se quiere reactivar en el futuro.
   let volatilityReduction = 0;
-  if (portfolioVol > 0.35) {
-    volatilityReduction = 0.40;   // vol extrema: más del 35% anualizado
-  } else if (portfolioVol > 0.28) {
-    volatilityReduction = 0.25;   // vol alta: 28-35%
-  } else if (portfolioVol > 0.22) {
-    volatilityReduction = 0.10;   // vol moderada: 22-28% (FIX: era 0.20 con umbral erróneo)
-  }
-  // Por debajo del 22% no hay penalización por volatilidad
 
   // ── 3. CRISIS SISTÉMICA (VIX + Credit Spread simultáneos) ─────────────
   // FIX-AUDIT-C6: thresholds centralizados en CEWS_CONFIG.SYSTEMIC_CRISIS.

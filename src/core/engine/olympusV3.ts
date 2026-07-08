@@ -514,7 +514,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     const kelly   = calculateKelly({ expectedReturn: rawExpectedReturn, volatility: asset.volatility });
     const isEquity = asset.earningsYield > 0;
     const erpAdj  = isEquity ? erpMultiplier : (erpRaw < -0.005 ? 1.03 : 1.0);
-    const kellyAlloc = kelly.kellyFraction * corrPenalty * coreSignalScore * erpAdj;
+    const kellyAlloc = kelly.kellyFraction * coreSignalScore * erpAdj;  // FIX-CALIBRATION: eliminado * corrPenalty (redundante con Correlation Panic + Absolute Trend Gates)
     return { asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn: rawExpectedReturn, calibrated, kelly, kellyAlloc };
   });
 

@@ -34,8 +34,8 @@ export const ENGINE_CONFIG_VERSION = "3.7.1"; // FIX MATH-02 + A2 intermediate b
 export const ERP_CONFIG = {
   TRIGGER_THRESHOLD: 0.025,    // 2.5% ERP — señal de warning
   MAX_EXPOSURE: 0.60,          // Cap forcedo al 60%
-  CRITICAL_THRESHOLD: 0.01,    // 1.0% ERP — señal de peligro extremo
-  CRITICAL_EXPOSURE: 0.35,     // Cap forzado al 35% en peligro extremo
+  CRITICAL_THRESHOLD: 0.005,   // 0.5% ERP — señal de peligro extremo (recalibrado: antes 1.0%)
+  CRITICAL_EXPOSURE: 0.50,     // Cap forzado al 50% en peligro extremo (recalibrado: antes 35%)
 } as const;
 
 // ── CORRELATION PANIC TRIGGER ────────────────────────────────────────────
@@ -83,7 +83,7 @@ export const ABSOLUTE_TREND_GATE = {
   BTC_BEAR_THRESHOLD: -0.30,    // umbral de bear market BTC (12 meses)
   DXY_RISK_OFF_THRESHOLD: 0.05, // DXY tendencia > 5% → risk-off
   DXY_PENALTY: 0.10,            // -10pp reduction per DXY gate
-  CORR_EARLY_PENALTY: 0.05,     // -5pp when avgCorrelation > 0.60
+  CORR_EARLY_PENALTY: 0.0,      // FIX-CALIBRATION: desactivado (redundante con Correlation Panic + Tail Risk corr penalty)
   FLOOR: 0.25,                  // floor absoluto (Tail Risk + Kill Switch deciden más abajo)
 } as const;
 
@@ -160,7 +160,7 @@ export const REGIME_CONFIG = {
   // FIX MATH-02: subido 10→12 tras reducir credit multiplier 3→2 en crisis.ts.
   // Con VIX=20 y credit=2.71% el score = 10.18 < 12 → EXPANSION (correcto).
   // Con VIX=28 y credit=4.5% el score = 14.8 > 12 → CONTRACTION (correcto).
-  CONTRACTION_THRESHOLD: 12,
+  CONTRACTION_THRESHOLD: 15,  // FIX-CALIBRATION: subido 12→15. Con VIX=22 y credit=2.5% score=13<15→EXPANSION (correcto, no es contracción real)
   PENALTY_MIN: 0.4,
   PENALTY_MAX: 1.0,
   BINARY_WEIGHT: 0.4,

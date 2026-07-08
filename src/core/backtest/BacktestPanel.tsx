@@ -42,7 +42,7 @@ export default function BacktestPanel({
   const [rebalanceDays, setRebalanceDays] = useState(126);
   const [lookbackDays, setLookbackDays]   = useState(252);
   const [activeTab, setActiveTab]         = useState<"equity" | "regime" | "rolling">("equity");
-  const [dataSource, setDataSource]       = useState<"yahoo" | "csv">("yahoo");
+  const [dataSource, setDataSource]       = useState<"yahoo" | "csv">("csv");  // FIX-CALIBRATION: CSV por defecto (11 años reales, VIX correcto 9-83). Yahoo puede caer en proxy SPX que suaviza crisis.
   const [csvData, setCsvData]             = useState<CSVBacktestData | null>(null);
   const [csvLoading, setCsvLoading]       = useState(false);
 

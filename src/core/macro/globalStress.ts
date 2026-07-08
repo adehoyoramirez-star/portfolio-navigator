@@ -78,7 +78,7 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
 
   let regime: StressRegime = "NORMAL";
   if (score >= 6) regime = "CRISIS";
-  else if (score >= 3) regime = "HIGH_RISK";
+  else if (score >= 4) regime = "HIGH_RISK";  // FIX-CALIBRATION: subido 3→4. Con VIX=20+MOVE=120 ya no dispara CONTRACTION (score=3<4→NORMAL)
 
   return { score, regime, wtiShock, wtiPenalty };
 }
