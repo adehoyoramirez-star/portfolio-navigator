@@ -346,7 +346,7 @@ function resolveRegime(a: MasterRegimeLabel, b: MasterRegimeLabel): MasterRegime
 
 function getBinaryPenalty(regime: MasterRegimeLabel): number {
   if (regime === "CRISIS")      return 0.4;
-  if (regime === "CONTRACTION") return 0.70;
+  if (regime === "CONTRACTION") return 0.85;  // FIX-CONTRACTION-LAG: subido 0.70→0.85. El stress model genera falsos positivos a VIX 20-25. Penalizacion mas suave mitiga el impacto del lag de deteccion sin cambiar la logica de entrada/salida.
   return 1.0;
 }
 

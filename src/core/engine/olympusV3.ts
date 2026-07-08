@@ -425,7 +425,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   - EXPANSION: no (el riesgo en EXPANSION es sobreexposición, manejado por Kill Switch)
   const adjustedRegimePenalty =
     (masterRegime.regime === 'CRISIS' || masterRegime.regime === 'CONTRACTION')
-      ? masterRegime.regimePenalty * metaIntelligence.confidenceMultiplier
+      ? Math.min(1.0, masterRegime.regimePenalty * metaIntelligence.confidenceMultiplier)  // FIX-CLAMP: CONTRACTION nunca debe exceder EXPANSION (penalty <= 1.0). Con binary=0.85 y confidence=1.30, 0.84*1.30=1.09 sin clamp → boost en vez de reduccion.
       : masterRegime.regimePenalty;
 
   const corrPenalty = correlationPenalty(correlationMatrix);
