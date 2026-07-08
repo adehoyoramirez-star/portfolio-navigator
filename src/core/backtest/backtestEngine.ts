@@ -527,6 +527,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let pendingNewCash = 0;
   let pendingNewRegime: BacktestRegime | null = null;
 
+  // TREND FILTER: previene reduccion acumulativa (100%→50%→25%→12.5%)
+  const trendReduced = new Set<string>(); // assets ya reducidos en este ciclo de rebalanceo
+
   // FIX-AUDIT-B3: benchmark también deferre la aplicación de nuevos pesos
   // al día siguiente, igual que la estrategia (FIX-BT-1).
   // ANTES: el benchmark reseteaba a EW y usaba esos pesos para el retorno del MISMO día
@@ -690,6 +693,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       instBenchmarkValue -= instBenchCost;
       pendingInstBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
 
+      // Reset trend filter state for the new rebalance cycle
+      trendReduced.clear();
+
       rebalanceCount++;
     }
 
@@ -810,6 +816,36 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
     regimeReturns[currentRegime].push(portfolioReturn);
     regimeDays[currentRegime]++;
+
+    // ── TREND FILTER: proteccion diaria contra downtrends (entre rebalanceos) ──
+    // El motor rebalancea cada 126 dias. Si BTC cae 50% en 2 semanas, el motor
+    // no reacciona hasta el dia 126. Este filtro actua CADA DIA: si un activo
+    // esta en downtrend confirmado, reduce su peso inmediatamente.
+    //
+    // Señales (se aplican UNA SOLA VEZ por ciclo de rebalanceo):
+    //   retorno 200d < -25%  → tendencia bajista severa → reducir peso al 50%
+    //   retorno 50d  < -15%  → acelerando caida       → reducir peso al 50%
+    //   retorno 200d < -10%  → tendencia bajista leve  → reducir peso al 65%
+    for (const ticker of ASSETS) {
+      if (trendReduced.has(ticker)) continue; // ya reducido en este ciclo
+      const bticker = backtestTickers[ticker];
+      const closes = closesHistory[bticker] ?? [];
+      if (t < 200 || closes[t] <= 0 || closes[t - 200] <= 0) continue;
+      const ret200d = periodReturn(closes, t, 200);
+      const ret50d  = periodReturn(closes, t, 50);
+      const currentW = currentAllocations[ticker] ?? 0;
+      if (currentW <= 0) continue;
+
+      if (ret200d < -0.25 || ret50d < -0.15) {
+        // Downtrend severo: cortar posicion a la mitad (una sola vez)
+        currentAllocations[ticker] = currentW * 0.50;
+        trendReduced.add(ticker);
+      } else if (ret200d < -0.10) {
+        // Downtrend leve: reducir al 65% (una sola vez)
+        currentAllocations[ticker] = currentW * 0.65;
+        trendReduced.add(ticker);
+      }
+    }
 
     let rolling252Sharpe: number | null = null;
     if (strategyDailyReturns.length >= 252) {
