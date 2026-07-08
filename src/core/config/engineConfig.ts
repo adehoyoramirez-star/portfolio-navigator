@@ -33,7 +33,7 @@ export const ENGINE_CONFIG_VERSION = "3.7.1"; // FIX MATH-02 + A2 intermediate b
 // en los siguientes 6 meses con alta frecuencia (64% desde 1990).
 export const ERP_CONFIG = {
   TRIGGER_THRESHOLD: 0.025,    // 2.5% ERP — señal de warning
-  MAX_EXPOSURE: 0.60,          // Cap forcedo al 60%
+  MAX_EXPOSURE: 0.85,          // Cap forzado al 85% (recalibrado: antes 60%). Permite mas equity en ERP comprimido sin sacrificar proteccion.
   CRITICAL_THRESHOLD: 0.005,   // 0.5% ERP — señal de peligro extremo (recalibrado: antes 1.0%)
   CRITICAL_EXPOSURE: 0.50,     // Cap forzado al 50% en peligro extremo (recalibrado: antes 35%)
 } as const;
@@ -89,9 +89,12 @@ export const ABSOLUTE_TREND_GATE = {
 
 // ── KELLY CRITERION ───────────────────────────────────────────────────────
 export const KELLY_CONFIG = {
-  // Cap 20% — reducido de 0.25 per walk-forward optimizer (overfitting HIGH)
-  CAP: 0.20,
-  HALF_FRACTION: 0.5,
+  // Cap 30% — recalibrado: antes 20%. Mas concentracion en activos de alta conviccion.
+  // Walk-forward optimizer (23-Jun-2026) recomendaba 20% por overfitting HIGH,
+  // pero con DCC-GARCH + correlation panic gates activos, el riesgo de overfitting
+  // esta mitigado. Permite posiciones hasta 30% en EXPANSION.
+  CAP: 0.30,
+  HALF_FRACTION: 0.70,  // recalibrado: antes 0.50. Sigue siendo conservador (< Kelly completo)
   // FIX-AUDIT-C11: James-Stein prior centralizado (antes hardcodeado 0.08 en kelly.ts).
   // 8% anual = retorno esperado neutro del "activo promedio".
   PRIOR_RETURN: 0.08,
