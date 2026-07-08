@@ -18,6 +18,8 @@ import { getProxyUS, getEarningsYield } from "../../lib/assetRegistry";
 import { covarianceMatrix } from "../../lib/marketData";
 // FIX-R2-A3: DCC-GARCH integration for backtest-live alignment
 import { getDynamicCovMatrix } from "../risk/dccGarch";
+import { detectCrisis } from "../macro/crisis";
+import { computeGlobalStress } from "../macro/globalStress";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
 import type { AssetInput } from "../engine/olympusV3";
@@ -716,6 +718,31 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
     strategyDailyReturns.push(portfolioReturn);
     benchmarkDailyReturns.push(benchmarkReturn);
+
+    // FIX-CRISIS-TRACKING: actualizar régimen CADA DÍA, no solo en rebalanceos.
+    // ANTES: currentRegime solo cambiaba en rebalanceDays (cada 63-126 días).
+    // Esto hacía que crisis cortas (COVID: 24 días) fueran invisibles si el
+    // rebalanceo no caía exactamente en medio del evento.
+    // AHORA: detectCrisis se ejecuta diariamente con los datos macro disponibles.
+    const dvix = vixArray[t];
+    if (dvix !== undefined && isFinite(dvix)) {
+      const dyield = yieldSpreadArray[t] ?? 0;
+      const dcredit = creditSpreadArray[t] ?? 2.5;
+      const crisisResult = detectCrisis(dvix, dyield, dcredit);
+      const stressResult = computeGlobalStress({
+        vix: dvix,
+        creditSpread: dcredit,
+        move: macroHistory.move?.[t] ?? (dvix * 4.5 + 20),
+        dxyTrend: macroHistory.dxyTrend?.[t] ?? 0,
+        btcVol: macroHistory.btcVol?.[t] ?? 0.5,
+        wtiOil: macroHistory.wtiOil?.[t],
+      });
+      const stressLabel: BacktestRegime = stressResult.regime === 'CRISIS' ? 'CRISIS' : stressResult.regime === 'HIGH_RISK' ? 'CONTRACTION' : 'EXPANSION';
+      const prio: Record<BacktestRegime, number> = { EXPANSION: 0, CONTRACTION: 1, CRISIS: 2 };
+      const labels: BacktestRegime[] = [crisisResult.regime, stressLabel, 'EXPANSION'];
+      const dailyRegime = labels.reduce((a, b) => prio[a] >= prio[b] ? a : b);
+      currentRegime = dailyRegime;
+    }
 
     regimeReturns[currentRegime].push(portfolioReturn);
     regimeDays[currentRegime]++;
