@@ -740,6 +740,7 @@ export function runWalkForwardTest(
         },
         dailyRecords: [],
         benchmarkMetrics: { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, volatility: 0, finalValue: 0, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 },
+        institutionalBenchmarkMetrics: { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, volatility: 0, finalValue: 0, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 },
         regimeConditional: { EXPANSION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CONTRACTION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CRISIS: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 } },
         regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
         daysWithProxies: 0, daysWithRealData: 0,

@@ -251,7 +251,7 @@ export default function BacktestPanel({
     );
   }
 
-  const { metrics: m, benchmarkMetrics: b, regimeConditional: rc, regimeDays } = result;
+  const { metrics: m, benchmarkMetrics: b, institutionalBenchmarkMetrics: im, regimeConditional: rc, regimeDays } = result;
   const totalDays = result.dailyRecords.length;
   const years = (totalDays / 252).toFixed(1);
 
@@ -357,21 +357,20 @@ export default function BacktestPanel({
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", margin: "1rem 0" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", margin: "1rem 0" }}>
         <MetricsCard title="🟣 Olympus Engine" metrics={m} color={COLORS.strategy} />
-        <MetricsCard title="⚖️ Equal Weight (rebalanceo)" metrics={b} color={COLORS.benchmark} />
+        <MetricsCard title="⚖️ Equal Weight (16.7% c/u)" metrics={b} color={COLORS.benchmark} />
+        <MetricsCard title="🏛️ Institutional (BTC 10%)" metrics={im} color="#fbbf24" />
       </div>
 
       <div style={styles.alphaBar}>
-        <span>Alpha vs benchmark:</span>
-        <span style={{ color: m.cagr > b.cagr ? "#10b981" : "#ef4444", fontWeight: "bold", marginLeft: "0.5rem" }}>
-          {m.cagr > b.cagr ? "+" : ""}{fmt(m.cagr - b.cagr)} CAGR · {(m.sharpe - b.sharpe).toFixed(2)} Sharpe
+        <span>Alpha vs Institutional Benchmark (BTC 10%):</span>
+        <span style={{ color: m.cagr > im.cagr ? "#10b981" : "#ef4444", fontWeight: "bold", marginLeft: "0.5rem" }}>
+          {m.cagr > im.cagr ? "+" : ""}{fmt(m.cagr - im.cagr)} CAGR · {(m.sharpe - im.sharpe).toFixed(2)} Sharpe
         </span>
-        {m.maxDrawdown < b.maxDrawdown && (
-          <span style={{ color: "#f59e0b", fontSize: "0.8rem", marginLeft: "1rem" }}>
-            ⚠️ Mayor drawdown ({fmt(m.maxDrawdown)} vs {fmt(b.maxDrawdown)})
-          </span>
-        )}
+        <span style={{ color: "#6b7280", fontSize: "0.75rem", marginLeft: "1rem" }}>
+          (EW: {m.cagr > b.cagr ? "+" : ""}{fmt(m.cagr - b.cagr)})
+        </span>
       </div>
 
       <div style={{ display: "flex", gap: "0.5rem", margin: "1rem 0 0.5rem" }}>

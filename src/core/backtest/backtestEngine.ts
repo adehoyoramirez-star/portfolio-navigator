@@ -14,7 +14,7 @@
 
 import { ASSETS, RISK_FREE_RATE_DAILY, RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
 import { dailyReturns, tradingDayReturns, mean, variance } from "../../lib/stats";
-import { getProxyUS, getEarningsYield } from "../../lib/assetRegistry";
+import { getProxyUS, getEarningsYield, getBenchmarkWeight } from "../../lib/assetRegistry";
 import { covarianceMatrix } from "../../lib/marketData";
 // FIX-R2-A3: DCC-GARCH integration for backtest-live alignment
 import { getDynamicCovMatrix } from "../risk/dccGarch";
@@ -126,6 +126,7 @@ export interface BacktestOutput {
   dailyRecords: DailyRecord[];
   metrics: BacktestMetrics;
   benchmarkMetrics: BacktestMetrics;
+  institutionalBenchmarkMetrics: BacktestMetrics;
   regimeConditional: RegimeConditionalMetrics;
   regimeDays: Record<BacktestRegime, number>;
   daysWithProxies: number;
@@ -134,6 +135,11 @@ export interface BacktestOutput {
   totalTransactionCosts: number;
   rebalanceCount: number;
 }
+
+// ── Institutional Benchmark weights (assetRegistry: BTC 10%, WLG 35%, PPFB 20%) ─
+const INSTITUTIONAL_BENCHMARK_WEIGHTS: Record<string, number> = Object.fromEntries(
+  ASSETS.map(t => [t, getBenchmarkWeight(t)])
+);
 
 // ── Utilidades estadísticas ─────────────────────────────────────────────
 function ensureLength(arr: number[], targetLen: number): number[] {
@@ -162,6 +168,7 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
     dailyRecords: [], daysWithProxies: 0, daysWithRealData: 0,
     metrics: emptyMetrics(initialCapital),
     benchmarkMetrics: emptyMetrics(initialCapital),
+    institutionalBenchmarkMetrics: emptyMetrics(initialCapital),
     regimeConditional: { EXPANSION: emptyRM, CONTRACTION: emptyRM, CRISIS: emptyRM },
     regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
     transactionCostBps: 15,
@@ -535,8 +542,14 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let benchmarkWeights: Record<string, number> = equalWeightAllocations();
   let benchmarkValue = initialCapital;
 
+  // ── Institutional Benchmark (assetRegistry weights: BTC 10%, WLG 35%, PPFB 20%, etc.) ─
+  let instBenchmarkWeights: Record<string, number> = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
+  let instBenchmarkValue = initialCapital;
+  let pendingInstBenchmarkWeights: Record<string, number> | null = null;
+
   const strategyDailyReturns: number[] = [];
   const benchmarkDailyReturns: number[] = [];
+  const instBenchmarkDailyReturns: number[] = [];
 
   const regimeReturns: Record<BacktestRegime, number[]> = {
     EXPANSION: [], CONTRACTION: [], CRISIS: [],
@@ -580,6 +593,12 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     if (pendingBenchmarkWeights) {
       benchmarkWeights = pendingBenchmarkWeights;
       pendingBenchmarkWeights = null;
+    }
+
+    // Institutional benchmark defer (same pattern)
+    if (pendingInstBenchmarkWeights) {
+      instBenchmarkWeights = pendingInstBenchmarkWeights;
+      pendingInstBenchmarkWeights = null;
     }
 
     if (dayIndex % rebalanceDays === 0) {
@@ -661,6 +680,16 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       // igual que pendingNewAllocations para la estrategia.
       pendingBenchmarkWeights = equalWeightAllocations();
 
+      // ── Institutional Benchmark rebalance ──
+      // Reset to assetRegistry weights (BTC 10%, WLG 35%, PPFB 20%, etc.).
+      let instBenchTurnover = 0;
+      for (const ticker of ASSETS) {
+        instBenchTurnover += Math.abs((INSTITUTIONAL_BENCHMARK_WEIGHTS[ticker] ?? 0) - (instBenchmarkWeights[ticker] ?? 0));
+      }
+      const instBenchCost = instBenchmarkValue * txCostRate * instBenchTurnover;
+      instBenchmarkValue -= instBenchCost;
+      pendingInstBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
+
       rebalanceCount++;
     }
 
@@ -679,6 +708,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
     // Benchmark: Equal Weight with periodic rebalancing.
     // Weights drift between rebalances; reset to 1/N at each rebalanceDay.
+    // Institutional Benchmark: assetRegistry weights, same rebalancing logic.
+    let instBenchmarkReturn = 0;
     for (const ticker of ASSETS) {
       const bticker = backtestTickers[ticker];
       const closes = closesHistory[bticker] ?? [];
@@ -690,6 +721,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
           portfolioReturn += (currentAllocations[ticker] ?? 0) * dailyRet;
           activeWeight += (currentAllocations[ticker] ?? 0);
           benchmarkReturn += (benchmarkWeights[ticker] ?? 0) * dailyRet;
+          instBenchmarkReturn += (instBenchmarkWeights[ticker] ?? 0) * dailyRet;
         }
       }
     }
@@ -699,9 +731,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
     if (!isFinite(portfolioReturn)) portfolioReturn = 0;
     if (!isFinite(benchmarkReturn)) benchmarkReturn = 0;
+    if (!isFinite(instBenchmarkReturn)) instBenchmarkReturn = 0;
 
     portfolioValue *= (1 + portfolioReturn);
     benchmarkValue *= (1 + benchmarkReturn);
+    instBenchmarkValue *= (1 + instBenchmarkReturn);
 
     // Benchmark weight drift (between rebalances): each weight evolves with its asset return
     let bwSum = 0;
@@ -720,11 +754,29 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       benchmarkWeights = equalWeightAllocations();
     }
 
+    // Institutional Benchmark weight drift (same pattern)
+    let ibwSum = 0;
+    for (const ticker of ASSETS) {
+      const bticker = backtestTickers[ticker];
+      const closes = closesHistory[bticker] ?? [];
+      const c0 = closes[t], c1 = closes[t - 1];
+      const dailyRet = (c0 != null && c1 != null && isFinite(c0) && isFinite(c1) && c1 > 0 && c0 > 0)
+        ? c0 / c1 - 1 : 0;
+      instBenchmarkWeights[ticker] = (instBenchmarkWeights[ticker] ?? 0) * (1 + dailyRet);
+      ibwSum += instBenchmarkWeights[ticker] ?? 0;
+    }
+    if (ibwSum > 0) {
+      for (const ticker of ASSETS) instBenchmarkWeights[ticker] = (instBenchmarkWeights[ticker] ?? 0) / ibwSum;
+    } else {
+      instBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
+    }
+
     if (portfolioValue > peakValue) peakValue = portfolioValue;
     const dd = (portfolioValue - peakValue) / peakValue;
 
     strategyDailyReturns.push(portfolioReturn);
     benchmarkDailyReturns.push(benchmarkReturn);
+    instBenchmarkDailyReturns.push(instBenchmarkReturn);
 
     // FIX-CRISIS-TRACKING: actualizar régimen CADA DÍA, no solo en rebalanceos.
     // ANTES: currentRegime solo cambiaba en rebalanceDays (cada 63-126 días).
@@ -793,6 +845,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     dailyRecords,
     metrics:          strategyMetrics,
     benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue),
+    institutionalBenchmarkMetrics: computeMetrics(instBenchmarkDailyReturns, initialCapital, instBenchmarkValue),
     regimeConditional,
     regimeDays,
     daysWithProxies,
