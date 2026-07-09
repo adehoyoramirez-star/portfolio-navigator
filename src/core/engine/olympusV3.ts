@@ -54,7 +54,8 @@
 // FIX-V5-8: ERP-DEFAULT-BOOST corregido (sin dato → neutro, no +5% boost).
 // FIX-V5-9: coreVolEstimate ponderado por pesos reales (no media aritmética).
 // FIX-V5-10: isERPCritical con guard input.erpValue !== undefined.
-export const ENGINE_VERSION = "v5.2.2";
+// FIX-V5-11: BTC Bear Gate condicionado a MVRV > 2.5 o régimen != EXPANSION.
+export const ENGINE_VERSION = "v5.2.3";
 
 // ── Imports ─────────────────────────────────────────────────────────────────
 import { calculateMomentum } from "../factors/momentum";
@@ -625,12 +626,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 // y el riesgo de mercado absoluto. El motor rankea activos relativamente —
 // el "mejor" activo en un bear market sigue teniendo retorno negativo.
 //
-// Tres señales absolutas que el motor ignoraba hasta ahora:
+// Cuatro señales absolutas que el motor ignoraba hasta ahora:
 //   1. AbsTrend Gate: si TODOS los activos tienen returns3m < 0, la
 //      diversificación no protege → cap exposición al 50%
-//   2. BTC Bear Gate: si BTC returns12m < -30% (proxy de BTC < MA200),
-//      el activo más volátil del portfolio está en bear market confirmado
-//      → cap adicional al 35%
+//   2. BTC Bear Gate: si BTC returns12m < -30% (proxy de BTC < MA200)
+//      Y (MVRV > 2.5 → sobrevalorado O régimen != EXPANSION),
+//      → cap adicional al 35%. En EXPANSION con MVRV ≤ 2.5, el gate
+//      se DESACTIVA: BTC infravalorado + macro favorable = acumulación.
 //   3. DXY Risk-Off: si DXY acelera >5% en 3 meses, es tightening
 //      financiero global → -10pp adicional
 //   4. Corr Convergence: si avgCorrelation > 0.60, la diversificación
@@ -643,6 +645,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     assets: AssetInput[],
     dxyTrend: number,
     avgCorrelation: number | undefined,
+    btcMVRV?: number,
+    regime?: string,
   ): { multiplier: number; reason: string; active: boolean } {
     let multiplier = 1.0;
     const reasons: string[] = [];
@@ -661,9 +665,19 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
 
     // Gate 2: BTC Bear Market — returns12m < -30%
-    if (btcReturns12m !== undefined && btcReturns12m < ABSOLUTE_TREND_GATE.BTC_BEAR_THRESHOLD) {
+    // FIX-BTCBEAR-MVRV (09-Jul-2026): solo activar si BTC está sobrevalorado (MVRV > 2.5)
+    // o si el régimen NO es EXPANSION. En EXPANSION con MVRV < 2.5, BTC está
+    // infravalorado → el bear market es oportunidad de acumulación, no peligro.
+    const btcMvrvOvervalued = btcMVRV !== undefined && btcMVRV > 2.5;
+    const regimeNotExpansion = regime !== undefined && regime !== 'EXPANSION';
+    const btcBearGateGuard = btcMvrvOvervalued || regimeNotExpansion;
+    if (btcReturns12m !== undefined && btcReturns12m < ABSOLUTE_TREND_GATE.BTC_BEAR_THRESHOLD && btcBearGateGuard) {
       multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.BTC_BEAR_CAP);
-      reasons.push(`btc-bear: returns12m ${(btcReturns12m * 100).toFixed(0)}% < ${(ABSOLUTE_TREND_GATE.BTC_BEAR_THRESHOLD * 100).toFixed(0)}% → cap ${(ABSOLUTE_TREND_GATE.BTC_BEAR_CAP * 100).toFixed(0)}%`);
+      const reasonTag = btcMvrvOvervalued ? `MVRV ${btcMVRV!.toFixed(2)} > 2.5 (sobrevalorado)` : `régimen ${regime}`;
+      reasons.push(`btc-bear: returns12m ${(btcReturns12m * 100).toFixed(0)}% < ${(ABSOLUTE_TREND_GATE.BTC_BEAR_THRESHOLD * 100).toFixed(0)}% + ${reasonTag} → cap ${(ABSOLUTE_TREND_GATE.BTC_BEAR_CAP * 100).toFixed(0)}%`);
+    } else if (btcReturns12m !== undefined && btcReturns12m < ABSOLUTE_TREND_GATE.BTC_BEAR_THRESHOLD) {
+      // BTC en bear market pero gate DESACTIVADO: MVRV bajo + EXPANSION = oportunidad de compra
+      reasons.push(`btc-bear bypassed: returns12m ${(btcReturns12m * 100).toFixed(0)}% < -30% pero MVRV ${btcMVRV?.toFixed(2) ?? '?'} ≤ 2.5 y régimen EXPANSION → acumulación`);
     }
 
     // Gate 3: DXY Risk-Off Accelerometer
@@ -938,6 +952,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     assets,
     macro.dxyTrend,
     input.avgCorrelation,
+    btcMVRV,
+    masterRegime.regime,
   );
   const totalInvested_afterGate = totalInvested_alpha * absTrendGate.multiplier;
 
