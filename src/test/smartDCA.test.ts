@@ -286,9 +286,14 @@ describe("BTC-Only Attack (≥4 señales, < 2 macro)", () => {
 
     expect(result.attackMode).toBe(true);
     expect(result.attackConfluence).toBe(4);
-    // BTC está en cycleTopTickers → no se compra nada (BTC-only pero BTC skippeado)
-    expect(result.allocationByAsset).toHaveLength(0);
-    // totalCashToInvest es el cash PLANIFICADO (600+500=1100), aunque ningún activo se compre
+    // BTC está en cycleTopTickers → no se compra vía buildAllocations, pero
+    // el fallback genera prorrateo simple para que el usuario tenga guía de distribución
+    expect(result.allocationByAsset.length).toBeGreaterThan(0);
+    // Todos los activos del motor aparecen en el prorrateo (fallback)
+    const tickers = result.allocationByAsset.map(a => a.ticker);
+    expect(tickers).toContain("BTC-EUR");
+    expect(tickers).toContain("0P00000WLG.F");
+    // totalCashToInvest es el cash PLANIFICADO (600+500=1100)
     expect(result.totalCashToInvest).toBe(1100);
   });
 });
@@ -511,9 +516,14 @@ describe("Edge Cases", () => {
       ],
     }));
 
-    // totalCashToInvest es el cash PLANIFICADO (1000*0.30=300), aunque ningún activo se compre
+    // totalCashToInvest es el cash PLANIFICADO (1000*0.30=300).
+    // El fallback genera prorrateo simple por pesos del motor para guiar al usuario.
     expect(result.totalCashToInvest).toBe(300);
-    expect(result.allocationByAsset).toHaveLength(0);
+    expect(result.allocationByAsset.length).toBeGreaterThan(0);
+    // Verificar que todos los activos aparecen en el prorrateo
+    const tickers = result.allocationByAsset.map(a => a.ticker);
+    expect(tickers).toContain("BTC-EUR");
+    expect(tickers).toContain("0P00000WLG.F");
   });
 
   test("cycleTopSignals con zone SAFE → no se filtra (shouldTrim true pero SAFE)", () => {

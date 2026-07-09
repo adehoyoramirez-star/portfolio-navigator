@@ -3662,7 +3662,7 @@ soxRsiWeekly,
       )}
 
       {/* SmartDCA por activo */}
-      {(smartDCAResult?.totalCashToInvest ?? 0) > 0 && (smartDCAResult?.allocationByAsset?.length ?? 0) > 0 && (
+      {(smartDCAResult?.totalCashToInvest ?? 0) > 0 && (
         <div style={styles.card}>
           <h2>💸 SmartDCA — Distribución por Motor (Nivel 4)</h2>
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{smartDCAResult?.reasoning}</p>

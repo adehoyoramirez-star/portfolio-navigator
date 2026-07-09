@@ -275,9 +275,37 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const currentAllocMap = new Map<string, number>(
     (input.currentAllocations ?? []).map(ca => [ca.ticker, ca.currentWeight])
   );
-  const allocs = totalCash > 0
+  let allocs = totalCash > 0
     ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap)
     : [];
+
+  // FIX-DCA-FALLBACK: cuando totalCash > 0 pero buildAllocations no encuentra
+  // activos elegibles (todos bloqueados por cycle top o sobreponderados),
+  // generar prorrateo simple según pesos del motor para que el usuario tenga
+  // una guía de distribución del DCA mensual.
+  if (totalCash > 0 && allocs.length === 0) {
+    const eligibleForFallback = motorAllocations.filter(a => a.finalAllocation > 0.02 && a.price > 0);
+    if (eligibleForFallback.length > 0) {
+      const totalWeight = eligibleForFallback.reduce((s, a) => s + a.finalAllocation, 0);
+      allocs = eligibleForFallback.map(a => {
+        const cashAssigned = totalCash * (a.finalAllocation / totalWeight);
+        const isFractional = a.ticker === "BTC-EUR";
+        const shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
+        const actualCost = shares * a.price;
+        const skipped = !isFractional && shares === 0;
+        return {
+          ticker: a.ticker, name: a.name,
+          cashToInvest: cashAssigned, actualCost,
+          motorWeight: a.finalAllocation, shares,
+          pricePerShare: a.price, isFractional, skipped,
+          reason: skipped
+            ? `Necesita €${a.price.toFixed(0)} mín.`
+            : `DCA prorrateado ${(a.finalAllocation*100).toFixed(1)}% (todos con cycle top ⚠️ o sobreponderados)`,
+        };
+      });
+    }
+  }
+
   const action: DCAAction = canAttack ? (attackConfluence >= 6 ? "ATTACK_MAX" : attackConfluence >= 5 ? "ATTACK_STRONG" : "ATTACK_ENTRY") : "BUY";
   const reasoning = canAttack
     ? btcOnlyAttack
