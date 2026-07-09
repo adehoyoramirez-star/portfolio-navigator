@@ -978,13 +978,12 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   - ERP < 1.0%  → equity capped al 35% (peligro extremo)
   //   - Non-equity (earningsYield === 0): sin cap por ERP
   //   - Solo se activa si erpValue fue explícitamente proporcionado
-  const isERPTriggered = input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD;
-  // FIX M2: guard input.erpValue !== undefined para isERPCritical.
-  // ANTES: solo comprobaba erpRaw < CRITICAL_THRESHOLD — con default 0.02,
-  //   isERPCritical era siempre false, pero si el threshold sube a >0.02
-  //   se activaría incorrectamente sin dato real del usuario.
-  const isERPCritical = input.erpValue !== undefined && erpRaw < ERP_CONFIG.CRITICAL_THRESHOLD;
-  const erpMaxExposure = isERPCritical ? ERP_CONFIG.CRITICAL_EXPOSURE : ERP_CONFIG.MAX_EXPOSURE;
+  // FIX-ERP-HIGHRATES (09-Jul-2026): en EXPANSION usar umbrales mas permisivos.
+  // ERP negativo con bonos al 4.5%+ no indica peligro inminente — es estructural.
+  const erpCfg = masterRegime.regime === 'EXPANSION' ? ERP_CONFIG.EXPANSION : ERP_CONFIG;
+  const isERPTriggered = input.erpValue !== undefined && erpRaw < erpCfg.TRIGGER_THRESHOLD;
+  const isERPCritical = input.erpValue !== undefined && erpRaw < erpCfg.CRITICAL_THRESHOLD;
+  const erpMaxExposure = isERPCritical ? erpCfg.CRITICAL_EXPOSURE : erpCfg.MAX_EXPOSURE;
 
   // Fracción equity vs non-equity de los pesos relativos
   const equityWeight = relativeWeightsAfterCap.reduce((s, w, i) =>

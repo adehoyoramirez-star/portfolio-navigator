@@ -22,11 +22,12 @@ export interface StressResult {
 
 // FIX A3: umbrales recalibrados para Brent (no WTI).
 // Brent cotiza $3-5 sobre WTI — los umbrales antiguos eran para WTI.
-// Brent < $80  → normal
-// Brent $80–100 → elevated (tensión geopolítica moderada)
-// Brent $100–120 → shock (conflicto regional — Ucrania 2022 llegó a $130)
-// Brent > $120 → crisis (Suez 1973, Iraq 2003, Iran 2026)
-const WTI_THRESHOLDS = { elevated: 80, shock: 100, crisis: 120 } as const;
+// FIX-WTI-ALIGN (09-Jul-2026): alineados con dashboard (75/95/115).
+// Brent < $75  → normal
+// Brent $75–95 → elevated (tensión geopolítica moderada)
+// Brent $95–115 → shock (conflicto regional — Ucrania 2022 llegó a $130)
+// Brent > $115 → crisis (Suez 1973, Iraq 2003, Iran 2026)
+const WTI_THRESHOLDS = { elevated: 75, shock: 95, crisis: 115 } as const;
 
 export function computeGlobalStress(inputs: StressInputs): StressResult {
   let score = 0;

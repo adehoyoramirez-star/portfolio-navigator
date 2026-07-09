@@ -36,6 +36,16 @@ export const ERP_CONFIG = {
   MAX_EXPOSURE: 0.85,          // Cap forzado al 85% (recalibrado: antes 60%). Permite mas equity en ERP comprimido sin sacrificar proteccion.
   CRITICAL_THRESHOLD: 0.005,   // 0.5% ERP — señal de peligro extremo (recalibrado: antes 1.0%)
   CRITICAL_EXPOSURE: 0.50,     // Cap forzado al 50% en peligro extremo (recalibrado: antes 35%)
+  // FIX-ERP-HIGHRATES (09-Jul-2026): en EXPANSION con tipos altos (>4%),
+  // el ERP es estructuralmente más bajo sin indicar peligro inminente.
+  // El earningsYield no puede competir con bonos al 4.5% — es normal.
+  // Umbrales más permisivos para no penalizar injustamente la equity.
+  EXPANSION: {
+    TRIGGER_THRESHOLD: 0.00,     // ERP < 0% → warning (vs 2.5% normal)
+    MAX_EXPOSURE: 0.90,          // cap al 90% (vs 85% normal)
+    CRITICAL_THRESHOLD: -0.025,   // ERP < -2.5% → crítico extremo (vs 0.5% normal)
+    CRITICAL_EXPOSURE: 0.65,      // cap al 65% en crítico (vs 50% normal)
+  },
 } as const;
 
 // ── CORRELATION PANIC TRIGGER ────────────────────────────────────────────
