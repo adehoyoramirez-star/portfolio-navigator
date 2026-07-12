@@ -266,6 +266,11 @@ export interface OlympusEngineInput {
   wlgPERatio?: number;
   emxcRsiWeekly?: number;
   emxcPERatio?: number;
+  // FIX-INSTITUCIONAL (Jul-2026): Shiller CAPE + DXY spot para cycle top detection.
+  // CAPE: estándar institucional de valoración (Shiller, Nobel 2013). Vía FRED.
+  // DXY: #1 factor de riesgo EM (BIS research). Vía Yahoo DX-Y.NYB.
+  cape?: number;
+  dxySpot?: number;
   cycleTopSignals?: { ticker: string; allocationMultiplier: number }[];
   regimeLock?: RegimeLock | null;
   blendWeights?: {
@@ -816,8 +821,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         brentOil: macro.wtiOil,
         wlgRsiWeekly: input.wlgRsiWeekly,
         wlgPERatio: input.wlgPERatio,
+        wlgCAPE: input.cape,
         emxcRsiWeekly: input.emxcRsiWeekly,
         emxcPERatio: input.emxcPERatio,
+        dxy: input.dxySpot,
       });
       return ctOutput.signals
         .filter(s => s.allocationMultiplier < 1.0)

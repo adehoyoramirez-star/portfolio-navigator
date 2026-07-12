@@ -679,11 +679,13 @@ soxRsiWeekly,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
       wlgRsiWeekly,
       wlgPERatio,
+      wlgCAPE: marketData?.per,
       emxcRsiWeekly,
       emxcPERatio,
+      dxy,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
   
 

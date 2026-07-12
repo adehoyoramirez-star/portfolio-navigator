@@ -38,10 +38,17 @@ soxRsiWeekly?: number;       // RSI semanal del índice PHLX Semiconductor (^SOX
   // WLG (Vanguard Global Stock — MSCI World)
   wlgRsiWeekly?: number;     // RSI semanal URTH (proxy MSCI World) — TradingView, período 14, timeframe W
   wlgPERatio?: number;       // P/E del MSCI World (manual — multpl.com o Yardeni)
+  wlgCAPE?: number;          // Shiller CAPE del S&P 500 vía FRED. PROXY del MSCI World (USA ~70% del índice).
+                              //   ⚠️ S&P 500 es estructuralmente más caro que el MSCI World por concentración Mag7/tech.
+                              //   CAPE > 30 desde S&P 500 puede sobrestimar la valoración global. Los reasons
+                              //   de la señal de techo aclaran que es "S&P 500 CAPE como proxy".
 
   // EMXC (Emerging Markets)
   emxcRsiWeekly?: number;     // RSI semanal EEM — TradingView, período 14, timeframe W
   emxcPERatio?: number;       // P/E del MSCI Emerging Markets (manual — Yardeni)
+  dxy?: number;              // DXY spot — índice del dólar USA. #1 factor de riesgo EM (BIS).
+                              //   DXY > 106 = estrés, > 110 = crisis EM.
+                              //   Solo se considera válido si dxy > 50 (guarda sanitario contra 0 = fetch fallido).
 }
 
 export interface CycleTopSignal {
@@ -165,17 +172,23 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
   } else if (ratio < 0.70) {
     // FIX-URANIUM-VALUE: descuento profundo — utilities pagan +43% más por contratos LP.
     // Señal de acumulación agresiva. Raro: solo ha ocurrido en 2016 y brevemente en 2020.
-    multiplier = 1.40; zone = "SAFE"; trimPct = 0;
+    multiplier = 1.0; zone = "SAFE"; trimPct = 0;
     reason = `Spot/LT ${ratio.toFixed(2)} — descuento profundo. Spot muy por debajo del LT: utilities pagan fuerte prima por suministro futuro. Señal de acumulación agresiva.`;
   } else if (ratio < 0.85) {
     // FIX-URANIUM-VALUE: spot barato vs contratos LP.
     // El mercado de futuros anticipa mayor demanda → ventana de acumulación.
-    multiplier = 1.20; zone = "SAFE"; trimPct = 0;
+    multiplier = 1.0; zone = "SAFE"; trimPct = 0;
     reason = `Spot/LT ${ratio.toFixed(2)} — spot barato vs contratos a largo plazo. Contango saludable: el mercado anticipa tightening futuro. Ventana de acumulación.`;
   } else {
     multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
     reason = `Spot/LT ${ratio.toFixed(2)} — equilibrio normal entre spot y contratos a largo plazo.`;
   }
+
+  // FIX-AUDIT-URANIO-CLAMP (Jul-2026): clamp [0, 1] para respetar el contrato de CycleTopSignal.
+  // El comentario del output dice explícitamente: "Output: un multiplicador [0, 1] por activo".
+  // ANTES: 1.40 y 1.20 cuando spot < LT → rompía el contrato.
+  // AHORA: 1.0 en zona SAFE. El boost se logra vía REGIME_TILT (uranium +10% en EXPANSION).
+  multiplier = Math.max(0, Math.min(1, multiplier));
 
   return {
     asset: "Uranium",
@@ -358,18 +371,24 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 // El MSCI World es el índice de developed markets más amplio.
 // Señales de techo:
 //   RSI Semanal > 75 → sobrecompra. > 80 → sobrecompra extrema.
+//   Shiller CAPE > 30 → caro. > 38 → burbuja (umbrales de Shiller Nobel Prize).
 //   P/E > 28 → caro (media histórica ~17-19). > 35 → burbuja.
+//
+// Jerarquía: CAPE es el indicador PRIMARIO (peso 1.5×), P/E es secundario (1.0×).
+// Razón: CAPE suaviza el ciclo de beneficios con media de 10 años (Shiller 1988).
+// P/E TTM es volátil por distorsiones contables (COVID, estímulos, write-offs).
+// Si ambos indicadores confluyen, la señal es más fuerte que cada uno por separado.
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { wlgRsiWeekly, wlgPERatio } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
 
-  if (wlgRsiWeekly === undefined && wlgPERatio === undefined) {
+  if (wlgRsiWeekly === undefined && wlgPERatio === undefined && wlgCAPE === undefined) {
     return {
       asset: "Vanguard Global Stock",
       ticker: "0P00000WLG.F",
       allocationMultiplier: 1.0,
       zone: "SAFE",
-      reason: "Sin datos de RSI semanal ni P/E — introduce wlgRsiWeekly y wlgPERatio para activar esta señal",
-      indicator: "RSI Semanal URTH + P/E MSCI World",
+      reason: "Sin datos de RSI, P/E ni CAPE — introduce wlgRsiWeekly, wlgPERatio o wlgCAPE para activar esta señal",
+      indicator: "RSI Semanal URTH + P/E MSCI World + CAPE",
       indicatorValue: "Sin datos",
       shouldTrim: false,
       trimPct: 0,
@@ -379,6 +398,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   let topSignals = 0;
   const reasons: string[] = [];
 
+  // RSI Semanal (mismo peso que antes)
   if (wlgRsiWeekly !== undefined) {
     if (wlgRsiWeekly > 85) {
       topSignals += 2;
@@ -392,25 +412,68 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  if (wlgPERatio !== undefined) {
-    if (wlgPERatio > 35) {
-      topSignals += 2.5;
-      reasons.push(`P/E ${wlgPERatio.toFixed(1)} — MSCI World en territorio de burbuja (>28 = caro)`);
-    } else if (wlgPERatio > 28) {
-      topSignals += 1.5;
-      reasons.push(`P/E ${wlgPERatio.toFixed(1)} — MSCI World caro por encima de su media (~18)`);
-    } else if (wlgPERatio > 22) {
-      topSignals += 1;
-      reasons.push(`P/E ${wlgPERatio.toFixed(1)} — MSCI World por encima de la media`);
+  // Shiller CAPE (proxy S&P 500 para MSCI World) — VALORACIÓN (selección: máx entre CAPE y P/E)
+  // ⚠️ El CAPE de Shiller vía FRED es del S&P 500, no del MSCI World global.
+  //    USA pesa ~70% del MSCI World pero es estructuralmente más caro por Mag7/tech.
+  //    CAPE > 30 desde S&P 500 puede sobrestimar la valoración global del índice.
+  //    Los reasons incluyen la etiqueta "S&P 500 CAPE" para transparencia.
+  //
+  // FIX-AUDIT-MC (Jul-2026): corrección de multicolinealidad CAPE + P/E.
+  //   CAPE y P/E TTM están correlacionados con r > 0.8 (ambos miden valoración del
+  //   mismo mercado). Sumarlos linealmente infla el score: con RSI 76 + CAPE 31 + P/E 23
+  //   → score 3.5 (EXTREME, trim 75%) cuando ninguna lectura individual es extrema.
+  //   SOLUCIÓN: tomar el MÁXIMO de CAPE y P/E, no la suma. Así dos indicadores que
+  //   dicen lo mismo no cuentan doble. El orden de prioridad es: CAPE > P/E > RSI.
+  //   RSI sigue sumándose porque mide momentum (dimensión ortogonal a valoración).
+  let valuationScore = 0;
+  const valuationReasons: string[] = [];
+
+  if (wlgCAPE !== undefined) {
+    // Proxy S&P 500 para MSCI World (USA ~70% del índice).
+    if (wlgCAPE > 44) {
+      valuationScore = 3;
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — nivel de burbuja dot-com (récord: 44.2 en 1999)`);
+    } else if (wlgCAPE > 38) {
+      valuationScore = Math.max(valuationScore, 2.5);
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — sobrevaloración extrema (>38: solo 1999 y 2021)`);
+    } else if (wlgCAPE > 33) {
+      valuationScore = Math.max(valuationScore, 2);
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado significativamente caro (top decil histórico)`);
+    } else if (wlgCAPE > 30) {
+      valuationScore = Math.max(valuationScore, 1.5);
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro (Bridgewater: retornos esperados <2% real 10y)`);
+    } else if (wlgCAPE > 27) {
+      valuationScore = Math.max(valuationScore, 0.75);
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por encima de la media (media ~17)`);
     }
   }
+
+  if (wlgPERatio !== undefined) {
+    if (wlgPERatio > 35) {
+      valuationScore = Math.max(valuationScore, 2.0);
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — en territorio de burbuja (>28 = caro)`);
+    } else if (wlgPERatio > 28) {
+      valuationScore = Math.max(valuationScore, 1.5);
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — caro por encima de su media (~18)`);
+    } else if (wlgPERatio > 22) {
+      valuationScore = Math.max(valuationScore, 1);
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media`);
+    }
+  }
+
+  // Aplicar valuationScore (máx entre CAPE y P/E) + reasons
+  topSignals += valuationScore;
+  reasons.push(...valuationReasons);
 
   let multiplier: number;
   let zone: CycleTopSignal["zone"];
   let trimPct = 0;
 
-  if (topSignals >= 3.5) {
-    multiplier = 0.15; zone = "EXTREME"; trimPct = 80;
+  // Umbrales ajustados: con CAPE + P/E + RSI simultáneos, topSignals puede llegar a 7+
+  if (topSignals >= 5) {
+    multiplier = 0.10; zone = "EXTREME"; trimPct = 85;
+  } else if (topSignals >= 3.5) {
+    multiplier = 0.20; zone = "EXTREME"; trimPct = 75;
   } else if (topSignals >= 2.5) {
     multiplier = 0.35; zone = "DANGER";  trimPct = 60;
   } else if (topSignals >= 1.5) {
@@ -423,6 +486,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 
   const parts: string[] = [];
   if (wlgRsiWeekly !== undefined) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
+  if (wlgCAPE !== undefined) parts.push(`CAPE ${wlgCAPE.toFixed(1)}`);
   if (wlgPERatio !== undefined) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
@@ -432,7 +496,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     allocationMultiplier: multiplier,
     zone,
     reason: reasons.length > 0 ? reasons.join(" · ") : "MSCI World en zona saludable — sin señales de techo",
-    indicator: "RSI Semanal URTH + P/E MSCI World",
+    indicator: "CAPE Shiller + RSI Semanal URTH + P/E MSCI World",
     indicatorValue,
     shouldTrim: trimPct > 0,
     trimPct,
@@ -446,17 +510,25 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 // Señales de techo:
 //   RSI Semanal > 80 → sobrecompra. > 85 → extrema.
 //   P/E > 20 → Emergentes caros (solo en 2010-11 post-estímulos). > 25 → peligro.
+//   DXY > 106 → dólar fuerte presiona EM. > 110 → crisis en EM (BIS research).
+//
+// DXY (índice del dólar USA) es el #1 factor de riesgo para emergentes según
+// el Bank for International Settlements (BIS). Un dólar fuerte:
+//   1. Encarece el servicio de deuda en USD para países EM
+//   2. Provoca salida de capitales (flight-to-safety hacia USA)
+//   3. Comprime los márgenes de exportadores EM (commodities nominados en USD)
+// El DXY tiene peso 1.5× sobre P/E porque es más predictivo en ciclos EM.
 function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { emxcRsiWeekly, emxcPERatio } = inputs;
+  const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
 
-  if (emxcRsiWeekly === undefined && emxcPERatio === undefined) {
+  if (emxcRsiWeekly === undefined && emxcPERatio === undefined && dxy === undefined) {
     return {
       asset: "Emerging Markets",
       ticker: "EMXC.DE",
       allocationMultiplier: 1.0,
       zone: "SAFE",
-      reason: "Sin datos de RSI semanal ni P/E — introduce emxcRsiWeekly y emxcPERatio para activar esta señal",
-      indicator: "RSI Semanal EEM + P/E Emergentes",
+      reason: "Sin datos de RSI, P/E ni DXY — introduce emxcRsiWeekly, emxcPERatio o dxy para activar esta señal",
+      indicator: "RSI Semanal EEM + P/E Emergentes + DXY",
       indicatorValue: "Sin datos",
       shouldTrim: false,
       trimPct: 0,
@@ -465,6 +537,33 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
 
   let topSignals = 0;
   const reasons: string[] = [];
+
+  // DXY — indicador PRIMARIO para EM (peso 1.5×)
+  // Justificación: BIS Quarterly Review 2023 confirma que el 60% de las crisis EM
+  // estuvieron precedidas por una apreciación del DXY >10% en 12 meses.
+  // DXY > 110 desencadena automáticamente salida de capitales de EM.
+  //
+  // FIX-AUDIT-MC (Jul-2026): guarda sanitario dxy > 50.
+  //   Si Yahoo falla (dxy = 0), el valor 0 entra como dato válido pero no dispara
+  //   ningún umbral (0 > 103 = false). El sistema reporta "EM en zona segura" con
+  //   DXY 0.0 — un valor imposible (mínimo histórico ~70) que induce a error.
+  //   Con dxy > 50 garantizamos que solo procesamos valores realistas.
+  const dxyValid = dxy !== undefined && dxy > 50;
+  if (dxyValid) {
+    if (dxy > 115) {
+      topSignals += 3;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar en niveles de crisis EM (México 1994, Asia 1997, Argentina 2018)`);
+    } else if (dxy > 110) {
+      topSignals += 2.5;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar extremadamente fuerte. Capital huyendo de emergentes.`);
+    } else if (dxy > 106) {
+      topSignals += 1.5;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar fuerte. Presión significativa sobre emergentes y commodities.`);
+    } else if (dxy > 103) {
+      topSignals += 0.75;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar apreciándose. Vigilar flujos EM.`);
+    }
+  }
 
   // Evaluar RSI semanal (umbrales más altos porque EM es más volátil)
   if (emxcRsiWeekly !== undefined) {
@@ -480,7 +579,7 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  // Evaluar P/E del MSCI Emerging Markets
+  // Evaluar P/E del MSCI Emerging Markets (SECUNDARIO)
   // Rango histórico P/E EM: ~10-12 en crisis, ~15 media, ~18-20 caro, >22 solo burbuja 2010.
   if (emxcPERatio !== undefined) {
     if (emxcPERatio > 25) {
@@ -499,11 +598,14 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   let zone: CycleTopSignal["zone"];
   let trimPct = 0;
 
-  if (topSignals >= 3) {
-    multiplier = 0.15; zone = "EXTREME"; trimPct = 80;
-  } else if (topSignals >= 2) {
+  // Umbrales ajustados al alza: con DXY + RSI + P/E, topSignals puede alcanzar 7+
+  if (topSignals >= 5) {
+    multiplier = 0.10; zone = "EXTREME"; trimPct = 85;
+  } else if (topSignals >= 3.5) {
+    multiplier = 0.20; zone = "EXTREME"; trimPct = 75;
+  } else if (topSignals >= 2.5) {
     multiplier = 0.35; zone = "DANGER";  trimPct = 60;
-  } else if (topSignals >= 1) {
+  } else if (topSignals >= 1.5) {
     multiplier = 0.55; zone = "CAUTION"; trimPct = 35;
   } else if (topSignals >= 0.5) {
     multiplier = 0.75; zone = "CAUTION"; trimPct = 15;
@@ -512,6 +614,7 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   const parts: string[] = [];
+  if (dxyValid) parts.push(`DXY ${dxy.toFixed(1)}`);
   if (emxcRsiWeekly !== undefined) parts.push(`RSI-W ${emxcRsiWeekly.toFixed(0)}`);
   if (emxcPERatio !== undefined) parts.push(`P/E ${emxcPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
@@ -522,7 +625,7 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
     allocationMultiplier: multiplier,
     zone,
     reason: reasons.length > 0 ? reasons.join(" · ") : "Emergentes en zona saludable — sin señales de techo",
-    indicator: "RSI Semanal EEM + P/E Emergentes",
+    indicator: "DXY + RSI Semanal EEM + P/E Emergentes",
     indicatorValue,
     shouldTrim: trimPct > 0,
     trimPct,
