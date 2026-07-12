@@ -77,24 +77,28 @@ export const CORRELATION_PANIC_CONFIG = {
 // el riesgo de mercado real. El motor rankea activos relativamente — el
 // "mejor" activo en un bear market sigue teniendo retorno esperado negativo.
 //
-// Tres señales de mercado absoluto que el motor ignoraba:
+// Tres senales de mercado absoluto (Gate DXY eliminado Jul-2026):
 //   1. Todos los activos negativos 3m → la diversificación no protege
 //   2. BTC en bear market (returns12m < -30%) → proxy de BTC < MA200
-//   3. DXY acelerándose (+5%) → dólar fuerte = risk-off global
+//   3. DXY acelerándose (+5%) → ELIMINADO (Jul-2026, auditoría)
+//      dxyTrend ya entra en masterRegime vía computeGlobalStress.
+//      Mantenerlo también aquí era doble conteo. Ver AGENTS.md.
+//   4. Correlation Convergence → early warning de diversificación colapsada
 //
 // Lógica:
 //   - All-bearish 3m → cap exposición al 50% (cross-sectional useless)
 //   - BTC bear market → cap adicional al 35% (BTC arrastra al portfolio)
-//   - DXY risk-off → -10pp adicional (tightening financiero global)
+//   - Correlation convergence → -0pp (desactivado, redundante con panic)
 //   - Floor absoluto: 25% (nunca ir a 0 por estos gates, Tail Risk decide)
 export const ABSOLUTE_TREND_GATE = {
   ALL_BEARISH_CAP: 0.50,        // todos los activos returns3m < 0 → max 50%
   BTC_BEAR_CAP: 0.35,           // BTC returns12m < -30% → max 35%
   BTC_BEAR_THRESHOLD: -0.30,    // umbral de bear market BTC (12 meses)
-  DXY_RISK_OFF_THRESHOLD: 0.05, // DXY tendencia > 5% → risk-off
-  DXY_PENALTY: 0.10,            // -10pp reduction per DXY gate
-  CORR_EARLY_PENALTY: 0.0,      // FIX-CALIBRATION: desactivado (redundante con Correlation Panic + Tail Risk corr penalty)
+  CORR_EARLY_PENALTY: 0.0,      // desactivado (redundante con Correlation Panic + Tail Risk corr penalty)
   FLOOR: 0.25,                  // floor absoluto (Tail Risk + Kill Switch deciden más abajo)
+  // DXY_RISK_OFF_THRESHOLD y DXY_PENALTY eliminados Jul-2026.
+  //   dxyTrend ya entra en masterRegime vía computeGlobalStress.
+  //   Mantener el gate aquí era doble conteo. Ver AGENTS.md.
 } as const;
 
 // ── KELLY CRITERION ───────────────────────────────────────────────────────

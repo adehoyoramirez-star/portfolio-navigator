@@ -100,6 +100,32 @@ supabase functions deploy glassnode-onchain
 GLASSNODE_API_KEY     (opcional — proxy gratuito disponible)
 ```
 
+## REGLA INSTITUCIONAL: SEÑALES MACRO EN MÚLTIPLES CAPAS
+
+Una variable macro puede aparecer en MÁXIMO DOS capas del pipeline SI Y SOLO SI:
+
+1. **Miden dimensiones diferentes** del mismo fenómeno (spot vs. trend, nivel vs. tasa de cambio)
+2. **Los umbrales NO se solapan** (gate mucho más extremo que régimen)
+3. **Los mecanismos son distintos** (régimen = recalibración gradual; gate = stop-loss puntual)
+
+**Ejemplos válidos:**
+- `dxy spot` → cycleTopDetector EMXC (nivel del dólar para emergentes)
+  + `dxy trend` → masterRegime (tendencia para régimen global) → dimensiones distintas ✅
+- VIX 20 → masterRegime (40% del peso del régimen, recalibración gradual)
+  + VIX > 30 → tailRisk (stop-loss puntual) → umbrales y mecanismos distintos ✅
+
+**Ejemplos de violación (corregidos):**
+- `dxyTrend` en masterRegime + Gate 3 Absolute Trend → misma variable, mismos umbrales solapados, mismo efecto → ELIMINADO (Jul-2026)
+- `yieldSpread` en masterRegime + propuesto en cycleTopDetector → mismo dato, misma dirección → RECHAZADO (Jul-2026)
+
+**En caso de duda → NO PERMITIDO. Una señal, una capa.**
+
+---
+
+### Deuda técnica conocida
+
+- **Naming WTI/Brent:** La variable `wtiOil` en MarketData, globalStress, olympusV3, masterRegime, y cycleTopDetector contiene en realidad **Brent** (Yahoo ticker BZ=F). Los umbrales están calibrados para Brent (75/95/115). Funcionalmente correcto, pero si se conecta WTI real (CL=F) en el futuro, los umbrales se retrasarían $3-5. Renombrar a `brentOil` en toda la cadena: MarketData → olympusV3 → masterRegime → globalStress → cycleTopDetector → dashboard.
+
 ## MISIONES DE AUTOMATIZACIÓN DISPONIBLES
 
 Puedes decirle al agente en lenguaje natural:

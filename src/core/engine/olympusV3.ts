@@ -648,7 +648,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 // ==========================================================================
   function computeAbsoluteTrendGates(
     assets: AssetInput[],
-    dxyTrend: number,
     avgCorrelation: number | undefined,
     btcMVRV?: number,
     regime?: string,
@@ -685,13 +684,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       reasons.push(`btc-bear bypassed: returns12m ${(btcReturns12m * 100).toFixed(0)}% < -30% pero MVRV ${btcMVRV?.toFixed(2) ?? '?'} ≤ 2.5 y régimen EXPANSION → acumulación`);
     }
 
-    // Gate 3: DXY Risk-Off Accelerometer
-    if (dxyTrend > ABSOLUTE_TREND_GATE.DXY_RISK_OFF_THRESHOLD) {
-      multiplier = Math.max(ABSOLUTE_TREND_GATE.FLOOR, multiplier - ABSOLUTE_TREND_GATE.DXY_PENALTY);
-      reasons.push(`dxy-risk-off: DXY +${(dxyTrend * 100).toFixed(1)}% → -${(ABSOLUTE_TREND_GATE.DXY_PENALTY * 100).toFixed(0)}pp`);
-    }
+    // DXY Risk-Off Accelerometer — ELIMINADO (auditoría Jul-2026)
+    //   dxyTrend ya entra en computeGlobalStress() vía masterRegime.
+    //   Mantenerlo también aquí era doble conteo de la misma señal macro
+    //   en dos capas independientes. La regla institucional: una señal,
+    //   una capa. Ver AGENTS.md → REGLA INSTITUCIONAL: SEÑALES EN MÚLTIPLES CAPAS.
 
-    // Gate 4: Correlation Convergence — early warning (antes de panic >0.85)
+    // Gate 3: Correlation Convergence — early warning (antes de panic >0.85)
     if (avgCorrelation !== undefined && avgCorrelation > CORRELATION_PANIC_CONFIG.DIVERSIFICATION_COLLAPSE && avgCorrelation <= CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD) {
       multiplier = Math.max(ABSOLUTE_TREND_GATE.FLOOR, multiplier - ABSOLUTE_TREND_GATE.CORR_EARLY_PENALTY);
       reasons.push(`corr-convergence: ${(avgCorrelation * 100).toFixed(0)}% → -${(ABSOLUTE_TREND_GATE.CORR_EARLY_PENALTY * 100).toFixed(0)}pp diversificación`);
@@ -957,7 +956,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // sigue en EXPANSION sin saber que todo baja.
   const absTrendGate = computeAbsoluteTrendGates(
     assets,
-    macro.dxyTrend,
     input.avgCorrelation,
     btcMVRV,
     masterRegime.regime,
