@@ -335,7 +335,8 @@ const formatCurrency = (value: number): string => {
       const liq = liquidityScore({
         m2Growth: md.m2GrowthSource === "FRED" ? md.m2Growth : m2Growth,
         vix: md.vix,
-        yieldCurveSpread: md.tnx - md.irx
+        yieldCurveSpread: md.tnx - md.irx,
+        centralBankGrowth: md.cbLiquidityGrowth
       });
       setLiquidity(liq);
 
@@ -1970,6 +1971,11 @@ soxRsiWeekly,
             }}>{(liquidity * 100).toFixed(0)}%</div>
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>
               {liquidity > 0.6 ? "Expansiva" : liquidity > 0.35 ? "Neutral" : "Restrictiva"}
+              {liquidityOutput && (
+                <span style={{ color: liquidityOutput.regime === 'EXPANSION' ? '#10b981' : liquidityOutput.regime === 'CONTRACTION' ? '#ef4444' : '#f59e0b', marginLeft: '4px' }}>
+                  · {liquidityOutput.regime === 'EXPANSION' ? 'CB Exp' : liquidityOutput.regime === 'CONTRACTION' ? 'CB Cont' : 'CB Neu'}
+                </span>
+              )}
             </div>
           </div>
 

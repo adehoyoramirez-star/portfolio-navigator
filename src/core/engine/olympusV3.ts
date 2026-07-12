@@ -481,10 +481,15 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
                         + CORE_SIGNAL_WEIGHTS.RISK * Math.max(0, riskNumeric);
 
   // ====== ESCENARIOS PROBABILÍSTICOS ======
+  // FIX-AUDIT-TRANSVERSAL #3 (Jul-2026): usar macro.cbLiquidityGrowth en vez
+  //   de input.liquidityGrowth (que es M2 growth del dashboard state).
+  //   cbLiquidityGrowth mide la base monetaria (QE/QT directo de bancos
+  //   centrales), que es el driver correcto para ajustar pBull/pBear.
+  //   Fallback a input.liquidityGrowth si cbLiquidityGrowth no está disponible.
   const scenarioProbabilities = computeScenarioProbabilities(
     masterRegime.regimeProbs,
     btcNumeric,
-    input.liquidityGrowth ?? 0
+    macro.cbLiquidityGrowth ?? input.liquidityGrowth ?? 0
   );
 
   // ====== CAPA 3: FACTOR SCORES ======

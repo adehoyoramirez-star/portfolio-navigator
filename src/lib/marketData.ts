@@ -5,6 +5,7 @@ import { ASSETS } from '@/lib/constants';
 import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { fromManualInputs } from '@/core/macro/liquidityCycle';
+import { liquidityScore } from '@/core/macro/liquidity';
 import { ensurePSD } from '@/lib/matrixUtils';
 
 interface YahooChartResult {
@@ -780,13 +781,23 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     creditSpreadSource = "YAHOO_PROXY";
   }
 
-  // ── Liquidez Global desde entradas manuales FRED ──────────────────────
-  const liquidityOutput = fromManualInputs({ liquidityGrowth: m2Growth, dxy });
+  // ── Liquidez Global — fórmula canónica (liquidity.ts) ──────────────
+  // FIX-AUDIT-TRANSVERSAL #2 (Jul-2026): antes había una fórmula duplicada
+  //   simplificada (M2/10 + VIX) que divergía de liquidity.ts. Ahora se usa
+  //   la misma función con los 4 inputs: M2, VIX, yield curve, y CB liquidity.
+  //   centralBankGrowth = cbLiquidityGrowth (WALCL+ECBASSETSW via FRED).
+  const liquidityScoreValue = liquidityScore({
+    m2Growth,
+    vix: vixPrice,
+    yieldCurveSpread: tnxPrice - irxPrice,
+    centralBankGrowth: cbLiquidityGrowth,
+  });
 
-  const liquidityScoreAuto = Math.max(0, Math.min(1,
-    (liquidityOutput.liquidityGrowth / 10) * 0.6 +
-    Math.max(0, (30 - vixPrice) / 30) * 0.4
-  ));
+  // fromManualInputs: solo para dataQuality del régimen de liquidez
+  //   NOTA: liquidityGrowth aquí es M2 growth, no CB liquidity growth.
+  //   El parámetro se llama liquidityGrowth por la interfaz de fromManualInputs,
+  //   pero el dato real es m2Growth (crecimiento de dinero amplio).
+  const liquidityOutput = fromManualInputs({ liquidityGrowth: m2Growth, dxy });
 
   // ====== RETORNOS POR PERÍODO (12m, 3m, 1m) ======
 
@@ -956,7 +967,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       jumpIntensity: jumpParams.intensity,
       jumpMean:      jumpParams.mean,
       jumpStd:       jumpParams.stdDev,
-      liquidityScore: liquidityScoreAuto,
+      liquidityScore: liquidityScoreValue,
       liquidityDataQuality: liquidityOutput.dataQuality,
       wtiOil,
       wtiSource,

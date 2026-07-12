@@ -30,6 +30,19 @@ export interface RegimeProbabilities {
  *   m2Growth   — crecimiento M2 en % (input manual del dashboard)
  *
  * Output: probabilidades [0,1] que suman 1 para cada régimen
+ *
+ * NOTA DE ARQUITECTURA (FIX-AUDIT-TRANSVERSAL #6, Jul-2026):
+ *   Esta función NO recibe cbLiquidityGrowth (crecimiento de base monetaria
+ *   Fed+ECB). Es intencional:
+ *   - m2Growth mide la dimensión de CRÉDITO (dinero amplio, multiplicador
+ *     bancario, velocidad del dinero).
+ *   - cbLiquidityGrowth mide la dimensión de BASE MONETARIA (QE/QT directo).
+ *   - Son dimensiones macro distintas que pueden divergir (2023: Fed QT
+ *     pero M2 plano porque drenaba del RRP, no de depósitos).
+ *   - cbLiquidityGrowth entra en el sistema por globalStress.ts (scoring
+ *     de crisis) y masterRegime.ts (stress regime), NO por aquí.
+ *   - Si en el futuro se añade, debe ser como input independiente con su
+ *     propio peso, NO mezclado con m2Growth.
  */
 export function detectRegimeProbabilistic(
   vix: number,
