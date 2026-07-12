@@ -126,6 +126,35 @@ Una variable macro puede aparecer en MÁXIMO DOS capas del pipeline SI Y SOLO SI
 
 - **Naming WTI/Brent:** La variable `wtiOil` en MarketData, globalStress, olympusV3, masterRegime, y cycleTopDetector contiene en realidad **Brent** (Yahoo ticker BZ=F). Los umbrales están calibrados para Brent (75/95/115). Funcionalmente correcto, pero si se conecta WTI real (CL=F) en el futuro, los umbrales se retrasarían $3-5. Renombrar a `brentOil` en toda la cadena: MarketData → olympusV3 → masterRegime → globalStress → cycleTopDetector → dashboard.
 
+- **Pérdida de granularidad del uranio (ratio Spot/LT):** Cuando se clampeó allocationMultiplier a [0,1] (FIX-AUDIT-URANIO-CLAMP), el boost por ratio Spot/LT bajo (1.40→1.0, 1.20→1.0) perdió toda expresión específica en el motor. La señal más fuerte del detector original —ratio <0.70 = ventana de acumulación agresiva, +100-300% históricamente— ahora es indistinguible de ratio=1.0. Si se quiere recuperar esa granularidad, iría como un multiplicador ortogonal al régimen (similar a dxy spot vs dxyTrend), no dentro de topSignals. La pérdida es consciente, no un bug.
+
+---
+
+### 🔖 SIGNAL_REGISTRY — fuente de verdad de qué variable entra en qué capa
+
+Regla: una variable solo puede aparecer en múltiples capas si cumple los 3 criterios
+(dimensiones distintas, umbrales no solapados, mecanismos distintos). Esta tabla es
+la referencia canónica. Cualquier propuesta de nueva señal debe consultarse aquí primero.
+
+| Variable | Capas activas | Nota |
+|---|---|---|
+| `dxyTrend` | `globalStress` (+1 si > 2% apreciación) | Gate 3 DXY eliminado Jul-2026 (doble conteo). Solo en globalStress. |
+| `dxy` (spot) | `cycleTopDetector` (EMXC, > 103 → +0.75, > 115 → +3) | Distinta de dxyTrend: spot mide nivel EM, trend mide régimen global. ✅ |
+| `yieldSpread` (T10Y2Y) | `crisis.ts` (+4 puntos si invertida), `CEWS_CONFIG` (danger: -0.5) | NO añadir a cycleTopDetector. Doble capa ya justificada (umbrales distintos). |
+| `creditSpread` | `globalStress` (+1 si > 3, +2 si > 5) | También en `crisis.ts` (+4 puntos si > 5). Umbrales no solapados (3/5 vs 5). ✅ |
+| `m2Growth` | `detectRegimeProbabilistic` (3er input), `CEWS_CONFIG` (warning: 2.0, danger: 0.0) | Dinero AMPLIO. NO confundir con CB Liquidity (dinero BASE). |
+| `cbLiquidityGrowth` | `globalStress` (+2 si < 0%, +3 si < -5%) | Dinero BASE (QE/QT directo). Defensa aprobada Jul-2026. Ver sección CB Liquidity vs M2. |
+| `vix` | `globalStress` (+1 si > 18, +2 si > 25), `crisis.ts` (+1 si > 20) | Misma variable, distinto mecanismo: régimen vs stop-loss puntual. ✅ |
+| `wtiOil` *(Brent real)* | `globalStress` (+1/+2/+3 a 75/95/115), `cycleTopDetector` (gold override) | Dimensiones distintas: shock geopolítico vs protección oro. ✅ |
+| `btcVol` | `globalStress` (+1 si > 80%) | Solo en globalStress. |
+| `move` | `globalStress` (+1 si > 110, +2 si > 140) | Solo en globalStress. |
+
+**Variables rechazadas:**
+| Variable | Propuesta rechazada | Motivo |
+|---|---|---|
+| `dxyTrend` | Gate 3 Absolute Trend | Doble conteo con globalStress (mismos umbrales, mismo efecto). |
+| `yieldSpread` | cycleTopDetector | Ya en crisis.ts + CEWS. Mismo dato, misma dirección. |
+
 ### CB Liquidity vs M2 — precedente de la regla institucional (Jul-2026)
 
 **Caso:** Se propuso añadir Global CB Liquidity (WALCL+ECBASSETSW) a globalStress. Objeción: m2Growth ya existe en detectRegimeProbabilistic y CEWS, ambos miden "cantidad de dinero".

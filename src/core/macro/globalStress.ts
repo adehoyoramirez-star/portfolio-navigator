@@ -58,9 +58,10 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   // Esto elimina ~40% de los falsos positivos de HIGH_RISK.
   if (inputs.btcVol > 0.80) score += 1;
 
-  // ── WTI OIL — geopolitical shock multiplier ──────────────────────────
+  // ── BRENT OIL — geopolitical shock multiplier ────────────────────────
   // El petróleo es el termómetro más rápido de crisis geopolíticas —
   // sube antes que el VIX, antes que credit spreads, antes que cualquier otro indicador.
+  // Umbrales: > $75 → ELEVATED · > $95 → SHOCK · > $115 → CRISIS
   let wtiShock: StressResult["wtiShock"] = "NONE";
   let wtiPenalty = 1.0;
 

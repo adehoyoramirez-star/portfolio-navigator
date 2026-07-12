@@ -14,7 +14,23 @@
 //   1.0 = sin restricción (zona segura)
 //   0.5 = reducir al 50% del peso objetivo
 //   0.1 = reducir al 10% del peso objetivo (techo extremo)
+//
+// CONTRATO: allocationMultiplier ∈ [0, 1] — garantizado centralizadamente en
+//           detectCycleTops() vía clamp post-map. Ningún detector individual
+//           puede violarlo aunque su lógica interna se equivoque.
 // ===============================================
+
+// ── Validación de lecturas numéricas ─────────────────────────────
+// FIX-VALID-READINGS (Jul-2026): helper reutilizable contra NaN y valores
+//   imposibles. Si un fetch de FRED devuelve NaN (parseo fallido de CSV),
+//   NaN > X es siempre false → fallo silencioso idéntico al bug dxy=0.
+//   Number.isFinite() bloquea NaN, Infinity, y -Infinity de una vez.
+const isValidReading = (
+  v?: number,
+  min = -Infinity,
+  max = Infinity,
+): v is number =>
+  v !== undefined && Number.isFinite(v) && v > min && v < max;
 
 export interface CycleTopInputs {
   // BTC
@@ -77,7 +93,7 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
   let topSignals = 0;
   const reasons: string[] = [];
 
-  if (mvrvRatio !== undefined) {
+  if (isValidReading(mvrvRatio)) {
     if (mvrvRatio > 6.0)       { topSignals += 3; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — extremo histórico`); }
     else if (mvrvRatio > 4.5)  { topSignals += 2; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de burbuja`); }
     else if (mvrvRatio > 3.5)  { topSignals += 1; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — alerta de techo`); }
@@ -85,7 +101,7 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
 
   if (btcDominanceFalling)     { topSignals += 1; reasons.push("BTC.D cayendo desde >58% — rotación a altcoins (fin de ciclo)"); }
 
-  if (btcRsiWeekly !== undefined && btcRsiWeekly > 80) {
+  if (isValidReading(btcRsiWeekly, 0, 100) && btcRsiWeekly > 80) {
     topSignals += 2; reasons.push(`RSI semanal ${btcRsiWeekly.toFixed(0)} — sobrecompra extrema en timeframe semanal`);
   }
 
@@ -107,8 +123,8 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   // MVRV como indicador primario para mostrar
-  const indicatorValue = mvrvRatio !== undefined
-    ? `MVRV ${mvrvRatio.toFixed(2)}${btcRsiWeekly ? ` · RSI-W ${btcRsiWeekly.toFixed(0)}` : ""}`
+  const indicatorValue = isValidReading(mvrvRatio)
+    ? `MVRV ${mvrvRatio.toFixed(2)}${isValidReading(btcRsiWeekly) ? ` · RSI-W ${btcRsiWeekly.toFixed(0)}` : ""}`
     : "Sin datos MVRV";
 
   return {
@@ -128,7 +144,7 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
 function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
   const { uraniumSpotPrice, uraniumLTPrice } = inputs;
 
-  if (uraniumSpotPrice === undefined || uraniumLTPrice === undefined || uraniumLTPrice === 0) {
+  if (!isValidReading(uraniumSpotPrice) || !isValidReading(uraniumLTPrice) || uraniumLTPrice === 0) {
     return {
       asset: "Uranium",
       ticker: "URNU.DE",
@@ -184,11 +200,9 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
     reason = `Spot/LT ${ratio.toFixed(2)} — equilibrio normal entre spot y contratos a largo plazo.`;
   }
 
-  // FIX-AUDIT-URANIO-CLAMP (Jul-2026): clamp [0, 1] para respetar el contrato de CycleTopSignal.
-  // El comentario del output dice explícitamente: "Output: un multiplicador [0, 1] por activo".
-  // ANTES: 1.40 y 1.20 cuando spot < LT → rompía el contrato.
-  // AHORA: 1.0 en zona SAFE. El boost se logra vía REGIME_TILT (uranium +10% en EXPANSION).
-  multiplier = Math.max(0, Math.min(1, multiplier));
+  // FIX-AUDIT-URANIO-CLAMP (Jul-2026): el clamp [0,1] ahora se aplica
+  //   centralizadamente en detectCycleTops() para TODOS los detectores.
+  //   Ver contrato del output al inicio del archivo.
 
   return {
     asset: "Uranium",
@@ -208,7 +222,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
   const { siaSalesYoY, soxRsiWeekly } = inputs;
 
   // Si no hay datos de ningún indicador, señal neutra
-  if (siaSalesYoY === undefined && soxRsiWeekly === undefined) {
+  if (!isValidReading(siaSalesYoY, -100) && !isValidReading(soxRsiWeekly, 0, 100)) {
     return {
       asset: "Semiconductors",
       ticker: "VVSM.DE",
@@ -227,7 +241,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
   const reasons: string[] = [];
 
   // Evaluar SIA Sales YoY%
-  if (siaSalesYoY !== undefined) {
+  if (isValidReading(siaSalesYoY, -100)) {
     if (siaSalesYoY > 40) {
       topSignals += 2;
       reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — euforia insostenible`);
@@ -241,7 +255,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   // Evaluar RSI semanal del SOX
-  if (soxRsiWeekly !== undefined) {
+  if (isValidReading(soxRsiWeekly, 0, 100)) {
     if (soxRsiWeekly > 85) {
       topSignals += 2;
       reasons.push(`RSI semanal SOX ${soxRsiWeekly.toFixed(0)} — sobrecompra extrema`);
@@ -271,8 +285,8 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
   // Construir valor del indicador para mostrar
   const parts: string[] = [];
-  if (siaSalesYoY !== undefined) parts.push(`SIA sales +${siaSalesYoY.toFixed(1)}% YoY`);
-  if (soxRsiWeekly !== undefined) parts.push(`SOX RSI-W ${soxRsiWeekly.toFixed(0)}`);
+  if (isValidReading(siaSalesYoY, -100)) parts.push(`SIA sales +${siaSalesYoY.toFixed(1)}% YoY`);
+  if (isValidReading(soxRsiWeekly, 0, 100)) parts.push(`SOX RSI-W ${soxRsiWeekly.toFixed(0)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
   return {
@@ -292,15 +306,15 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
   const { bondYield10y, inflationBreakeven, brentOil } = inputs;
 
-  if (inflationBreakeven === undefined) {
+  if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
       asset: "Gold (ETC)",
       ticker: "PPFB.DE",
       allocationMultiplier: 1.0,
       zone: "SAFE",
-      reason: "Sin datos de inflación implícita — introduce T5YIE (TradingView) para activar esta señal",
+      reason: "Sin datos de inflación implícita o bono 10y — introduce T5YIE y US10Y (TradingView) para activar esta señal",
       indicator: "Tipo Real (bono 10y − breakeven 5y)",
-      indicatorValue: "Sin datos breakeven",
+      indicatorValue: "Sin datos tipo real",
       shouldTrim: false,
       trimPct: 0,
     };
@@ -381,7 +395,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
 
-  if (wlgRsiWeekly === undefined && wlgPERatio === undefined && wlgCAPE === undefined) {
+  if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
       asset: "Vanguard Global Stock",
       ticker: "0P00000WLG.F",
@@ -399,7 +413,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   const reasons: string[] = [];
 
   // RSI Semanal (mismo peso que antes)
-  if (wlgRsiWeekly !== undefined) {
+  if (isValidReading(wlgRsiWeekly, 0, 100)) {
     if (wlgRsiWeekly > 85) {
       topSignals += 2;
       reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra extrema`);
@@ -428,7 +442,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   let valuationScore = 0;
   const valuationReasons: string[] = [];
 
-  if (wlgCAPE !== undefined) {
+  if (isValidReading(wlgCAPE)) {
     // Proxy S&P 500 para MSCI World (USA ~70% del índice).
     if (wlgCAPE > 44) {
       valuationScore = 3;
@@ -448,7 +462,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  if (wlgPERatio !== undefined) {
+  if (isValidReading(wlgPERatio)) {
     if (wlgPERatio > 35) {
       valuationScore = Math.max(valuationScore, 2.0);
       valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — en territorio de burbuja (>28 = caro)`);
@@ -485,9 +499,9 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   const parts: string[] = [];
-  if (wlgRsiWeekly !== undefined) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
-  if (wlgCAPE !== undefined) parts.push(`CAPE ${wlgCAPE.toFixed(1)}`);
-  if (wlgPERatio !== undefined) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
+  if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
+  if (isValidReading(wlgCAPE)) parts.push(`CAPE ${wlgCAPE.toFixed(1)}`);
+  if (isValidReading(wlgPERatio)) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
   return {
@@ -521,7 +535,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
 
-  if (emxcRsiWeekly === undefined && emxcPERatio === undefined && dxy === undefined) {
+  if (!isValidReading(emxcRsiWeekly, 0, 100) && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
     return {
       asset: "Emerging Markets",
       ticker: "EMXC.DE",
@@ -547,9 +561,9 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   //   Si Yahoo falla (dxy = 0), el valor 0 entra como dato válido pero no dispara
   //   ningún umbral (0 > 103 = false). El sistema reporta "EM en zona segura" con
   //   DXY 0.0 — un valor imposible (mínimo histórico ~70) que induce a error.
-  //   Con dxy > 50 garantizamos que solo procesamos valores realistas.
-  const dxyValid = dxy !== undefined && dxy > 50;
-  if (dxyValid) {
+  //   Con isValidReading(dxy, 50) garantizamos que solo procesamos valores realistas
+  //   y que un NaN de FRED/Yahoo no pase como "datos válidos".
+  if (isValidReading(dxy, 50)) {
     if (dxy > 115) {
       topSignals += 3;
       reasons.push(`DXY ${dxy.toFixed(1)} — dólar en niveles de crisis EM (México 1994, Asia 1997, Argentina 2018)`);
@@ -566,7 +580,7 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   // Evaluar RSI semanal (umbrales más altos porque EM es más volátil)
-  if (emxcRsiWeekly !== undefined) {
+  if (isValidReading(emxcRsiWeekly, 0, 100)) {
     if (emxcRsiWeekly > 85) {
       topSignals += 2;
       reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — sobrecompra extrema en emergentes`);
@@ -581,7 +595,7 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
 
   // Evaluar P/E del MSCI Emerging Markets (SECUNDARIO)
   // Rango histórico P/E EM: ~10-12 en crisis, ~15 media, ~18-20 caro, >22 solo burbuja 2010.
-  if (emxcPERatio !== undefined) {
+  if (isValidReading(emxcPERatio)) {
     if (emxcPERatio > 25) {
       topSignals += 2;
       reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes en burbuja (histórico: >20 = caro)`);
@@ -614,9 +628,9 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   const parts: string[] = [];
-  if (dxyValid) parts.push(`DXY ${dxy.toFixed(1)}`);
-  if (emxcRsiWeekly !== undefined) parts.push(`RSI-W ${emxcRsiWeekly.toFixed(0)}`);
-  if (emxcPERatio !== undefined) parts.push(`P/E ${emxcPERatio.toFixed(1)}`);
+  if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);
+  if (isValidReading(emxcRsiWeekly, 0, 100)) parts.push(`RSI-W ${emxcRsiWeekly.toFixed(0)}`);
+  if (isValidReading(emxcPERatio)) parts.push(`P/E ${emxcPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
   return {
@@ -645,7 +659,14 @@ export function detectCycleTops(inputs: CycleTopInputs): CycleTopOutput {
     detectGoldTop(inputs),
     detectWLGTop(inputs),
     detectEMXCTop(inputs),
-  ];
+  ].map(s => ({
+    ...s,
+    // FIX-CENTRAL-CLAMP (Jul-2026): garantía centralizada del contrato
+    //   allocationMultiplier ∈ [0, 1]. Si algún detector individual se
+    //   equivoca (como ocurrió con uranio: 1.40 y 1.20), este clamp lo
+    //   corrige sin depender de la disciplina de cada función interna.
+    allocationMultiplier: Math.max(0, Math.min(1, s.allocationMultiplier)),
+  }));
 
   return {
     signals,
