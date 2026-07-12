@@ -43,6 +43,36 @@ import { toEur, getCachedFxRates } from './fxConverter';
 import type { MarketRegime } from './marketRegimeFilter';
 
 // ════════════════════════════════════════════════════════════
+// COOLDOWN MECHANISM (v10 Pine Script alignment)
+//
+// Después de un stop-loss o TP2, bloquea nuevas entradas durante
+// N velas (default 5). Evita re-entrar en whipsaw tras una salida.
+// ════════════════════════════════════════════════════════════
+let _cooldownRemaining = 0;
+
+export function setCooldown(bars: number = 5): void {
+  _cooldownRemaining = Math.max(_cooldownRemaining, bars);
+  console.debug(`[Cooldown] Activado: ${_cooldownRemaining} velas de espera`);
+}
+
+export function isInCooldown(): boolean {
+  return _cooldownRemaining > 0;
+}
+
+export function getCooldownRemaining(): number {
+  return _cooldownRemaining;
+}
+
+export function decrementCooldown(): void {
+  if (_cooldownRemaining > 0) {
+    _cooldownRemaining--;
+    if (_cooldownRemaining === 0) {
+      console.debug('[Cooldown] Finalizado — re-entradas permitidas');
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 // ESTADO INICIAL Y PERSISTENCIA
 // ════════════════════════════════════════════════════════════
 
@@ -274,6 +304,12 @@ export function openPosition(
 
   if (state.openPositions.length >= config.maxOpenPositions) {
     console.warn('[Tactical] Max open positions reached');
+    return state;
+  }
+
+  // ── v10: COOLDOWN CHECK ──────────────────────────────────
+  if (isInCooldown()) {
+    console.warn(`[Tactical] ⏳ Cooldown activo (${_cooldownRemaining} velas restantes) — entrada bloqueada`);
     return state;
   }
 
@@ -521,6 +557,11 @@ export function closePosition(
     reason === 'SL'                       ? 'CLOSED_SL' :
     reason === 'TIME'                     ? 'CLOSED_TIME' :
     'CLOSED_MANUAL';
+
+  // ── v10: ACTIVAR COOLDOWN tras stop-loss o TP2 ───────────
+  if (reason === 'SL' || reason === 'TP2') {
+    setCooldown(5); // 5 velas de espera (alineado con Pine Script v10.4 default)
+  }
 
   const closed: TacticalPosition = {
     ...position,

@@ -285,6 +285,9 @@ export interface ScreenerResult {
     oppRSBajo: number;       // NUEVO v8: RS vs SPY < 0.85
     oppSectorBajo: number;   // NUEVO v8: RS vs sector ETF < 0.90
     oppExhaustion: number;   // NUEVO v8: rally agotado detectado
+    oppMTFBajo: number;      // NUEVO v10: MTF weekly < 2/3 confirmaciones
+    oppDollarVol: number;    // NUEVO v10: dollar volume insuficiente
+    oppGapAlto: number;      // NUEVO v10: gap > 5%
     oportunidades: number;
     signalTypeCounts: Record<string, number>;
     totalActiveSignals: number;

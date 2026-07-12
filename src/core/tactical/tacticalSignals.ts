@@ -913,6 +913,65 @@ export interface ExhaustionResult {
   confidence: number;  // 0-100
 }
 
+// ════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME WEEKLY CONFIRMATION (v10 Pine Script alignment)
+//
+// Pide 2 de 3 condiciones en la vela semanal antes de validar
+// una señal diaria. Reduce falsas entradas en mercados sin
+// tendencia clara en el timeframe superior.
+//
+// Condiciones:
+//   1. W Close > W MA50 (tendencia alcista semanal)
+//   2. W RSI(14) > 50 (momentum positivo semanal)
+//   3. W MACD bullish (momentum 4-semanas > 0)
+// ════════════════════════════════════════════════════════════
+export interface WeeklyConfirmation {
+  confirmed:     boolean;
+  confirmations: number;   // 0-3
+  details:       string;
+}
+
+export function checkWeeklyConfirmation(closes: number[]): WeeklyConfirmation {
+  if (closes.length < 70) {
+    return { confirmed: false, confirmations: 0, details: 'Datos insuficientes (<70 velas diarias)' };
+  }
+
+  // Muestrear cierres semanales (cada 5 velas diarias)
+  const weeklyCloses: number[] = [];
+  for (let i = closes.length - 1; i >= 0; i -= 5) {
+    weeklyCloses.unshift(closes[i]);
+  }
+  if (weeklyCloses.length < 14) {
+    return { confirmed: false, confirmations: 0, details: 'Datos semanales insuficientes' };
+  }
+
+  // 1. W Close > W MA50
+  const wMA50 = weeklyCloses.length >= 50
+    ? weeklyCloses.slice(-50).reduce((a, b) => a + b, 0) / 50
+    : weeklyCloses.reduce((a, b) => a + b, 0) / weeklyCloses.length;
+  const wClose = weeklyCloses[weeklyCloses.length - 1];
+  const wTrendOk = wClose > wMA50;
+
+  // 2. W RSI(14) > 50
+  const wRsi14 = calcRSI(weeklyCloses, 14);
+  const wRsiOk = wRsi14 > 50;
+
+  // 3. W MACD bullish (proxy: momentum 4 semanas positivo)
+  const wMomentum4w = weeklyCloses.length >= 5
+    ? weeklyCloses[weeklyCloses.length - 1] / weeklyCloses[weeklyCloses.length - 5] - 1
+    : 0;
+  const wMacdOk = wMomentum4w > 0;
+
+  const confirmations = (wTrendOk ? 1 : 0) + (wRsiOk ? 1 : 0) + (wMacdOk ? 1 : 0);
+  const confirmed = confirmations >= 2;
+
+  return {
+    confirmed,
+    confirmations,
+    details: `W Close${wClose.toFixed(0)} vs MA50${wMA50.toFixed(0)}:${wTrendOk ? 'OK' : 'NO'} · RSI:${wRsi14.toFixed(0)}:${wRsiOk ? 'OK' : 'NO'} · Mom4w:${(wMomentum4w*100).toFixed(1)}%:${wMacdOk ? 'BULL' : 'BEAR'} → ${confirmations}/3${confirmed ? ' ✓' : ' ✗'}`,
+  };
+}
+
 export function detectMomentumExhaustion(
   closes:  number[],
   volumes: number[],

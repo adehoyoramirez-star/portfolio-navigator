@@ -49,6 +49,7 @@ import {
   calcStopLoss, calcTakeProfits,
   generateMacroSignal,
   detectMomentumExhaustion,
+  checkWeeklyConfirmation,
 } from './tacticalSignals';
 import {
   CORE_TACTICAL_UNIVERSE,
@@ -455,6 +456,9 @@ export async function scanTacticalUniverse(
     oppRSBajo:     0,  // v8: RS vs SPY < MIN_RS_VS_SPY
     oppSectorBajo: 0,  // v8: RS vs sector < MIN_RS_VS_SECTOR
     oppExhaustion: 0,  // v8: rally agotado
+    oppMTFBajo:    0,  // v10: MTF weekly < 2/3
+    oppDollarVol:  0,  // v10: dollar volume insuficiente
+    oppGapAlto:    0,  // v10: gap demasiado grande
     oportunidades: 0,
   };
 
@@ -567,6 +571,7 @@ export async function scanTacticalUniverse(
     volRatio: number,
     trend:   string,
     atrPct:  number,
+    adx:     number,
     price:   number,
   ): number {
     let score = 0;
@@ -587,6 +592,10 @@ export async function scanTacticalUniverse(
     if (atrPct < 0.03)      score += 20;
     else if (atrPct < 0.05) score += 15;
     else if (atrPct < 0.08) score += 8;
+    // ADX — fuerza de tendencia (+10pts) — alineado con Pine Script v10
+    if (adx > 30)           score += 10;
+    else if (adx > 25)      score += 8;
+    else if (adx > 20)      score += 5;
     return Math.min(100, score);
   }
 
@@ -647,6 +656,7 @@ export async function scanTacticalUniverse(
         built.indicators?.volumeRatio ?? 1,
         built.indicators?.trend ?? 'SIDEWAYS',
         built.indicators?.atrPct ?? 0.02,
+        built.indicators?.adx ?? 0,
         built.price,
       );
 
@@ -831,6 +841,50 @@ export async function scanTacticalUniverse(
       }
     }
 
+    // ── v10: MULTI-TIMEFRAME WEEKLY CONFIRMATION ──
+    // Alineado con Pine Script v10.4. Pide 2 de 3 condiciones semanales
+    // para confirmar que la tendencia diaria tiene respaldo en el timeframe superior.
+    const weeklyCheck = checkWeeklyConfirmation(asset.closes);
+    if (!weeklyCheck.confirmed) {
+      console.debug(
+        `[Screener] 📅 ${asset.ticker}: MTF Weekly ${weeklyCheck.confirmations}/3 — ${weeklyCheck.details}`
+      );
+      diag.oppMTFBajo++;
+      continue;
+    }
+
+    // ── v10: DOLLAR VOLUME LIQUIDITY FILTER ──
+    // Alineado con Pine Script v10.4. Descarta activos sin suficiente
+    // liquidez para ejecutar sin slippage significativo.
+    const lastVol = asset.volumes?.[asset.volumes.length - 1] ?? 0;
+    const dollarVolM = (asset.price * lastVol) / 1_000_000;
+    // Default 5M€ mínimo — configurable si se añade input más adelante
+    const MIN_DOLLAR_VOL_M = 5;
+    if (dollarVolM < MIN_DOLLAR_VOL_M) {
+      console.debug(
+        `[Screener] 💧 ${asset.ticker}: Dollar Vol ${dollarVolM.toFixed(1)}M€ < ${MIN_DOLLAR_VOL_M}M€ — ilíquido`
+      );
+      diag.oppDollarVol++;
+      continue;
+    }
+
+    // ── v10: GAP FILTER ──
+    // Alineado con Pine Script v10.4. Evita entrar en activos que han
+    // hecho gap alcista en la apertura — el riesgo de pullback es alto.
+    const closesArr = asset.closes;
+    if (closesArr.length >= 2) {
+      const prevClose = closesArr[closesArr.length - 2];
+      const gapPct = prevClose > 0 ? ((closesArr[closesArr.length - 1] - prevClose) / prevClose) * 100 : 0;
+      const MAX_GAP_PCT = 5;
+      if (gapPct > MAX_GAP_PCT) {
+        console.debug(
+          `[Screener] 🕳️ ${asset.ticker}: Gap +${gapPct.toFixed(1)}% > ${MAX_GAP_PCT}% — entrada rechazada`
+        );
+        diag.oppGapAlto++;
+        continue;
+      }
+    }
+
     opportunities.push({ ...opp, score: adjustedScore });
     diag.oportunidades++;
   }
@@ -891,6 +945,9 @@ export async function scanTacticalUniverse(
     `  📉 RS vs SPY < ${MIN_RS_VS_SPY}: -${diag.oppRSBajo}\n` +
     `  📉 RS vs Sector < ${MIN_RS_VS_SECTOR}: -${diag.oppSectorBajo}\n` +
     `  🔥 Rally agotado:    -${diag.oppExhaustion}\n` +
+    `  📅 MTF Weekly < 2/3: -${diag.oppMTFBajo}\n` +
+    `  💧 Dollar Vol < 5M€: -${diag.oppDollarVol}\n` +
+    `  🕳️ Gap > 5%:         -${diag.oppGapAlto}\n` +
     `  🎯 Oportunidades:    ${diag.oportunidades}\n` +
     `  ─────────────────────────────────────`
   );
@@ -967,6 +1024,9 @@ export async function scanTacticalUniverse(
       oppRSBajo: diag.oppRSBajo,
       oppSectorBajo: diag.oppSectorBajo,
       oppExhaustion: diag.oppExhaustion,
+      oppMTFBajo: diag.oppMTFBajo,
+      oppDollarVol: diag.oppDollarVol,
+      oppGapAlto: diag.oppGapAlto,
       oportunidades: diag.oportunidades,
       signalTypeCounts,
       totalActiveSignals,
