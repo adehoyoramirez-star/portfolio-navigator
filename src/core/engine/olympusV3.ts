@@ -70,7 +70,7 @@ import { correlationPenalty } from "../portfolio/correlation";
 import { computeRiskParityWeights, DEFAULT_SECTOR_BUDGETS } from "../risk/riskBudget";
 import { computeVolTargetMultiplier } from "../risk/volatilityTarget";
 import { computeTailRiskOverlay } from "../risk/tailRisk";
-import { runBlackLitterman, generateViewsFromEngine, generateViewsExternal, BLView } from "../portfolio/blackLitterman";
+import { runBlackLitterman, generateViewsExternal, BLView } from "../portfolio/blackLitterman";
 import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";
