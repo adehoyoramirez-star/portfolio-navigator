@@ -710,6 +710,7 @@ soxRsiWeekly,
         dxyTrend: (dxy - 100) / 100,
         btcVol,
         wtiOil,
+        cbLiquidityGrowth: marketData?.cbLiquidityGrowth,
       },
       covMatrix: dynamicCovResult?.covMatrix ?? marketData?.covMatrix,
       portfolioDrawdown,
@@ -740,7 +741,7 @@ soxRsiWeekly,
   // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
   // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
   // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult]);
 
   useEffect(() => {
     if (engineResult?.regime && engineResult.regime !== lastRegime) {

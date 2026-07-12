@@ -16,6 +16,12 @@ export interface FredManualData {
   cape: number;
   creditSpread: number;
   inflationBreakeven5y: number;
+  /** Fed Balance Sheet (WALCL) — total assets, billions USD */
+  fedBalanceSheet?: number;
+  /** ECB Balance Sheet (ECBASSETSW) — total assets, billions EUR */
+  ecbBalanceSheet?: number;
+  /** Global Central Bank Liquidity Growth YoY% — (Fed+ECB) cambio interanual */
+  cbLiquidityGrowth?: number;
   lastUpdated: string;
   updatedBy?: string;
   /** Si true, el usuario ha editado manualmente → el servidor NO sobrescribe */

@@ -126,6 +126,17 @@ Una variable macro puede aparecer en MÁXIMO DOS capas del pipeline SI Y SOLO SI
 
 - **Naming WTI/Brent:** La variable `wtiOil` en MarketData, globalStress, olympusV3, masterRegime, y cycleTopDetector contiene en realidad **Brent** (Yahoo ticker BZ=F). Los umbrales están calibrados para Brent (75/95/115). Funcionalmente correcto, pero si se conecta WTI real (CL=F) en el futuro, los umbrales se retrasarían $3-5. Renombrar a `brentOil` en toda la cadena: MarketData → olympusV3 → masterRegime → globalStress → cycleTopDetector → dashboard.
 
+### CB Liquidity vs M2 — precedente de la regla institucional (Jul-2026)
+
+**Caso:** Se propuso añadir Global CB Liquidity (WALCL+ECBASSETSW) a globalStress. Objeción: m2Growth ya existe en detectRegimeProbabilistic y CEWS, ambos miden "cantidad de dinero".
+
+**Defensa (APROBADA):** Son dimensiones macro distintas:
+- **m2Growth** = dinero AMPLIO (depósitos bancarios, crédito privado, multiplicador bancario). Depende de la voluntad de los bancos de prestar.
+- **cbLiquidityGrowth** = dinero BASE (creación directa de reservas vía QE/QT por bancos centrales). No depende del multiplicador bancario.
+- **Evidencia de divergencia:** En 2023 la Fed redujo balance vía QT, pero M2 se mantuvo plano porque el drenaje venía del Reverse Repo facility (reservas estériles), no de depósitos bancarios. Divergieron en timing y magnitud.
+
+**Aplica el criterio A de la regla:** "Miden dimensiones diferentes del mismo fenómeno (spot vs. trend, nivel vs. tasa de cambio)" — aquí: base monetaria vs. dinero amplio.
+
 ## MISIONES DE AUTOMATIZACIÓN DISPONIBLES
 
 Puedes decirle al agente en lenguaje natural:

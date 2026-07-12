@@ -96,6 +96,9 @@ export interface MarketData {
   // Brent Crude Oil $/barril — auto Yahoo Finance (BZ=F) — referente europeo/global
   wtiOil: number;
   wtiSource: "YAHOO" | "MANUAL";
+  // Global CB Liquidity Growth YoY% — Fed WALCL + BCE ECBASSETSW
+  cbLiquidityGrowth?: number;
+  cbLiquiditySource: "FRED" | "MANUAL";
   // PASO 5 — Nuevos campos auto desde Yahoo/FRED
   moveIndex: number;      // CBOE MOVE Index (^MOVE) — volatilidad bonos USA
   moveSource: "YAHOO" | "MANUAL";
@@ -526,6 +529,42 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   // M2 real de FRED (server o localStorage)
   const m2Growth = fredManual.m2GrowthYoY;
 
+  // Global CB Liquidity Growth YoY% — Fed (WALCL) + BCE (ECBASSETSW)
+  //   Computado comparando valores actuales vs previos almacenados en localStorage.
+  //   Si no hay datos previos, cbLiquidityGrowth queda undefined (el engine lo salta).
+  let cbLiquidityGrowth: number | undefined = fredManual.cbLiquidityGrowth;
+  let cbLiquiditySource: "FRED" | "MANUAL" = "MANUAL";
+  if (cbLiquidityGrowth === undefined) {
+    // Intentar computar desde fedBalanceSheet + ecbBalanceSheet con prev-persist
+    const fedNow = fredManual.fedBalanceSheet;
+    const ecbNow = fredManual.ecbBalanceSheet;
+    if (fedNow !== undefined && ecbNow !== undefined) {
+      const PREV_KEY = 'olympus_cb_liquidity_prev';
+      try {
+        const prevRaw = localStorage.getItem(PREV_KEY);
+        if (prevRaw) {
+          const prev = JSON.parse(prevRaw);
+          if (typeof prev.fed === 'number' && typeof prev.ecb === 'number' && prev.fed > 0 && prev.ecb > 0) {
+    // ECB balance sheet está en billions EUR → convertir a USD (~1.08, aproximado).
+            // TODO: usar EUR/USD real del dashboard en vez de hardcodeado.
+            const ecbUsd = ecbNow * 1.08;
+            const ecbPrevUsd = prev.ecb * 1.08;
+            const totalNow = fedNow + ecbUsd;
+            const totalPrev = prev.fed + ecbPrevUsd;
+            if (totalPrev > 0) {
+              cbLiquidityGrowth = ((totalNow - totalPrev) / totalPrev) * 100;
+              cbLiquiditySource = "FRED";
+            }
+          }
+        }
+        // Guardar actual para la próxima comparación
+        localStorage.setItem(PREV_KEY, JSON.stringify({ fed: fedNow, ecb: ecbNow, ts: Date.now() }));
+      } catch { /* localStorage no disponible */ }
+    }
+  } else {
+    cbLiquiditySource = "FRED";
+  }
+
   // Shiller CAPE (PER ajustado al ciclo)
   const per = fredManual.cape;
   const perSource: "FRED" | "manual" = fredSource;
@@ -921,6 +960,8 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       liquidityDataQuality: liquidityOutput.dataQuality,
       wtiOil,
       wtiSource,
+      cbLiquidityGrowth,
+      cbLiquiditySource,
       moveIndex,
       moveSource,
       creditSpread,

@@ -53,7 +53,9 @@ export interface MasterRegimeInput {
   btcVol: number;
   m2Growth: number;
   wtiOil?: number;
-  lowVixStreak?: boolean;  // FIX-FAST-EXIT: true si VIX lleva 5+ dias < 22 → forzar EXPANSION si el motor dice CONTRACTION
+  cbLiquidityGrowth?: number;  // Global CB Liquidity Growth YoY% — base monetaria (WALCL+ECBASSETSW)
+                                //   Dimensión DISTINTA de m2Growth (dinero amplio). Ver AGENTS.md.
+  lowVixStreak?: boolean;
 }
 
 // FIX MATH-NEW-02: el output ahora expone regimeDuration para el dashboard
@@ -202,6 +204,7 @@ export function getMasterRegime(
     dxyTrend: input.dxyTrend,
     btcVol: input.btcVol,
     wtiOil: input.wtiOil,
+    cbLiquidityGrowth: input.cbLiquidityGrowth,
   });
   const regimeProbs = detectRegimeProbabilistic(input.vix, input.yieldSpread, input.m2Growth);
 

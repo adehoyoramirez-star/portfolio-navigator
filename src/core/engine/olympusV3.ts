@@ -224,6 +224,7 @@ export interface OlympusEngineInput {
     btcVol: number;
     m2Growth: number;
     wtiOil?: number;
+    cbLiquidityGrowth?: number;  // Global CB Liquidity Growth YoY%
   };
   covMatrix?: number[][];
   portfolioDrawdown?: number;
@@ -391,6 +392,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       btcVol:      macro.btcVol,
       m2Growth:    macro.m2Growth,
       wtiOil:      macro.wtiOil,
+      cbLiquidityGrowth: macro.cbLiquidityGrowth,
     },
     input.cewsHistory,
     input.regimeHistory,
