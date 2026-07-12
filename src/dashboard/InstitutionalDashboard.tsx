@@ -737,12 +737,19 @@ soxRsiWeekly,
         allocationMultiplier: s.allocationMultiplier,
       })),
       regimeLock,
+      // FIX-AUDIT-TRANSVERSAL-R3 #1 (Jul-2026): regimeHistory ahora se pasa al motor
+      // para que computeRegimeDuration() ajuste ±0.10 en finalPenalty según la madurez
+      // del régimen (CRISIS OLD +0.08 prepara ataque, CRISIS YOUNG -0.10 cautela extra).
+      // ANTES: regimeHistory estaba cargado en el dashboard pero nunca llegaba al engine
+      // → el bloque `if (regimeHistory !== undefined)` en masterRegime.ts nunca se ejecutaba.
+      regimeHistory,
     });
   // FIX-DCC-01: dynamicCovResult añadido a deps para que el engine reaccione
   // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
   // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
   // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult]);
+  // FIX-AUDIT-TRANSVERSAL-R3: regimeHistory añadido a deps para regimeDuration.
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult, regimeHistory]);
 
   useEffect(() => {
     if (engineResult?.regime && engineResult.regime !== lastRegime) {

@@ -75,8 +75,9 @@ import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
 import { computeDCADecision } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
-import { detectCycleTops } from "../risk/cycleTopDetector";
-import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, BOND_YIELD_10Y, getFactorWeightsByRegime, REGIME_TILT } from "../config/engineConfig";
+// detectCycleTops removed — auto-detect fallback eliminated (FIX-AUDIT-TRANSVERSAL-R3 #2).
+// cycleTopSignals from dashboard is the single source of truth.
+import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, getFactorWeightsByRegime, REGIME_TILT } from "../config/engineConfig";
 // FIX-R2-C10: renombrado DISCRETIONARY_OVERLAY. Import usado para allocationProvenance.
 // FIX-AUDIT-R10: allocationProvenance (transparencia del overlay discrecional)
 // FIX-R2-C10: REGIME_TACTICAL_ALLOCATIONS → DISCRETIONARY_OVERLAY
@@ -808,38 +809,19 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     relativeWeightsAfterCap[i] /= relCapTotal;
   });
   // CAPA 8.5: CYCLE TOP OVERLAY (FIX-CYCLE-MOTOR)
-  // FIX-AUDIT-R8 3.4: auto-detect cycle tops when not provided by caller.
-  // Uses available engine data (btcOnChain, macro, btcVol) to build CycleTopInputs.
-  const activeCycleSignals = input.cycleTopSignals ?? (() => {
-    try {
-      // FIX-AUDIT-R8 3.4: BTC gets full cycle top protection (MVRV + RSI-W).
-      // Other assets return SAFE (allocationMultiplier=1.0) until their data
-      // sources are integrated (URNU spot/LT, SOX RSI, WLG P/E, EMXC P/E, etc.)
-      const ctOutput = detectCycleTops({
-        mvrvRatio: input.btcOnChain?.mvrvRatio,
-        btcRsiWeekly: input.btcOnChain?.rsiWeekly,
-        uraniumSpotPrice: input.uraniumSpotPrice,
-        uraniumLTPrice: input.uraniumLTPrice,
-        siaSalesYoY: input.siaSalesYoY,
-        soxRsiWeekly: input.soxRsiWeekly,
-        bondYield10y: BOND_YIELD_10Y,  // FIX-AUDIT-C4,C10: % desde config (4.25%), detectCycleTops espera notación %
-        inflationBreakeven: input.inflationBreakeven,
-        brentOil: macro.wtiOil,
-        wlgRsiWeekly: input.wlgRsiWeekly,
-        wlgPERatio: input.wlgPERatio,
-        wlgCAPE: input.cape,
-        emxcRsiWeekly: input.emxcRsiWeekly,
-        emxcPERatio: input.emxcPERatio,
-        dxy: input.dxySpot,
-      });
-      return ctOutput.signals
-        .filter(s => s.allocationMultiplier < 1.0)
-        .map(s => ({ ticker: s.ticker, allocationMultiplier: s.allocationMultiplier }));
-    } catch (e) {
-      console.warn('[Olympus] CycleTop auto-detect failed:', e);
-      return [];
-    }
-  })();
+  // FIX-AUDIT-TRANSVERSAL-R3 #2 (Jul-2026): el fallback de auto-detección ha sido
+  //   eliminado. Usaba datos (uraniumSpotPrice, wlgRsiWeekly, emxcPERatio, dxySpot,
+  //   cape, etc.) que el dashboard NUNCA pasaba al engine → detectCycleTops() devolvía
+  //   SAFE para todos los no-BTC. Era una falsa red de seguridad.
+  //
+  //   AHORA: cycleTopSignals es la ÚNICA fuente de verdad. El dashboard precomputa
+  //   detectCycleTops() con todos los datos disponibles (uraniumSpot, uraniumLT,
+  //   wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, dxy, marketData.per).
+  //   Si el dashboard no pasa cycleTopSignals, el motor asume [] (sin restricciones).
+  //
+  //   La función detectCycleTops() sigue disponible para backtests y scripts que
+  //   sí tengan acceso a los datos completos (ver scripts/run-backtest-*.ts).
+  const activeCycleSignals = input.cycleTopSignals ?? [];
   if (activeCycleSignals.length > 0) {
     for (let i = 0; i < assets.length; i++) {
       const ticker = assets[i].ticker ?? assets[i].name;
