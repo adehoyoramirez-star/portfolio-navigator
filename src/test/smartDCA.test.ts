@@ -411,22 +411,21 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
 // ───────────────────────────────────────────────────────────────────────────
 describe("Bloqueos", () => {
 
-  test("Tail Risk activo con overlay < 0.7 → BLOCK_TAIL_RISK", () => {
+  test("Tail Risk activo → BLOCK_TAIL_RISK (independientemente del overlay)", () => {
     const result = computeSmartDCA(baseInput({
       tailRiskActive: true,
-      tailRiskOverlay: 0.50,
+      tailRiskOverlay: 0.80,
     }));
 
     expect(result.action).toBe("BLOCK_TAIL_RISK");
     expect(result.attackMode).toBe(false);
     expect(result.totalCashToInvest).toBe(0);
-    expect(result.blockReason).toContain("Tail Risk");
   });
 
-  test("Tail Risk activo con overlay ≥ 0.7 → NO bloquea (sigue normal)", () => {
+  test("Tail Risk inactivo → NO bloquea (DCA normal)", () => {
     const result = computeSmartDCA(baseInput({
-      tailRiskActive: true,
-      tailRiskOverlay: 0.80,
+      tailRiskActive: false,
+      tailRiskOverlay: 1.0,
     }));
 
     expect(result.action).not.toBe("BLOCK_TAIL_RISK");

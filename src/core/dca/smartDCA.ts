@@ -49,9 +49,12 @@ const DCA_CONFIG = {
   },
   // Umbrales de bloqueo — si se cruzan, no se compra nada
   BLOCKS: {
-    TAIL_RISK_OVERLAY_MAX: 0.70,   // tailRiskOverlay por debajo → BLOCK_TAIL_RISK
     REGIME_PENALTY_MIN: 0.45,      // regimePenalty por debajo → BLOCK_CRISIS
     VOL_TARGET_MIN: 0.60,          // volTargetMultiplier por debajo → BLOCK_VOL
+    // TAIL_RISK: bloquea DCA si tailRiskActive (sin threshold intermedio).
+    // El engine ya computó tailRiskActive = finalOverlay < 0.99. Si el motor
+    // dice que hay riesgo de cola, el DCA no compra — el overlay se usa como
+    // multiplicador de exposición, no como umbral de tolerancia del DCA.
   },
 } as const;
 
@@ -286,8 +289,12 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // ── BLOQUEOS ─────────────────────────────────────────────────────────
   // FIX-AUDIT-R9 4: circuit breaker — bloquear DCA si datos Yahoo >72h stale.
   if (input.staleDataBlock) return emptyOutput("BLOCK_TAIL_RISK", "🔴 Datos Yahoo >72h sin actualizar. DCA bloqueado hasta que se restaure la conexión.", attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
-  // [FIX-AUDIT-R6]: tailRiskOverlay < DCA_CONFIG.BLOCKS.TAIL_RISK_OVERLAY_MAX → Kill Switch
-  if (tailRiskActive && tailRiskOverlay < BLK.TAIL_RISK_OVERLAY_MAX) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  // FIX-KILLSWITCH (Jul-2026): tailRiskActive → BLOCK. Sin threshold de overlay.
+  // El engine ya decidió que hay riesgo de cola (overlay < 0.99). El DCA obedece
+  // sin segundas opiniones: si el motor reduce exposición, no compramos más.
+  // ANTES: tailRiskActive && tailRiskOverlay < 0.70 → L1 (overlay 0.80) no bloqueaba.
+  // AHORA: tailRiskActive solo → cualquier Kill Switch activo frena el DCA.
+  if (tailRiskActive) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   if (regime === "CRISIS" || regimePenalty <= BLK.REGIME_PENALTY_MIN) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   if (volTargetMultiplier < BLK.VOL_TARGET_MIN) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
 
