@@ -534,6 +534,26 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   const totalKelly = kellyAllocations.reduce((s, a) => s + a.kellyAlloc, 0);
   if (totalKelly === 0) {
+    // FIX-STATE-MASKING (Jul-2026): ANTES hardcodeaba killSwitchLevel:0, tailRiskActive:false,
+    // volTargetMultiplier:0. Si el totalKelly cae a 0 en un colapso de mercado, el dashboard
+    // veía "SIN TRIGGER" cuando en realidad el Kill Switch estaba en L4-L5.
+    // AHORA: computamos tailRisk y volTarget reales AUNQUE la exposición sea 0.
+    // El inversor necesita saber la verdad, no una mentira tranquilizadora.
+    const estimatedRealizedVol = input.portfolioRealizedVol ?? 0.18;
+    const allCashTailRisk = computeTailRiskOverlay({
+      drawdown:           input.portfolioDrawdown ?? 0,
+      vix:                macro.vix,
+      creditSpread:       macro.creditSpread,
+      stressScore:        masterRegime.stressDetail.score,
+      portfolioVolatility: estimatedRealizedVol,
+      avgCorrelation:     input.avgCorrelation,
+    });
+    const allCashVolTarget = computeVolTargetMultiplier({
+      targetVol:     input.targetVol ?? VOLATILITY_CONFIG.DEFAULT_TARGET_VOL,
+      realizedVol:   estimatedRealizedVol,
+      regimePenalty: adjustedRegimePenalty,
+    });
+
     const empty = kellyAllocations.map(({ asset, momentum, value, quality, lowVol, rawExpectedReturn, kelly }) => ({
       name: asset.name, momentumScore: momentum.momentumScore, valueScore: value.valueScore,
       valuePercentileRank: value.percentileRank, qualityScore: quality.qualityScore,
@@ -546,15 +566,20 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }));
     return {
       allocations: empty, regime: "ALL_CASH", masterRegime, correlationPenalty: corrPenalty,
-      totalAllocation: 0, totalInvested: 0, volTargetMultiplier: 0, tailRiskOverlay: 1,
-      tailRiskActive: false, tailRiskReason: "", engineVersion: ENGINE_VERSION,
+      totalAllocation: 0, totalInvested: 0,
+      volTargetMultiplier: allCashVolTarget.multiplier,
+      tailRiskOverlay:     allCashTailRisk.overlay,
+      tailRiskActive:      allCashTailRisk.isActive,
+      tailRiskReason:      allCashTailRisk.triggerReason,
+      engineVersion: ENGINE_VERSION,
       meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
       coreSignal: { regimeComponent: CORE_SIGNAL_WEIGHTS.REGIME * regimeNumeric, btcComponent: CORE_SIGNAL_WEIGHTS.BTC * btcNumeric, riskComponent: CORE_SIGNAL_WEIGHTS.RISK * Math.max(0, riskNumeric), finalScore: coreSignalScore },
       scenarioProbabilities,
       metaIntelligence: { modelHealth: metaIntelligence.modelHealth, confidenceMultiplier: metaIntelligence.confidenceMultiplier, consecutiveErrors: metaIntelligence.consecutiveErrors, recommendation: metaIntelligence.recommendation },
-      killSwitchLevel: 0, killSwitchName: 'SIN TRIGGER',
+      killSwitchLevel: allCashTailRisk.killSwitchLevel,
+      killSwitchName:  allCashTailRisk.killSwitchName,
     };
   }
 
