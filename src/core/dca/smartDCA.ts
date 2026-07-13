@@ -10,6 +10,51 @@
 
 import type { CEWSOutput, CEWSLevel } from "../macro/crisisEarlyWarning";
 
+// ── CONFIGURACIÓN CENTRALIZADA (auditoría Jul-2026) ─────────────────────
+// Todos los magic numbers extraídos a este objeto para tuning consistente.
+// Si se ajusta un umbral, editar aquí — no hay números sueltos en el código.
+const DCA_CONFIG = {
+  // Umbrales de las 7 señales de confluencia de fondo
+  SIGNALS: {
+    BTC_RSI_OVERSOLD: 35,
+    BTC_Z_OVERSOLD: -1.5,
+    REGIME_EXPANSION_THRESHOLD: 0.85,   // regimePenalty mínimo para que EXPANSION cuente como macro
+    REGIME_CONTRACTION_THRESHOLD: 0.55, // regimePenalty mínimo para que CONTRACTION cuente como macro
+    MOMENTUM_DIVERGENCE: -0.10,        // retorno 1m mínimo para divergencia bajista
+    MOMENTUM_Z_FLOOR: -2.5,            // Z-Score mínimo para que divergencia aplique
+    BTC_DOMINANCE_ACCUMULATION: 52,     // BTC.D > 52% = señal de acumulación
+    MVRV_UNDERVALUED: 1.5,             // MVRV < 1.5 = zona de valor
+  },
+  // Filtros de elegibilidad para compra
+  ALLOCATION: {
+    MIN_FINAL_ALLOCATION: 0.02,  // target < 2% → no comprar (demasiado pequeño)
+    MIN_DRIFT: 0.005,            // drift < 0.5pp → no comprar (ya está en peso)
+  },
+  // Parámetros de ataque y graduación Kelly-inspired
+  ATTACK: {
+    THRESHOLD: 4,                      // señales mínimas para activar modo ataque
+    MIN_MACRO_FOR_FULL_ATTACK: 2,      // señales macro mínimas para ataque a cartera completa (si <2 → BTC-only)
+    BTC_OVERRIDE_FRACTION: 0.25,       // % Olympus a BTC en CRISIS + ≥4 señales
+    GRADUATION: {
+      // [olympusFraction, tacticalFraction] por tramo
+      MAX:    [1.00, 1.00] as const,   // Tramo 3: fat pitch, todo al mercado
+      STRONG: [0.75, 0.66] as const,   // Tramo 2: convicción alta
+      ENTRY:  [0.50, 0.33] as const,   // Tramo 1: probe inicial
+    },
+    MULTIPLIERS: { MAX: 3.0, STRONG: 2.0, ENTRY: 1.5 },
+  },
+  // DCA normal (sin ataque)
+  NORMAL: {
+    OLYMPUS_FRACTION: 0.30,  // % del cash Olympus a invertir cada mes
+  },
+  // Umbrales de bloqueo — si se cruzan, no se compra nada
+  BLOCKS: {
+    TAIL_RISK_OVERLAY_MAX: 0.70,   // tailRiskOverlay por debajo → BLOCK_TAIL_RISK
+    REGIME_PENALTY_MIN: 0.45,      // regimePenalty por debajo → BLOCK_CRISIS
+    VOL_TARGET_MIN: 0.60,          // volTargetMultiplier por debajo → BLOCK_VOL
+  },
+} as const;
+
 export type DCAAction =
   | "BLOCK_CRISIS" | "BLOCK_TAIL_RISK" | "BLOCK_VOL"
   | "WAIT" | "SMALL_BUY" | "BUY" | "FULL_BUY"
@@ -87,7 +132,8 @@ export interface SmartDCAOutput {
 function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio } = input;
 
-  const btcOversold = btcRsi < 35 && btcZScore < -1.5;
+  const S = DCA_CONFIG.SIGNALS;
+  const btcOversold = btcRsi < S.BTC_RSI_OVERSOLD && btcZScore < S.BTC_Z_OVERSOLD;
   const cewsRecovering = cewsOutput !== undefined && cewsPreviousLevel !== undefined &&
     (cewsPreviousLevel === "ALERT" || cewsPreviousLevel === "WARNING") &&
     (cewsOutput.level === "WATCH" || cewsOutput.level === "CLEAR");
@@ -97,12 +143,12 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   //      threshold ↑   → 0.80→0.85, 0.55→0.65; solo ciclos con mejora fuerte cuentan como macro.
   // FIX-AUDIT-R5 R5.1 v2 (post-reviewer): EXPANSION strengthened (0.80→0.85), CONTRACTION changes reverted to original 0.55 to avoid silent breakage en tests existentes.
   const regimeImproving = (
-    (regime === "EXPANSION" && typeof regimePenalty === "number" && regimePenalty >= 0.85) ||
-    (regime === "CONTRACTION" && typeof regimePenalty === "number" && regimePenalty > 0.55)
+    (regime === "EXPANSION" && typeof regimePenalty === "number" && regimePenalty >= S.REGIME_EXPANSION_THRESHOLD) ||
+    (regime === "CONTRACTION" && typeof regimePenalty === "number" && regimePenalty > S.REGIME_CONTRACTION_THRESHOLD)
   );
-  const momentumDivergence = btcMomentum1m < -0.10 && btcZScore > -2.5;
-  const dominanceAccumulation = btcDominance !== undefined && btcDominance > 52;
-  const mvrvUndervalued = mvrvRatio !== undefined && mvrvRatio < 1.5;
+  const momentumDivergence = btcMomentum1m < S.MOMENTUM_DIVERGENCE && btcZScore > S.MOMENTUM_Z_FLOOR;
+  const dominanceAccumulation = btcDominance !== undefined && btcDominance > S.BTC_DOMINANCE_ACCUMULATION;
+  const mvrvUndervalued = mvrvRatio !== undefined && mvrvRatio < S.MVRV_UNDERVALUED;
   const volNormalizing = cewsOutput !== undefined && cewsOutput.signals.volClustering.trend === "IMPROVING" && cewsOutput.signals.volClustering.level !== "ALERT";
 
   return [
@@ -146,12 +192,13 @@ function buildAllocations(
     return { ...a, drift, currentWeight };
   });
 
-  // 2. Filtrar: solo activos con target > 2%, precio > 0, sin techo de ciclo, y drift POSITIVO
+  // 2. Filtrar: solo activos con target > MIN, precio > 0, sin techo de ciclo, y drift POSITIVO
+  const ALLOC = DCA_CONFIG.ALLOCATION;
   const eligible = withDrift.filter(a =>
-    a.finalAllocation > 0.02 &&
+    a.finalAllocation > ALLOC.MIN_FINAL_ALLOCATION &&
     a.price > 0 &&
     !skipTickers.has(a.ticker) &&
-    a.drift > 0.005 // al menos 0.5pp de infraponderación
+    a.drift > ALLOC.MIN_DRIFT
   );
 
   if (eligible.length === 0) return [];
@@ -204,7 +251,10 @@ function buildAllocations(
 // ── FUNCIÓN PRINCIPAL ──────────────────────────────────────────────────
 export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, olympusAvailableCash, tacticalAvailableCash, motorAllocations } = input;
-  const ATTACK_THRESHOLD = 4;
+  const ATK = DCA_CONFIG.ATTACK;
+  const BLK = DCA_CONFIG.BLOCKS;
+  const NRM = DCA_CONFIG.NORMAL;
+  const A = DCA_CONFIG.ALLOCATION;
 
   // Extraer tickers con señal de techo de ciclo activa (CAUTION/DANGER/EXTREME)
   // Estos activos NO se comprarán — el cash se redistribuye a los demás
@@ -225,9 +275,9 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const macroConfluence = attackSignals.filter(s => macroSignalNames.has(s.name) && s.active).length;
 
   // ── BTC CYCLE OVERRIDE (≥4/7 en CRISIS) ────────────────────────────
-  if (attackConfluence >= 4 && !tailRiskActive && regime === "CRISIS") {
+  if (attackConfluence >= ATK.THRESHOLD && !tailRiskActive && regime === "CRISIS") {
     const btcOnly = motorAllocations.filter(a => a.ticker === "BTC-EUR");
-    const btcCash = olympusAvailableCash * 0.25;
+    const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
     const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:");
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
     return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/7 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash };
@@ -236,16 +286,15 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // ── BLOQUEOS ─────────────────────────────────────────────────────────
   // FIX-AUDIT-R9 4: circuit breaker — bloquear DCA si datos Yahoo >72h stale.
   if (input.staleDataBlock) return emptyOutput("BLOCK_TAIL_RISK", "🔴 Datos Yahoo >72h sin actualizar. DCA bloqueado hasta que se restaure la conexión.", attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
-  // [FIX-KILLSWITCH] Umbral subido de 0.70 a 0.85 para que Kill Switch L1
-  // (×0.80, DD -10.5%) también bloquee compras. Antes solo L2+ bloqueaba.
-  if (tailRiskActive && tailRiskOverlay < 0.70) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
-  if (regime === "CRISIS" || regimePenalty <= 0.45) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
-  if (volTargetMultiplier < 0.60) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  // [FIX-AUDIT-R6]: tailRiskOverlay < DCA_CONFIG.BLOCKS.TAIL_RISK_OVERLAY_MAX → Kill Switch
+  if (tailRiskActive && tailRiskOverlay < BLK.TAIL_RISK_OVERLAY_MAX) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  if (regime === "CRISIS" || regimePenalty <= BLK.REGIME_PENALTY_MIN) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  if (volTargetMultiplier < BLK.VOL_TARGET_MIN) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
 
   // ── MODO ATAQUE ─────────────────────────────────────────────────────
-  const canAttack = attackConfluence >= ATTACK_THRESHOLD;
-  // Si el ataque tiene <2 señales macro, solo comprar BTC-EUR (el resto del cash se acumula)
-  const btcOnlyAttack = canAttack && macroConfluence < 2;
+  const canAttack = attackConfluence >= ATK.THRESHOLD;
+  // Si el ataque tiene <MIN_MACRO_FOR_FULL_ATTACK señales macro, solo comprar BTC-EUR
+  const btcOnlyAttack = canAttack && macroConfluence < ATK.MIN_MACRO_FOR_FULL_ATTACK;
   let olympusInvested = 0, tacticalInvested = 0, tacticalAccumulated = tacticalAvailableCash;
 
   // ── GRADUACIÓN KELLY-INSPIRED (Jul-2026) ──────────────────────────
@@ -254,20 +303,21 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // Tramo 1 (4/7): probe — testear el fondo sin quemar pólvora.
   // Tramo 2 (5/7): convicción — edge ya claro, desplegar mayoría.
   // Tramo 3 (6-7/7): fat pitch — coste de oportunidad > riesgo de caída.
+  const G = ATK.GRADUATION;
   if (attackConfluence >= 6) {           // TRAMO 3: ATTACK_MAX
-    olympusInvested = olympusAvailableCash * 1.00;
-    tacticalInvested = tacticalAvailableCash * 1.00;
+    olympusInvested = olympusAvailableCash * G.MAX[0];
+    tacticalInvested = tacticalAvailableCash * G.MAX[1];
     tacticalAccumulated = 0;
   } else if (attackConfluence >= 5) {    // TRAMO 2: ATTACK_STRONG
-    olympusInvested = olympusAvailableCash * 0.75;
-    tacticalInvested = tacticalAvailableCash * 0.66;
+    olympusInvested = olympusAvailableCash * G.STRONG[0];
+    tacticalInvested = tacticalAvailableCash * G.STRONG[1];
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
-  } else if (attackConfluence >= 4) {    // TRAMO 1: ATTACK_ENTRY
-    olympusInvested = olympusAvailableCash * 0.50;
-    tacticalInvested = tacticalAvailableCash * 0.33;
+  } else if (attackConfluence >= ATK.THRESHOLD) { // TRAMO 1: ATTACK_ENTRY
+    olympusInvested = olympusAvailableCash * G.ENTRY[0];
+    tacticalInvested = tacticalAvailableCash * G.ENTRY[1];
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else {                               // DCA NORMAL
-    olympusInvested = olympusAvailableCash * 0.30;
+    olympusInvested = olympusAvailableCash * NRM.OLYMPUS_FRACTION;
     tacticalInvested = 0;
     tacticalAccumulated = tacticalAvailableCash;
   }
@@ -300,7 +350,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   //   El cash de cycle-blocked + sobreponderados se redistribuye a infraponderados.
   //   Si no hay infraponderados, el cash se acumula (todos skipped).
   if (totalCash > 0 && allocs.length === 0) {
-    const eligibleForFallback = motorAllocations.filter(a => a.finalAllocation > 0.02 && a.price > 0);
+    const eligibleForFallback = motorAllocations.filter(a => a.finalAllocation > A.MIN_FINAL_ALLOCATION && a.price > 0);
     if (eligibleForFallback.length > 0) {
       // Clasificar en 3 grupos: cycle-blocked, sobreponderado, infraponderado
       const withDrift = eligibleForFallback.map(a => ({
@@ -309,8 +359,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
         driftVal: a.finalAllocation - (currentAllocMap.get(a.ticker) ?? 0),
       }));
       const cycleBlocked  = withDrift.filter(a => cycleTopTickers.has(a.ticker));
-      const overweight    = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal <= 0.005);
-      const underweight   = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal > 0.005);
+      const overweight    = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal <= A.MIN_DRIFT);
+      const underweight   = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal > A.MIN_DRIFT);
       const totalUWWeight = underweight.reduce((s, a) => s + a.finalAllocation, 0);
 
       const buildEntry = (
@@ -348,7 +398,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
         } else if (skipped) {
           reason = motivo;
         } else {
-          reason = `DCA prorrateado ${(a.finalAllocation*100).toFixed(1)}% · ${motivo}`;
+          // FIX-FALLBACK-LABEL: usar label dinámico (ATAQUE:/DCA:) en vez de hardcode "DCA prorrateado"
+          reason = `${canAttack ? "ATAQUE:" : "DCA:"} prorrateado ${(a.finalAllocation*100).toFixed(1)}% · ${motivo}`;
         }
         return {
           ticker: a.ticker, name: a.name,
@@ -387,7 +438,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
       : `🚀 ATAQUE — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
     : `DCA normal Olympus €${olympusInvested.toFixed(0)}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
-  const attackMultiplier = canAttack ? (attackConfluence >= 6 ? 3.0 : attackConfluence >= 5 ? 2.0 : 1.5) : 1.0;
+  const M = ATK.MULTIPLIERS;
+  const attackMultiplier = canAttack ? (attackConfluence >= 6 ? M.MAX : attackConfluence >= 5 ? M.STRONG : M.ENTRY) : 1.0;
   const attackTranche = canAttack ? (attackConfluence >= 6 ? 3 : attackConfluence >= 5 ? 2 : 1) : 0;
   return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier, attackTranche, olympusInvested, tacticalInvested, tacticalAccumulated };
 }

@@ -656,4 +656,69 @@ describe("Edge Cases", () => {
     expect(result.tacticalInvested).toBe(660);
     expect(result.totalCashToInvest).toBe(660);
   });
+
+  // FIX-TEST-RECALIBRACION (Jul-2026): verificar que el fallback recalibra
+  // olympusInvested/tacticalInvested/totalCash al cash realmente desplegado.
+  // El fallback solo se activa cuando buildAllocations retorna vacío. Esto ocurre
+  // en BTC-only attack con BTC cycle-blocked: allocAssets=[BTC-EUR] no tiene
+  // elegibles, pero el fallback usa motorAllocations (6 activos) y encuentra
+  // infraponderados no bloqueados. El cash planificado se reduce a lo real.
+  test("Recalibración post-fallback: BTC-only con BTC bloqueado → cash parcial desplegado", () => {
+    // BTC-only attack (4 señales BTC/on-chain, 0 macro)
+    // BTC-EUR está cycle-blocked → buildAllocations([BTC-EUR]) retorna vacío
+    // Fallback usa motorAllocations (6 activos): BTC cycle-blocked, otros 5 underweight
+    const result = computeSmartDCA(baseInput({
+      btcRsi: 30,
+      btcZScore: -2.0,
+      btcMomentum1m: -0.15,
+      btcDominance: 60,
+      mvrvRatio: 1.4,
+      cycleTopSignals: [
+        { ticker: "BTC-EUR", shouldTrim: true, zone: "CAUTION" },
+      ],
+      currentAllocations: [
+        { ticker: "BTC-EUR", name: "Bitcoin", currentWeight: 0.10 },
+        { ticker: "0P00000WLG.F", name: "MSCI World", currentWeight: 0.20 },
+        { ticker: "URNU.DE", name: "Uranio", currentWeight: 0.00 },
+        { ticker: "EMXC.DE", name: "E.M.", currentWeight: 0.00 },
+        { ticker: "PPFB.DE", name: "Gold", currentWeight: 0.00 },
+        { ticker: "VVSM.DE", name: "Value", currentWeight: 0.00 },
+      ],
+    }));
+
+    expect(result.attackMode).toBe(true);
+    expect(result.action).toBe("ATTACK_ENTRY");
+    expect(result.reasoning).toContain("BTC-ONLY");
+
+    // Tramo 1: 50% Oly + 33% Táct = 500 + 165 = 665 planificado
+    // Pero BTC-EUR está cycle-blocked → el fallback NO compra BTC
+    // Los 5 activos no-BTC están underweight → reciben cash en el fallback
+    // Cash planificado original: 665, cash real desplegado < 665 (solo no-BTC)
+    expect(result.olympusInvested).toBeLessThan(500);  // recalibrado a la baja
+    expect(result.tacticalInvested).toBeLessThan(165);  // recalibrado a la baja
+
+    // BTC cycle-blocked → skipped, €0
+    const btcAlloc = result.allocationByAsset.find(a => a.ticker === "BTC-EUR");
+    expect(btcAlloc!.skipped).toBe(true);
+    expect(btcAlloc!.actualCost).toBe(0);
+    expect(btcAlloc!.reason).toContain("cycle top");
+
+    // No-BTC underweight → no skipped, reciben cash real
+    const wlgAlloc = result.allocationByAsset.find(a => a.ticker === "0P00000WLG.F");
+    expect(wlgAlloc!.skipped).toBe(false);
+    expect(wlgAlloc!.actualCost).toBeGreaterThan(0);
+    expect(wlgAlloc!.reason).toContain("ATAQUE:");
+
+    // totalCashToInvest = cash real, menor que el planificado
+    const deployed = result.allocationByAsset.reduce((s, a) => s + a.actualCost, 0);
+    expect(result.totalCashToInvest).toBe(deployed);
+    expect(result.totalCashToInvest).toBeLessThan(665);
+    expect(result.totalCashToInvest).toBeGreaterThan(0);
+
+    // Coherencia: olympusInvested + tacticalInvested ≈ totalCashToInvest (+/- 1€ por redondeo)
+    expect(result.olympusInvested + result.tacticalInvested).toBeCloseTo(result.totalCashToInvest, 0);
+
+    // El label del fallback usa "ATAQUE:" (no el viejo "DCA prorrateado")
+    expect(wlgAlloc!.reason).not.toContain("DCA prorrateado");
+  });
 });
