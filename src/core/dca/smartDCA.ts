@@ -59,7 +59,7 @@ const DCA_CONFIG = {
 } as const;
 
 export type DCAAction =
-  | "BLOCK_CRISIS" | "BLOCK_TAIL_RISK" | "BLOCK_VOL"
+  | "BLOCK_STALE_DATA" | "BLOCK_CRISIS" | "BLOCK_TAIL_RISK" | "BLOCK_VOL"
   | "WAIT" | "SMALL_BUY" | "BUY" | "FULL_BUY"
   | "ATTACK_ENTRY" | "ATTACK_STRONG" | "ATTACK_MAX"
   | "BTC_CYCLE_OVERRIDE";
@@ -277,26 +277,54 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const macroSignalNames = new Set(["CEWS Recuperándose", "Régimen Mejorando", "VIX Normalizándose"]);
   const macroConfluence = attackSignals.filter(s => macroSignalNames.has(s.name) && s.active).length;
 
-  // ── BTC CYCLE OVERRIDE (≥4/7 en CRISIS) ────────────────────────────
-  if (attackConfluence >= ATK.THRESHOLD && !tailRiskActive && regime === "CRISIS") {
+  // ═══════════════════════════════════════════════════════════════
+  // ORDEN DE BLOQUEOS (auditoría Jul-2026 — reordenados por prioridad)
+  //   Prioridad institucional: circuit breaker técnico > kill switch >
+  //   régimen macro > vol target > excepciones tácticas.
+  //   Ningún early-return puede saltarse un bloqueo más restrictivo.
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── 1. CIRCUIT BREAKER: datos stale (>72h sin Yahoo) ──────────
+  // Máxima prioridad: sin datos frescos, el motor no puede tomar
+  // decisiones de compra. Bloquea TODO — incluso BTC_CYCLE_OVERRIDE.
+  if (input.staleDataBlock) return emptyOutput("BLOCK_STALE_DATA", "🔴 Datos Yahoo >72h sin actualizar. DCA bloqueado hasta que se restaure la conexión.", attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+
+  // ── 2. KILL SWITCH: tail risk activo ──────────────────────────
+  // El engine ya decidió que hay riesgo de cola (overlay < 0.99).
+  // El DCA obedece sin segundas opiniones.
+  if (tailRiskActive) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+
+  // ── 3. RÉGIMEN MACRO: CRISIS o penalty crítico ────────────────
+  // CRISIS bloquea DCA excepto si hay confluencia de fondo fuerte (≥4/7)
+  // y no hay tail risk → en ese caso cedemos paso al BTC_CYCLE_OVERRIDE.
+  // El override está diseñado para comprar BTC en capitulación macro —
+  // incluso con penalty bajo (CRISIS profunda), las señales de fondo
+  // justifican una posición pequeña (25% Olympus solo en BTC).
+  const isBTC_OverrideCandidate = attackConfluence >= ATK.THRESHOLD && !tailRiskActive && regime === "CRISIS";
+  if (!isBTC_OverrideCandidate) {
+    if (regimePenalty <= BLK.REGIME_PENALTY_MIN) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+    if (regime === "CRISIS") return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  }
+
+  // ── 4. VOLATILIDAD: vol target demasiado bajo ─────────────────
+  // El BTC override es una excepción táctica: 25% Olympus solo BTC.
+  // En capitulación la volatilidad es intrínsecamente alta — bloquear
+  // el override por vol elevada sería contraproducente. El kill switch
+  // (posición 2) ya protege contra riesgos de cola extremos.
+  if (volTargetMultiplier < BLK.VOL_TARGET_MIN && !isBTC_OverrideCandidate) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+
+  // ── 5. BTC CYCLE OVERRIDE (≥4/7 en CRISIS, sin tail risk) ────
+  // Excepción táctica: comprar BTC en capitulación macro si las
+  // señales de fondo son fuertes Y no hay kill switch activo.
+  // Se ejecuta DESPUÉS de todos los bloqueos para garantizar que
+  // no compra con datos stale ni con protección de capital activa.
+  if (isBTC_OverrideCandidate) {
     const btcOnly = motorAllocations.filter(a => a.ticker === "BTC-EUR");
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
     const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:");
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
     return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/7 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash };
   }
-
-  // ── BLOQUEOS ─────────────────────────────────────────────────────────
-  // FIX-AUDIT-R9 4: circuit breaker — bloquear DCA si datos Yahoo >72h stale.
-  if (input.staleDataBlock) return emptyOutput("BLOCK_TAIL_RISK", "🔴 Datos Yahoo >72h sin actualizar. DCA bloqueado hasta que se restaure la conexión.", attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
-  // FIX-KILLSWITCH (Jul-2026): tailRiskActive → BLOCK. Sin threshold de overlay.
-  // El engine ya decidió que hay riesgo de cola (overlay < 0.99). El DCA obedece
-  // sin segundas opiniones: si el motor reduce exposición, no compramos más.
-  // ANTES: tailRiskActive && tailRiskOverlay < 0.70 → L1 (overlay 0.80) no bloqueaba.
-  // AHORA: tailRiskActive solo → cualquier Kill Switch activo frena el DCA.
-  if (tailRiskActive) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
-  if (regime === "CRISIS" || regimePenalty <= BLK.REGIME_PENALTY_MIN) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
-  if (volTargetMultiplier < BLK.VOL_TARGET_MIN) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
 
   // ── MODO ATAQUE ─────────────────────────────────────────────────────
   const canAttack = attackConfluence >= ATK.THRESHOLD;

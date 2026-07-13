@@ -422,6 +422,41 @@ describe("Bloqueos", () => {
     expect(result.totalCashToInvest).toBe(0);
   });
 
+  test("Stale data >72h → BLOCK_STALE_DATA (máxima prioridad)", () => {
+    const result = computeSmartDCA(baseInput({
+      staleDataBlock: true,
+      // Aunque el resto esté perfecto, stale data bloquea TODO
+      btcDominance: 60,
+      mvrvRatio: 1.4,
+      regime: "CONTRACTION",
+      regimePenalty: 0.70,
+      cewsOutput: cewsRecovering(),
+      cewsPreviousLevel: "ALERT",
+    }));
+
+    expect(result.action).toBe("BLOCK_STALE_DATA");
+    expect(result.attackMode).toBe(false);
+    expect(result.totalCashToInvest).toBe(0);
+  });
+
+  test("Stale data bloquea incluso BTC_CYCLE_OVERRIDE", () => {
+    // Con stale data activo, ni siquiera el BTC override (caso especial)
+    // debe ejecutarse — comprar con datos viejos es peligroso.
+    const result = computeSmartDCA(baseInput({
+      staleDataBlock: true,
+      btcRsi: 30,
+      btcZScore: -2.0,
+      btcMomentum1m: -0.15,
+      btcDominance: 60,
+      mvrvRatio: 1.4,
+      regime: "CRISIS",
+      regimePenalty: 0.40,
+    }));
+
+    expect(result.action).toBe("BLOCK_STALE_DATA");
+    expect(result.totalCashToInvest).toBe(0);
+  });
+
   test("Tail Risk inactivo → NO bloquea (DCA normal)", () => {
     const result = computeSmartDCA(baseInput({
       tailRiskActive: false,
