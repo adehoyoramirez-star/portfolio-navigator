@@ -173,7 +173,3 @@ export function computeDCADecision(input: DCAEngineInput): DCAEngineOutput {
     description,
   };
 }
-
-export function computeDCAMultiplier(input: DCAEngineInput): number {
-  return computeDCADecision(input).effectiveIntensity;
-}

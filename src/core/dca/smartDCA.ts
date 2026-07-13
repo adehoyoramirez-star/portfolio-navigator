@@ -2,13 +2,11 @@
 // ARCHIVO: src/core/dca/smartDCA.ts
 // HENDENFUND — SmartDCA con separación Olympus/Táctico
 // ===============================================
-// REGLAS:
-//   - Olympus recibe el 80% de la liquidez defensiva + aportación mensual
-//   - Táctico recibe el 20% de la liquidez defensiva
-//   - El Táctico solo invierte si attackConfluence ≥ 4 (umbral de ataque)
-//   - El sobrante del Táctico se acumula como efectivo para el mes siguiente
-//   - Olympus puede reclamar hasta el 75% del capital táctico si confluence ≥ 6
-//   - El panel de liquidez mostrará el desglose actualizado
+// REGLAS (actualizado Jul-2026):
+//   - Olympus recibe el cash operativo mensual (cashReserve). Invierte 30% en DCA normal.
+//   - Táctico recibe el 100% de la liquidez defensiva acumulada. Solo invierte si attackConfluence ≥ 4.
+//   - El sobrante del Táctico se acumula como efectivo para el mes siguiente.
+//   - Graduación Kelly-inspired: Tramo 1 (4/7) 50% Oly + 33% Táct, Tramo 2 (5/7) 75% Oly + 66% Táct, Tramo 3 (6-7/7) 100% ambos.
 
 import type { CEWSOutput, CEWSLevel } from "../macro/crisisEarlyWarning";
 
@@ -206,7 +204,6 @@ function buildAllocations(
 // ── FUNCIÓN PRINCIPAL ──────────────────────────────────────────────────
 export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, olympusAvailableCash, tacticalAvailableCash, motorAllocations } = input;
-  const defensiveLiquidity = input.accumulatedDefensiveLiquidity ?? 0;
   const ATTACK_THRESHOLD = 4;
 
   // Extraer tickers con señal de techo de ciclo activa (CAUTION/DANGER/EXTREME)
