@@ -1145,7 +1145,7 @@ soxRsiWeekly,
   }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
-  const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK";
+  const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";
 
   // CASH-REDESIGN-05: eliminados los 3 useEffects de auto-acumulación.
   //   - defensiveLiquidityRef + useEffect que movía monthlyInjection → defensiveLiquidity en CRISIS
