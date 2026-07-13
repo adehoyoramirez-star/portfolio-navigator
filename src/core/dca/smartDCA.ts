@@ -251,16 +251,31 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const btcOnlyAttack = canAttack && macroConfluence < 2;
   let olympusInvested = 0, tacticalInvested = 0, tacticalAccumulated = tacticalAvailableCash;
 
-  if (canAttack) {
-    tacticalInvested = tacticalAvailableCash;
+  // ── GRADUACIÓN KELLY-INSPIRED (Jul-2026) ──────────────────────────
+  // Despliegue proporcional a la convicción. Olympus escala 50→75→100%,
+  // Táctico escala más lento 33→66→100% porque es war chest acumulado.
+  // Tramo 1 (4/7): probe — testear el fondo sin quemar pólvora.
+  // Tramo 2 (5/7): convicción — edge ya claro, desplegar mayoría.
+  // Tramo 3 (6-7/7): fat pitch — coste de oportunidad > riesgo de caída.
+  if (attackConfluence >= 6) {           // TRAMO 3: ATTACK_MAX
+    olympusInvested = olympusAvailableCash * 1.00;
+    tacticalInvested = tacticalAvailableCash * 1.00;
     tacticalAccumulated = 0;
-    olympusInvested = olympusAvailableCash * 0.60;
-  } else {
+  } else if (attackConfluence >= 5) {    // TRAMO 2: ATTACK_STRONG
+    olympusInvested = olympusAvailableCash * 0.75;
+    tacticalInvested = tacticalAvailableCash * 0.66;
+    tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
+  } else if (attackConfluence >= 4) {    // TRAMO 1: ATTACK_ENTRY
+    olympusInvested = olympusAvailableCash * 0.50;
+    tacticalInvested = tacticalAvailableCash * 0.33;
+    tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
+  } else {                               // DCA NORMAL
     olympusInvested = olympusAvailableCash * 0.30;
+    tacticalInvested = 0;
     tacticalAccumulated = tacticalAvailableCash;
   }
 
-  const totalCash = olympusInvested + tacticalInvested;
+  let totalCash = olympusInvested + tacticalInvested;
   // cycleTopTickers: activos en zona de techo de ciclo no se compran
   // btcOnlyAttack: solo BTC-EUR se compra, el resto del cash se acumula
   const allocAssets = btcOnlyAttack
@@ -279,53 +294,57 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap)
     : [];
 
-  // FIX-DCA-FALLBACK: cuando totalCash > 0 pero buildAllocations no encuentra
-  // activos elegibles (todos bloqueados por cycle top o sobreponderados),
-  // generar prorrateo simple según pesos del motor para que el usuario tenga
-  // una guía de distribución del DCA mensual.
-  // FIX-FALLBACK-REASON (Jul-2026): el motivo ahora es por activo específico.
-  //   • Activos con cycle top → skipped: true, actualCost = 0 (no se compran).
-  //   • Activos sin cycle top → prorrateo normal (guía DCA).
-  //   El cash de cycle-blocked se redistribuye entre los no bloqueados.
-  //   Si TODOS tienen cycle top, todos aparecen skipped → cash se acumula.
+  // FIX-DCA-FALLBACK (v3 Jul-2026): cuando totalCash > 0 pero buildAllocations
+  // no encuentra activos elegibles (todos cycle top, sobreponderados, o sin drift),
+  // generar guía de distribución con motivo por activo.
+  //   • cycle top → skipped, actualCost 0, no se compra.
+  //   • sobreponderado (drift ≤ 0.5pp) → skipped, actualCost 0, no se compra.
+  //   • infraponderado (drift > 0.5pp) → prorrateo real, sí se compra.
+  //   El cash de cycle-blocked + sobreponderados se redistribuye a infraponderados.
+  //   Si no hay infraponderados, el cash se acumula (todos skipped).
   if (totalCash > 0 && allocs.length === 0) {
     const eligibleForFallback = motorAllocations.filter(a => a.finalAllocation > 0.02 && a.price > 0);
     if (eligibleForFallback.length > 0) {
-      const cycleBlocked = eligibleForFallback.filter(a => cycleTopTickers.has(a.ticker));
-      const notBlocked = eligibleForFallback.filter(a => !cycleTopTickers.has(a.ticker));
-      const totalWeight = notBlocked.reduce((s, a) => s + a.finalAllocation, 0);
+      // Clasificar en 3 grupos: cycle-blocked, sobreponderado, infraponderado
+      const withDrift = eligibleForFallback.map(a => ({
+        ...a,
+        currentW: currentAllocMap.get(a.ticker) ?? 0,
+        driftVal: a.finalAllocation - (currentAllocMap.get(a.ticker) ?? 0),
+      }));
+      const cycleBlocked  = withDrift.filter(a => cycleTopTickers.has(a.ticker));
+      const overweight    = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal <= 0.005);
+      const underweight   = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal > 0.005);
+      const totalUWWeight = underweight.reduce((s, a) => s + a.finalAllocation, 0);
 
-      const buildEntry = (a: typeof eligibleForFallback[number], isCycleBlocked: boolean) => {
-        const currentW = currentAllocMap.get(a.ticker) ?? 0;
-        const driftVal = a.finalAllocation - currentW;
+      const buildEntry = (
+        a: typeof withDrift[number],
+        kind: 'cycle' | 'overweight' | 'underweight'
+      ) => {
         const isFractional = a.ticker === "BTC-EUR";
         let cashAssigned: number, shares: number, actualCost: number, skipped: boolean, motivo: string;
 
-        if (isCycleBlocked) {
-          cashAssigned = 0;
-          shares = 0;
-          actualCost = 0;
-          skipped = true;
-          const overMsg = driftVal <= 0.005
-            ? ` + sobreponderado ${(driftVal*100).toFixed(1)}pp`
-            : ` (target ${(a.finalAllocation*100).toFixed(1)}% vs actual ${(currentW*100).toFixed(1)}%)`;
+        if (kind === 'cycle') {
+          cashAssigned = 0; shares = 0; actualCost = 0; skipped = true;
+          const overMsg = a.driftVal <= 0.005
+            ? ` + sobreponderado ${(a.driftVal*100).toFixed(1)}pp`
+            : ` (target ${(a.finalAllocation*100).toFixed(1)}% vs actual ${(a.currentW*100).toFixed(1)}%)`;
           motivo = `cycle top ⚠️${overMsg} — no se compra`;
-        } else if (totalWeight === 0) {
-          cashAssigned = 0;
-          shares = 0;
-          actualCost = 0;
-          skipped = true;
+        } else if (kind === 'overweight') {
+          cashAssigned = 0; shares = 0; actualCost = 0; skipped = true;
+          motivo = `sobreponderado ${(a.driftVal*100).toFixed(1)}pp (target ${(a.finalAllocation*100).toFixed(1)}% vs actual ${(a.currentW*100).toFixed(1)}%) — no se compra`;
+        } else if (totalUWWeight === 0) {
+          cashAssigned = 0; shares = 0; actualCost = 0; skipped = true;
           motivo = `sin activos elegibles para redistribuir`;
         } else {
-          cashAssigned = totalCash * (a.finalAllocation / totalWeight);
+          // Prorratear cash solo entre infraponderados no bloqueados
+          cashAssigned = totalCash * (a.finalAllocation / totalUWWeight);
           shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
           actualCost = shares * a.price;
           skipped = !isFractional && shares === 0;
-          const overLabel = driftVal <= 0.005 ? "sobreponderado" : "infraponderado";
-          motivo = `${overLabel} ${(driftVal*100).toFixed(1)}pp (target ${(a.finalAllocation*100).toFixed(1)}% vs actual ${(currentW*100).toFixed(1)}%)`;
+          motivo = `infraponderado ${(a.driftVal*100).toFixed(1)}pp (target ${(a.finalAllocation*100).toFixed(1)}% vs actual ${(a.currentW*100).toFixed(1)}%)`;
         }
         let reason: string;
-        if (skipped && isCycleBlocked) {
+        if (skipped && kind !== 'underweight') {
           reason = motivo;
         } else if (skipped && !isFractional) {
           reason = `${motivo} — necesita €${a.price.toFixed(0)} mín.`;
@@ -340,13 +359,27 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
           motorWeight: a.finalAllocation, shares,
           pricePerShare: a.price, isFractional, skipped,
           reason,
-          drift: driftVal, currentWeight: currentW,
+          drift: a.driftVal, currentWeight: a.currentW,
         };
       };
       allocs = [
-        ...cycleBlocked.map(a => buildEntry(a, true)),
-        ...notBlocked.map(a => buildEntry(a, false)),
+        ...cycleBlocked.map(a => buildEntry(a, 'cycle')),
+        ...overweight.map(a => buildEntry(a, 'overweight')),
+        ...underweight.map(a => buildEntry(a, 'underweight')),
       ];
+
+      // Recalcular cash real desplegado: cycle-blocked + sobreponderados = €0,
+      // solo infraponderados reciben cash. Ajustar olympusInvested/tacticalInvested.
+      const actualDeployed = allocs.reduce((s, a) => s + a.actualCost, 0);
+      if (actualDeployed < totalCash && totalCash > 0) {
+        const scale = actualDeployed / totalCash;
+        olympusInvested = Math.round(olympusInvested * scale);
+        tacticalInvested = actualDeployed - olympusInvested;
+        // tacticalInvested no puede ser negativo (ej: olympusInvested > actualDeployed)
+        if (tacticalInvested < 0) { olympusInvested = actualDeployed; tacticalInvested = 0; }
+        tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
+        totalCash = actualDeployed;
+      }
     }
   }
 
@@ -357,7 +390,9 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
       : `🚀 ATAQUE — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
     : `DCA normal Olympus €${olympusInvested.toFixed(0)}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
-  return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier: canAttack ? 1.5 : 1, attackTranche: canAttack ? (attackConfluence >= 6 ? 3 : attackConfluence >= 5 ? 2 : 1) : 0, olympusInvested, tacticalInvested, tacticalAccumulated };
+  const attackMultiplier = canAttack ? (attackConfluence >= 6 ? 3.0 : attackConfluence >= 5 ? 2.0 : 1.5) : 1.0;
+  const attackTranche = canAttack ? (attackConfluence >= 6 ? 3 : attackConfluence >= 5 ? 2 : 1) : 0;
+  return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier, attackTranche, olympusInvested, tacticalInvested, tacticalAccumulated };
 }
 
 function emptyOutput(action: DCAAction, reason: string, signals: AttackSignal[], confluence: number, olympusCash: number, tacticalCash: number): SmartDCAOutput {

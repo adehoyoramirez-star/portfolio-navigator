@@ -213,9 +213,9 @@ describe("BTC-Only Attack (≥4 señales, < 2 macro)", () => {
     // BTC-only: solo se compra BTC-EUR
     expect(result.allocationByAsset.every(a => a.ticker === "BTC-EUR")).toBe(true);
     expect(result.reasoning).toContain("BTC-ONLY");
-    // Olympus 60%, táctico completo
-    expect(result.olympusInvested).toBe(600);
-    expect(result.tacticalInvested).toBe(500);
+    // Olympus 50% (Tramo 1), táctico 33%
+    expect(result.olympusInvested).toBe(500);
+    expect(result.tacticalInvested).toBe(165);
   });
 
   test("4 señales BTC/on-chain + 1 macro → BTC-ONLY attack (solo 1 macro < 2)", () => {
@@ -293,8 +293,9 @@ describe("BTC-Only Attack (≥4 señales, < 2 macro)", () => {
     const tickers = result.allocationByAsset.map(a => a.ticker);
     expect(tickers).toContain("BTC-EUR");
     expect(tickers).toContain("0P00000WLG.F");
-    // totalCashToInvest es el cash PLANIFICADO (600+500=1100)
-    expect(result.totalCashToInvest).toBe(1100);
+    // totalCashToInvest = cash real desplegado tras fallback (BTC skipped → €0)
+    // Los 5 underweight reciben: WLG 3×75=225 + URNU 1×28=28 + EMXC 3×30=90 + PPFB 2×70=140 + VVSM 1×55=55 = 538
+    expect(result.totalCashToInvest).toBe(538);
   });
 });
 
@@ -331,9 +332,9 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
     expect(hasNonBtc).toBe(true);
     expect(result.reasoning).toContain("ATAQUE");
     expect(result.reasoning).not.toContain("BTC-ONLY");
-    // Olympus 60%, táctico completo
-    expect(result.olympusInvested).toBe(600);
-    expect(result.tacticalInvested).toBe(500);
+    // Olympus 50% (Tramo 1), táctico 33%
+    expect(result.olympusInvested).toBe(500);
+    expect(result.tacticalInvested).toBe(165);
   });
 
   test("7 señales con 3 macro → ATTACK_MAX, cartera completa", () => {
@@ -516,9 +517,8 @@ describe("Edge Cases", () => {
       ],
     }));
 
-    // totalCashToInvest es el cash PLANIFICADO (1000*0.30=300).
-    // El fallback genera prorrateo simple por pesos del motor para guiar al usuario.
-    expect(result.totalCashToInvest).toBe(300);
+    // totalCashToInvest = cash real desplegado. Todos cycle-blocked → 0 desplegado.
+    expect(result.totalCashToInvest).toBe(0);
     expect(result.allocationByAsset.length).toBeGreaterThan(0);
     // Verificar que todos los activos aparecen en el prorrateo
     const tickers = result.allocationByAsset.map(a => a.ticker);
@@ -597,8 +597,8 @@ describe("Edge Cases", () => {
     expect(result.attackConfluence).toBe(7);
     expect(result.action).toBe("ATTACK_MAX");
     expect(result.allocationByAsset.length).toBeGreaterThan(1);
-    // Attack multiplier should be 1.5 for attack mode
-    expect(result.attackMultiplier).toBe(1.5);
+    // Attack multiplier: Tramo 3 (6-7/7) = 3.0
+    expect(result.attackMultiplier).toBe(3.0);
     // Attack tranche: 6+ → 3
     expect(result.attackTranche).toBe(3);
   });
@@ -652,7 +652,8 @@ describe("Edge Cases", () => {
 
     expect(result.attackMode).toBe(true);
     expect(result.olympusInvested).toBe(0);
-    expect(result.tacticalInvested).toBe(1000);
-    expect(result.totalCashToInvest).toBe(1000);
+    // Tramo 2 (5/7): 66% táctico = 660
+    expect(result.tacticalInvested).toBe(660);
+    expect(result.totalCashToInvest).toBe(660);
   });
 });
