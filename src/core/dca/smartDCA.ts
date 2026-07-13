@@ -283,26 +283,70 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // activos elegibles (todos bloqueados por cycle top o sobreponderados),
   // generar prorrateo simple según pesos del motor para que el usuario tenga
   // una guía de distribución del DCA mensual.
+  // FIX-FALLBACK-REASON (Jul-2026): el motivo ahora es por activo específico.
+  //   • Activos con cycle top → skipped: true, actualCost = 0 (no se compran).
+  //   • Activos sin cycle top → prorrateo normal (guía DCA).
+  //   El cash de cycle-blocked se redistribuye entre los no bloqueados.
+  //   Si TODOS tienen cycle top, todos aparecen skipped → cash se acumula.
   if (totalCash > 0 && allocs.length === 0) {
     const eligibleForFallback = motorAllocations.filter(a => a.finalAllocation > 0.02 && a.price > 0);
     if (eligibleForFallback.length > 0) {
-      const totalWeight = eligibleForFallback.reduce((s, a) => s + a.finalAllocation, 0);
-      allocs = eligibleForFallback.map(a => {
-        const cashAssigned = totalCash * (a.finalAllocation / totalWeight);
+      const cycleBlocked = eligibleForFallback.filter(a => cycleTopTickers.has(a.ticker));
+      const notBlocked = eligibleForFallback.filter(a => !cycleTopTickers.has(a.ticker));
+      const totalWeight = notBlocked.reduce((s, a) => s + a.finalAllocation, 0);
+
+      const buildEntry = (a: typeof eligibleForFallback[number], isCycleBlocked: boolean) => {
+        const currentW = currentAllocMap.get(a.ticker) ?? 0;
+        const driftVal = a.finalAllocation - currentW;
         const isFractional = a.ticker === "BTC-EUR";
-        const shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
-        const actualCost = shares * a.price;
-        const skipped = !isFractional && shares === 0;
+        let cashAssigned: number, shares: number, actualCost: number, skipped: boolean, motivo: string;
+
+        if (isCycleBlocked) {
+          cashAssigned = 0;
+          shares = 0;
+          actualCost = 0;
+          skipped = true;
+          const overMsg = driftVal <= 0.005
+            ? ` + sobreponderado ${(driftVal*100).toFixed(1)}pp`
+            : ` (target ${(a.finalAllocation*100).toFixed(1)}% vs actual ${(currentW*100).toFixed(1)}%)`;
+          motivo = `cycle top ⚠️${overMsg} — no se compra`;
+        } else if (totalWeight === 0) {
+          cashAssigned = 0;
+          shares = 0;
+          actualCost = 0;
+          skipped = true;
+          motivo = `sin activos elegibles para redistribuir`;
+        } else {
+          cashAssigned = totalCash * (a.finalAllocation / totalWeight);
+          shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
+          actualCost = shares * a.price;
+          skipped = !isFractional && shares === 0;
+          const overLabel = driftVal <= 0.005 ? "sobreponderado" : "infraponderado";
+          motivo = `${overLabel} ${(driftVal*100).toFixed(1)}pp (target ${(a.finalAllocation*100).toFixed(1)}% vs actual ${(currentW*100).toFixed(1)}%)`;
+        }
+        let reason: string;
+        if (skipped && isCycleBlocked) {
+          reason = motivo;
+        } else if (skipped && !isFractional) {
+          reason = `${motivo} — necesita €${a.price.toFixed(0)} mín.`;
+        } else if (skipped) {
+          reason = motivo;
+        } else {
+          reason = `DCA prorrateado ${(a.finalAllocation*100).toFixed(1)}% · ${motivo}`;
+        }
         return {
           ticker: a.ticker, name: a.name,
           cashToInvest: cashAssigned, actualCost,
           motorWeight: a.finalAllocation, shares,
           pricePerShare: a.price, isFractional, skipped,
-          reason: skipped
-            ? `Necesita €${a.price.toFixed(0)} mín.`
-            : `DCA prorrateado ${(a.finalAllocation*100).toFixed(1)}% (todos con cycle top ⚠️ o sobreponderados)`,
+          reason,
+          drift: driftVal, currentWeight: currentW,
         };
-      });
+      };
+      allocs = [
+        ...cycleBlocked.map(a => buildEntry(a, true)),
+        ...notBlocked.map(a => buildEntry(a, false)),
+      ];
     }
   }
 
