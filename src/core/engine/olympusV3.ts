@@ -73,11 +73,11 @@ import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { runBlackLitterman, generateViewsExternal, BLView } from "../portfolio/blackLitterman";
 import { calibrateExpectedReturn } from "../factors/factorCalibration";
 import { computeBTCCycleOverlay, BTCCycleInput } from "../crypto/btcCycleOverlay";
-import { computeDCADecision } from "../dca/dcaEngine";
+import { computeDCADecision, type PortfolioRegime } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 // detectCycleTops removed — auto-detect fallback eliminated (FIX-AUDIT-TRANSVERSAL-R3 #2).
 // cycleTopSignals from dashboard is the single source of truth.
-import { FACTOR_CONFIG, VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, getFactorWeightsByRegime, REGIME_TILT } from "../config/engineConfig";
+import { VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, getFactorWeightsByRegime, REGIME_TILT } from "../config/engineConfig";
 // FIX-R2-C10: renombrado DISCRETIONARY_OVERLAY. Import usado para allocationProvenance.
 // FIX-AUDIT-R10: allocationProvenance (transparencia del overlay discrecional)
 // FIX-R2-C10: REGIME_TACTICAL_ALLOCATIONS → DISCRETIONARY_OVERLAY
@@ -134,7 +134,7 @@ export interface OlympusOutput {
   finalAllocation: number;
 }
 
-export type PortfolioRegime = "EXPANSION" | "CONTRACTION" | "CRISIS" | "ALL_CASH";
+export type { PortfolioRegime };
 
 export interface ScenarioProbabilities {
   bull: number;
@@ -192,7 +192,7 @@ export interface EngineOutput {
   dca?: {
     investPercent: number;
     investAmount: number;
-    frequency: 'weekly' | 'biweekly' | 'monthly';
+    frequency: 'weekly' | 'biweekly' | 'monthly' | 'none';
     boostMultiplier: number;
     effectiveIntensity: number;
   };
@@ -1039,7 +1039,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         description:          `DCA bloqueado en Kill Switch L${tailRisk.killSwitchLevel}.`,
       }
     : computeDCADecision({
-        regime:               (masterRegime.regime as PortfolioRegime) === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime as 'EXPANSION' | 'CONTRACTION' | 'CRISIS',
+        regime:               (masterRegime.regime as PortfolioRegime) === 'ALL_CASH' ? 'CRISIS' : masterRegime.regime as PortfolioRegime,
         btcCycle,
         totalPortfolioValue:  input.totalPortfolioValue ?? 0,
         availableCash:        input.availableCash ?? 0,
@@ -1183,8 +1183,6 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   }
   return result;
 }
-
-  // 
 
 // ── HELPERS INTERNOS ──────────────────────────────────────────────────────────
 

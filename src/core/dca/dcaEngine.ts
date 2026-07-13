@@ -1,6 +1,6 @@
 import type { BTCCycleOutput } from '../crypto/btcCycleOverlay';
 
-export type PortfolioRegime = 'EXPANSION' | 'CONTRACTION' | 'CRISIS';
+export type PortfolioRegime = 'EXPANSION' | 'CONTRACTION' | 'CRISIS' | 'ALL_CASH';
 
 export interface DCAEngineInput {
   regime: PortfolioRegime;
@@ -18,7 +18,7 @@ export interface DCAEngineOutput {
   baseIntensity: number;
   boostMultiplier: number;
   effectiveIntensity: number;
-  frequency: 'weekly' | 'biweekly' | 'monthly';
+  frequency: 'weekly' | 'biweekly' | 'monthly' | 'none';
   frequencyDays: number;
   riskConstraintActive: boolean;
   riskConstraintReason: string;
@@ -56,12 +56,14 @@ const DCA_CONFIG = {
     CRISIS:      0.02,
     CONTRACTION: 0.05,
     EXPANSION:   0.08,
+    ALL_CASH:    0.00,  // type-safety only: olympusV3 maps ALL_CASH→CRISIS before calling computeDCADecision
   },
   // FIX-DCA-1: frecuencia por régimen (antes hardcodeado a monthly siempre)
   FREQUENCY: {
     CRISIS:      { label: 'monthly',   days: 30 } as const,
     CONTRACTION: { label: 'biweekly',  days: 14 } as const,
     EXPANSION:   { label: 'weekly',    days:  7 } as const,
+    ALL_CASH:    { label: 'none',      days:  0 } as const,  // type-safety only (see INTENSITY note)
   },
   ATTACK_MODE: {
     RECOVERY_BOOST:          2.0,  // FIX-DCA-2: reducido de 3.5× → 2.0× (28%→16% max)
@@ -153,6 +155,7 @@ export function computeDCADecision(input: DCAEngineInput): DCAEngineOutput {
       EXPANSION:   `Inversión estándar expansión: ${(effectiveIntensity * 100).toFixed(0)}% ${freqConfig.label}.`,
       CONTRACTION: `Inversión defensiva contracción: ${(effectiveIntensity * 100).toFixed(0)}% ${freqConfig.label}.`,
       CRISIS:      `Inversión mínima crisis: ${(effectiveIntensity * 100).toFixed(0)}% ${freqConfig.label}.`,
+      ALL_CASH:    `Inversión nula — motor en ALL_CASH (sin exposición).`,  // type-safety only (see INTENSITY note)
     };
     description = labels[regime];
   }
