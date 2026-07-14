@@ -1,9 +1,14 @@
 {
   "date": "2026-07-14",
+  "mode": "monthly",
   "period": {
     "start": "2025-01-01",
     "end": "2026-04-08",
     "days": 463
+  },
+  "marketContext": {
+    "bias": "NEUTRAL",
+    "inCrisis": false
   },
   "metrics": {
     "sharpe": 0.717359654632413,
@@ -11,16 +16,36 @@
     "maxDD": -0.16802976120094087,
     "annVol": 0.16194461337803936,
     "rollingSharpe": 0.5614096377183415,
+    "expansionRatio": 0.9460043196544277,
     "crisisDays": 1,
-    "expansionRatio": 0.9460043196544277
+    "contractionDays": 24,
+    "sortino": 1.0290846251089774,
+    "calmar": 0.914990429087545,
+    "recoveryFactor": 1.7840638681163665,
+    "winRate": 0.5497835497835498,
+    "maxConsecutiveLossDays": 7,
+    "ulcerIndex": 0.056217080600008955,
+    "monthlyPosRatio": 0.75,
+    "avgTurnover": 0.06719047619047619,
+    "avgCostsBps": 1.0078571428571428,
+    "ewSharpe": -0.3147976966732318,
+    "sharpeDiffVsEW": 1.0321573513056448,
+    "recoveryDays": 57
   },
   "backtest": {
     "sharpe": 0.74,
     "cagr": 0.126,
     "maxDD": -0.27,
     "vol": 0.12,
+    "sortino": 1.62,
+    "calmar": 0.47,
+    "recoveryFactor": 1.85,
+    "winRate": 0.53,
+    "expansionRatio": 0.7,
     "crisisDaysPerYear": 30,
-    "expansionRatio": 0.7
+    "ulcerIndex": 0.08,
+    "avgTurnover": 0.15,
+    "maxConsecutiveLoss": 12
   },
   "alerts": [],
   "verdict": "NORMAL"
