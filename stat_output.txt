@@ -1,0 +1,30 @@
+================================================================================
+  STATISTICAL VALIDATION: Olympus V3+ (sin MinVar)
+================================================================================
+
+Engine returns: 3863
+Aligned: oly=3863 ew=3863 btc=3863
+
+--- BASELINE METRICS ---
+Olympus:  Sharpe=0.699  CAGR=12.61%  MaxDD=-27.10%
+EW:       Sharpe=9.854  CAGR=inf%  MaxDD=0.00%
+BTC:      Sharpe=0.877  CAGR=45.02%
+
+--- 1. DEFLATED SHARPE RATIO ---
+  Sharpe ratio: 0.699
+  E[max SR] over K=20 trials: 3.071
+  Deflated Sharpe: -2.372
+  DSR p-value (prob not random): 1.0000
+  Verdict: NOT SIGNIFICANT
+
+--- 2. PBO (Bailey & Lopez de Prado CSCV) ---
+  N configurations: 24
+  M bootstraps: 2000
+  PBO: 98.9%
+  95% CI: [98.4%, 99.3%]
+  Verdict: HIGH OVERFITTING RISK
+
+--- 3. WHITE REALITY CHECK (Bootstrap) ---
+  Observed Sharpe diff (Olympus - EW): -9.1553
+  White RC p-value: 1.0000
+  Verdict: NOT SIGNIFICANT

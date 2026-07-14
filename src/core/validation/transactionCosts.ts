@@ -34,7 +34,7 @@ export interface CostParams {
 
 // ── Parámetros por activo ──────────────────────────────────────────────────
 
-const ASSET_COST_PARAMS: Record<string, CostParams> = {
+export const ASSET_COST_PARAMS: Record<string, CostParams> = {
   'BTC-EUR': {
     halfSpreadBps: 15,       // exchanges europeos: Kraken/Bitstamp ~30bps spread → half=15
     dailyVol: 0.035,         // ~3.5% daily vol (~60% anual/√252)

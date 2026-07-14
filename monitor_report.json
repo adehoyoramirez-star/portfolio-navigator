@@ -1,0 +1,27 @@
+{
+  "date": "2026-07-14",
+  "period": {
+    "start": "2025-01-01",
+    "end": "2026-04-08",
+    "days": 463
+  },
+  "metrics": {
+    "sharpe": 0.717359654632413,
+    "cagr": 0.1537456233007266,
+    "maxDD": -0.16802976120094087,
+    "annVol": 0.16194461337803936,
+    "rollingSharpe": 0.5614096377183415,
+    "crisisDays": 1,
+    "expansionRatio": 0.9460043196544277
+  },
+  "backtest": {
+    "sharpe": 0.74,
+    "cagr": 0.126,
+    "maxDD": -0.27,
+    "vol": 0.12,
+    "crisisDaysPerYear": 30,
+    "expansionRatio": 0.7
+  },
+  "alerts": [],
+  "verdict": "NORMAL"
+}

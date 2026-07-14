@@ -9,7 +9,7 @@
 //   3. FACTOR SCORES      → momentum + value + quality + lowVol
 //   4. KELLY FRACTION     → half-kelly cap 0.20, modulado por coreSignalScore
 //   5. CORRELACIÓN        → penalización si correlación media > 0.5
-//   6. BLEND 2-PATH       → BL×0.20 + HRP×0.65 + MinVar×0.15
+//   6. BLEND 2-PATH       → BL×0.24 + HRP×0.76 + MinVar×0.00 (MinVar eliminado — ablation study 14-Jul-2026)
 //   7. VOL TARGET         → reduce exposición total (cash implícito preservado)
 //   8. TAIL RISK V5       → kill switch 5 niveles DD 5/10/15/20/25%
 //   9. BTC CAP            → máximo 20% sobre el tramo invertido
@@ -89,10 +89,16 @@ import {
 } from "./regimeTacticalAllocation";
 
 // ── Blend weights (fuente de verdad dinámica) ───────────────────────────────────
+// FIX-ABLATION-MINVAR (14-Jul-2026): MIN_VAR eliminado del blend.
+// Ablation study demostró que MinVar destruye Sharpe (−0.061 al usarse solo,
+// +0.013 al eliminarse del blend). No protege drawdown (diferencia −0.2pp,
+// insignificante). Es complejidad sin beneficio.
+// CONSERVATIVE: BL 0.20→0.24, HRP 0.65→0.76 (redistribución proporcional del 15% liberado)
+// AGGRESSIVE:   BL 0.40→0.50, HRP 0.40→0.50 (redistribución proporcional del 20% liberado)
 const BLEND_WEIGHTS = {
   WITH_COV: {
-    CONSERVATIVE: { BL: 0.20, HRP: 0.65, MIN_VAR: 0.15 },
-    AGGRESSIVE:   { BL: 0.40, HRP: 0.40, MIN_VAR: 0.20 },
+    CONSERVATIVE: { BL: 0.24, HRP: 0.76, MIN_VAR: 0.00 },
+    AGGRESSIVE:   { BL: 0.50, HRP: 0.50, MIN_VAR: 0.00 },
   },
   WITHOUT_COV: {
     CONSERVATIVE: { KELLY: 0.25, HRP: 0.75 },
@@ -648,7 +654,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       const weights = input.blendWeights ?? currentBlendAccess;
       return blWeights[i]             * (weights.BL ?? weights.kelly ?? 0.20)
            + hrpWeights[i]            * (weights.HRP ?? weights.hrp ?? 0.65)
-           + minVarW[i]               * (weights.MIN_VAR ?? weights.markowitz ?? 0.15);
+           + minVarW[i]               * (weights.MIN_VAR ?? weights.markowitz ?? 0.00);  // FIX-ABLATION-MINVAR: fallback a 0.00 (MinVar eliminado por ablation study)
     } else {
       const weights = input.blendWeights ?? currentBlendAccess;
       return kellyNorm[i].kellyNormalized * (weights.KELLY ?? weights.kelly ?? 0.25)

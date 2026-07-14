@@ -19,6 +19,7 @@ import { covarianceMatrix } from "../../lib/marketData";
 // FIX-R2-A3: DCC-GARCH integration for backtest-live alignment
 import { getDynamicCovMatrix } from "../risk/dccGarch";
 import { detectCrisis } from "../macro/crisis";
+import { ASSET_COST_PARAMS } from "../validation/transactionCosts";
 import { computeGlobalStress } from "../macro/globalStress";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
@@ -78,6 +79,9 @@ export interface BacktestInput {
     BL?: number; HRP?: number; MIN_VAR?: number; KELLY?: number;
     kelly?: number; hrp?: number; markowitz?: number;
   };
+  // FIX-AUDIT-INST-03: engineOverrides permite al sensitivity analysis
+  // variar parametros del motor (kellyCap, volTarget, etc.) sin modificar engineConfig.ts.
+  engineOverrides?: Record<string, number>;
 }
 
 export type BacktestRegime = "EXPANSION" | "CONTRACTION" | "CRISIS";
@@ -491,7 +495,15 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     initialCapital = 10_000,
     transactionCostBps = 15,
   } = input;
+  // FIX-AUDIT-INST-02: Costes realistas por activo (spread + fixed cost).
+  // ANTES: 15bps flat para todos los activos, ignorando diferencias de liquidez.
+  // AHORA: usa ASSET_COST_PARAMS de transactionCosts.ts con half-spread por activo.
+  // BTC-EUR paga ~30bps efectivos, PPFB paga ~6bps. Benchmark sigue usando flat 15bps.
   const txCostRate = transactionCostBps / 10_000;
+  const getAssetSpreadCost = (ticker: string): number => {
+    const params = ASSET_COST_PARAMS[ticker];
+    return params ? (params.halfSpreadBps * 2) / 10_000 : txCostRate;
+  };
   let totalTransactionCosts = 0;
   let rebalanceCount = 0;
 
@@ -652,10 +664,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       pendingNewRegime = result.regime;
       pendingNewCash = result.cash;
 
-      // FIX-FAST-EXIT: si VIX lleva 5+ dias < 22, forzar EXPANSION aunque el motor diga CONTRACTION.
-      // El stress model genera falsos positivos (HIGH_RISK a VIX 20-25). Si VIX ya bajo,
-      // la contraccion termino — no quedarse atrapado perdiendo el rebote.
-      if (pendingNewRegime === 'CONTRACTION' && computeLowVixStreak(vixArray, t, 22, 5)) {
+      // FIX-FAST-EXIT-V2 (14-Jul-2026): recalibrado 22→25 / 5→3.
+      // Auditoria mostro que el motor tardaba demasiado en reentrar tras crisis
+      // (ej: 2022 termino con solo 14% invertido). Con VIX<25 durante 3 dias,
+      // la contraccion ya paso — forzar EXPANSION mas rapido.
+      if (pendingNewRegime === 'CONTRACTION' && computeLowVixStreak(vixArray, t, 25, 3)) {
         pendingNewRegime = 'EXPANSION';
       }
 
@@ -667,7 +680,19 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         const oldWeight = oldAllocations[ticker] ?? 0;
         turnover += Math.abs(newWeight - oldWeight);
       }
-      const costThisRebalance = portfolioValue * txCostRate * turnover;
+      // FIX-AUDIT-INST-02: Coste por activo con spread real + coste fijo €1/operación.
+      // Suma el half-spread × 2 (compra + venta implícito) × turnover weight × portfolio value.
+      let costThisRebalance = 0;
+      for (const ticker of ASSETS) {
+        const newWeight = pendingNewAllocations[ticker] ?? 0;
+        const oldWeight = oldAllocations[ticker] ?? 0;
+        const assetTurnover = Math.abs(newWeight - oldWeight);
+        if (assetTurnover > 1e-6) {
+          const spread = getAssetSpreadCost(ticker);
+          costThisRebalance += portfolioValue * spread * assetTurnover;
+          costThisRebalance += 1.0; // €1 fixed cost per traded asset
+        }
+      }
       portfolioValue -= costThisRebalance;
       totalTransactionCosts += costThisRebalance;
 
@@ -808,8 +833,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const dailyRegime = labels.reduce((a, b) => prio[a] >= prio[b] ? a : b);
       currentRegime = dailyRegime;
 
-      // FIX-FAST-EXIT: mismo override diario — no esperar al proximo rebalanceo para salir de CONTRACTION
-      if (currentRegime === 'CONTRACTION' && computeLowVixStreak(vixArray, t, 22, 5)) {
+      // FIX-FAST-EXIT-V2 (14-Jul-2026): recalibrado 22→25 / 3 dias.
+      // Mismo ajuste que en el path de rebalanceo: salir de CONTRACTION mas rapido.
+      if (currentRegime === 'CONTRACTION' && computeLowVixStreak(vixArray, t, 25, 3)) {
         currentRegime = 'EXPANSION';
       }
     }
@@ -886,7 +912,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     regimeDays,
     daysWithProxies,
     daysWithRealData,
-    transactionCostBps,
+    transactionCostBps: totalTransactionCosts > 0 && portfolioValue > 0 && rebalanceCount > 0
+      ? Math.round((totalTransactionCosts / (portfolioValue * rebalanceCount)) * 10000)
+      : 15,
     totalTransactionCosts,
     rebalanceCount,
   };

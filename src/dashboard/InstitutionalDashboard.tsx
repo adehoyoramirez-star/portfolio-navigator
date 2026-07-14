@@ -3548,7 +3548,16 @@ soxRsiWeekly,
                       }}>{s.action}</span>
                     </td>
                     <td style={{ padding: "0.5rem", textAlign: "right" }}>{(s.currentPct * 100).toFixed(1)}%</td>
-                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#6366f1" }}>{(s.targetPct * 100).toFixed(1)}%</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                      <span style={{ color: "#6366f1" }}>{(s.targetPct * 100).toFixed(1)}%</span>
+                      {s.ticker === "BTC-EUR" && olympusPct < 100 && (
+                        <div style={{ fontSize: "0.62rem", color: "#6b7280", marginTop: "2px", lineHeight: "1.3" }}>
+                          <span style={{ color: "#818cf8" }}>motor {((engineResult?.allocations.find(a => a.name === portfolio.assets.find(p => p.ticker === "BTC-EUR")?.name)?.finalAllocation ?? 0) * olympusPct).toFixed(1)}%</span>
+                          {" · "}
+                          <span style={{ color: "#f59e0b" }}>sat {(100 - olympusPct).toFixed(0)}%</span>
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: "0.5rem", textAlign: "right", color: s.drift > 0 ? "#f59e0b" : "#ef4444" }}>{(s.drift * 100).toFixed(1)}pp</td>
                     <td style={{ padding: "0.5rem", textAlign: "right" }}>
                       {s.action === "SELL"
