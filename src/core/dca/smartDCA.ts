@@ -144,9 +144,9 @@ export interface SmartDCAOutput {
   rebalanceFirst: boolean;
 }
 
-// ── SEÑALES DE CONFLUENCIA DE FONDO (sin cambios) ───────────────────────
+// ── SEÑALES DE CONFLUENCIA DE FONDO (8 señales: 4 BTC + 3 Macro + 1 per-asset) ──
 function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
-  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio } = input;
+  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio, cycleBottomSignals } = input;
 
   const S = DCA_CONFIG.SIGNALS;
   const btcOversold = btcRsi < S.BTC_RSI_OVERSOLD && btcZScore < S.BTC_Z_OVERSOLD;
@@ -167,6 +167,18 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   const mvrvUndervalued = mvrvRatio !== undefined && mvrvRatio < S.MVRV_UNDERVALUED;
   const volNormalizing = cewsOutput !== undefined && cewsOutput.signals.volClustering.trend === "IMPROVING" && cewsOutput.signals.volClustering.level !== "ALERT";
 
+  // ── Señal #8: Cycle Bottom per-asset (≥OPPORTUNITY en cualquier activo) ──
+  // Si algún activo del universo está en OPPORTUNITY (≥60) o EXTREME (≥80),
+  // hay valor real en algún rincón del mercado → suma 1 a la confluencia.
+  // Esto permite que suelos en uranio, oro, emergentes o semis también aceleren
+  // el despliegue de cash, no solo los suelos macro/BTC.
+  const bottomAssets = (cycleBottomSignals ?? []).filter(s => s.shouldAccumulate);
+  const perAssetBottom = bottomAssets.some(s => s.zone === "OPPORTUNITY" || s.zone === "EXTREME");
+  const topBottom = bottomAssets.reduce((best, s) => {
+    const score = s.zone === "EXTREME" ? 80 : s.zone === "OPPORTUNITY" ? 60 : 40;
+    return score > best.score ? { ticker: s.ticker, score, zone: s.zone } : best;
+  }, { ticker: "—", score: 0, zone: "NEUTRAL" as string });
+
   return [
     { name: "BTC Sobreventa Extrema", active: btcOversold, description: btcOversold ? `RSI ${btcRsi.toFixed(0)} + Z-Score ${btcZScore.toFixed(2)}` : `RSI ${btcRsi.toFixed(0)}, Z ${btcZScore.toFixed(2)}` },
     { name: "CEWS Recuperándose", active: cewsRecovering, description: cewsRecovering ? `CEWS mejoró de ${cewsPreviousLevel} → ${cewsOutput?.level}` : `CEWS en ${cewsOutput?.level ?? "sin datos"}` },
@@ -175,6 +187,7 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
     { name: "VIX Normalizándose", active: volNormalizing, description: volNormalizing ? `Volatility clustering mejorando` : `Vol clustering sin normalización` },
     { name: "BTC Dominance Acumulación", active: dominanceAccumulation, description: btcDominance !== undefined ? (dominanceAccumulation ? `BTC.D ${btcDominance.toFixed(1)}% — acumulación` : `BTC.D ${btcDominance.toFixed(1)}%`) : "Sin dato" },
     { name: "MVRV Zona de Valor", active: mvrvUndervalued, description: mvrvRatio !== undefined ? (mvrvUndervalued ? (mvrvRatio < 1.0 ? `MVRV ${mvrvRatio.toFixed(2)} — fondo histórico` : `MVRV ${mvrvRatio.toFixed(2)} — acumulación`) : (mvrvRatio > 3.5 ? `MVRV ${mvrvRatio.toFixed(2)} — burbuja` : `MVRV ${mvrvRatio.toFixed(2)} — neutral`)) : "Sin dato" },
+    { name: "Cycle Bottom — Suelo per-asset", active: perAssetBottom, description: perAssetBottom ? `${topBottom.ticker} en ${topBottom.zone} (${topBottom.score}/100) — valor real detectado` : bottomAssets.length > 0 ? `${bottomAssets.length} activo(s) en VALUE — no llega a OPPORTUNITY` : "Sin suelos per-asset detectados" },
   ];
 }
 
@@ -449,7 +462,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
     const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:", new Set(), new Map(), false, totalPortfolioValueEUR ?? 0, bottomMultipliers);
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
-    return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/7 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
+    return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/8 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
   }
 
   // ── MODO ATAQUE ─────────────────────────────────────────────────────
@@ -591,8 +604,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const action: DCAAction = canAttack ? (attackConfluence >= 6 ? "ATTACK_MAX" : attackConfluence >= 5 ? "ATTACK_STRONG" : "ATTACK_ENTRY") : "BUY";
   const reasoning = canAttack
     ? btcOnlyAttack
-      ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
-      : `🚀 ATAQUE — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
+      ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
+      : `🚀 ATAQUE — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
     : `DCA normal Olympus €${olympusInvested.toFixed(0)}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — ejecuta PRIMERO el rebalanceo)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
   const M = ATK.MULTIPLIERS;
