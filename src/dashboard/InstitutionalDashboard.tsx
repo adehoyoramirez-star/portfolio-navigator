@@ -1912,7 +1912,7 @@ soxRsiWeekly,
           </div>
 
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
-            <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>VIX <span style={{ color: "#10b981" }}>● auto</span></div>
+            <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>VIX <span style={{ color: "#f59e0b" }}>● auto</span></div>
             <div style={{
               fontSize: "1.1rem", fontWeight: "bold",
               color: vix > 30 ? "#ef4444" : vix > 20 ? "#f59e0b" : "#10b981"
@@ -1971,7 +1971,7 @@ soxRsiWeekly,
           </div>
 
           <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem" }}>
-            <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>LIQUIDEZ <span style={{ color: "#10b981" }}>● auto</span></div>
+            <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>LIQUIDEZ <span style={{ color: "#f59e0b" }}>● auto</span></div>
             <div style={{
               fontSize: "1.1rem", fontWeight: "bold",
               color: liquidity > 0.6 ? "#10b981" : liquidity > 0.35 ? "#f59e0b" : "#ef4444"
@@ -1990,7 +1990,7 @@ soxRsiWeekly,
             <div style={{
               background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "0.6rem 0.9rem"
             }}>
-              <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>FEAR & GREED <span style={{ color: "#10b981" }}>● auto</span></div>
+              <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>FEAR & GREED <span style={{ color: "#f59e0b" }}>● auto</span></div>
               <div style={{
                 fontSize: "1.1rem", fontWeight: "bold",
                 color: fearGreedIndex.value <= 25 ? "#ef4444"
@@ -2044,7 +2044,7 @@ soxRsiWeekly,
           <input type="number" value={manualPER} onChange={(e) => setManualPER(Number(e.target.value))} style={styles.smallInput} step="0.1" min="1" />
         </div>
         <div>
-          <label style={styles.label}>Bono USA 10y % {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>Bono USA 10y % {" "}<span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● Yahoo auto</span></label>
           <input type="number" value={manualBond10y} onChange={(e) => setManualBond10y(Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
         </div>
         <div>
@@ -2062,12 +2062,12 @@ soxRsiWeekly,
         </div>
         <div>
           <label style={styles.label}>Credit Spread %{" "}
-            <span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● manual</span>
+            <span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● manual</span>
           </label>
           <input type="number" value={creditSpread} onChange={(e) => setCreditSpread(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
-          <label style={styles.label}>VIX {" "}<span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● Yahoo auto</span></label>
+          <label style={styles.label}>VIX {" "}<span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● Yahoo auto</span></label>
           <input type="number" value={vix} onChange={(e) => setVix(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
@@ -2095,7 +2095,7 @@ soxRsiWeekly,
           <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.0001" min="-1" max="1" />
         </div>
         <div>
-          <label style={styles.label}>Liquidez Global % <span style={{ fontSize: "0.65rem", color: "#10b981", fontWeight: "normal" }}>● FRED auto (Fed+ECB)</span></label>
+          <label style={styles.label}>Liquidez Global % <span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● manual (Fed+ECB)</span></label>
           <input type="number" value={liquidityGrowth} onChange={(e) => setLiquidityGrowth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
         </div>
         <div>
@@ -2404,7 +2404,7 @@ soxRsiWeekly,
               style={{ ...styles.smallInput, width: "100%", fontFamily: "monospace" }}
             />
             {elliottPivots.length >= 2 && (
-              <p style={{ fontSize: "0.65rem", color: "#10b981", margin: "0.2rem 0 0" }}>
+              <p style={{ fontSize: "0.65rem", color: "#f59e0b", margin: "0.2rem 0 0" }}>
                 ✓ {elliottPivots.length} pivotes cargados · Onda detectada automáticamente
               </p>
             )}
@@ -2720,9 +2720,9 @@ soxRsiWeekly,
           </div>
           <div style={{ background: "#1f2937", borderRadius: 8, padding: "0.75rem 1rem" }}>
             <div style={{ color: "#9ca3af", fontSize: "0.72rem", marginBottom: "0.2rem" }}>RANGO CENTRAL (P25–P75)</div>
-            <div style={{ color: "#10b981", fontSize: "1rem", fontWeight: "bold" }}>{formatCurrency(p25)}</div>
+            <div style={{ color: "#f59e0b", fontSize: "1rem", fontWeight: "bold" }}>{formatCurrency(p25)}</div>
             <div style={{ color: "#6b7280", fontSize: "0.7rem" }}>— a —</div>
-            <div style={{ color: "#10b981", fontSize: "1rem", fontWeight: "bold" }}>{formatCurrency(p75)}</div>
+            <div style={{ color: "#f59e0b", fontSize: "1rem", fontWeight: "bold" }}>{formatCurrency(p75)}</div>
           </div>
           <div style={{ background: "#1f2937", borderRadius: 8, padding: "0.75rem 1rem" }}>
             <div style={{ color: "#9ca3af", fontSize: "0.72rem", marginBottom: "0.2rem" }}>MEDIA (sesgada al alza)</div>
@@ -2956,7 +2956,7 @@ soxRsiWeekly,
                   <div>
                     <p style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>{alert.title}</p>
                     <p style={{ color: "#d1d5db", fontSize: "0.85rem", marginBottom: "0.25rem" }}>{alert.message}</p>
-                    <p style={{ color: "#10b981", fontSize: "0.8rem" }}>→ {alert.action}</p>
+                    <p style={{ color: "#f59e0b", fontSize: "0.8rem" }}>→ {alert.action}</p>
                     <p style={{ color: "#6b7280", fontSize: "0.75rem" }}>{new Date(alert.timestamp).toLocaleString("es-ES")}</p>
                   </div>
                   {alert.dismissible && (
@@ -3397,7 +3397,7 @@ soxRsiWeekly,
                 </div>
               </div>
               <div style={{ background: "#0f172a", borderRadius: 8, padding: "0.75rem" }}>
-                <div style={{ color: "#10b981", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>⚡ ON-CHAIN SIGNALS</div>
+                <div style={{ color: "#f59e0b", fontSize: "0.72rem", fontWeight: "bold", marginBottom: "0.5rem" }}>⚡ ON-CHAIN SIGNALS</div>
                 <div style={{ marginBottom: "0.5rem" }}>
                   <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Puell Multiple:</div>
                   <div style={{ fontSize: "0.78rem", color: c.puellMultiple.zone === "CAPITULATION" ? "#10b981" : c.puellMultiple.zone === "EUPHORIA" ? "#ef4444" : "#f59e0b" }}>
@@ -3480,7 +3480,7 @@ soxRsiWeekly,
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
             <div style={{ background: "#1f2937", borderRadius: 6, padding: "0.6rem 1rem" }}>
               <div style={{ color: "#9ca3af", fontSize: "0.75rem" }}>Plusvalías latentes</div>
-              <div style={{ color: "#10b981", fontWeight: "bold", fontSize: "1.1rem" }}>+€{taxAnalysis.totalLatentGains.toFixed(0)}</div>
+              <div style={{ color: "#f59e0b", fontWeight: "bold", fontSize: "1.1rem" }}>+€{taxAnalysis.totalLatentGains.toFixed(0)}</div>
             </div>
             <div style={{ background: "#1f2937", borderRadius: 6, padding: "0.6rem 1rem" }}>
               <div style={{ color: "#9ca3af", fontSize: "0.75rem" }}>Minusvalías latentes</div>
@@ -3562,12 +3562,12 @@ soxRsiWeekly,
                     <td style={{ padding: "0.5rem", textAlign: "right" }}>
                       {s.action === "SELL"
                         ? <span style={{ color: "#ef4444" }}>−{s.sharesToSell} ({s.trimPct}%)</span>
-                        : <span style={{ color: "#10b981" }}>+{s.sharesToBuy}</span>}
+                        : <span style={{ color: "#f59e0b" }}>+{s.sharesToBuy}</span>}
                     </td>
                     <td style={{ padding: "0.5rem", textAlign: "right" }}>
                       {s.action === "SELL"
                         ? <span style={{ color: "#f59e0b" }}>+€{s.proceedsIfSold.toFixed(0)}</span>
-                        : <span style={{ color: "#10b981" }}>−€{s.cost.toFixed(0)}</span>}
+                        : <span style={{ color: "#f59e0b" }}>−€{s.cost.toFixed(0)}</span>}
                     </td>
                     <td style={{ padding: "0.5rem", fontSize: "0.78rem" }}>
                       <span style={{
@@ -3611,7 +3611,7 @@ soxRsiWeekly,
             </table>
           </div>
           <p style={{ color: "#9ca3af", fontSize: "0.8rem", marginTop: "0.75rem" }}>
-            Total compras: <strong style={{ color: "#10b981" }}>€{taxAwareRebalance!.totalCost.toFixed(0)}</strong> ·
+            Total compras: <strong style={{ color: "#f59e0b" }}>€{taxAwareRebalance!.totalCost.toFixed(0)}</strong> ·
             Restante: €{taxAwareRebalance!.remainingCash.toFixed(0)}
           </p>
         </div>
@@ -3748,7 +3748,7 @@ soxRsiWeekly,
               <tfoot>
                 <tr style={{ borderTop: "1px solid #374151", backgroundColor: "#0f172a" }}>
                   <td colSpan={4} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>Total a desembolsar:</td>
-                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#10b981", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(2)}</td>
+                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f59e0b", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(2)}</td>
                   <td></td>
                 </tr>
               </tfoot>
