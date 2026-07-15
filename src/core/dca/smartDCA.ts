@@ -45,7 +45,8 @@ const DCA_CONFIG = {
   },
   // DCA normal (sin ataque)
   NORMAL: {
-    OLYMPUS_FRACTION: 0.30,  // % del cash Olympus a invertir cada mes
+    OLYMPUS_FRACTION: 0.30,            // % del cash Olympus a invertir cada mes
+    OLYMPUS_FRACTION_CYCLE_TOP: 0.15,   // % reducido cuando hay trims activos (el rebalanceo cubre el resto)
   },
   // Umbrales de bloqueo — si se cruzan, no se compra nada
   BLOCKS: {
@@ -92,7 +93,10 @@ export interface SmartDCAInput {
   cewsOutput?: CEWSOutput;
   cewsPreviousLevel?: CEWSLevel;
   /** Señales de techo de ciclo por activo. Si un activo tiene shouldTrim=true,
-   *  SmartDCA no comprará más de ese activo (redistribuye el cash a los demás). */
+   *  SmartDCA no comprará más de ese activo (redistribuye el cash a los demás).
+   *  Si HAY trims activos en OTROS activos, los BUYs de activos no-trimmed se
+   *  marcan como "⚠️ rebalanceo pendiente" porque su drift puede venir de la
+   *  redistribución de capital, no de una oportunidad genuina de compra con cash. */
   cycleTopSignals?: { ticker: string; shouldTrim: boolean; zone: string }[];
   /** FIX-AUDIT-R9 4: circuit breaker — true if Yahoo data >72h stale. DCA blocked. */
   staleDataBlock?: boolean;
@@ -129,6 +133,8 @@ export interface SmartDCAOutput {
   olympusInvested: number;
   tacticalInvested: number;
   tacticalAccumulated: number;
+  /** Si true, hay Cycle Top trims activos → ejecutar rebalanceo antes que DCA. */
+  rebalanceFirst: boolean;
 }
 
 // ── SEÑALES DE CONFLUENCIA DE FONDO (sin cambios) ───────────────────────
@@ -169,12 +175,18 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
 // Distribuye el cash entre activos infraponderados (drift positivo),
 // prorrateando por el drift en vez del peso objetivo.
 // Si un activo está sobreponderado (drift negativo), NO recibe cash.
+// FIX-CYCLE-GUARD (Jul-2026): nuevo parámetro cycleTopActive.
+// Si true, hay trims de Cycle Top en otros activos. Los BUYs de activos
+// no-trimmed pueden tener drift por redistribución de capital, no por
+// oportunidad genuina. Se anota en el reason y el usuario debe ejecutar
+// el rebalanceador antes que el DCA.
 function buildAllocations(
   totalCash: number,
   assets: { ticker: string; name: string; finalAllocation: number; price: number }[],
   trancheLabel: string,
   skipTickers: Set<string> = new Set(),
-  currentAllocations: Map<string, number> = new Map()
+  currentAllocations: Map<string, number> = new Map(),
+  cycleTopActive = false
 ): DCAAllocation[] {
   // FIX-AUDIT-DEDUP: eliminar tickers duplicados antes de procesar.
   // Si el motor recibe assets duplicados (ej: VVSM.DE aparece 2 veces en el portfolio),
@@ -245,7 +257,7 @@ function buildAllocations(
       motorWeight: a.finalAllocation, shares,
       pricePerShare: a.price, isFractional: a.isFractional,
       skipped: false,
-      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)`,
+      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)${cycleTopActive ? ' ⚠️ rebalanceo pendiente' : ''}`,
       drift: a.drift, currentWeight: a.currentWeight,
     };
   });
@@ -261,6 +273,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
 
   // Extraer tickers con señal de techo de ciclo activa (CAUTION/DANGER/EXTREME)
   // Estos activos NO se comprarán — el cash se redistribuye a los demás
+  const cycleTopActive = (input.cycleTopSignals ?? []).some(s => s.shouldTrim && s.zone !== "SAFE");
   const cycleTopTickers = new Set<string>(
     (input.cycleTopSignals ?? [])
       .filter(s => s.shouldTrim && s.zone !== "SAFE")
@@ -323,7 +336,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
     const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:");
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
-    return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/7 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash };
+    return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/7 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
   }
 
   // ── MODO ATAQUE ─────────────────────────────────────────────────────
@@ -352,7 +365,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     tacticalInvested = tacticalAvailableCash * G.ENTRY[1];
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else {                               // DCA NORMAL
-    olympusInvested = olympusAvailableCash * NRM.OLYMPUS_FRACTION;
+    olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION);
     tacticalInvested = 0;
     tacticalAccumulated = tacticalAvailableCash;
   }
@@ -373,7 +386,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     (input.currentAllocations ?? []).map(ca => [ca.ticker, ca.currentWeight])
   );
   let allocs = totalCash > 0
-    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap)
+    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap, cycleTopActive)
     : [];
 
   // FIX-DCA-FALLBACK (v3 Jul-2026): cuando totalCash > 0 pero buildAllocations
@@ -433,8 +446,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
         } else if (skipped) {
           reason = motivo;
         } else {
-          // FIX-FALLBACK-LABEL: usar label dinámico (ATAQUE:/DCA:) en vez de hardcode "DCA prorrateado"
-          reason = `${canAttack ? "ATAQUE:" : "DCA:"} prorrateado ${(a.finalAllocation*100).toFixed(1)}% · ${motivo}`;
+          reason = `${canAttack ? "ATAQUE:" : "DCA:"} prorrateado ${(a.finalAllocation*100).toFixed(1)}% · ${motivo}${cycleTopActive ? ' ⚠️ rebalanceo pendiente' : ''}`;
         }
         return {
           ticker: a.ticker, name: a.name,
@@ -471,14 +483,14 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     ? btcOnlyAttack
       ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
       : `🚀 ATAQUE — ${attackConfluence}/7 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
-    : `DCA normal Olympus €${olympusInvested.toFixed(0)}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
+    : `DCA normal Olympus €${olympusInvested.toFixed(0)}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — ejecuta PRIMERO el rebalanceo)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
   const M = ATK.MULTIPLIERS;
   const attackMultiplier = canAttack ? (attackConfluence >= 6 ? M.MAX : attackConfluence >= 5 ? M.STRONG : M.ENTRY) : 1.0;
   const attackTranche = canAttack ? (attackConfluence >= 6 ? 3 : attackConfluence >= 5 ? 2 : 1) : 0;
-  return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier, attackTranche, olympusInvested, tacticalInvested, tacticalAccumulated };
+  return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier, attackTranche, olympusInvested, tacticalInvested, tacticalAccumulated, rebalanceFirst: cycleTopActive };
 }
 
 function emptyOutput(action: DCAAction, reason: string, signals: AttackSignal[], confluence: number, olympusCash: number, tacticalCash: number): SmartDCAOutput {
-  return { action, score: 0, buyFraction: 0, totalCashToInvest: 0, allocationByAsset: [], reasoning: reason, blockReason: reason, attackMode: false, attackConfluence: confluence, attackSignals: signals, attackMultiplier: 1, attackTranche: 0, olympusInvested: 0, tacticalInvested: 0, tacticalAccumulated: tacticalCash };
+  return { action, score: 0, buyFraction: 0, totalCashToInvest: 0, allocationByAsset: [], reasoning: reason, blockReason: reason, attackMode: false, attackConfluence: confluence, attackSignals: signals, attackMultiplier: 1, attackTranche: 0, olympusInvested: 0, tacticalInvested: 0, tacticalAccumulated: tacticalCash, rebalanceFirst: false };
 }
