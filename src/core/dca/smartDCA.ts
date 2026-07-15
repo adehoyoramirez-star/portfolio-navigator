@@ -242,20 +242,36 @@ function buildAllocations(
 
   // 3. Prorratear cash por drift positivo. Activos con drift ≤ 0 (sobreponderados)
   //    reciben 0 en el prorrateo — aparecerán como skipped con razón informativa.
-  const positiveDrift = eligible.map(a => Math.max(0, a.drift));
-  const totalDrift = positiveDrift.reduce((s, d) => s + d, 0);
+  //
+  // FIX-BOTTOM-FLOOR (Jul-2026): cuando un activo tiene señal de suelo de ciclo
+  //   (bottomMul > 1.0), se le da un drift mínimo de 0.5pp para el prorrateo
+  //   aunque esté ligeramente sobreponderado. Una oportunidad de suelo justifica
+  //   comprar un poco incluso si ya estás en peso (-0.2pp en BTC no debería bloquear
+  //   una compra cuando MVRV está en 1.22).
+  const driftForTotal = eligible.map(a => {
+    const bm = bottomMultipliers.get(a.ticker) ?? 1.0;
+    return bm > 1.0 ? Math.max(a.drift, 0.005) : Math.max(0, a.drift);
+  });
+  const totalDrift = driftForTotal.reduce((s, d) => s + d, 0);
   const pass1 = eligible.map(a => {
-    const driftForProration = Math.max(0, a.drift);
+    const bottomMul = bottomMultipliers.get(a.ticker) ?? 1.0;
+    // Drift floor: 0.5pp para activos con bottom signal activo
+    const driftForProration = bottomMul > 1.0
+      ? Math.max(a.drift, 0.005)
+      : Math.max(0, a.drift);
     const cashAssignedRaw = totalDrift > 0
       ? (driftForProration / totalDrift) * totalCash
       : 0;
-    // FIX-CAP-ALLOC: no comprar más de lo necesario para llegar al target
+    // FIX-CAP-ALLOC: no comprar más de lo necesario para llegar al target.
+    //   Con bottom signal: floor de 0.5pp también en el cap (permitir overweight leve).
+    const effectiveDriftForCap = bottomMul > 1.0
+      ? Math.max(a.drift, 0.005)
+      : Math.max(0, a.drift);
     const maxCashToTarget = totalPortfolioValueEUR > 0
-      ? Math.max(0, a.drift * totalPortfolioValueEUR)
+      ? effectiveDriftForCap * totalPortfolioValueEUR
       : cashAssignedRaw;
     // FIX-BOTTOM-MULT: si hay señal de suelo de ciclo, escalar asignación
     //   y relajar el cap proporcionalmente (entrar overweight es aceptable en un suelo).
-    const bottomMul = bottomMultipliers.get(a.ticker) ?? 1.0;
     const cashAssigned = Math.min(cashAssignedRaw * bottomMul, maxCashToTarget * bottomMul);
     const isFractional = a.ticker === "BTC-EUR";
     const shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
@@ -270,16 +286,23 @@ function buildAllocations(
   //    El exceso del cap NO se redistribuye — vuelve a cashReserve (FIX-CAP-LEAK).
   const stranded = pass1.filter(a => a.skipped).reduce((s, a) => s + a.cashAssigned, 0);
   const canBuy = pass1.filter(a => !a.skipped);
-  const canBuyDrift = canBuy.reduce((s, a) => s + Math.max(0, a.drift), 0);
+  // FIX-BOTTOM-FLOOR: consistencia con pass1 — floor 0.5pp para bottom signals
+  const canBuyDrift = canBuy.reduce((s, a) => {
+    const bm = bottomMultipliers.get(a.ticker) ?? 1.0;
+    return s + (bm > 1.0 ? Math.max(a.drift, 0.005) : Math.max(0, a.drift));
+  }, 0);
 
   // 5. Construir resultado final con drift en la descripción
   return pass1.map(a => {
     const capped = (a as any).capped as boolean | undefined;
+    const bottomMul = bottomMultipliers.get(a.ticker) ?? 1.0;
     if (a.skipped) {
       // Activos sobreponderados (drift ≤ 0) que se incluyeron por MAX_OVERWEIGHT_BUY
       let skipReason: string;
       if (a.drift <= 0) {
-        skipReason = `en peso (${(a.drift*100).toFixed(1)}pp) — sin compra necesaria`;
+        skipReason = bottomMul > 1.0
+          ? `en peso (${(a.drift*100).toFixed(1)}pp) — bottom signal ×${bottomMul.toFixed(2)} no activa compra (sin drift)`
+          : `en peso (${(a.drift*100).toFixed(1)}pp) — sin compra necesaria`;
       } else if (capped) {
         skipReason = `Cap objetivo: ya en peso (target ${(a.finalAllocation*100).toFixed(1)}%)`;
       } else {
@@ -294,14 +317,16 @@ function buildAllocations(
         drift: a.drift, currentWeight: a.currentWeight,
       };
     }
+    // FIX-BOTTOM-FLOOR: floor consistente con pass1
+    const effDrift = bottomMul > 1.0 ? Math.max(a.drift, 0.005) : Math.max(0, a.drift);
     let extra = 0;
-    if (stranded > 0 && canBuyDrift > 0) extra = (Math.max(0, a.drift) / canBuyDrift) * stranded;
+    if (stranded > 0 && canBuyDrift > 0) extra = (effDrift / canBuyDrift) * stranded;
     const totalBeforeCap = a.cashAssigned + extra;
-    // Re-aplicar cap después de redistribución para evitar leaks
+    // Re-aplicar cap después de redistribución para evitar leaks (con floor para bottom)
     const maxCap = totalPortfolioValueEUR > 0
-      ? Math.max(0, a.drift * totalPortfolioValueEUR)
+      ? effDrift * totalPortfolioValueEUR
       : totalBeforeCap;
-    const total = Math.min(totalBeforeCap, maxCap);
+    const total = Math.min(totalBeforeCap, maxCap * bottomMul);
     const shares = a.isFractional ? total / a.price : Math.floor(total / a.price);
     const capNote = capped ? ` (cap €${a.cashAssigned.toFixed(0)} de €${(a as any).cashAssignedRaw.toFixed(0)})` : '';
     return {
