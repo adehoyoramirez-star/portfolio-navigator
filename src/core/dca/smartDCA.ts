@@ -47,6 +47,7 @@ const DCA_CONFIG = {
   NORMAL: {
     OLYMPUS_FRACTION: 0.30,            // % del cash Olympus a invertir cada mes
     OLYMPUS_FRACTION_CYCLE_TOP: 0.15,   // % reducido cuando hay trims activos (el rebalanceo cubre el resto)
+    REBALANCE_THRESHOLD: 0.02,          // 2pp — si currentWeight > motorTarget + esto, falta rebalanceo
   },
   // Umbrales de bloqueo — si se cruzan, no se compra nada
   BLOCKS: {
@@ -271,9 +272,35 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const NRM = DCA_CONFIG.NORMAL;
   const A = DCA_CONFIG.ALLOCATION;
 
-  // Extraer tickers con señal de techo de ciclo activa (CAUTION/DANGER/EXTREME)
-  // Estos activos NO se comprarán — el cash se redistribuye a los demás
-  const cycleTopActive = (input.cycleTopSignals ?? []).some(s => s.shouldTrim && s.zone !== "SAFE");
+  // Mapa de pesos actuales del portfolio — se necesita ANTES de cycleTopActive
+  // para poder comparar si el rebalanceo ya se ejecutó (peso real ≈ target motor).
+  const currentAllocMap = new Map<string, number>(
+    (input.currentAllocations ?? []).map(ca => [ca.ticker, ca.currentWeight])
+  );
+
+  // Extraer tickers con señal de techo de ciclo activa (CAUTION/DANGER/EXTREME).
+  // Estos activos NO se comprarán — el cash se redistribuye a los demás.
+  //
+  // FIX-CYCLE-REBALANCED (Jul-2026): cycleTopActive antes era binario puro
+  // (¿hay shouldTrim? → sí → 15%). Ahora compara los pesos REALES del portfolio
+  // contra los targets del motor. Si WLG ya está en 8.9% (target post-trim),
+  // el rebalanceo ya se ejecutó → cycleTopActive=false → 30% normal.
+  // Si WLG sigue en 36% vs target 8.9% → 27pp de drift → falta rebalanceo → 15%.
+  //
+  // Umbral de 2pp: si el peso actual supera al target por ≤2pp, consideramos
+  // el rebalanceo ejecutado (margen para redondeo y posiciones fraccionales).
+  const REBALANCE_THRESHOLD = NRM.REBALANCE_THRESHOLD;
+  const cycleTopActive = (input.cycleTopSignals ?? []).some(s => {
+    if (!s.shouldTrim || s.zone === "SAFE") return false;
+    // Sin datos de posiciones actuales → no podemos verificar → asumir pendiente
+    if (currentAllocMap.size === 0) return true;
+    const motorTarget = motorAllocations.find(a => a.ticker === s.ticker);
+    const currentWeight = currentAllocMap.get(s.ticker) ?? 0;
+    // ¿El peso actual sigue muy por encima del target post-trim?
+    if (motorTarget && currentWeight > motorTarget.finalAllocation + REBALANCE_THRESHOLD) return true;
+    // Ticker no encontrado en motorAllocations o ya está en peso → rebalanceo OK
+    return false;
+  });
   const cycleTopTickers = new Set<string>(
     (input.cycleTopSignals ?? [])
       .filter(s => s.shouldTrim && s.zone !== "SAFE")
@@ -382,9 +409,6 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // posiciones reales, comprando activos ya sobreponderados (ej: IS3Q al 38%
   // con target 10.5% recibía €1,591). Ahora siempre se respetan las posiciones
   // actuales. El ataque despliega más cash pero solo en activos con drift > 0.
-  const currentAllocMap = new Map<string, number>(
-    (input.currentAllocations ?? []).map(ca => [ca.ticker, ca.currentWeight])
-  );
   let allocs = totalCash > 0
     ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap, cycleTopActive)
     : [];
