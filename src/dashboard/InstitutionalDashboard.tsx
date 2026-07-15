@@ -86,9 +86,12 @@ import {
 } from "@/core/portfolio/rebalancer";
 import {
   detectCycleTops,
+  detectCycleBottoms,
   isBTCDominanceFalling,
   type CycleTopInputs,
   type CycleTopSignal,
+  type CycleBottomSignal,
+  type CycleBottomOutput,
 } from "@/core/risk/cycleTopDetector";
 import {
   analyzeSpainTax,
@@ -688,6 +691,32 @@ soxRsiWeekly,
     return detectCycleTops(cycleInputs);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
+  // ── Cycle Bottom Detection — suelos de ciclo por activo ───────────
+  // Simétrico a cycleTopResult: reutiliza los mismos cycleInputs invertidos.
+  // Detecta activos infravalorados/oversold con opportunityScore 0-100.
+  // Se pasa al Smart DCA para escalar compras en activos con suelo detectado.
+  const cycleBottomResult = useMemo(() => {
+    const cycleInputs: CycleTopInputs = {
+      mvrvRatio,
+      btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
+      btcRsiWeekly,
+      uraniumSpotPrice: uraniumSpot,
+      uraniumLTPrice: uraniumLT,
+      siaSalesYoY,
+      soxRsiWeekly,
+      bondYield10y: manualBond10y,
+      inflationBreakeven,
+      brentOil: wtiOil > 0 ? wtiOil : undefined,
+      wlgRsiWeekly,
+      wlgPERatio,
+      wlgCAPE: marketData?.per,
+      emxcRsiWeekly,
+      emxcPERatio,
+      dxy,
+    };
+    return detectCycleBottoms(cycleInputs);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+
   
 
   const engineResult = useMemo(() => {
@@ -1141,10 +1170,17 @@ soxRsiWeekly,
       staleDataBlock,
       // FIX-CAP-ALLOC: pasar totalPortfolioValue para cap de compra por activo
       totalPortfolioValueEUR: totalPortfolioValue,
+      // Cycle Bottom Detection: per-asset attackMultiplier para escalar DCA en suelos
+      cycleBottomSignals: (cycleBottomResult?.signals ?? []).map(s => ({
+        ticker: s.ticker,
+        attackMultiplier: s.attackMultiplier,
+        shouldAccumulate: s.shouldAccumulate,
+        zone: s.zone,
+      })),
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, totalPortfolioValue]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";
@@ -3466,6 +3502,30 @@ soxRsiWeekly,
                     color: s.zone === "EXTREME" || s.zone === "DANGER" ? "#ef4444" : "#f59e0b",
                     padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.75rem", fontWeight: "bold",
                   }}>{s.zone}{s.shouldTrim ? ` · REDUCIR ${s.trimPct}%` : ""}</span>
+                </div>
+                <p style={{ color: "#9ca3af", fontSize: "0.8rem", margin: 0 }}>{s.indicatorValue}</p>
+                <p style={{ color: "#d1d5db", fontSize: "0.78rem", marginTop: "0.2rem", marginBottom: 0 }}>{s.reason}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Cycle Bottom Opportunities */}
+      {cycleBottomResult && cycleBottomResult.hasActiveOpportunities && (
+        <div style={{ ...styles.card, border: "1px solid #10b981", background: "linear-gradient(135deg, #0a1a10 0%, #111827 100%)" }}>
+          <h2 style={{ color: "#34d399", marginBottom: "0.5rem" }}>Oportunidades de Suelo de Ciclo</h2>
+          <p style={{ color: "#6b7280", fontSize: "0.78rem", marginBottom: "0.75rem" }}>Activos con indicadores de infravaloracion u oversold. El Smart DCA escala la compra (x1.25 VALUE, x1.5 OPPORTUNITY, x2.0 EXTREME).</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            {cycleBottomResult.signals.filter((s: CycleBottomSignal) => s.shouldAccumulate).map((s: CycleBottomSignal) => (
+              <div key={s.ticker} style={{
+                background: s.zone === "EXTREME" ? "rgba(16,185,129,0.15)" : s.zone === "OPPORTUNITY" ? "rgba(16,185,129,0.10)" : "rgba(16,185,129,0.06)",
+                border: "1px solid" + (s.zone === "EXTREME" ? " #10b981" : s.zone === "OPPORTUNITY" ? " #34d399" : " #6ee7b7"),
+                borderRadius: "6px", padding: "0.6rem 1rem",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                  <span style={{ fontWeight: "bold", color: "#e5e7eb" }}>{s.ticker} - {s.asset}</span>
+                  <span style={{ background: s.zone === "EXTREME" ? "#064e3b" : "#065f46", color: "#34d399", padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.75rem", fontWeight: "bold" }}>{s.zone} {s.opportunityScore}/100 DCA x{s.attackMultiplier.toFixed(2)}</span>
                 </div>
                 <p style={{ color: "#9ca3af", fontSize: "0.8rem", margin: 0 }}>{s.indicatorValue}</p>
                 <p style={{ color: "#d1d5db", fontSize: "0.78rem", marginTop: "0.2rem", marginBottom: 0 }}>{s.reason}</p>

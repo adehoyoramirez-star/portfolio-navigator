@@ -104,6 +104,9 @@ export interface SmartDCAInput {
   staleDataBlock?: boolean;
   /** Valor total del portfolio en EUR — necesario para el cap de compra por activo. */
   totalPortfolioValueEUR?: number;
+  /** Cycle Bottom signals por activo — attackMultiplier > 1 escala la asignación
+   *  de ese activo cuando shouldAccumulate = true (suelo de ciclo detectado). */
+  cycleBottomSignals?: { ticker: string; attackMultiplier: number; shouldAccumulate: boolean; zone: string }[];
 }
 
 export interface DCAAllocation {
@@ -201,7 +204,8 @@ function buildAllocations(
   skipTickers: Set<string> = new Set(),
   currentAllocations: Map<string, number> = new Map(),
   cycleTopActive = false,
-  totalPortfolioValueEUR = 0
+  totalPortfolioValueEUR = 0,
+  bottomMultipliers: Map<string, number> = new Map()
 ): DCAAllocation[] {
   // FIX-AUDIT-DEDUP: eliminar tickers duplicados antes de procesar.
   // Si el motor recibe assets duplicados (ej: VVSM.DE aparece 2 veces en el portfolio),
@@ -249,7 +253,10 @@ function buildAllocations(
     const maxCashToTarget = totalPortfolioValueEUR > 0
       ? Math.max(0, a.drift * totalPortfolioValueEUR)
       : cashAssignedRaw;
-    const cashAssigned = Math.min(cashAssignedRaw, maxCashToTarget);
+    // FIX-BOTTOM-MULT: si hay señal de suelo de ciclo, escalar asignación
+    //   y relajar el cap proporcionalmente (entrar overweight es aceptable en un suelo).
+    const bottomMul = bottomMultipliers.get(a.ticker) ?? 1.0;
+    const cashAssigned = Math.min(cashAssignedRaw * bottomMul, maxCashToTarget * bottomMul);
     const isFractional = a.ticker === "BTC-EUR";
     const shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
     const actualCost = shares * a.price;
@@ -316,6 +323,15 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const BLK = DCA_CONFIG.BLOCKS;
   const NRM = DCA_CONFIG.NORMAL;
   const A = DCA_CONFIG.ALLOCATION;
+
+  // ── Mapa de per-asset attackMultiplier desde Cycle Bottom Detection ──
+  // Si un activo tiene shouldAccumulate=true, el DCA escala su asignación
+  // por attackMultiplier (1.25 VALUE, 1.5 OPPORTUNITY, 2.0 EXTREME).
+  const bottomMultipliers = new Map<string, number>(
+    (input.cycleBottomSignals ?? [])
+      .filter(s => s.shouldAccumulate && s.attackMultiplier > 1.0)
+      .map(s => [s.ticker, s.attackMultiplier])
+  );
 
   // Mapa de pesos actuales del portfolio — se necesita ANTES de cycleTopActive
   // para poder comparar si el rebalanceo ya se ejecutó (peso real ≈ target motor).
@@ -406,7 +422,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   if (isBTC_OverrideCandidate) {
     const btcOnly = motorAllocations.filter(a => a.ticker === "BTC-EUR");
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
-    const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:", new Set(), new Map(), false, totalPortfolioValueEUR ?? 0);
+    const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:", new Set(), new Map(), false, totalPortfolioValueEUR ?? 0, bottomMultipliers);
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
     return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/7 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
   }
@@ -455,7 +471,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // con target 10.5% recibía €1,591). Ahora siempre se respetan las posiciones
   // actuales. El ataque despliega más cash pero solo en activos con drift > 0.
   let allocs = totalCash > 0
-    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0)
+    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers)
     : [];
 
   // FIX-DCA-FALLBACK (v3 Jul-2026): cuando totalCash > 0 pero buildAllocations
