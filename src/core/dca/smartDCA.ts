@@ -210,6 +210,20 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
 // FIX-SLIGHT-OVERWEIGHT (Jul-2026): el filtro de elegibilidad ahora permite
 // activos ligeramente sobreponderados (hasta -2pp). Un sobrepeso pequeño
 // (-0.2pp en BTC) no debería bloquear una compra si hay oportunidad.
+//
+// ── BOTTOM DRIFT FLOOR ──────────────────────────────────────────────────
+// FIX-BOTTOM-FLOOR-SCALED (Jul-2026): drift floor escalado por attackMultiplier.
+// Permite overweight táctico cuando hay señal de suelo de ciclo.
+//   VALUE (×1.25)     → +1.5pp overweight permitido
+//   OPPORTUNITY (×1.5) → +3.0pp
+//   EXTREME (×2.0)    → +5.0pp
+function getBottomDriftFloor(attackMultiplier: number): number {
+  if (attackMultiplier >= 2.0) return 0.050;  // EXTREME: 5.0pp
+  if (attackMultiplier >= 1.5) return 0.030;  // OPPORTUNITY: 3.0pp
+  if (attackMultiplier > 1.0) return 0.015;   // VALUE: 1.5pp
+  return 0;
+}
+
 function buildAllocations(
   totalCash: number,
   assets: { ticker: string; name: string; finalAllocation: number; price: number }[],
@@ -256,29 +270,25 @@ function buildAllocations(
   // 3. Prorratear cash por drift positivo. Activos con drift ≤ 0 (sobreponderados)
   //    reciben 0 en el prorrateo — aparecerán como skipped con razón informativa.
   //
-  // FIX-BOTTOM-FLOOR (Jul-2026): cuando un activo tiene señal de suelo de ciclo
-  //   (bottomMul > 1.0), se le da un drift mínimo de 0.5pp para el prorrateo
-  //   aunque esté ligeramente sobreponderado. Una oportunidad de suelo justifica
-  //   comprar un poco incluso si ya estás en peso (-0.2pp en BTC no debería bloquear
-  //   una compra cuando MVRV está en 1.22).
+  // FIX-BOTTOM-FLOOR-SCALED: drift floor escalado (VALUE +1.5pp, OPPORTUNITY +3pp, EXTREME +5pp).
   const driftForTotal = eligible.map(a => {
     const bm = bottomMultipliers.get(a.ticker) ?? 1.0;
-    return bm > 1.0 ? Math.max(a.drift, 0.005) : Math.max(0, a.drift);
+    return bm > 1.0 ? Math.max(a.drift, getBottomDriftFloor(bm)) : Math.max(0, a.drift);
   });
   const totalDrift = driftForTotal.reduce((s, d) => s + d, 0);
   const pass1 = eligible.map(a => {
     const bottomMul = bottomMultipliers.get(a.ticker) ?? 1.0;
-    // Drift floor: 0.5pp para activos con bottom signal activo
+    // Drift floor escalado: VALUE +1.5pp, OPPORTUNITY +3pp, EXTREME +5pp
     const driftForProration = bottomMul > 1.0
-      ? Math.max(a.drift, 0.005)
+      ? Math.max(a.drift, getBottomDriftFloor(bottomMul))
       : Math.max(0, a.drift);
     const cashAssignedRaw = totalDrift > 0
       ? (driftForProration / totalDrift) * totalCash
       : 0;
     // FIX-CAP-ALLOC: no comprar más de lo necesario para llegar al target.
-    //   Con bottom signal: floor de 0.5pp también en el cap (permitir overweight leve).
+    //   Con bottom signal: floor escalado en el cap (overweight proporcional a la señal).
     const effectiveDriftForCap = bottomMul > 1.0
-      ? Math.max(a.drift, 0.005)
+      ? Math.max(a.drift, getBottomDriftFloor(bottomMul))
       : Math.max(0, a.drift);
     const maxCashToTarget = totalPortfolioValueEUR > 0
       ? effectiveDriftForCap * totalPortfolioValueEUR
@@ -299,10 +309,10 @@ function buildAllocations(
   //    El exceso del cap NO se redistribuye — vuelve a cashReserve (FIX-CAP-LEAK).
   const stranded = pass1.filter(a => a.skipped).reduce((s, a) => s + a.cashAssigned, 0);
   const canBuy = pass1.filter(a => !a.skipped);
-  // FIX-BOTTOM-FLOOR: consistencia con pass1 — floor 0.5pp para bottom signals
+  // FIX-BOTTOM-FLOOR: floor escalado (VALUE +1.5pp, OPPORTUNITY +3pp, EXTREME +5pp)
   const canBuyDrift = canBuy.reduce((s, a) => {
     const bm = bottomMultipliers.get(a.ticker) ?? 1.0;
-    return s + (bm > 1.0 ? Math.max(a.drift, 0.005) : Math.max(0, a.drift));
+    return s + (bm > 1.0 ? Math.max(a.drift, getBottomDriftFloor(bm)) : Math.max(0, a.drift));
   }, 0);
 
   // 5. Construir resultado final con drift en la descripción
@@ -330,8 +340,8 @@ function buildAllocations(
         drift: a.drift, currentWeight: a.currentWeight,
       };
     }
-    // FIX-BOTTOM-FLOOR: floor consistente con pass1
-    const effDrift = bottomMul > 1.0 ? Math.max(a.drift, 0.005) : Math.max(0, a.drift);
+    // FIX-BOTTOM-FLOOR: floor escalado consistente con pass1
+    const effDrift = bottomMul > 1.0 ? Math.max(a.drift, getBottomDriftFloor(bottomMul)) : Math.max(0, a.drift);
     let extra = 0;
     if (stranded > 0 && canBuyDrift > 0) extra = (effDrift / canBuyDrift) * stranded;
     const totalBeforeCap = a.cashAssigned + extra;
