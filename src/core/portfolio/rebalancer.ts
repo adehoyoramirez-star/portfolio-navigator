@@ -91,20 +91,35 @@ export function computeRebalanceSuggestions(
 
   const suggestions: RebalanceSuggestion[] = [];
 
-  // ── SELL — basado en señales de techo de ciclo ────────────────
+  // ── SELL — basado en señales de techo de ciclo (target-based) ──
+  // FIX-DEATH-SPIRAL (Jul-2026): ANTES aplicaba trimPct% sobre acciones
+  // actuales CADA ejecución → death spiral (vender 60% cada día hasta
+  // liquidación total). AHORA calcula sharesToSell para alcanzar el peso
+  // objetivo (targetAllocation). Si ya se alcanzó, no hay más ventas.
   for (const asset of withDrift) {
     if (!asset.cycleSignal?.shouldTrim) continue;
     const { trimPct, zone, indicator, indicatorValue, reason } = asset.cycleSignal;
-    if (trimPct <= 0 || asset.shares <= 0) continue;
+    if (trimPct <= 0 || asset.shares <= 0 || asset.price <= 0) continue;
+
+    // Target-based: solo vender el exceso sobre el peso objetivo
+    const targetValue = asset.targetPct * totalPortfolioValue;
+    const currentValue = asset.shares * asset.price;
+    const excessValue = currentValue - targetValue;
+    if (excessValue <= 0.01) continue; // ya está en peso o por debajo
 
     const sharesToSell = asset.ticker === "BTC-EUR"
-      ? Math.floor((asset.shares * trimPct / 100) * 10000) / 10000
-      : Math.floor(asset.shares * trimPct / 100);
+      ? Math.floor((excessValue / asset.price) * 10000) / 10000
+      : Math.floor(excessValue / asset.price);
 
     if (sharesToSell <= 0) continue;
 
+    // trimPct efectivo: % real que se está vendiendo (informativo)
+    const effectiveTrimPct = parseFloat(((sharesToSell / asset.shares) * 100).toFixed(1));
+
+    // Prioridad basada en la zona del cycle signal, no en el trim efectivo.
+    // El usuario necesita ver la severidad real de la señal subyacente.
     const priority: "HIGH" | "MEDIUM" | "LOW" =
-      trimPct > 50 ? "HIGH" : trimPct > 25 ? "MEDIUM" : "LOW";
+      zone === "EXTREME" || zone === "DANGER" ? "HIGH" : "MEDIUM";
 
     suggestions.push({
       ticker: asset.ticker,
@@ -113,11 +128,11 @@ export function computeRebalanceSuggestions(
       sharesToBuy: 0, cost: 0,
       sharesToSell,
       proceedsIfSold: sharesToSell * asset.price,
-      trimPct,
+      trimPct: effectiveTrimPct,
       currentPct: asset.currentPct,
       targetPct: asset.targetPct,
       drift: asset.drift,
-      reason: `🔴 TECHO DE CICLO: ${reason}`,
+      reason: `🔴 TECHO DE CICLO: ${reason} (target ${(asset.targetPct * 100).toFixed(1)}%, vendiendo ${effectiveTrimPct}%)`,
       priority,
       cycleZone: zone,
       cycleIndicator: indicator,
