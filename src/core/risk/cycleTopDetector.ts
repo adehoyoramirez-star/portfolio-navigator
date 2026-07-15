@@ -702,3 +702,452 @@ export function isBTCDominanceFalling(current: number, previous?: number): boole
   if (previous === undefined) return false;
   return previous > 58 && current < previous - 1.5; // caída de >1.5pp desde nivel alto
 }
+
+// ===============================================
+// CYCLE BOTTOM DETECTION — Suelos de ciclo por activo
+// ===============================================
+// Extensión simétrica a Cycle Top: detecta activos infravalorados u
+// oversold. Reutiliza los mismos indicadores del CycleTopInputs,
+// invertidos. Misma arquitectura: una función por activo → agregador.
+//
+// Output: opportunityScore 0-100 + attackMultiplier para Smart DCA.
+//   NEUTRAL     (0-39):  sin oportunidad especial — DCA normal
+//   VALUE       (40-59): oportunidad moderada — DCA ×1.25
+//   OPPORTUNITY (60-79): oportunidad fuerte — DCA ×1.5
+//   EXTREME     (80-100): suelo histórico — DCA ×2.0 (ataque)
+// ===============================================
+
+export interface CycleBottomSignal {
+  asset: string;
+  ticker: string;
+  opportunityScore: number;     // 0-100, mayor = mejor oportunidad
+  zone: "NEUTRAL" | "VALUE" | "OPPORTUNITY" | "EXTREME";
+  reason: string;
+  indicator: string;
+  indicatorValue: string;
+  shouldAccumulate: boolean;     // true si hay que comprar más de lo normal
+  attackMultiplier: number;      // 1.0 = normal, 1.25 = +25%, 1.5 = +50%, 2.0 = doble
+}
+
+export interface CycleBottomOutput {
+  signals: CycleBottomSignal[];
+  hasActiveOpportunities: boolean;
+  maxOpportunityScore: number;
+  topOpportunity: CycleBottomSignal | null;
+}
+
+// ── Helpers compartidos para bottom detection ────────────────────
+
+function scoreToZone(score: number): CycleBottomSignal["zone"] {
+  if (score >= 80) return "EXTREME";
+  if (score >= 60) return "OPPORTUNITY";
+  if (score >= 40) return "VALUE";
+  return "NEUTRAL";
+}
+
+function attackMultiplierForScore(score: number): number {
+  if (score >= 80) return 2.0;
+  if (score >= 60) return 1.50;
+  if (score >= 40) return 1.25;
+  return 1.0;
+}
+
+// ── BTC Bottom ───────────────────────────────────────────────────
+// Invierte la lógica de detectBTCTop:
+//   MVRV > 3.5 = techo  →  MVRV < 1.5 = suelo
+//   RSI-W > 80 = techo  →  RSI-W < 30 = suelo
+function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
+  const { mvrvRatio, btcRsiWeekly } = inputs;
+
+  let score = 0;
+  const reasons: string[] = [];
+
+  // MVRV — invertido: bajo = infravalorado
+  // CALIBRACIÓN: MVRV<1.5 + RSI<30 debe alcanzar EXTREME (≥80).
+  //   Históricamente: solo marzo 2020 (COVID) y nov 2022 (FTX).
+  if (isValidReading(mvrvRatio)) {
+    if (mvrvRatio < 1.5)        { score += 45; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — infravaloración extrema (suelo de ciclo)`); }
+    else if (mvrvRatio < 2.0)   { score += 30; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de acumulación`); }
+    else if (mvrvRatio < 2.5)   { score += 18; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — ligeramente infravalorado`); }
+  }
+
+  // RSI semanal — invertido: bajo = oversold
+  if (isValidReading(btcRsiWeekly, 0, 100)) {
+    if (btcRsiWeekly < 30)        { score += 35; reasons.push(`RSI semanal ${btcRsiWeekly.toFixed(0)} — oversold extremo`); }
+    else if (btcRsiWeekly < 40)   { score += 20; reasons.push(`RSI semanal ${btcRsiWeekly.toFixed(0)} — oversold`); }
+    else if (btcRsiWeekly < 45)   { score += 10; reasons.push(`RSI semanal ${btcRsiWeekly.toFixed(0)} — zona baja`); }
+  }
+
+  const zone = scoreToZone(score);
+  const indicatorValue = isValidReading(mvrvRatio)
+    ? `MVRV ${mvrvRatio.toFixed(2)}${isValidReading(btcRsiWeekly, 0, 100) ? ` · RSI-W ${btcRsiWeekly.toFixed(0)}` : ""}`
+    : `RSI-W ${btcRsiWeekly?.toFixed(0) ?? "—"}`;
+
+  return {
+    asset: "Bitcoin",
+    ticker: "BTC-EUR",
+    opportunityScore: score,
+    zone,
+    reason: reasons.length > 0 ? reasons.join(" · ") : "BTC en zona neutra — sin señal de suelo de ciclo",
+    indicator: "MVRV + RSI Semanal (invertido)",
+    indicatorValue,
+    shouldAccumulate: score >= 40,
+    attackMultiplier: attackMultiplierForScore(score),
+  };
+}
+
+// ── Uranio Bottom ────────────────────────────────────────────────
+// Invierte la lógica de detectUraniumTop:
+//   Spot/LT > 1.20 = techo  →  Spot/LT < 0.70 = suelo
+// El top detector ya reconoce ratios <0.85 como "ventana de acumulación"
+// y <0.70 como "acumulación agresiva". Aquí lo convertimos en score.
+function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
+  const { uraniumSpotPrice, uraniumLTPrice } = inputs;
+
+  if (!isValidReading(uraniumSpotPrice) || !isValidReading(uraniumLTPrice) || uraniumLTPrice === 0) {
+    return {
+      asset: "Uranium",
+      ticker: "URNU.DE",
+      opportunityScore: 0,
+      zone: "NEUTRAL",
+      reason: "Sin datos de precio spot/LT — introduce uraniumSpot y uraniumLT para activar detección de suelo",
+      indicator: "Spot/LT Ratio",
+      indicatorValue: "Sin datos",
+      shouldAccumulate: false,
+      attackMultiplier: 1.0,
+    };
+  }
+
+  const ratio = uraniumSpotPrice / uraniumLTPrice;
+  let score = 0;
+  let reason: string;
+
+  if (ratio < 0.70) {
+    score = 70;
+    reason = `Spot/LT ${ratio.toFixed(2)} — descuento profundo. Spot muy por debajo del LT: utilities pagan fuerte prima por suministro futuro. Señal de acumulación agresiva (raro: solo 2016 y 2020).`;
+  } else if (ratio < 0.85) {
+    score = 45;
+    reason = `Spot/LT ${ratio.toFixed(2)} — spot barato vs contratos a largo plazo. Contango saludable: el mercado anticipa tightening futuro. Ventana de acumulación.`;
+  } else if (ratio < 1.0) {
+    score = 20;
+    reason = `Spot/LT ${ratio.toFixed(2)} — spot ligeramente por debajo del LT. Valor razonable, sin prima especulativa.`;
+  } else {
+    score = 0;
+    reason = `Spot/LT ${ratio.toFixed(2)} — spot en prima o equilibrio. Sin señal de suelo.`;
+  }
+
+  const zone = scoreToZone(score);
+
+  return {
+    asset: "Uranium",
+    ticker: "URNU.DE",
+    opportunityScore: score,
+    zone,
+    reason,
+    indicator: "Uranium Spot/LT Ratio",
+    indicatorValue: `Spot $${uraniumSpotPrice}/lb · LT $${uraniumLTPrice}/lb → ratio ${ratio.toFixed(2)}`,
+    shouldAccumulate: score >= 40,
+    attackMultiplier: attackMultiplierForScore(score),
+  };
+}
+
+// ── Semis Bottom ─────────────────────────────────────────────────
+// Invierte la lógica de detectSemisTop:
+//   SIA Sales > 25% + SOX RSI > 80 = techo
+//   SOX RSI < 35 + SIA Sales < 0% = suelo (recession pricing)
+function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
+  const { siaSalesYoY, soxRsiWeekly } = inputs;
+
+  if (!isValidReading(siaSalesYoY, -100) && !isValidReading(soxRsiWeekly, 0, 100)) {
+    return {
+      asset: "Semiconductors",
+      ticker: "VVSM.DE",
+      opportunityScore: 0,
+      zone: "NEUTRAL",
+      reason: "Sin datos de ventas SIA ni RSI del SOX — introduce ambos para activar detección de suelo",
+      indicator: "SIA Sales YoY + SOX RSI Semanal",
+      indicatorValue: "Sin datos",
+      shouldAccumulate: false,
+      attackMultiplier: 1.0,
+    };
+  }
+
+  let score = 0;
+  const reasons: string[] = [];
+
+  // SOX RSI — invertido: bajo = oversold
+  if (isValidReading(soxRsiWeekly, 0, 100)) {
+    if (soxRsiWeekly < 30)        { score += 35; reasons.push(`SOX RSI semanal ${soxRsiWeekly.toFixed(0)} — oversold extremo (pánico)`); }
+    else if (soxRsiWeekly < 40)   { score += 20; reasons.push(`SOX RSI semanal ${soxRsiWeekly.toFixed(0)} — oversold`); }
+    else if (soxRsiWeekly < 50)   { score += 8;  reasons.push(`SOX RSI semanal ${soxRsiWeekly.toFixed(0)} — zona baja`); }
+  }
+
+  // SIA Sales — invertido: crecimiento negativo = recession pricing
+  if (isValidReading(siaSalesYoY, -100)) {
+    if (siaSalesYoY < -10)        { score += 25; reasons.push(`Ventas SIA ${siaSalesYoY.toFixed(1)}% YoY — contracción severa (recession pricing)`); }
+    else if (siaSalesYoY < 0)     { score += 15; reasons.push(`Ventas SIA ${siaSalesYoY.toFixed(1)}% YoY — contracción. Las caídas de semis preceden recuperaciones explosivas.`); }
+    else if (siaSalesYoY < 10)    { score += 5;  reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — crecimiento modesto, no es techo`); }
+  }
+
+  const zone = scoreToZone(score);
+  const parts: string[] = [];
+  if (isValidReading(siaSalesYoY, -100)) parts.push(`SIA sales ${siaSalesYoY > 0 ? "+" : ""}${siaSalesYoY.toFixed(1)}% YoY`);
+  if (isValidReading(soxRsiWeekly, 0, 100)) parts.push(`SOX RSI-W ${soxRsiWeekly.toFixed(0)}`);
+
+  return {
+    asset: "Semiconductors",
+    ticker: "VVSM.DE",
+    opportunityScore: score,
+    zone,
+    reason: reasons.length > 0 ? reasons.join(" · ") : "Semis en zona neutra — sin señal de suelo de ciclo",
+    indicator: "SOX RSI Semanal + SIA Sales YoY",
+    indicatorValue: parts.join(" · ") || "Sin datos",
+    shouldAccumulate: score >= 40,
+    attackMultiplier: attackMultiplierForScore(score),
+  };
+}
+
+// ── Oro Bottom ───────────────────────────────────────────────────
+// Invierte la lógica de detectGoldTop:
+//   Tipo real > 0.5% = presión (techo)  →  Tipo real > 2.0% = sobrecastigado (suelo)
+//   Brent alto protege al oro en ambos casos.
+function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
+  const { bondYield10y, inflationBreakeven, brentOil } = inputs;
+
+  if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
+    return {
+      asset: "Gold (ETC)",
+      ticker: "PPFB.DE",
+      opportunityScore: 0,
+      zone: "NEUTRAL",
+      reason: "Sin datos de inflación implícita o bono 10y — introduce T5YIE y US10Y para activar detección de suelo",
+      indicator: "Tipo Real (bono 10y − breakeven 5y)",
+      indicatorValue: "Sin datos tipo real",
+      shouldAccumulate: false,
+      attackMultiplier: 1.0,
+    };
+  }
+
+  const realRate = bondYield10y - inflationBreakeven;
+  let score = 0;
+  const reasons: string[] = [];
+
+  // Tipo real MUY alto = oro está sobrecastigado (coste de oportunidad extremo ya priced in)
+  // La lógica: si el tipo real está forzando ventas masivas de oro, el precio ya lo descuenta.
+  // Un tipo real > 2.5% es históricamente insostenible y precede rallies de oro.
+  // CALIBRACIÓN: realRate>2.5% + Brent>95 debe alcanzar OPPORTUNITY (≥60).
+  //   El oro tiene menos indicadores → max teórico ~70 (OPPORTUNITY, no EXTREME).
+  //   Documentado: las puntuaciones no son comparables entre activos.
+  if (realRate > 2.5) {
+    score += 45;
+    reasons.push(`Tipo real ${realRate.toFixed(2)}% — oro sobrecastigado. Tipos reales >2.5% son históricamente insostenibles y han precedido rallies fuertes del oro.`);
+  } else if (realRate > 2.0) {
+    score += 25;
+    reasons.push(`Tipo real ${realRate.toFixed(2)}% — presión extrema sobre el oro. El mercado ya descuenta el coste de oportunidad.`);
+  } else if (realRate > 1.5) {
+    score += 12;
+    reasons.push(`Tipo real ${realRate.toFixed(2)}% — presión elevada. Potencial suelo si la Fed se acerca al final del ciclo.`);
+  } else if (realRate < -0.5) {
+    // Tipos reales negativos = oro barato en términos reales
+    score += 15;
+    reasons.push(`Tipo real ${realRate.toFixed(2)}% — tipos reales negativos. El oro protege el poder adquisitivo.`);
+  }
+
+  // Brent: petróleo alto → inflación → el oro sirve como cobertura
+  if (isValidReading(brentOil, 0, 300)) {
+    if (brentOil > 95) {
+      score += 25;
+      reasons.push(`Brent $${brentOil.toFixed(0)} — crisis energética. El oro es el activo refugio clásico en shocks de oferta.`);
+    } else if (brentOil > 75) {
+      score += 8;
+      reasons.push(`Brent $${brentOil.toFixed(0)} — tensión geopolítica moderada`);
+    }
+  }
+
+  const zone = scoreToZone(score);
+
+  return {
+    asset: "Gold (ETC)",
+    ticker: "PPFB.DE",
+    opportunityScore: score,
+    zone,
+    reason: reasons.length > 0 ? reasons.join(" · ") : "Oro en zona neutra — sin señal de suelo de ciclo",
+    indicator: "Tipo Real + Brent Crude Oil",
+    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"}`,
+    shouldAccumulate: score >= 40,
+    attackMultiplier: attackMultiplierForScore(score),
+  };
+}
+
+// ── WLG Bottom ───────────────────────────────────────────────────
+// Invierte la lógica de detectWLGTop:
+//   P/E > 19 + CAPE > 30 + RSI > 75 = techo
+//   P/E < 14 + CAPE < 20 + RSI < 35 = suelo
+// Misma jerarquía institucional: P/E primario, CAPE confirmatorio.
+function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
+
+  if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
+    return {
+      asset: "Vanguard Global Stock",
+      ticker: "0P00000WLG.F",
+      opportunityScore: 0,
+      zone: "NEUTRAL",
+      reason: "Sin datos de RSI, P/E ni CAPE — introduce wlgRsiWeekly, wlgPERatio o wlgCAPE para activar detección de suelo",
+      indicator: "RSI Semanal URTH + P/E MSCI World + CAPE",
+      indicatorValue: "Sin datos",
+      shouldAccumulate: false,
+      attackMultiplier: 1.0,
+    };
+  }
+
+  let score = 0;
+  const reasons: string[] = [];
+
+  // RSI semanal — invertido: bajo = oversold
+  if (isValidReading(wlgRsiWeekly, 0, 100)) {
+    if (wlgRsiWeekly < 30)        { score += 30; reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — oversold extremo (pánico vendedor)`); }
+    else if (wlgRsiWeekly < 40)   { score += 18; reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — oversold`); }
+    else if (wlgRsiWeekly < 50)   { score += 8;  reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — zona baja`); }
+  }
+
+  // P/E — PRIMARIO: barato = oportunidad
+  const hasPE = isValidReading(wlgPERatio);
+  const hasCAPE = isValidReading(wlgCAPE);
+
+  // CALIBRACIÓN: P/E<13 + RSI<30 + CAPE<20 debe alcanzar EXTREME (≥80).
+  //   Históricamente: solo marzo 2009 (GFC) y marzo 2020 (COVID).
+  if (hasPE) {
+    if (wlgPERatio < 13)          { score += 45; reasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — infravaloración histórica (solo crisis severas)`); }
+    else if (wlgPERatio < 15)     { score += 30; reasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado barato (por debajo de la media histórica)`); }
+    else if (wlgPERatio < 17)     { score += 15; reasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración razonable`); }
+
+    // CAPE confirmatorio: si CAPE está más barato que lo que sugiere el P/E
+    if (hasCAPE) {
+      let capeDiscount = false;
+      if (wlgCAPE < 20)           { capeDiscount = true; reasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — confirma infravaloración (proxy, <20: solo crisis 2009 y 2020)`); }
+      else if (wlgCAPE < 25)      { capeDiscount = true; reasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por debajo de la media (proxy)`); }
+      if (capeDiscount) score += 10;
+    }
+  } else if (hasCAPE) {
+    // Fallback: sin P/E, CAPE actúa como primario
+    if (wlgCAPE < 20)             { score += 30; reasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — infravaloración extrema [fallback: sin P/E]`); }
+    else if (wlgCAPE < 25)        { score += 18; reasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — por debajo de la media [fallback: sin P/E]`); }
+    else if (wlgCAPE < 28)        { score += 8;  reasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — valoración razonable [fallback: sin P/E]`); }
+  }
+
+  const zone = scoreToZone(score);
+  const parts: string[] = [];
+  if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
+  if (isValidReading(wlgCAPE)) parts.push(`CAPE ${wlgCAPE.toFixed(1)}`);
+  if (isValidReading(wlgPERatio)) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
+
+  return {
+    asset: "Vanguard Global Stock",
+    ticker: "0P00000WLG.F",
+    opportunityScore: score,
+    zone,
+    reason: reasons.length > 0 ? reasons.join(" · ") : "MSCI World en zona neutra — sin señal de suelo de ciclo",
+    indicator: "P/E MSCI World + CAPE + RSI Semanal",
+    indicatorValue: parts.join(" · ") || "Sin datos",
+    shouldAccumulate: score >= 40,
+    attackMultiplier: attackMultiplierForScore(score),
+  };
+}
+
+// ── EMXC Bottom ──────────────────────────────────────────────────
+// Invierte la lógica de detectEMXCTop:
+//   DXY > 103 + P/E > 18 + RSI > 75 = techo
+//   DXY > 106 + P/E < 12 + RSI < 35 = suelo (EM crisis sale)
+// El DXY extremo significa que EM están en oferta por flight-to-safety,
+// no por deterioro fundamental. Es el momento clásico de comprar EM.
+function detectEMXCBottom(inputs: CycleTopInputs): CycleBottomSignal {
+  const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
+
+  if (!isValidReading(emxcRsiWeekly, 0, 100) && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
+    return {
+      asset: "Emerging Markets",
+      ticker: "EMXC.DE",
+      opportunityScore: 0,
+      zone: "NEUTRAL",
+      reason: "Sin datos de RSI, P/E ni DXY — introduce emxcRsiWeekly, emxcPERatio o dxy para activar detección de suelo",
+      indicator: "RSI Semanal EEM + P/E Emergentes + DXY",
+      indicatorValue: "Sin datos",
+      shouldAccumulate: false,
+      attackMultiplier: 1.0,
+    };
+  }
+
+  let score = 0;
+  const reasons: string[] = [];
+
+  // DXY como indicador de oportunidad: dólar extremadamente fuerte = EM en oferta
+  // No es que EM estén mal — es que el capital huye a USD. Cuando el DXY revierte,
+  // EM suelen rebotar +20-40% en 12 meses. Esto es investigación del BIS.
+  if (isValidReading(dxy, 50)) {
+    if (dxy > 110) {
+      score += 35;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar en niveles de crisis EM. El flight-to-safety ha castigado a emergentes más allá de sus fundamentales. Oportunidad histórica de compra (recuperación media EM tras pico DXY: +32% en 12m).`);
+    } else if (dxy > 106) {
+      score += 25;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar fuerte. EM en descuento por flujos, no por fundamentales.`);
+    } else if (dxy > 103) {
+      score += 10;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar apreciándose. EM empezando a estar atractivos.`);
+    }
+  }
+
+  // P/E — barato = oportunidad
+  if (isValidReading(emxcPERatio)) {
+    if (emxcPERatio < 10)         { score += 30; reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes en crisis (solo en pánicos sistémicos)`); }
+    else if (emxcPERatio < 12)    { score += 20; reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes baratos (por debajo de su media histórica ~15)`); }
+    else if (emxcPERatio < 15)    { score += 10; reasons.push(`P/E ${emxcPERatio.toFixed(1)} — valoración razonable`); }
+  }
+
+  // RSI semanal — oversold
+  if (isValidReading(emxcRsiWeekly, 0, 100)) {
+    if (emxcRsiWeekly < 30)       { score += 25; reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — oversold extremo (capitulación EM)`); }
+    else if (emxcRsiWeekly < 40)  { score += 15; reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — oversold`); }
+    else if (emxcRsiWeekly < 50)  { score += 5;  reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — zona baja`); }
+  }
+
+  const zone = scoreToZone(score);
+  const parts: string[] = [];
+  if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);
+  if (isValidReading(emxcRsiWeekly, 0, 100)) parts.push(`RSI-W ${emxcRsiWeekly.toFixed(0)}`);
+  if (isValidReading(emxcPERatio)) parts.push(`P/E ${emxcPERatio.toFixed(1)}`);
+
+  return {
+    asset: "Emerging Markets",
+    ticker: "EMXC.DE",
+    opportunityScore: score,
+    zone,
+    reason: reasons.length > 0 ? reasons.join(" · ") : "Emergentes en zona neutra — sin señal de suelo de ciclo",
+    indicator: "DXY + P/E Emergentes + RSI Semanal EEM",
+    indicatorValue: parts.join(" · ") || "Sin datos",
+    shouldAccumulate: score >= 40,
+    attackMultiplier: attackMultiplierForScore(score),
+  };
+}
+
+// ── FUNCIÓN PRINCIPAL (BOTTOMS) ──────────────────────────────────
+export function detectCycleBottoms(inputs: CycleTopInputs): CycleBottomOutput {
+  const signals: CycleBottomSignal[] = [
+    detectBTCBottom(inputs),
+    detectUraniumBottom(inputs),
+    detectSemisBottom(inputs),
+    detectGoldBottom(inputs),
+    detectWLGBottom(inputs),
+    detectEMXCBottom(inputs),
+  ];
+
+  const maxOpportunityScore = Math.max(...signals.map(s => s.opportunityScore));
+  const topOpportunity = signals.find(s => s.opportunityScore === maxOpportunityScore && s.opportunityScore >= 40) ?? null;
+
+  return {
+    signals,
+    hasActiveOpportunities: signals.some(s => s.shouldAccumulate),
+    maxOpportunityScore,
+    topOpportunity,
+  };
+}
