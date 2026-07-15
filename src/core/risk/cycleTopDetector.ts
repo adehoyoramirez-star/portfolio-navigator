@@ -385,13 +385,20 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 // El MSCI World es el índice de developed markets más amplio.
 // Señales de techo:
 //   RSI Semanal > 75 → sobrecompra. > 80 → sobrecompra extrema.
-//   Shiller CAPE > 30 → caro. > 38 → burbuja (umbrales de Shiller Nobel Prize).
-//   P/E > 28 → caro (media histórica ~17-19). > 35 → burbuja.
+//   P/E MSCI World → indicador PRIMARIO (dato real del fondo, URTH vía TradingView).
+//   Shiller CAPE S&P 500 → CONFIRMATORIO (+0.5 si confirma sobrevaloración).
 //
-// Jerarquía: CAPE es el indicador PRIMARIO (peso 1.5×), P/E es secundario (1.0×).
-// Razón: CAPE suaviza el ciclo de beneficios con media de 10 años (Shiller 1988).
-// P/E TTM es volátil por distorsiones contables (COVID, estímulos, write-offs).
-// Si ambos indicadores confluyen, la señal es más fuerte que cada uno por separado.
+// FIX-INSTITUTIONAL (Jul-2026): Jerarquía invertida por principios de ingeniería
+//   cuantitativa institucional. El dato real del activo (P/E 19.4 de URTH) es
+//   más defendible que un proxy de otro índice (CAPE 41.7 del S&P 500). Un hedge
+//   fund debe poder explicar cada decisión en 10 segundos: "Vendimos porque el
+//   P/E del MSCI World estaba a X" se defiende. "Vendimos porque el CAPE del
+//   S&P 500..." no. El CAPE del S&P 500 sobrestima la valoración global por
+//   concentración Mag7/tech — sirve como confirmación, no como driver.
+//
+//   Con datos actuales (P/E 19.4 + CAPE 41.7):
+//   ANTES: max(CAPE_score=2.5, P/E_score=0) = 2.5 → DANGER, trim 60%
+//   AHORA: P/E_score=1.0 + CAPE_confirm=0.5 = 1.5 → CAUTION, trim 35%
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
 
@@ -426,56 +433,70 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  // Shiller CAPE (proxy S&P 500 para MSCI World) — VALORACIÓN (selección: máx entre CAPE y P/E)
-  // ⚠️ El CAPE de Shiller vía FRED es del S&P 500, no del MSCI World global.
-  //    USA pesa ~70% del MSCI World pero es estructuralmente más caro por Mag7/tech.
-  //    CAPE > 30 desde S&P 500 puede sobrestimar la valoración global del índice.
-  //    Los reasons incluyen la etiqueta "S&P 500 CAPE" para transparencia.
-  //
-  // FIX-AUDIT-MC (Jul-2026): corrección de multicolinealidad CAPE + P/E.
-  //   CAPE y P/E TTM están correlacionados con r > 0.8 (ambos miden valoración del
-  //   mismo mercado). Sumarlos linealmente infla el score: con RSI 76 + CAPE 31 + P/E 23
-  //   → score 3.5 (EXTREME, trim 75%) cuando ninguna lectura individual es extrema.
-  //   SOLUCIÓN: tomar el MÁXIMO de CAPE y P/E, no la suma. Así dos indicadores que
-  //   dicen lo mismo no cuentan doble. El orden de prioridad es: CAPE > P/E > RSI.
-  //   RSI sigue sumándose porque mide momentum (dimensión ortogonal a valoración).
+  // FIX-INSTITUTIONAL (Jul-2026): P/E PRIMARIO, CAPE CONFIRMATORIO.
+  //   Principio: dato real del activo > proxy de otro índice.
+  //   El P/E 19.4 de URTH (MSCI World) es el valuation driver. El CAPE 41.7
+  //   del S&P 500 confirma si está más alarmado que el P/E (+0.5 extra).
+  //   Sin P/E disponible, CAPE actúa como fallback primario.
   let valuationScore = 0;
   const valuationReasons: string[] = [];
+  const hasPE = isValidReading(wlgPERatio);
+  const hasCAPE = isValidReading(wlgCAPE);
 
-  if (isValidReading(wlgCAPE)) {
-    // Proxy S&P 500 para MSCI World (USA ~70% del índice).
+  if (hasPE) {
+    // ── PRIMARIO: P/E del MSCI World (dato real del fondo URTH) ──
+    // Umbrales recalibrados para MSCI World (media histórica ~15-17, rango 10-30).
+    if (wlgPERatio > 30) {
+      valuationScore = 2.5;
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración extrema (solo 2000 y 2021)`);
+    } else if (wlgPERatio > 25) {
+      valuationScore = 2.0;
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado muy caro`);
+    } else if (wlgPERatio > 22) {
+      valuationScore = 1.5;
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado caro`);
+    } else if (wlgPERatio > 19) {
+      valuationScore = 1.0;
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~17)`);
+    } else if (wlgPERatio > 17) {
+      valuationScore = 0.5;
+      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — ligeramente por encima de la media`);
+    }
+
+    // ── CONFIRMATORIO: CAPE del S&P 500 (+0.5 si está más alarmado que el P/E) ──
+    if (hasCAPE) {
+      let capeImpliedScore = 0;
+      if (wlgCAPE > 44) capeImpliedScore = 3;
+      else if (wlgCAPE > 38) capeImpliedScore = 2.5;
+      else if (wlgCAPE > 33) capeImpliedScore = 2;
+      else if (wlgCAPE > 30) capeImpliedScore = 1.5;
+      else if (wlgCAPE > 27) capeImpliedScore = 0.75;
+
+      if (capeImpliedScore > valuationScore) {
+        valuationScore += 0.5;
+        valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — confirma sobrevaloración (proxy, no dato del fondo)`);
+      }
+    }
+  } else if (hasCAPE) {
+    // ── FALLBACK: sin P/E, CAPE actúa como primario ──
     if (wlgCAPE > 44) {
       valuationScore = 3;
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — nivel de burbuja dot-com (récord: 44.2 en 1999)`);
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — nivel de burbuja dot-com (récord: 44.2 en 1999) [fallback: sin P/E]`);
     } else if (wlgCAPE > 38) {
-      valuationScore = Math.max(valuationScore, 2.5);
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — sobrevaloración extrema (>38: solo 1999 y 2021)`);
+      valuationScore = 2.5;
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — sobrevaloración extrema (>38: solo 1999 y 2021) [fallback: sin P/E]`);
     } else if (wlgCAPE > 33) {
-      valuationScore = Math.max(valuationScore, 2);
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado significativamente caro (top decil histórico)`);
+      valuationScore = 2;
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado significativamente caro [fallback: sin P/E]`);
     } else if (wlgCAPE > 30) {
-      valuationScore = Math.max(valuationScore, 1.5);
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro (Bridgewater: retornos esperados <2% real 10y)`);
+      valuationScore = 1.5;
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro [fallback: sin P/E]`);
     } else if (wlgCAPE > 27) {
-      valuationScore = Math.max(valuationScore, 0.75);
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por encima de la media (media ~17)`);
+      valuationScore = 0.75;
+      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por encima de la media [fallback: sin P/E]`);
     }
   }
 
-  if (isValidReading(wlgPERatio)) {
-    if (wlgPERatio > 35) {
-      valuationScore = Math.max(valuationScore, 2.0);
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — en territorio de burbuja (>28 = caro)`);
-    } else if (wlgPERatio > 28) {
-      valuationScore = Math.max(valuationScore, 1.5);
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — caro por encima de su media (~18)`);
-    } else if (wlgPERatio > 22) {
-      valuationScore = Math.max(valuationScore, 1);
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media`);
-    }
-  }
-
-  // Aplicar valuationScore (máx entre CAPE y P/E) + reasons
   topSignals += valuationScore;
   reasons.push(...valuationReasons);
 
