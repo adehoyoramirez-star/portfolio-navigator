@@ -29,6 +29,7 @@ const DCA_CONFIG = {
   ALLOCATION: {
     MIN_FINAL_ALLOCATION: 0.02,  // target < 2% → no comprar (demasiado pequeño)
     MIN_DRIFT: 0.005,            // drift < 0.5pp → no comprar (ya está en peso)
+    MAX_OVERWEIGHT_BUY: -0.02,   // permitir comprar hasta 2pp sobreponderado (oportunidad > peso exacto)
   },
   // Parámetros de ataque y graduación Kelly-inspired
   ATTACK: {
@@ -101,6 +102,8 @@ export interface SmartDCAInput {
   cycleTopSignals?: { ticker: string; shouldTrim: boolean; zone: string }[];
   /** FIX-AUDIT-R9 4: circuit breaker — true if Yahoo data >72h stale. DCA blocked. */
   staleDataBlock?: boolean;
+  /** Valor total del portfolio en EUR — necesario para el cap de compra por activo. */
+  totalPortfolioValueEUR?: number;
 }
 
 export interface DCAAllocation {
@@ -181,13 +184,24 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
 // no-trimmed pueden tener drift por redistribución de capital, no por
 // oportunidad genuina. Se anota en el reason y el usuario debe ejecutar
 // el rebalanceador antes que el DCA.
+//
+// FIX-CAP-ALLOC (Jul-2026): nuevo parámetro totalPortfolioValueEUR.
+// Cada activo tiene un cap: cashAsignado ≤ max(0, drift × totalPortfolioValueEUR).
+// Evita que el DCA compre 47 acciones de URNU para un drift de 1.5pp (€1,034
+// para un gap real de ~€112). El exceso se redistribuye a otros activos o
+// se acumula como cash no desplegado.
+//
+// FIX-SLIGHT-OVERWEIGHT (Jul-2026): el filtro de elegibilidad ahora permite
+// activos ligeramente sobreponderados (hasta -2pp). Un sobrepeso pequeño
+// (-0.2pp en BTC) no debería bloquear una compra si hay oportunidad.
 function buildAllocations(
   totalCash: number,
   assets: { ticker: string; name: string; finalAllocation: number; price: number }[],
   trancheLabel: string,
   skipTickers: Set<string> = new Set(),
   currentAllocations: Map<string, number> = new Map(),
-  cycleTopActive = false
+  cycleTopActive = false,
+  totalPortfolioValueEUR = 0
 ): DCAAllocation[] {
   // FIX-AUDIT-DEDUP: eliminar tickers duplicados antes de procesar.
   // Si el motor recibe assets duplicados (ej: VVSM.DE aparece 2 veces en el portfolio),
@@ -208,57 +222,88 @@ function buildAllocations(
     return { ...a, drift, currentWeight };
   });
 
-  // 2. Filtrar: solo activos con target > MIN, precio > 0, sin techo de ciclo, y drift POSITIVO
+  // 2. Filtrar: activos con target > MIN, precio > 0, sin techo de ciclo.
+  //    Drift: permitir hasta -2pp (ligeramente sobreponderado) para no bloquear
+  //    compras por oportunidad cuando el sobrepeso es mínimo.
   const ALLOC = DCA_CONFIG.ALLOCATION;
   const eligible = withDrift.filter(a =>
     a.finalAllocation > ALLOC.MIN_FINAL_ALLOCATION &&
     a.price > 0 &&
     !skipTickers.has(a.ticker) &&
-    a.drift > ALLOC.MIN_DRIFT
+    a.drift > ALLOC.MAX_OVERWEIGHT_BUY
   );
 
   if (eligible.length === 0) return [];
   if (totalCash <= 0) return [];
 
-  // 3. Prorratear cash por drift, no por target absoluto
-  const totalDrift = eligible.reduce((s, a) => s + a.drift, 0);
+  // 3. Prorratear cash por drift positivo. Activos con drift ≤ 0 (sobreponderados)
+  //    reciben 0 en el prorrateo — aparecerán como skipped con razón informativa.
+  const positiveDrift = eligible.map(a => Math.max(0, a.drift));
+  const totalDrift = positiveDrift.reduce((s, d) => s + d, 0);
   const pass1 = eligible.map(a => {
-    const cashAssigned = (a.drift / totalDrift) * totalCash;
+    const driftForProration = Math.max(0, a.drift);
+    const cashAssignedRaw = totalDrift > 0
+      ? (driftForProration / totalDrift) * totalCash
+      : 0;
+    // FIX-CAP-ALLOC: no comprar más de lo necesario para llegar al target
+    const maxCashToTarget = totalPortfolioValueEUR > 0
+      ? Math.max(0, a.drift * totalPortfolioValueEUR)
+      : cashAssignedRaw;
+    const cashAssigned = Math.min(cashAssignedRaw, maxCashToTarget);
     const isFractional = a.ticker === "BTC-EUR";
     const shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
     const actualCost = shares * a.price;
-    const skipped = !isFractional && shares === 0;
-    return { ...a, cashAssigned, shares, actualCost, isFractional, skipped };
+    const skipped = (!isFractional && shares === 0) || cashAssigned <= 0;
+    // Solo marcar como capped si hay cap real (no para activos con drift≤0 que reciben 0)
+    const capped = cashAssignedRaw > maxCashToTarget && maxCashToTarget > 0 && cashAssigned > 0;
+    return { ...a, cashAssigned, shares, actualCost, isFractional, skipped, capped, cashAssignedRaw };
   });
 
-  // 4. Redistribuir cash sobrante de activos que no alcanzan 1 acción
+  // 4. Redistribuir cash sobrante SOLO de activos que no alcanzan 1 acción mínima.
+  //    El exceso del cap NO se redistribuye — vuelve a cashReserve (FIX-CAP-LEAK).
   const stranded = pass1.filter(a => a.skipped).reduce((s, a) => s + a.cashAssigned, 0);
   const canBuy = pass1.filter(a => !a.skipped);
-  const canBuyDrift = canBuy.reduce((s, a) => s + a.drift, 0);
+  const canBuyDrift = canBuy.reduce((s, a) => s + Math.max(0, a.drift), 0);
 
   // 5. Construir resultado final con drift en la descripción
   return pass1.map(a => {
+    const capped = (a as any).capped as boolean | undefined;
     if (a.skipped) {
+      // Activos sobreponderados (drift ≤ 0) que se incluyeron por MAX_OVERWEIGHT_BUY
+      let skipReason: string;
+      if (a.drift <= 0) {
+        skipReason = `en peso (${(a.drift*100).toFixed(1)}pp) — sin compra necesaria`;
+      } else if (capped) {
+        skipReason = `Cap objetivo: ya en peso (target ${(a.finalAllocation*100).toFixed(1)}%)`;
+      } else {
+        skipReason = `Necesita €${a.price.toFixed(0)} mín.`;
+      }
       return {
         ticker: a.ticker, name: a.name,
         cashToInvest: a.cashAssigned, actualCost: 0,
         motorWeight: a.finalAllocation, shares: 0,
         pricePerShare: a.price, isFractional: false,
-        skipped: true, reason: `Necesita €${a.price.toFixed(0)} mín.`,
+        skipped: true, reason: skipReason,
         drift: a.drift, currentWeight: a.currentWeight,
       };
     }
     let extra = 0;
-    if (stranded > 0 && canBuyDrift > 0) extra = (a.drift / canBuyDrift) * stranded;
-    const total = a.cashAssigned + extra;
+    if (stranded > 0 && canBuyDrift > 0) extra = (Math.max(0, a.drift) / canBuyDrift) * stranded;
+    const totalBeforeCap = a.cashAssigned + extra;
+    // Re-aplicar cap después de redistribución para evitar leaks
+    const maxCap = totalPortfolioValueEUR > 0
+      ? Math.max(0, a.drift * totalPortfolioValueEUR)
+      : totalBeforeCap;
+    const total = Math.min(totalBeforeCap, maxCap);
     const shares = a.isFractional ? total / a.price : Math.floor(total / a.price);
+    const capNote = capped ? ` (cap €${a.cashAssigned.toFixed(0)} de €${(a as any).cashAssignedRaw.toFixed(0)})` : '';
     return {
       ticker: a.ticker, name: a.name,
       cashToInvest: total, actualCost: shares * a.price,
       motorWeight: a.finalAllocation, shares,
       pricePerShare: a.price, isFractional: a.isFractional,
       skipped: false,
-      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)${cycleTopActive ? ' ⚠️ rebalanceo pendiente' : ''}`,
+      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)${capNote}${cycleTopActive ? ' ⚠️ rebalanceo pendiente' : ''}`,
       drift: a.drift, currentWeight: a.currentWeight,
     };
   });
@@ -266,7 +311,7 @@ function buildAllocations(
 
 // ── FUNCIÓN PRINCIPAL ──────────────────────────────────────────────────
 export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
-  const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, olympusAvailableCash, tacticalAvailableCash, motorAllocations } = input;
+  const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, olympusAvailableCash, tacticalAvailableCash, motorAllocations, totalPortfolioValueEUR } = input;
   const ATK = DCA_CONFIG.ATTACK;
   const BLK = DCA_CONFIG.BLOCKS;
   const NRM = DCA_CONFIG.NORMAL;
@@ -361,7 +406,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   if (isBTC_OverrideCandidate) {
     const btcOnly = motorAllocations.filter(a => a.ticker === "BTC-EUR");
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
-    const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:");
+    const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:", new Set(), new Map(), false, totalPortfolioValueEUR ?? 0);
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
     return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/7 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
   }
@@ -410,7 +455,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // con target 10.5% recibía €1,591). Ahora siempre se respetan las posiciones
   // actuales. El ataque despliega más cash pero solo en activos con drift > 0.
   let allocs = totalCash > 0
-    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap, cycleTopActive)
+    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0)
     : [];
 
   // FIX-DCA-FALLBACK (v3 Jul-2026): cuando totalCash > 0 pero buildAllocations
@@ -431,7 +476,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
         driftVal: a.finalAllocation - (currentAllocMap.get(a.ticker) ?? 0),
       }));
       const cycleBlocked  = withDrift.filter(a => cycleTopTickers.has(a.ticker));
-      const overweight    = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal <= A.MIN_DRIFT);
+      const overweight    = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal <= A.MAX_OVERWEIGHT_BUY);
       const underweight   = withDrift.filter(a => !cycleTopTickers.has(a.ticker) && a.driftVal > A.MIN_DRIFT);
       const totalUWWeight = underweight.reduce((s, a) => s + a.finalAllocation, 0);
 

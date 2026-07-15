@@ -1139,10 +1139,12 @@ soxRsiWeekly,
       })),
       // FIX-AUDIT-R9 4: stale data circuit breaker
       staleDataBlock,
+      // FIX-CAP-ALLOC: pasar totalPortfolioValue para cap de compra por activo
+      totalPortfolioValueEUR: totalPortfolioValue,
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, totalPortfolioValue]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";
