@@ -21,22 +21,40 @@ const logContent = fs.readFileSync(logPath, 'utf8');
 const logLines = logContent.split('\n').filter(l => l.trim());
 const logHeaders = logLines[0].split(',');
 
+// Detect format: legacy (6 cols) vs institutional (9 cols)
+const isInstitutional = logHeaders.length >= 9;
+const formatLabel = isInstitutional ? 'INSTITUCIONAL (dual tracking)' : 'LEGACY';
+
 const dates: string[] = [];
-const values: number[] = [];
+const values: number[] = [];          // motorValue in new format
+const frozenValues: number[] = [];    // frozenValue in new format
 const drawdowns: number[] = [];
 const regimes: string[] = [];
 const allocStrings: string[] = [];
 const rebalanceFlags: string[] = [];
+const legacyPnLs: number[] = [];      // legacy P&L (col 7)
+const alphaDailies: number[] = [];    // alpha daily (col 8)
 
 for (let i = 1; i < logLines.length; i++) {
   const parts = logLines[i].split(',');
   if (parts.length < 4) continue;
   dates.push(parts[0]);
-  values.push(parseFloat(parts[1]));
-  drawdowns.push(parseFloat(parts[2].replace('%', '')) / 100);
-  regimes.push(parts[3]);
-  allocStrings.push(parts[4] || '');
-  rebalanceFlags.push(parts[5] || 'N');
+  if (isInstitutional) {
+    values.push(parseFloat(parts[1]));          // motorValue
+    frozenValues.push(parseFloat(parts[2]));    // frozenValue
+    drawdowns.push(parseFloat(parts[3].replace('%', '')) / 100);
+    regimes.push(parts[4]);
+    allocStrings.push(parts[5] || '');
+    rebalanceFlags.push(parts[6] || 'N');
+    legacyPnLs.push(parseFloat(parts[7]) || 0);
+    alphaDailies.push(parseFloat(parts[8]) || 0);
+  } else {
+    values.push(parseFloat(parts[1]));
+    drawdowns.push(parseFloat(parts[2].replace('%', '')) / 100);
+    regimes.push(parts[3]);
+    allocStrings.push(parts[4] || '');
+    rebalanceFlags.push(parts[5] || 'N');
+  }
 }
 
 const minData = isMonthly ? 60 : 20;
@@ -47,9 +65,14 @@ if (values.length < minData) {
 
 const modeLabel = isMonthly ? 'MENSUAL (Tier 1 + Tier 2)' : 'SEMANAL (Tier 1)';
 console.log('OLYMPUS V3+ — Monitorizacion ' + modeLabel);
-console.log('='.repeat(60));
+console.log('='.repeat(70));
+console.log('Formato: ' + formatLabel);
 console.log('Periodo: ' + dates[0] + ' -> ' + dates[dates.length-1]);
 console.log('Dias: ' + values.length);
+if (isInstitutional && legacyPnLs.length > 0) {
+  console.log('Legacy P&L (archivado): €' + legacyPnLs[legacyPnLs.length-1].toFixed(0));
+  console.log('Forward P&L (motor):    €' + (values[values.length-1] - values[0]).toFixed(0));
+}
 
 // ── Retornos diarios ──
 const returns: number[] = [];
@@ -116,6 +139,9 @@ let sortino = 0, calmar = 0, recoveryFactor = 0, winRate = 0;
 let maxConsecutiveLossDays = 0, ulcerIndex = 0, monthlyPosRatio = 0;
 let avgTurnover = 0, avgCostsBps = 0;
 let ewSharpe = 0, sharpeDiffVsEW = 0;
+let frozenSharpe = 0, frozenCagr = 0, frozenMaxDD = 0, frozenVol = 0;
+let alphaCagr = 0, alphaMeanDaily = 0, alphaTStat = 0, alphaSignificant = false;
+let alphaWinRate = 0;
 
 if (isMonthly) {
   // Sortino: usa solo retornos negativos para la desviacion
@@ -196,6 +222,45 @@ if (isMonthly) {
   }
   avgTurnover = turnovers.length > 0 ? turnovers.reduce((a,b)=>a+b,0) / turnovers.length : 0;
   avgCostsBps = avgTurnover * 15; // 15bps por operacion
+
+  // ── FROZEN BENCHMARK (solo si formato institucional) ──
+  if (isInstitutional && frozenValues.length > 0) {
+    const frozenReturns: number[] = [];
+    for (let i = 1; i < frozenValues.length; i++) {
+      frozenReturns.push(frozenValues[i-1] > 0 ? frozenValues[i] / frozenValues[i-1] - 1 : 0);
+    }
+    if (frozenReturns.length > 0) {
+      const fMean = frozenReturns.reduce((a,b)=>a+b,0)/frozenReturns.length;
+      const fVar = frozenReturns.reduce((s,r)=>s+(r-fMean)**2,0)/frozenReturns.length;
+      const fStd = Math.sqrt(Math.max(1e-16, fVar));
+      frozenSharpe = (fMean*252 - 0.04) / Math.max(0.01, fStd*Math.sqrt(252));
+      let fTR = 1.0;
+      for (const r of frozenReturns) fTR *= (1+r);
+      const fYears = Math.max(0.01, frozenReturns.length/252);
+      frozenCagr = fTR ** (1/fYears) - 1;
+      frozenVol = fStd * Math.sqrt(252);
+      let fPeak = frozenValues[0];
+      for (const v of frozenValues) {
+        if (v > fPeak) fPeak = v;
+        const dd = (v - fPeak) / fPeak;
+        if (dd < frozenMaxDD) frozenMaxDD = dd;
+      }
+    }
+
+    // Alpha: from alphaDaily column
+    if (alphaDailies.length > 0) {
+      const validAlphas = alphaDailies.slice(1).filter(a => !isNaN(a) && isFinite(a));
+      if (validAlphas.length > 0) {
+        alphaMeanDaily = validAlphas.reduce((a,b)=>a+b,0)/validAlphas.length;
+        alphaCagr = alphaMeanDaily * 252;
+        const alphaVar = validAlphas.reduce((s,a)=>s+(a-alphaMeanDaily)**2,0)/validAlphas.length;
+        const alphaStd = Math.sqrt(Math.max(1e-16, alphaVar));
+        alphaTStat = alphaMeanDaily / Math.max(1e-10, alphaStd/Math.sqrt(validAlphas.length));
+        alphaSignificant = Math.abs(alphaTStat) > 1.96;
+        alphaWinRate = validAlphas.filter(a => a > 0).length / validAlphas.length;
+      }
+    }
+  }
 }
 
 // ── EW Benchmark (desde CSV) ──
@@ -292,6 +357,35 @@ if (isMonthly) {
   }
   if (recoveryDays > 0) console.log('Recovery del MaxDD:     ' + recoveryDays + ' dias');
   else if (recoveryDays === -1) console.log('Recovery del MaxDD:     NO recuperado aun');
+
+  // ── ALPHA & FROZEN BENCHMARK ──
+  if (isInstitutional && frozenValues.length > 0) {
+    console.log('\n--- BENCHMARK CONGELADO (Do-Nothing) ---');
+    console.log('Motor  Sharpe:          ' + sharpe.toFixed(3));
+    console.log('Frozen Sharpe:          ' + frozenSharpe.toFixed(3));
+    console.log('Motor  CAGR:            ' + (cagr*100).toFixed(2) + '%');
+    console.log('Frozen CAGR:            ' + (frozenCagr*100).toFixed(2) + '%');
+    console.log('Motor  MaxDD:           ' + (maxDD*100).toFixed(2) + '%');
+    console.log('Frozen MaxDD:           ' + (frozenMaxDD*100).toFixed(2) + '%');
+    console.log('Motor  Vol:             ' + (annVol*100).toFixed(2) + '%');
+    console.log('Frozen Vol:             ' + (frozenVol*100).toFixed(2) + '%');
+    console.log('Motor  Final (€):       ' + values[values.length-1].toFixed(0));
+    console.log('Frozen Final (€):       ' + frozenValues[frozenValues.length-1].toFixed(0));
+
+    console.log('\n--- ALPHA (Motor - Frozen) ---');
+    console.log('Alpha CAGR (anual):    ' + (alphaCagr >= 0 ? '+' : '') + (alphaCagr*100).toFixed(2) + '%');
+    console.log('Alpha t-statistic:     ' + alphaTStat.toFixed(3));
+    console.log('Alpha significativo:   ' + (alphaSignificant ? '✅ SI (95%)' : '❌ NO'));
+    console.log('Alpha Win Rate:        ' + (alphaWinRate*100).toFixed(1) + '% de dias alpha > 0');
+
+    if (alphaSignificant && alphaCagr > 0) {
+      console.log('✅ EL MOTOR GENERA VALOR — alpha positivo y significativo.');
+    } else if (alphaSignificant && alphaCagr < 0) {
+      console.log('🔴 EL MOTOR DESTRUYE VALOR — alpha negativo y significativo.');
+    } else {
+      console.log('🟡 Alpha no significativo — continuar monitoreando.');
+    }
+  }
 }
 
 // ── Alerta con contexto de mercado ──
@@ -343,6 +437,21 @@ if (isMonthly) {
     alerts.push({ level: 'WARNING', msg: 'Sharpe muy inferior a EW (' + sharpeDiffVsEW.toFixed(2) + ') sin bull market.' });
   }
   if (monthlyPosRatio < 0.40 && monthlyPosRatio > 0) alerts.push({ level: 'WARNING', msg: 'Meses positivos < 40% (' + (monthlyPosRatio*100).toFixed(0) + '%).' });
+
+  // Alpha alerts (solo formato institucional)
+  if (isInstitutional && alphaDailies.length > 0) {
+    if (alphaSignificant && alphaCagr < -0.05) {
+      alerts.push({ level: 'CRITICO', msg: 'Alpha NEGATIVO y significativo (' + (alphaCagr*100).toFixed(1) + '% anual). Motor destruye valor. PAUSAR.' });
+    } else if (alphaCagr < -0.02 && alphaDailies.length > 60) {
+      alerts.push({ level: 'WARNING', msg: 'Alpha negativo (' + (alphaCagr*100).toFixed(2) + '% anual) por >60 dias.' });
+    }
+    if (frozenSharpe - sharpe > 0.15 && frozenValues.length > 60) {
+      alerts.push({ level: 'WARNING', msg: 'Frozen Sharpe supera al motor por +' + ((frozenSharpe - sharpe)*100).toFixed(0) + 'pp. Mejor no hacer nada.' });
+    }
+    if (alphaWinRate < 0.45 && alphaDailies.length > 60) {
+      alerts.push({ level: 'INFO', msg: 'Alpha Win Rate < 45% (' + (alphaWinRate*100).toFixed(0) + '%). Motor pierde vs frozen la mayoria de dias.' });
+    }
+  }
 }
 
 if (alerts.length === 0) {
@@ -400,6 +509,16 @@ if (isMonthly) {
   report.metrics.ewSharpe = ewSharpe;
   report.metrics.sharpeDiffVsEW = sharpeDiffVsEW;
   report.metrics.recoveryDays = recoveryDays;
+  if (isInstitutional) {
+    report.metrics.alpha = { cagr: alphaCagr, tStat: alphaTStat, significant: alphaSignificant, winRate: alphaWinRate };
+    report.metrics.frozen = { sharpe: frozenSharpe, cagr: frozenCagr, maxDD: frozenMaxDD, vol: frozenVol };
+    report.institutional = {
+      format: 'dual tracking (motor vs frozen do-nothing)',
+      legacyPnL: legacyPnLs.length > 0 ? legacyPnLs[legacyPnLs.length-1] : 0,
+      forwardPnL: values.length > 0 ? values[values.length-1] - values[0] : 0,
+      day0MtM: true,
+    };
+  }
 }
 
 fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
