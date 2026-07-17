@@ -169,14 +169,32 @@ const result = runBacktest({
 });
 
 const backtestStart = 252;
-const forwardStartRecordIdx = cutoffIdx - backtestStart;
+let forwardStartRecordIdx = cutoffIdx - backtestStart;
 
-if (forwardStartRecordIdx < 0 || forwardStartRecordIdx >= result.dailyRecords.length) {
-  console.log('ERROR: forward start index ' + forwardStartRecordIdx + ' out of range [0, ' + (result.dailyRecords.length-1) + ']');
+if (forwardStartRecordIdx < 0) {
+  console.log('ERROR: cutoff date too early — need at least ' + backtestStart + ' days of lookback data before ' + paperStart);
+  console.log('First available date with enough lookback: ' + dates[backtestStart]);
   process.exit(1);
 }
 
+// Clamp to valid range: cutoff may be at the very end of data with zero forward days
+const origForwardIdx = forwardStartRecordIdx;
+if (forwardStartRecordIdx >= result.dailyRecords.length) {
+  forwardStartRecordIdx = result.dailyRecords.length - 1;
+  if (forwardStartRecordIdx < 0) {
+    console.log('ERROR: not enough data for any forward period. Add more data to the CSV.');
+    process.exit(1);
+  }
+}
+
 const forwardRecords = result.dailyRecords.slice(forwardStartRecordIdx);
+
+if (origForwardIdx >= result.dailyRecords.length) {
+  console.log('⚠️  ADVERTENCIA: La fecha de corte (' + paperStart + ') está al borde de los datos.');
+  console.log('⚠️  Solo hay ' + forwardRecords.length + ' día(s) de datos forward. El backtest necesita al menos 21-63 días para ser significativo.');
+  console.log('⚠️  Ejecuta append_weekly_data.ts para añadir datos frescos y vuelve a correr paper_trading.ts.');
+  console.log();
+}
 
 // Scale factor: backtest starts with 10_000 but the user has totalPortfolioDay0
 // The backtest portfolio value at cutoff (first forward record) is our anchor

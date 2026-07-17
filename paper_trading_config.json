@@ -1,5 +1,5 @@
 {
-  "paper_trading_start": "2026-07-17",
+  "paper_trading_start": "2026-07-14",
   "initial_cash": 7021,
   "positions": {
     "BTC-EUR":    { "shares": 0.031285, "avg_price_original": 88010.99 },
@@ -10,18 +10,19 @@
     "VVSM.DE":    { "shares": 1,       "avg_price_original": 52.01 }
   },
   "mark_to_market_day0": {
-    "BTC-EUR":    56618.52,
-    "EMXC.DE":    40.51,
-    "0P00000WLG.F": 62.68,
-    "PPFB.DE":    68.56,
-    "URNU.DE":    22.02,
-    "VVSM.DE":    100.56
+    "BTC-EUR":    54675.57,
+    "EMXC.DE":    39.94,
+    "0P00000WLG.F": 62.99,
+    "PPFB.DE":    68.53,
+    "URNU.DE":    21.69,
+    "VVSM.DE":    99.54
   },
   "notes": [
     "Todas las posiciones se marcan a precio de mercado el dia 0.",
     "El P&L del paper trading empieza desde CERO (reset institucional).",
     "Las perdidas historicas (legacy P&L) se archivan separadamente.",
     "Se trackea DOBLE: motor activo (Olympus) vs congelado (do-nothing).",
-    "Alpha real = rendimiento motor - rendimiento congelado."
+    "Alpha real = rendimiento motor - rendimiento congelado.",
+    "Dia 0 ajustado a 2026-07-14 para tener datos forward (2026-07-17)."
   ]
 }
