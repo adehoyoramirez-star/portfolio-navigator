@@ -590,28 +590,32 @@ const formatCurrency = (value: number): string => {
 
   const yieldSpread = manualBond10y - bond2y;
 
+  // FIX-HWM-INSTITUCIONAL (Jul 2026): High-Water Mark real, no contrafactual.
+  // ANTES: se recorria TODA la historia de precios con las shares ACTUALES,
+  //   creando un pico fantasma (ej: 0.3 BTC x 100K = 30.000 que nunca existio).
+  //   Resultado: Kill Switch L4 tras cualquier cambio de composicion.
+  // AHORA: se persiste el valor maximo REAL alcanzado por la cartera en
+  //   localStorage (olympus_hwm). El HWM solo sube cuando el valor actual
+  //   supera el maximo historico real. Si compras en suelo, DD = 0%.
+  //   Si la cartera cae de verdad, el HWM queda alto y el Kill Switch protege.
+  //   Hedge-fund standard: Bridgewater, AQR, Two Sigma usan HWM, no contrafactual.
+  const HWM_KEY = "olympus_hwm";
+  const hwmRef = useRef<number>(Number(localStorage.getItem(HWM_KEY)) || 0);
   const portfolioDrawdown = useMemo(() => {
-    if (!marketData) return 0;
-    // FIX-CASH-DD: incluir cashReserve en currentTotal. Sin esto, la formula
-    // (currentTotal - peak) / peak es inconsistente porque peak SI incluye cash.
     const currentTotal = totalPortfolioValue + cashReserve;
     if (currentTotal <= 0) return 0;
-    let peak = 0;
-    const minLen = Math.min(...portfolio.assets.map(a =>
-      (marketData.closesHistory[a.ticker] ?? []).length
-    ));
-    if (minLen < 2) return 0;
-    for (let t = 0; t < minLen; t++) {
-      let dayValue = 0;
-      for (const asset of portfolio.assets) {
-        const closes = marketData.closesHistory[asset.ticker] ?? [];
-        dayValue += (closes[closes.length - minLen + t] ?? 0) * asset.shares;
-      }
-      dayValue += cashReserve;  // FIX-CASH-DD: cash no se deprecia
-      if (dayValue > peak) peak = dayValue;
+    const peak = hwmRef.current > 0 ? hwmRef.current : currentTotal;
+    if (currentTotal > peak) return 0; // nuevo maximo -> DD 0%
+    return (currentTotal - peak) / peak;
+  }, [totalPortfolioValue, cashReserve]);
+  // Persistir HWM como efecto puro (separa calculo de side-effect)
+  useEffect(() => {
+    const currentTotal = totalPortfolioValue + cashReserve;
+    if (currentTotal > hwmRef.current) {
+      hwmRef.current = currentTotal;
+      localStorage.setItem(HWM_KEY, String(currentTotal));
     }
-    return peak > 0 ? (currentTotal - peak) / peak : 0;
-  }, [marketData, portfolio.assets, totalPortfolioValue, cashReserve]);
+  }, [totalPortfolioValue, cashReserve]);
 
   const effectiveCEWSHistory = useMemo(() => {
     if (cewsHistory.length >= 4) return cewsHistory;
