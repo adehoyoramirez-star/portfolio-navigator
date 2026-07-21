@@ -601,13 +601,14 @@ const formatCurrency = (value: number): string => {
   //   Hedge-fund standard: Bridgewater, AQR, Two Sigma usan HWM, no contrafactual.
   const HWM_KEY = "olympus_hwm";
   const hwmRef = useRef<number>(Number(localStorage.getItem(HWM_KEY)) || 0);
+  const [hwmResetKey, setHwmResetKey] = useState(0);
   const portfolioDrawdown = useMemo(() => {
     const currentTotal = totalPortfolioValue + cashReserve;
     if (currentTotal <= 0) return 0;
     const peak = hwmRef.current > 0 ? hwmRef.current : currentTotal;
     if (currentTotal > peak) return 0; // nuevo maximo -> DD 0%
     return (currentTotal - peak) / peak;
-  }, [totalPortfolioValue, cashReserve]);
+  }, [totalPortfolioValue, cashReserve, hwmResetKey]);
   // Persistir HWM como efecto puro (separa calculo de side-effect)
   useEffect(() => {
     const currentTotal = totalPortfolioValue + cashReserve;
@@ -615,7 +616,14 @@ const formatCurrency = (value: number): string => {
       hwmRef.current = currentTotal;
       localStorage.setItem(HWM_KEY, String(currentTotal));
     }
-  }, [totalPortfolioValue, cashReserve]);
+  }, [totalPortfolioValue, cashReserve, hwmResetKey]);
+  const handleResetHWM = useCallback(() => {
+    if (window.confirm("¿Resetear el High-Water Mark al valor actual de la cartera?\n\nEsto reinicia el drawdown al 0%. Úsalo solo cuando:\n• Cambiaste la composición de la cartera (más/menos shares)\n• Hiciste pruebas que inflaron artificialmente el HWM\n• Quieres reiniciar la medición desde hoy")) {
+      hwmRef.current = 0;
+      localStorage.removeItem(HWM_KEY);
+      setHwmResetKey(k => k + 1);
+    }
+  }, []);
 
   const effectiveCEWSHistory = useMemo(() => {
     if (cewsHistory.length >= 4) return cewsHistory;
@@ -2680,6 +2688,22 @@ soxRsiWeekly,
                 {(portfolioDrawdown * 100).toFixed(1)}%
               </div>
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>vs peak histórico</div>
+              <button
+                onClick={handleResetHWM}
+                title="Resetear High-Water Mark al valor actual"
+                style={{
+                  marginTop: "0.4rem",
+                  padding: "0.2rem 0.5rem",
+                  fontSize: "0.65rem",
+                  background: "transparent",
+                  color: "#6b7280",
+                  border: "1px solid #374151",
+                  borderRadius: "0.25rem",
+                  cursor: "pointer",
+                }}
+              >
+                ↺ Reset HWM
+              </button>
             </div>
             <div style={{ background: "#1f2937", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
               <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Retorno Esp. (ajust. régimen)</div>
