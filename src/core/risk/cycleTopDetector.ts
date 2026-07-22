@@ -157,22 +157,11 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
     topSignals += 2; reasons.push(`RSI semanal ${btcRsiWeekly.toFixed(0)} — sobrecompra extrema en timeframe semanal`);
   }
 
-  // Calcular multiplicador y zona
-  let multiplier: number;
-  let zone: CycleTopSignal["zone"];
-  let trimPct = 0;
-
-  if (topSignals >= 5) {
-    multiplier = 0.10; zone = "EXTREME"; trimPct = 80;  // vender 80% de la posición
-  } else if (topSignals >= 3) {
-    multiplier = 0.30; zone = "DANGER";  trimPct = 60;  // vender 60%
-  } else if (topSignals >= 2) {
-    multiplier = 0.50; zone = "CAUTION"; trimPct = 40;  // vender 40%
-  } else if (topSignals >= 1) {
-    multiplier = 0.70; zone = "CAUTION"; trimPct = 20;  // vender 20%
-  } else {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-  }
+  // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
+  //   multiplierFromScore usa rampas suaves entre los puntos de anclaje originales
+  //   (0→1.0, 0.5→0.75, 1.5→0.55, 2.5→0.35, 3.5→0.20, 5.0→0.10).
+  //   Sin acantilados: topSignals=1 → ~0.65 (antes 0.70), topSignals=3 → ~0.28 (antes 0.30).
+  const { multiplier, zone, trimPct } = multiplierFromScore(topSignals);
 
   // MVRV como indicador primario para mostrar
   const indicatorValue = isValidReading(mvrvRatio)
@@ -220,35 +209,38 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
   //   El boost es asimétrico: el ratio alto castiga más de lo que el bajo premia,
   //   porque el uranio es un activo de alta volatilidad (URNU ~35% vol).
 
-  let multiplier: number;
-  let zone: CycleTopSignal["zone"];
-  let trimPct = 0;
-  let reason: string;
+  // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
+  //   Rampa suave en ratio Spot/LT. Ratio ≤ 1.0 → multiplier 1.0 (SAFE).
+  //   Ratio > 1.0 castiga progresivamente: 1.10→0.75, 1.20→0.55, 1.30→0.35, 1.50→0.15, 1.70+→0.10.
+  //   Ratio < 0.85 → zona de acumulación (multiplier sigue siendo 1.0 porque no hay techo).
+  const multiplier = ratio <= 1.0 ? 1.0 : smoothScore(ratio, [
+    [1.0, 1.0],
+    [1.10, 0.75],
+    [1.20, 0.55],
+    [1.30, 0.35],
+    [1.50, 0.15],
+    [1.70, 0.10],
+  ]);
+  const zone: CycleTopSignal["zone"] =
+    multiplier <= 0.20 ? "EXTREME" : multiplier <= 0.40 ? "DANGER" : multiplier < 1.0 ? "CAUTION" : "SAFE";
+  const trimPct = Math.round((1 - multiplier) * 100);
 
-  if (ratio > 1.50) {
-    multiplier = 0.15; zone = "EXTREME"; trimPct = 75;
-    reason = `Spot/LT ${ratio.toFixed(2)} — utilities comprando en pánico (como 2007). Techo de ciclo inminente.`;
-  } else if (ratio > 1.30) {
-    multiplier = 0.35; zone = "DANGER";  trimPct = 55;
-    reason = `Spot/LT ${ratio.toFixed(2)} — fuerte backwardation. Demanda spot muy por encima de contratos LT.`;
-  } else if (ratio > 1.20) {
-    multiplier = 0.55; zone = "CAUTION"; trimPct = 35;
-    reason = `Spot/LT ${ratio.toFixed(2)} — alerta de ciclo. Spot superando LT en >20%.`;
-  } else if (ratio > 1.10) {
-    multiplier = 0.75; zone = "CAUTION"; trimPct = 15;
-    reason = `Spot/LT ${ratio.toFixed(2)} — ligera tensión. Spot empieza a superar al LT.`;
-  } else if (ratio < 0.70) {
-    // FIX-URANIUM-VALUE: descuento profundo — utilities pagan +43% más por contratos LP.
-    // Señal de acumulación agresiva. Raro: solo ha ocurrido en 2016 y brevemente en 2020.
-    multiplier = 1.0; zone = "SAFE"; trimPct = 0;
+  let reason: string;
+  if (ratio < 0.70) {
     reason = `Spot/LT ${ratio.toFixed(2)} — descuento profundo. Spot muy por debajo del LT: utilities pagan fuerte prima por suministro futuro. Señal de acumulación agresiva.`;
   } else if (ratio < 0.85) {
-    // FIX-URANIUM-VALUE: spot barato vs contratos LP.
-    // El mercado de futuros anticipa mayor demanda → ventana de acumulación.
-    multiplier = 1.0; zone = "SAFE"; trimPct = 0;
     reason = `Spot/LT ${ratio.toFixed(2)} — spot barato vs contratos a largo plazo. Contango saludable: el mercado anticipa tightening futuro. Ventana de acumulación.`;
+  } else if (ratio > 1.50) {
+    reason = `Spot/LT ${ratio.toFixed(2)} — utilities comprando en pánico (como 2007). Techo de ciclo inminente.`;
+  } else if (ratio > 1.30) {
+    reason = `Spot/LT ${ratio.toFixed(2)} — fuerte backwardation. Demanda spot muy por encima de contratos LT.`;
+  } else if (ratio > 1.20) {
+    reason = `Spot/LT ${ratio.toFixed(2)} — alerta de ciclo. Spot superando LT en >20%.`;
+  } else if (ratio > 1.10) {
+    reason = `Spot/LT ${ratio.toFixed(2)} — ligera tensión. Spot empieza a superar al LT.`;
+  } else if (ratio > 1.0) {
+    reason = `Spot/LT ${ratio.toFixed(2)} — spot ligeramente por encima del LT. Prima modesta, sin señal de alerta.`;
   } else {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
     reason = `Spot/LT ${ratio.toFixed(2)} — equilibrio normal entre spot y contratos a largo plazo.`;
   }
 
@@ -317,23 +309,11 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  // Asignar multiplicador y zona según puntuación acumulada
-  let multiplier: number;
-  let zone: CycleTopSignal["zone"];
-  let trimPct = 0;
-
-  // Umbrales ajustados: con dos señales ya estamos en DANGER
-  if (topSignals >= 3) {
-    multiplier = 0.15; zone = "EXTREME"; trimPct = 80;
-  } else if (topSignals >= 2) {
-    multiplier = 0.35; zone = "DANGER";  trimPct = 60;
-  } else if (topSignals >= 1) {
-    multiplier = 0.55; zone = "CAUTION"; trimPct = 35;
-  } else if (topSignals >= 0.5) {
-    multiplier = 0.75; zone = "CAUTION"; trimPct = 15; // señal débil
-  } else {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-  }
+  // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
+  //   multiplierFromScore con rampas suaves. Semis usa los mismos anclajes genéricos:
+  //   topSignals=0.5→0.75, 1→0.65, 2→0.45, 3→0.28.
+  //   La suavidad elimina el acantilado donde topSignals=1.99→0.35 y 2.01→0.55.
+  const { multiplier, zone, trimPct } = multiplierFromScore(topSignals);
 
   // Construir valor del indicador para mostrar
   const parts: string[] = [];
@@ -651,24 +631,10 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  let multiplier: number;
-  let zone: CycleTopSignal["zone"];
-  let trimPct = 0;
-
-  // Umbrales ajustados al alza: con DXY + RSI + P/E, topSignals puede alcanzar 7+
-  if (topSignals >= 5) {
-    multiplier = 0.10; zone = "EXTREME"; trimPct = 85;
-  } else if (topSignals >= 3.5) {
-    multiplier = 0.20; zone = "EXTREME"; trimPct = 75;
-  } else if (topSignals >= 2.5) {
-    multiplier = 0.35; zone = "DANGER";  trimPct = 60;
-  } else if (topSignals >= 1.5) {
-    multiplier = 0.55; zone = "CAUTION"; trimPct = 35;
-  } else if (topSignals >= 0.5) {
-    multiplier = 0.75; zone = "CAUTION"; trimPct = 15;
-  } else {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-  }
+  // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
+  //   multiplierFromScore con rampas suaves. EMXC mapea casi exacto a los anclajes genéricos:
+  //   topSignals=0.5→0.75, 1.5→0.55, 2.5→0.35, 3.5→0.20, 5.0→0.10 (idénticos a los antiguos).
+  const { multiplier, zone, trimPct } = multiplierFromScore(topSignals);
 
   const parts: string[] = [];
   if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);
