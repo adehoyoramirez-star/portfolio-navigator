@@ -32,6 +32,58 @@ const isValidReading = (
 ): v is number =>
   v !== undefined && Number.isFinite(v) && v > min && v < max;
 
+// ── Interpolación lineal entre umbrales ──────────────────────────
+// FIX-SMOOTH-THRESHOLDS (Jul-2026): reemplaza if/else duros con
+//   interpolación lineal continua. Elimina el acantilado donde
+//   P/E 18.99 → score 0 y P/E 19.01 → score 1.0.
+//
+//   thresholds: pares [umbral, score] ordenados de menor a mayor.
+//   x ≤ thresholds[0][0] → 0
+//   x ≥ thresholds[last][0] → thresholds[last][1]
+//   entre medias → interpolación lineal
+//
+//   Ejemplo: P/E 19.3 con thresholds [[17,1.0],[22,1.5],[30,2.5]]
+//     → score = 1.0 + (1.5-1.0)×(19.3-17)/(22-17) = 1.0 + 0.23 = 1.23
+const smoothScore = (
+  x: number,
+  thresholds: [number, number][],
+): number => {
+  if (thresholds.length === 0) return 0;
+  const sorted = [...thresholds].sort((a, b) => a[0] - b[0]);
+  if (x <= sorted[0][0]) return 0;
+  if (x >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const [t1, s1] = sorted[i];
+    const [t2, s2] = sorted[i + 1];
+    if (x >= t1 && x <= t2) {
+      return s1 + (s2 - s1) * (x - t1) / (t2 - t1);
+    }
+  }
+  return 0;
+};
+
+// ── Interpolación suave para topSignals → multiplier/trimPct ─────
+// Convierte topSignals (0-7+) en [multiplier, zone, trimPct] usando
+// rampas lineales entre los puntos de anclaje originales.
+const multiplierFromScore = (score: number): { multiplier: number; zone: CycleTopSignal["zone"]; trimPct: number } => {
+  // Puntos de anclaje: [topSignals, multiplier]. Incluye [0, 1.0] → sin rama manual.
+  const multiplier = smoothScore(score, [
+    [0, 1.0],
+    [0.5, 0.75],
+    [1.5, 0.55],
+    [2.5, 0.35],
+    [3.5, 0.20],
+    [5.0, 0.10],
+  ]);
+  // Zone: discreta por diseño (SAFE/CAUTION/DANGER/EXTREME son etiquetas cualitativas).
+  // El multiplier SÍ es continuo gracias a smoothScore.
+  const zone: CycleTopSignal["zone"] =
+    score >= 3.5 ? "EXTREME" : score >= 2.5 ? "DANGER" : score >= 0.5 ? "CAUTION" : "SAFE";
+  // trimPct = 1 − multiplier (consistente: ×0.55 = −45% trim, no 35% arbitrario)
+  const trimPct = Math.round((1 - multiplier) * 100);
+  return { multiplier: Math.max(0.05, Math.min(1, multiplier)), zone, trimPct };
+};
+
 export interface CycleTopInputs {
   // BTC
   mvrvRatio?: number;          // lookintobitcoin.com — umbral techo: >3.5
@@ -419,105 +471,78 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   let topSignals = 0;
   const reasons: string[] = [];
 
-  // RSI Semanal (mismo peso que antes)
+  // RSI Semanal — interpolación suave (FIX-SMOOTH-THRESHOLDS)
+  // Puntos de anclaje: RSI 75→score 0, RSI 80→1.0, RSI 85→1.5 (cap en 2.0)
   if (isValidReading(wlgRsiWeekly, 0, 100)) {
-    if (wlgRsiWeekly > 85) {
-      topSignals += 2;
-      reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra extrema`);
-    } else if (wlgRsiWeekly > 80) {
-      topSignals += 1.5;
-      reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra severa`);
-    } else if (wlgRsiWeekly > 75) {
-      topSignals += 1;
-      reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra`);
-    }
+    const rsiScore = smoothScore(wlgRsiWeekly, [
+      [75, 1.0],
+      [80, 1.5],
+      [85, 2.0],
+    ]);
+    topSignals += rsiScore;
+    if (rsiScore >= 2.0) reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra extrema`);
+    else if (rsiScore >= 1.5) reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra severa`);
+    else if (rsiScore >= 1.0) reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra`);
+    else if (rsiScore > 0) reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — zona elevada`);
   }
 
-  // FIX-INSTITUTIONAL (Jul-2026): P/E PRIMARIO, CAPE CONFIRMATORIO.
-  //   Principio: dato real del activo > proxy de otro índice.
-  //   El P/E 19.4 de URTH (MSCI World) es el valuation driver. El CAPE 41.7
-  //   del S&P 500 confirma si está más alarmado que el P/E (+0.5 extra).
-  //   Sin P/E disponible, CAPE actúa como fallback primario.
+  // FIX-INSTITUTIONAL (Jul-2026) + FIX-SMOOTH-THRESHOLDS (Jul-2026):
+  //   P/E PRIMARIO, CAPE CONFIRMATORIO. Ambos con interpolación lineal.
+  //   Umbrales P/E: [17→1.0, 22→1.5, 25→2.0, 30→2.5] (media ~17).
+  //   Umbrales CAPE: [27→1.5, 30→2.0, 33→2.5, 38→3.0, 44→3.5] (cap).
+  //   Con P/E 19.3: score=1.0+0.5×(19.3-17)/(22-17)=1.23 (antes 1.0, cliff en 19).
   let valuationScore = 0;
   const valuationReasons: string[] = [];
   const hasPE = isValidReading(wlgPERatio);
   const hasCAPE = isValidReading(wlgCAPE);
 
   if (hasPE) {
-    // ── PRIMARIO: P/E del MSCI World (dato real del fondo URTH) ──
-    // Umbrales recalibrados para MSCI World (media histórica ~15-17, rango 10-30).
-    if (wlgPERatio > 30) {
-      valuationScore = 2.5;
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración extrema (solo 2000 y 2021)`);
-    } else if (wlgPERatio > 25) {
-      valuationScore = 2.0;
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado muy caro`);
-    } else if (wlgPERatio > 22) {
-      valuationScore = 1.5;
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado caro`);
-    } else if (wlgPERatio > 19) {
-      valuationScore = 1.0;
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~17)`);
-    } else if (wlgPERatio > 17) {
-      valuationScore = 0.5;
-      valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — ligeramente por encima de la media`);
-    }
+    valuationScore = smoothScore(wlgPERatio, [
+      [17, 1.0],
+      [22, 1.5],
+      [25, 2.0],
+      [30, 2.5],
+    ]);
+    if (valuationScore >= 2.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración extrema (solo 2000 y 2021)`);
+    else if (valuationScore >= 2.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado muy caro`);
+    else if (valuationScore >= 1.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado caro`);
+    else if (valuationScore >= 1.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~17)`);
+    else if (valuationScore > 0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — ligeramente por encima de la media`);
 
-    // ── CONFIRMATORIO: CAPE del S&P 500 (+0.5 si está más alarmado que el P/E) ──
+    // CAPE confirmatorio: +0.5 si está más alarmado que el P/E
     if (hasCAPE) {
-      let capeImpliedScore = 0;
-      if (wlgCAPE > 44) capeImpliedScore = 3;
-      else if (wlgCAPE > 38) capeImpliedScore = 2.5;
-      else if (wlgCAPE > 33) capeImpliedScore = 2;
-      else if (wlgCAPE > 30) capeImpliedScore = 1.5;
-      else if (wlgCAPE > 27) capeImpliedScore = 0.75;
-
-      if (capeImpliedScore > valuationScore) {
+      const capeScore = smoothScore(wlgCAPE, [
+        [27, 0.75],
+        [30, 1.5],
+        [33, 2.0],
+        [38, 2.5],
+        [44, 3.0],
+      ]);
+      if (capeScore > valuationScore) {
         valuationScore += 0.5;
         valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — confirma sobrevaloración (proxy, no dato del fondo)`);
       }
     }
   } else if (hasCAPE) {
-    // ── FALLBACK: sin P/E, CAPE actúa como primario ──
-    if (wlgCAPE > 44) {
-      valuationScore = 3;
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — nivel de burbuja dot-com (récord: 44.2 en 1999) [fallback: sin P/E]`);
-    } else if (wlgCAPE > 38) {
-      valuationScore = 2.5;
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — sobrevaloración extrema (>38: solo 1999 y 2021) [fallback: sin P/E]`);
-    } else if (wlgCAPE > 33) {
-      valuationScore = 2;
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado significativamente caro [fallback: sin P/E]`);
-    } else if (wlgCAPE > 30) {
-      valuationScore = 1.5;
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro [fallback: sin P/E]`);
-    } else if (wlgCAPE > 27) {
-      valuationScore = 0.75;
-      valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por encima de la media [fallback: sin P/E]`);
-    }
+    valuationScore = smoothScore(wlgCAPE, [
+      [27, 0.75],
+      [30, 1.5],
+      [33, 2.0],
+      [38, 2.5],
+      [44, 3.0],
+    ]);
+    if (valuationScore >= 3.0) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — nivel de burbuja dot-com (récord: 44.2 en 1999) [fallback: sin P/E]`);
+    else if (valuationScore >= 2.5) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — sobrevaloración extrema (>38: solo 1999 y 2021) [fallback: sin P/E]`);
+    else if (valuationScore >= 2.0) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado significativamente caro [fallback: sin P/E]`);
+    else if (valuationScore >= 1.5) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro [fallback: sin P/E]`);
+    else if (valuationScore > 0) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por encima de la media [fallback: sin P/E]`);
   }
 
   topSignals += valuationScore;
   reasons.push(...valuationReasons);
 
-  let multiplier: number;
-  let zone: CycleTopSignal["zone"];
-  let trimPct = 0;
-
-  // Umbrales ajustados: con CAPE + P/E + RSI simultáneos, topSignals puede llegar a 7+
-  if (topSignals >= 5) {
-    multiplier = 0.10; zone = "EXTREME"; trimPct = 85;
-  } else if (topSignals >= 3.5) {
-    multiplier = 0.20; zone = "EXTREME"; trimPct = 75;
-  } else if (topSignals >= 2.5) {
-    multiplier = 0.35; zone = "DANGER";  trimPct = 60;
-  } else if (topSignals >= 1.5) {
-    multiplier = 0.55; zone = "CAUTION"; trimPct = 35;
-  } else if (topSignals >= 0.5) {
-    multiplier = 0.75; zone = "CAUTION"; trimPct = 15;
-  } else {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-  }
+  // FIX-SMOOTH-THRESHOLDS: interpolación lineal en vez de if/else duros
+  const { multiplier, zone, trimPct } = multiplierFromScore(topSignals);
 
   const parts: string[] = [];
   if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
