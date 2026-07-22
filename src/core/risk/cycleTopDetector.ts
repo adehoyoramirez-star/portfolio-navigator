@@ -92,6 +92,9 @@ export interface CycleTopInputs {
   puellMultiple?: number;      // Puell Multiple — lookintobitcoin.com. Umbral techo: >3.5 (euforia minera)
                                 //   Complementa MVRV midiendo supply-side (agotamiento de mineros).
                                 //   Puell > 2.5 = mineros con alta rentabilidad, > 3.5 = euforia insostenible.
+  mvrvZScore?: number;         // MVRV Z-Score — Glassnode (normalizado por volatilidad histórica).
+                                //   Más robusto en era ETF que el ratio bruto. Umbral techo canónico: >7.
+                                //   Si está disponible, se usa como PRIMARIO (reemplaza al ratio bruto).
 
   // Uranio
   uraniumSpotPrice?: number;   // $/lb — uxc.com o cameco.com/invest
@@ -145,16 +148,45 @@ export interface CycleTopOutput {
 
 // ── BTC ──────────────────────────────────────────────────────────
 function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { mvrvRatio, btcDominanceFalling, btcRsiWeekly, puellMultiple } = inputs;
+  const { mvrvRatio, btcDominanceFalling, btcRsiWeekly, puellMultiple, mvrvZScore } = inputs;
 
   // Contar señales de techo activas
   let topSignals = 0;
   const reasons: string[] = [];
 
-  if (isValidReading(mvrvRatio)) {
-    if (mvrvRatio > 6.0)       { topSignals += 3; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — extremo histórico`); }
-    else if (mvrvRatio > 4.5)  { topSignals += 2; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de burbuja`); }
-    else if (mvrvRatio > 3.5)  { topSignals += 1; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — alerta de techo`); }
+  // MVRV Z-Score — PRIMARIO si está disponible (más robusto en era ETF).
+  //   Umbral canónico: Z > 7 = techo (solo 2013, 2017, 2021).
+  //   Si no hay Z-Score, fallback al ratio bruto con smoothScore.
+  if (isValidReading(mvrvZScore)) {
+    // Z-Score: rampa suave [5→0, 6→1, 7→3, 8→4] — preserva el umbral canónico 7.
+    const zScore = smoothScore(mvrvZScore, [
+      [5, 0],
+      [6, 1],
+      [7, 3],
+      [8, 4],
+    ]);
+    topSignals += zScore;
+    if (mvrvZScore > 8)       reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — techo confirmado (Z>8 solo en 2013, 2017, 2021)`);
+    else if (mvrvZScore > 7)  reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — zona de techo canónico (>7)`);
+    else if (mvrvZScore > 6)  reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — acercándose a techo`);
+    else if (zScore > 0)      reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — por encima de la media`);
+  } else if (isValidReading(mvrvRatio)) {
+    // FIX-SMOOTH-MVRV (Jul-2026): rampa suave elimina el acantilado donde
+    //   MVRV 4.49→+1 y 4.51→+2. Rampa: [2.0→0, 3.5→1, 4.5→2, 6.0→3, 7.5→3.5].
+    //   MVRV 4.5 → 2.0 (anclaje). MVRV 3.0 → 0.67 (interpolado).
+    const mrvrScore = smoothScore(mvrvRatio, [
+      [2.0, 0],
+      [3.5, 1],
+      [4.5, 2],
+      [6.0, 3],
+      [7.5, 3.5],
+    ]);
+    topSignals += mrvrScore;
+    if (mvrvRatio > 7.5)      reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — máximo histórico`);
+    else if (mvrvRatio > 6.0) reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — extremo histórico`);
+    else if (mvrvRatio > 4.5) reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de burbuja`);
+    else if (mvrvRatio > 3.5) reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — alerta de techo`);
+    else if (mrvrScore > 0)   reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — elevado`);
   }
 
   // Puell Multiple — supply-side: agotamiento de mineros (complementa MVRV que mide demanda)
@@ -655,19 +687,25 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  // Evaluar P/E del MSCI Emerging Markets (SECUNDARIO)
-  // Rango histórico P/E EM: ~10-12 en crisis, ~15 media, ~18-20 caro, >22 solo burbuja 2010.
+  // P/E del MSCI Emerging Markets — smoothScore (FIX-SMOOTH-EMXC Jul 2026)
+  //   Rampa: [12->0, 15->0.5, 18->1, 20->1.5, 25->2, 30->3].
+  //   Elimina el acantilado P/E 19.99->+1 y 20.01->+1.5.
+  //   Anclajes: P/E 15 (media) -> 0.5, P/E 20 (caro) -> 1.5, P/E 25 (burbuja) -> 2.
   if (isValidReading(emxcPERatio)) {
-    if (emxcPERatio > 25) {
-      topSignals += 2;
-      reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes en burbuja (histórico: >20 = caro)`);
-    } else if (emxcPERatio > 20) {
-      topSignals += 1.5;
-      reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes caros (media histórica ~15)`);
-    } else if (emxcPERatio > 18) {
-      topSignals += 1;
-      reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes por encima de su media`);
-    }
+    const peScore = smoothScore(emxcPERatio, [
+      [12, 0],
+      [15, 0.5],
+      [18, 1],
+      [20, 1.5],
+      [25, 2],
+      [30, 3],
+    ]);
+    topSignals += peScore;
+    if (emxcPERatio > 30)       reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes en burbuja extrema`);
+    else if (emxcPERatio > 25)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes en burbuja (historico: >20 = caro)`);
+    else if (emxcPERatio > 20)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes caros (media historica ~15)`);
+    else if (emxcPERatio > 18)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes por encima de su media`);
+    else if (peScore > 0)       reasons.push(`P/E ${emxcPERatio.toFixed(1)} — ligeramente por encima de la media`);
   }
 
   // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
@@ -784,18 +822,27 @@ function attackMultiplierForScore(score: number): number {
 //   MVRV > 3.5 = techo  →  MVRV < 1.5 = suelo
 //   RSI-W > 80 = techo  →  RSI-W < 30 = suelo
 function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { mvrvRatio, btcRsiWeekly } = inputs;
+  const { mvrvRatio, btcRsiWeekly, puellMultiple } = inputs;
 
   let score = 0;
   const reasons: string[] = [];
 
   // MVRV — invertido: bajo = infravalorado
-  // CALIBRACIÓN: MVRV<1.5 + RSI<30 debe alcanzar EXTREME (≥80).
+  // CALIBRACIÓN: MVRV<1.5 + RSI<30 + Puell<0.5 debe alcanzar EXTREME (≥80).
   //   Históricamente: solo marzo 2020 (COVID) y nov 2022 (FTX).
   if (isValidReading(mvrvRatio)) {
     if (mvrvRatio < 1.5)        { score += 45; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — infravaloración extrema (suelo de ciclo)`); }
     else if (mvrvRatio < 2.0)   { score += 30; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de acumulación`); }
     else if (mvrvRatio < 2.5)   { score += 18; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — ligeramente infravalorado`); }
+  }
+
+  // Puell Multiple — INVERTIDO: bajo = capitulación minera (suelo de ciclo)
+  //   Puell < 0.5 = capitulación extrema (solo 2015, 2019, 2022 = suelos históricos).
+  //   Puell < 1.0 = zona de valor. Mineros con rentabilidad baja = acumulación inteligente.
+  //   La confluencia MVRV<1.5 + Puell<0.5 es el gold standard de suelo de ciclo.
+  if (isValidReading(puellMultiple)) {
+    if (puellMultiple < 0.5)       { score += 25; reasons.push(`Puell ${puellMultiple.toFixed(2)} — capitulación minera extrema (solo 2015, 2019, 2022 = suelos históricos)`); }
+    else if (puellMultiple < 1.0)  { score += 15; reasons.push(`Puell ${puellMultiple.toFixed(2)} — zona de valor. Mineros con rentabilidad baja.`); }
   }
 
   // RSI semanal — invertido: bajo = oversold
@@ -806,9 +853,11 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
   }
 
   const zone = scoreToZone(score);
-  const indicatorValue = isValidReading(mvrvRatio)
-    ? `MVRV ${mvrvRatio.toFixed(2)}${isValidReading(btcRsiWeekly, 0, 100) ? ` · RSI-W ${btcRsiWeekly.toFixed(0)}` : ""}`
-    : `RSI-W ${btcRsiWeekly?.toFixed(0) ?? "—"}`;
+  const parts: string[] = [];
+  if (isValidReading(mvrvRatio)) parts.push(`MVRV ${mvrvRatio.toFixed(2)}`);
+  if (isValidReading(puellMultiple)) parts.push(`Puell ${puellMultiple.toFixed(2)}`);
+  if (isValidReading(btcRsiWeekly, 0, 100)) parts.push(`RSI-W ${btcRsiWeekly.toFixed(0)}`);
+  const indicatorValue = parts.join(" · ") || "Sin datos on-chain";
 
   return {
     asset: "Bitcoin",
@@ -816,7 +865,7 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
     opportunityScore: score,
     zone,
     reason: reasons.length > 0 ? reasons.join(" · ") : "BTC en zona neutra — sin señal de suelo de ciclo",
-    indicator: "MVRV + RSI Semanal (invertido)",
+    indicator: "MVRV + Puell + RSI Semanal (invertido)",
     indicatorValue,
     shouldAccumulate: score >= 40,
     attackMultiplier: attackMultiplierForScore(score),
