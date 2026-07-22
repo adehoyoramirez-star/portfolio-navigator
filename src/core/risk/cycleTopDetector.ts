@@ -372,53 +372,50 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
     };
   }
 
-  // Tipo real = rendimiento nominal 10y − inflación implícita 5y
-  // El oro sufre cuando el tipo real sube (coste de oportunidad vs bonos)
-  // Historial: tipo real >2% = muy malo para el oro
-  //            tipo real >1% = presión moderada
-  //            tipo real 0-1% = neutral
-  //            tipo real <0% = positivo para oro (dinero barato, cobre el coste de oportunidad)
+  // FIX-GOLD-STRUCTURAL (Jul-2026): multiplier es la ÚNICA fuente de verdad.
+  //   trimPct se deriva, nunca se asigna. Elimina el bug donde Brent reducía
+  //   trimPct pero no multiplier → motor reducía ×0.45 pero UI decía −20%.
+  //   Rampas suaves en realRate y Brent (sin acantilados en $95 o 2.5%).
+  //
+  //   Con datos actuales (realRate 2.37%, Brent $94):
+  //     baseMultiplier = smoothScore(2.37, [[0,1],[0.5,0.7],[1.5,0.45],[2.5,0.2]]) ≈ 0.23
+  //     relief = smoothScore(94, [[75,0],[95,0.55]]) ≈ 0.52
+  //     multiplier = min(1.0, 0.23+0.52) ≈ 0.75 → CAUTION, trim ~25%
   const realRate = bondYield10y - inflationBreakeven;
 
-  let multiplier: number;
-  let zone: CycleTopSignal["zone"];
-  let trimPct = 0;
+  // Paso 1: base multiplier desde real rate (rampa suave).
+  //   Guard: realRate ≤ 0 → 1.0 (tipos reales negativos = favorable para el oro).
+  //   smoothScore devuelve 0 para x ≤ primer umbral → sin el guard, realRate=0 daría 0.
+  const baseMultiplier = realRate <= 0 ? 1.0 : smoothScore(realRate, [
+    [0, 1.0],
+    [0.5, 0.70],
+    [1.5, 0.45],
+    [2.5, 0.20],
+  ]);
+
+  // Paso 2: Brent relief — rampa 75→95 (0→0.55 de alivio), cap en 0.55
+  //   Prima de guerra: oro y crudo correlacionados en shock geopolítico.
+  let relief = 0;
   let reason: string;
-
-  if (realRate > 2.5) {
-    multiplier = 0.20; zone = "DANGER";  trimPct = 65;
-    reason = `Tipo real ${realRate.toFixed(2)}% — bonos pagan mucho más que el oro. Flujos saliendo del oro hacia renta fija.`;
-  } else if (realRate > 1.5) {
-    multiplier = 0.45; zone = "CAUTION"; trimPct = 40;
-    reason = `Tipo real ${realRate.toFixed(2)}% — coste de oportunidad elevado. Presión importante sobre el oro.`;
-  } else if (realRate > 0.5) {
-    multiplier = 0.70; zone = "CAUTION"; trimPct = 20;
-    reason = `Tipo real ${realRate.toFixed(2)}% — presión moderada sobre el oro. Vigilar tendencia.`;
-  } else if (realRate > -0.5) {
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
-    reason = `Tipo real ${realRate.toFixed(2)}% — zona neutral. Sin presión significativa sobre el oro.`;
-  } else {
-    // Tipo real negativo = entorno muy favorable para el oro → no recortar
-    multiplier = 1.0;  zone = "SAFE";    trimPct = 0;
+  if (realRate < -0.5) {
     reason = `Tipo real ${realRate.toFixed(2)}% — tipos reales negativos. Entorno favorable para el oro.`;
+  } else if (brentOil !== undefined && brentOil >= 75) {
+    relief = smoothScore(brentOil, [
+      [75, 0],
+      [95, 0.55],
+    ]);
+    reason = `Tipo real ${realRate.toFixed(2)}% — presión sobre el oro, mitigada por prima de guerra (Brent $${brentOil.toFixed(0)}, oro y crudo correlacionados en shock geopolítico).`;
+  } else if (baseMultiplier < 1.0) {
+    reason = `Tipo real ${realRate.toFixed(2)}% — presión clásica sobre el oro (coste de oportunidad vs bonos). Sin mitigante geopolítico.`;
+  } else {
+    reason = `Tipo real ${realRate.toFixed(2)}% — zona neutral. Sin presión significativa sobre el oro.`;
   }
 
-  // ── BRENT CRUDE OVERRIDE ──────────────────────────────────────────────────
-  // Petróleo alto → inflación real sube → tipo real efectivo cae → oro protege
-  // En shock/crisis energética la señal de venta de oro se cancela o reduce
-  // porque el Brent es el termómetro más rápido de inflación geopolítica real
-  if (brentOil !== undefined && brentOil >= 95 && trimPct > 0) {
-    const brentLabel = brentOil >= 115 ? "CRISIS ENERGÉTICA" : "SHOCK GEOPOLÍTICO";
-    reason = `Brent $${brentOil.toFixed(0)} — ${brentLabel}. Señal de venta suspendida: petróleo alto genera inflación real que protege al oro. Tipo real nominal: ${realRate.toFixed(2)}%.`;
-    multiplier = Math.max(multiplier, 0.85);
-    trimPct    = 0;
-    zone       = "SAFE";
-  } else if (brentOil !== undefined && brentOil >= 75 && trimPct > 0) {
-    // Tensión elevada — suavizar señal de venta 20pp pero no eliminarla
-    reason = `Tipo real ${realRate.toFixed(2)}% — presión sobre el oro, pero Brent $${brentOil.toFixed(0)} (tensión geopolítica) reduce el riesgo. Vigilar.`;
-    trimPct = Math.max(0, trimPct - 20);
-    if (trimPct === 0) { multiplier = 1.0; zone = "SAFE"; }
-  }
+  // Paso 3: multiplier = base + relief, clamp a [0.05, 1.0]
+  const multiplier = Math.max(0.05, Math.min(1.0, baseMultiplier + relief));
+  const zone: CycleTopSignal["zone"] =
+    multiplier <= 0.30 ? "DANGER" : multiplier < 1.0 ? "CAUTION" : "SAFE";
+  const trimPct = Math.round((1 - multiplier) * 100);
 
   return {
     asset: "Gold (ETC)",
