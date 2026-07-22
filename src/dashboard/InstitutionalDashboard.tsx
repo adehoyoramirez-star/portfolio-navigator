@@ -242,6 +242,7 @@ const formatCurrency = (value: number): string => {
   const [uraniumLT, setUraniumLT] = useState<number | undefined>(undefined);
  const [siaSalesYoY, setSiaSalesYoY] = useState<number | undefined>(undefined);
  const [soxRsiWeekly, setSoxRsiWeekly] = useState<number | undefined>(undefined);
+ const [soxSpyRS, setSoxSpyRS] = useState<number>(0);
   const [inflationBreakeven, setInflationBreakeven] = useState<number | undefined>(undefined);
   const [wlgRsiWeekly, setWlgRsiWeekly] = useState<number | undefined>(undefined);
   const [wlgPERatio, setWlgPERatio] = useState<number | undefined>(undefined);
@@ -353,6 +354,10 @@ const formatCurrency = (value: number): string => {
       // FIX-AUDIT-R9 5: SOX RSI semanal para CycleTop de semiconductores
       if (md.soxRsiWeekly > 0 && md.soxRsiWeekly !== 50) {
         setSoxRsiWeekly(md.soxRsiWeekly);
+      }
+      // FEAT-SOX-SPY (Jul-2026): SOX/SPX RS Z-score
+      if (md.soxSpyRelativeStrength !== 0) {
+        setSoxSpyRS(parseFloat(md.soxSpyRelativeStrength.toFixed(3)));
       }
       if (md.piCycleMa111 && md.piCycleMa111 > 0) setPiCycleMa111(md.piCycleMa111);
       if (md.piCycleMa350x2 && md.piCycleMa350x2 > 0) setPiCycleMa350x2(md.piCycleMa350x2);
@@ -686,10 +691,12 @@ const formatCurrency = (value: number): string => {
       mvrvRatio,
       btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
       btcRsiWeekly,
+      puellMultiple,
       uraniumSpotPrice: uraniumSpot,
       uraniumLTPrice: uraniumLT,
       siaSalesYoY,
 soxRsiWeekly,
+      soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
@@ -701,7 +708,7 @@ soxRsiWeekly,
       dxy,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
   // ── Cycle Bottom Detection — suelos de ciclo por activo ───────────
   // Simétrico a cycleTopResult: reutiliza los mismos cycleInputs invertidos.
@@ -712,10 +719,12 @@ soxRsiWeekly,
       mvrvRatio,
       btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
       btcRsiWeekly,
+      puellMultiple,
       uraniumSpotPrice: uraniumSpot,
       uraniumLTPrice: uraniumLT,
       siaSalesYoY,
       soxRsiWeekly,
+      soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
@@ -727,7 +736,7 @@ soxRsiWeekly,
       dxy,
     };
     return detectCycleBottoms(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
   
 

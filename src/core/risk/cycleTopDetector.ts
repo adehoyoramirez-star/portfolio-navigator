@@ -89,6 +89,9 @@ export interface CycleTopInputs {
   mvrvRatio?: number;          // lookintobitcoin.com — umbral techo: >3.5
   btcDominanceFalling?: boolean; // BTC.D cayendo desde >58% (calculado en dashboard)
   btcRsiWeekly?: number;       // RSI semanal BTC — TradingView, período 14, timeframe W
+  puellMultiple?: number;      // Puell Multiple — lookintobitcoin.com. Umbral techo: >3.5 (euforia minera)
+                                //   Complementa MVRV midiendo supply-side (agotamiento de mineros).
+                                //   Puell > 2.5 = mineros con alta rentabilidad, > 3.5 = euforia insostenible.
 
   // Uranio
   uraniumSpotPrice?: number;   // $/lb — uxc.com o cameco.com/invest
@@ -97,6 +100,9 @@ export interface CycleTopInputs {
   // Semiconductores
 siaSalesYoY?: number;        // Crecimiento interanual de ventas globales de semis (%) — SIA/WSTS
 soxRsiWeekly?: number;       // RSI semanal del índice PHLX Semiconductor (^SOX)
+soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). Indicador líder de ciclo.
+                                  //   Z > 2 = euforia semis vs mercado broad. Z > 1 = outperformance.
+                                  //   Documentado como leading indicator del ciclo de semiconductores.
 
   // Oro
   bondYield10y: number;        // ya disponible en dashboard
@@ -139,7 +145,7 @@ export interface CycleTopOutput {
 
 // ── BTC ──────────────────────────────────────────────────────────
 function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { mvrvRatio, btcDominanceFalling, btcRsiWeekly } = inputs;
+  const { mvrvRatio, btcDominanceFalling, btcRsiWeekly, puellMultiple } = inputs;
 
   // Contar señales de techo activas
   let topSignals = 0;
@@ -149,6 +155,18 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
     if (mvrvRatio > 6.0)       { topSignals += 3; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — extremo histórico`); }
     else if (mvrvRatio > 4.5)  { topSignals += 2; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de burbuja`); }
     else if (mvrvRatio > 3.5)  { topSignals += 1; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — alerta de techo`); }
+  }
+
+  // Puell Multiple — supply-side: agotamiento de mineros (complementa MVRV que mide demanda)
+  // CALIBRACIÓN (Glassnode/21Shares 2025-2026):
+  //   Puell > 3.5 = euforia minera extrema (solo 2013, 2017, 2021). Mineros ganando 3.5× la media anual.
+  //   Puell > 2.5 = alta rentabilidad minera. Bull market maduro, empezar reducción escalonada.
+  //   Puell > 2.0 = rentabilidad por encima de la media. Vigilar.
+  //   La combinación MVRV>3.5 + Puell>2.5 es el gold standard de techo de ciclo (confluencia demanda+supply).
+  if (isValidReading(puellMultiple)) {
+    if (puellMultiple > 3.5)       { topSignals += 2; reasons.push(`Puell ${puellMultiple.toFixed(2)} — euforia minera extrema. Mineros ganando 3.5× la media anual (solo 2013, 2017, 2021).`); }
+    else if (puellMultiple > 2.5)  { topSignals += 1.5; reasons.push(`Puell ${puellMultiple.toFixed(2)} — alta rentabilidad minera. Bull market maduro.`); }
+    else if (puellMultiple > 2.0)  { topSignals += 0.5; reasons.push(`Puell ${puellMultiple.toFixed(2)} — rentabilidad por encima de la media. Vigilar.`); }
   }
 
   if (btcDominanceFalling)     { topSignals += 1; reasons.push("BTC.D cayendo desde >58% — rotación a altcoins (fin de ciclo)"); }
@@ -163,10 +181,12 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
   //   Sin acantilados: topSignals=1 → ~0.65 (antes 0.70), topSignals=3 → ~0.28 (antes 0.30).
   const { multiplier, zone, trimPct } = multiplierFromScore(topSignals);
 
-  // MVRV como indicador primario para mostrar
-  const indicatorValue = isValidReading(mvrvRatio)
-    ? `MVRV ${mvrvRatio.toFixed(2)}${isValidReading(btcRsiWeekly) ? ` · RSI-W ${btcRsiWeekly.toFixed(0)}` : ""}`
-    : "Sin datos MVRV";
+  // MVRV como indicador primario para mostrar (+ Puell si disponible)
+  const parts: string[] = [];
+  if (isValidReading(mvrvRatio)) parts.push(`MVRV ${mvrvRatio.toFixed(2)}`);
+  if (isValidReading(puellMultiple)) parts.push(`Puell ${puellMultiple.toFixed(2)}`);
+  if (isValidReading(btcRsiWeekly)) parts.push(`RSI-W ${btcRsiWeekly.toFixed(0)}`);
+  const indicatorValue = parts.join(" · ") || "Sin datos on-chain";
 
   return {
     asset: "Bitcoin",
@@ -174,7 +194,7 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
     allocationMultiplier: multiplier,
     zone,
     reason: reasons.length > 0 ? reasons.join(" · ") : "Zona segura — sin señales de techo de ciclo",
-    indicator: "MVRV + BTC.D + RSI Semanal",
+    indicator: "MVRV + Puell + BTC.D + RSI Semanal",
     indicatorValue,
     shouldTrim: trimPct > 0,
     trimPct,
@@ -263,37 +283,54 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── SEMICONDUCTORES ──────────────────────────────────────────────
 function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { siaSalesYoY, soxRsiWeekly } = inputs;
+  const { siaSalesYoY, soxRsiWeekly, soxSpyRelativeStrength } = inputs;
 
   // Si no hay datos de ningún indicador, señal neutra
-  if (!isValidReading(siaSalesYoY, -100) && !isValidReading(soxRsiWeekly, 0, 100)) {
+  if (!isValidReading(siaSalesYoY, -100) && !isValidReading(soxRsiWeekly, 0, 100) && !isValidReading(soxSpyRelativeStrength, -10, 10)) {
     return {
       asset: "Semiconductors",
       ticker: "VVSM.DE",
       allocationMultiplier: 1.0,
       zone: "SAFE",
-      reason: "Sin datos de ventas SIA ni RSI del SOX — introduce ambos para activar esta señal",
-      indicator: "SIA Sales YoY + SOX RSI Semanal",
+      reason: "Sin datos de ventas SIA, RSI del SOX ni SOX/SPX RS — introduce al menos uno para activar esta señal",
+      indicator: "SIA Sales YoY + SOX RSI Semanal + SOX/SPX RS",
       indicatorValue: "Sin datos",
       shouldTrim: false,
       trimPct: 0,
     };
   }
 
-  // Contar señales de techo activas (0, 1 o 2)
+  // Contar señales de techo activas
   let topSignals = 0;
   const reasons: string[] = [];
 
-  // Evaluar SIA Sales YoY%
+  // SOX/SPX Relative Strength — INDICADOR LÍDER (cableado Jul 2026)
+  //   Z-score del ratio SOX/SPX sobre ventana 200d.
+  //   Z > 2 = semis en euforia vs mercado broad. Leading indicator documentado
+  //   en literatura de ciclos de semiconductores. Captura burbujas sectoriales
+  //   antes que SIA Sales (que es coincidente/lagging).
+  //   Peso: +2 señales (mismo peso que SIA en modo primario, compatible con
+  //   degradación de SIA a confirmatorio).
+  if (isValidReading(soxSpyRelativeStrength, -10, 10)) {
+    if (soxSpyRelativeStrength > 2.0)        { topSignals += 2; reasons.push(`SOX/SPX RS Z ${soxSpyRelativeStrength.toFixed(2)} — euforia sectorial extrema (semis 2σ+ vs mercado)`); }
+    else if (soxSpyRelativeStrength > 1.5)   { topSignals += 1.5; reasons.push(`SOX/SPX RS Z ${soxSpyRelativeStrength.toFixed(2)} — fuerte outperformance de semis`); }
+    else if (soxSpyRelativeStrength > 1.0)   { topSignals += 0.75; reasons.push(`SOX/SPX RS Z ${soxSpyRelativeStrength.toFixed(2)} — semis outperforming, vigilar`); }
+  }
+
+  // SIA Sales YoY% — DEGRADADO a CONFIRMATORIO (Jul 2026)
+  //   ANTES: primario (+2/+1/+0.5). AHORA: confirmatorio (−25% peso).
+  //   Razón: SIA es coincidente/lagging (mide ventas YA realizadas).
+  //   SOX/SPX RS es leading (mide expectativas de mercado). La combinación
+  //   de ambos es más robusta que cualquiera por separado.
   if (isValidReading(siaSalesYoY, -100)) {
     if (siaSalesYoY > 40) {
-      topSignals += 2;
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — euforia insostenible`);
+      topSignals += 1.5;
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — euforia insostenible (datos realizados)`);
     } else if (siaSalesYoY > 30) {
-      topSignals += 1;
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — ciclo muy caliente`);
+      topSignals += 0.75;
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — ciclo muy caliente (datos realizados)`);
     } else if (siaSalesYoY > 25) {
-      topSignals += 0.5; // Señal débil
+      topSignals += 0.3;
       reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — crecimiento elevado, vigilar`);
     }
   }
@@ -317,6 +354,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
   // Construir valor del indicador para mostrar
   const parts: string[] = [];
+  if (isValidReading(soxSpyRelativeStrength, -10, 10)) parts.push(`SOX/SPX Z ${soxSpyRelativeStrength.toFixed(2)}`);
   if (isValidReading(siaSalesYoY, -100)) parts.push(`SIA sales +${siaSalesYoY.toFixed(1)}% YoY`);
   if (isValidReading(soxRsiWeekly, 0, 100)) parts.push(`SOX RSI-W ${soxRsiWeekly.toFixed(0)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
@@ -327,7 +365,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
     allocationMultiplier: multiplier,
     zone,
     reason: reasons.length > 0 ? reasons.join(" · ") : "Ciclo saludable, sin señales de techo",
-    indicator: "SIA Sales YoY + SOX RSI Semanal",
+    indicator: "SOX/SPX RS + SIA Sales YoY + SOX RSI Semanal",
     indicatorValue,
     shouldTrim: trimPct > 0,
     trimPct,

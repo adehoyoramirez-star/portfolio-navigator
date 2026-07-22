@@ -125,6 +125,9 @@ export interface MarketData {
   staleDataBlock: boolean;
   // FIX-AUDIT-R9 5: SOX RSI semanal para CycleTop de semiconductores
   soxRsiWeekly: number;
+  // FEAT-SOX-SPY (Jul-2026): SOX/SPX Relative Strength Z-score 200d.
+  //   Indicador líder del ciclo de semiconductores. Z > 2 = euforia sectorial.
+  soxSpyRelativeStrength: number;
 }
 
 // Nota: cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile importados desde @/lib/stats.ts
@@ -701,6 +704,27 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const soxTimestamps = yfData['^SOX']?.timestamps ?? [];
   const soxRsiWeekly = calculateWeeklyRSI14(soxDailyCloses, soxTimestamps);
 
+  // FEAT-SOX-SPY (Jul-2026): SOX/SPX Relative Strength Z-score 200d.
+  //   Indicador líder del ciclo de semiconductores. Calcula el ratio diario
+  //   SOX/^GSPC, luego el Z-score del ratio actual vs media móvil 200d.
+  //   Z > 2 = semis en euforia vs mercado broad. Z > 1 = outperformance.
+  //   Z < -1 = semis infravalorados vs mercado (oportunidad).
+  const spxDailyCloses = cleanCloses(yfData['^GSPC']?.closes ?? []);
+  let soxSpyRelativeStrength = 0;
+  if (soxDailyCloses.length >= 200 && spxDailyCloses.length >= 200) {
+    const minLen = Math.min(soxDailyCloses.length, spxDailyCloses.length);
+    const ratios: number[] = [];
+    for (let i = minLen - 200; i < minLen; i++) {
+      if (spxDailyCloses[i] > 0) ratios.push(soxDailyCloses[i] / spxDailyCloses[i]);
+    }
+    if (ratios.length >= 200) {
+      const currentRatio = ratios[ratios.length - 1];
+      const meanRatio = ratios.reduce((s, v) => s + v, 0) / ratios.length;
+      const stdRatio = Math.sqrt(ratios.reduce((s, v) => s + (v - meanRatio) ** 2, 0) / ratios.length);
+      soxSpyRelativeStrength = stdRatio > 0 ? (currentRatio - meanRatio) / stdRatio : 0;
+    }
+  }
+
   // PASO 5: Pi Cycle MAs — 111DMA y 350DMAx2 calculados desde histórico diario BTC
   const piCycleMAs = calculatePiCycleMAs(btcDailyCloses);
 
@@ -988,6 +1012,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       // FIX-AUDIT-R9 4+5: circuit breaker + SOX RSI
       staleDataBlock,
       soxRsiWeekly,
+      soxSpyRelativeStrength,
     },
     fetchErrors,
   };
