@@ -158,15 +158,15 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   // Puell Multiple — supply-side: agotamiento de mineros (complementa MVRV que mide demanda)
-  // CALIBRACIÓN (Glassnode/21Shares 2025-2026):
-  //   Puell > 3.5 = euforia minera extrema (solo 2013, 2017, 2021). Mineros ganando 3.5× la media anual.
-  //   Puell > 2.5 = alta rentabilidad minera. Bull market maduro, empezar reducción escalonada.
-  //   Puell > 2.0 = rentabilidad por encima de la media. Vigilar.
-  //   La combinación MVRV>3.5 + Puell>2.5 es el gold standard de techo de ciclo (confluencia demanda+supply).
+  // CALIBRACIÓN P0 (Comité Jul-2026): thresholds exactos del plan de auditoría.
+  //   Puell > 5 = agotamiento extremo de mineros (solo 2013, 2017, 2021).
+  //   Puell > 3.5 = euforia minera. Mineros ganando 3.5× la media anual.
+  //   Puell > 2.5 = alta rentabilidad minera. Bull market maduro, empezar reducción.
+  //   La combinación MVRV>3.5 + Puell>2.5 es el gold standard de techo de ciclo.
   if (isValidReading(puellMultiple)) {
-    if (puellMultiple > 3.5)       { topSignals += 2; reasons.push(`Puell ${puellMultiple.toFixed(2)} — euforia minera extrema. Mineros ganando 3.5× la media anual (solo 2013, 2017, 2021).`); }
-    else if (puellMultiple > 2.5)  { topSignals += 1.5; reasons.push(`Puell ${puellMultiple.toFixed(2)} — alta rentabilidad minera. Bull market maduro.`); }
-    else if (puellMultiple > 2.0)  { topSignals += 0.5; reasons.push(`Puell ${puellMultiple.toFixed(2)} — rentabilidad por encima de la media. Vigilar.`); }
+    if (puellMultiple > 5)       { topSignals += 3; reasons.push(`Puell ${puellMultiple.toFixed(2)} — agotamiento extremo de mineros (solo 2013, 2017, 2021).`); }
+    else if (puellMultiple > 3.5)  { topSignals += 2; reasons.push(`Puell ${puellMultiple.toFixed(2)} — euforia minera. Mineros ganando 3.5× la media anual.`); }
+    else if (puellMultiple > 2.5)  { topSignals += 1; reasons.push(`Puell ${puellMultiple.toFixed(2)} — alta rentabilidad minera. Bull market maduro.`); }
   }
 
   if (btcDominanceFalling)     { topSignals += 1; reasons.push("BTC.D cayendo desde >58% — rotación a altcoins (fin de ciclo)"); }
@@ -318,19 +318,20 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   // SIA Sales YoY% — DEGRADADO a CONFIRMATORIO (Jul 2026)
-  //   ANTES: primario (+2/+1/+0.5). AHORA: confirmatorio (−25% peso).
+  //   P1 (Comité): corte al 50% del peso original. ANTES: primario (+2/+1/+0.5).
+  //   AHORA: confirmatorio (exactamente la mitad: +1.0/+0.5/+0.25).
   //   Razón: SIA es coincidente/lagging (mide ventas YA realizadas).
   //   SOX/SPX RS es leading (mide expectativas de mercado). La combinación
   //   de ambos es más robusta que cualquiera por separado.
   if (isValidReading(siaSalesYoY, -100)) {
     if (siaSalesYoY > 40) {
-      topSignals += 1.5;
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — euforia insostenible (datos realizados)`);
+      topSignals += 1.0;
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — euforia insostenible (datos realizados, 50% peso)`);
     } else if (siaSalesYoY > 30) {
-      topSignals += 0.75;
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — ciclo muy caliente (datos realizados)`);
+      topSignals += 0.5;
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — ciclo muy caliente (datos realizados, 50% peso)`);
     } else if (siaSalesYoY > 25) {
-      topSignals += 0.3;
+      topSignals += 0.25;
       reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — crecimiento elevado, vigilar`);
     }
   }
