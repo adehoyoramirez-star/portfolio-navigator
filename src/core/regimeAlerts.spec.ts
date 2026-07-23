@@ -14,6 +14,7 @@ describe('Auditoría de Alertas de Régimen', () => {
       tailRiskActive: false,
       tailRiskReason: "",
       vix: 22,
+      killSwitchLevel: 0,
       portfolioDrawdown: -15,
       volTargetMultiplier: 1.0
     };

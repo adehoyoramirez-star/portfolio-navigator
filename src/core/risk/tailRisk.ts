@@ -72,10 +72,17 @@ function computeKillSwitch(drawdown: number): {
   if (dd >= ks.L2.threshold) {
     return { level: 2, name: ks.L2.name, overlay: ks.L2.overlay, exposureReduction: ks.L2.reduction };
   }
-  // FIX A2: L1.5 antes de L1
-  if ('L1_5' in ks && dd >= (ks as any).L1_5.threshold) {
-    const l15 = (ks as any).L1_5;
-    return { level: 2, name: l15.name, overlay: l15.overlay, exposureReduction: l15.reduction };
+  // FIX A2: banda intermedia L1.5 entre L1 y L2.
+  // FIX-H1 (Jul-2026): L1_5 ahora tiene su propio level=1 (no usurpa level=2).
+  //   Esto permite que getKillSwitchDcaScale(1) devuelva 0.70 para L1_5,
+  //   distinguiéndolo del verdadero L2 (0.50). Sin este fix, L1_5 y L2
+  //   compartían level=2 con overlays distintos (0.65 vs 0.50).
+  // FIX-H20 (Jul-2026): eliminado as any. Acceso tipado via genérico del tipo.
+  if ('L1_5' in ks) {
+    const l15 = ks.L1_5 as unknown as typeof ks['L1'];
+    if (dd >= l15.threshold) {
+      return { level: 1, name: l15.name, overlay: l15.overlay, exposureReduction: l15.reduction };
+    }
   }
   if (dd >= ks.L1.threshold) {
     return { level: 1, name: ks.L1.name, overlay: ks.L1.overlay, exposureReduction: ks.L1.reduction };
@@ -121,8 +128,10 @@ export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
   }
 
   // ── 4. PENALIZACIÓN POR CORRELACIÓN → 1 ───────────────────────────────
-  // FIX-AUDIT-C6: thresholds centralizados en CORRELATION_PANIC_CONFIG.
-  // Antes hardcodeados como avgCorr>0.85 y avgCorr>0.70.
+  // FIX-AUDIT-C6 + FIX-H17 (Jul-2026): correlation penalty solo se aplica aquí.
+  //   Antes se aplicaba también en olympusV3.ts (CORRELATION_PANIC_CONFIG)
+  //   y en correlation.ts (correlationPenalty). Triple conteo eliminado.
+  //   tailRisk es la ÚNICA capa de penalización por correlación.
   let correlationPenalty = 0;
   if (avgCorr > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD) {
     correlationPenalty = 0.20;

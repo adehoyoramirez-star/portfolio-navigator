@@ -54,10 +54,10 @@ const DCA_CONFIG = {
   BLOCKS: {
     REGIME_PENALTY_MIN: 0.45,      // regimePenalty por debajo → BLOCK_CRISIS
     VOL_TARGET_MIN: 0.60,          // volTargetMultiplier por debajo → BLOCK_VOL
-    // TAIL_RISK: bloquea DCA si tailRiskActive (sin threshold intermedio).
-    // El engine ya computó tailRiskActive = finalOverlay < 0.99. Si el motor
-    // dice que hay riesgo de cola, el DCA no compra — el overlay se usa como
-    // multiplicador de exposición, no como umbral de tolerancia del DCA.
+  // ── TAIL_RISK: ahora escala con Kill Switch (no binario).
+  //   L1-L3 → escala el DCA (getKillSwitchDcaScale).
+  //   L4-L5 → bloqueo total (BLOCK_TAIL_RISK).
+  //   Ver FIX-KS-SCALE (Jul-2026).
   },
 } as const;
 
@@ -79,6 +79,7 @@ export interface SmartDCAInput {
   btcMomentum1m: number;
   btcDominance?: number;
   mvrvRatio?: number;
+  mvrvZScore?: number;  // MVRV Z-Score — primario sobre ratio bruto (FIX-H4)
   regime: string;
   regimePenalty: number;
   volTargetMultiplier: number;
@@ -151,7 +152,7 @@ export interface SmartDCAOutput {
 
 // ── SEÑALES DE CONFLUENCIA DE FONDO (8 señales: 4 BTC + 3 Macro + 1 per-asset) ──
 function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
-  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio, cycleBottomSignals } = input;
+  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio, mvrvZScore, cycleBottomSignals } = input;
 
   const S = DCA_CONFIG.SIGNALS;
   const btcOversold = btcRsi < S.BTC_RSI_OVERSOLD && btcZScore < S.BTC_Z_OVERSOLD;
@@ -169,7 +170,8 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   );
   const momentumDivergence = btcMomentum1m < S.MOMENTUM_DIVERGENCE && btcZScore > S.MOMENTUM_Z_FLOOR;
   const dominanceAccumulation = btcDominance !== undefined && btcDominance > S.BTC_DOMINANCE_ACCUMULATION;
-  const mvrvUndervalued = mvrvRatio !== undefined && mvrvRatio < S.MVRV_UNDERVALUED;
+  const mvrvForSignal = mvrvZScore ?? mvrvRatio;  // FIX-H4: Z-Score primario
+  const mvrvUndervalued = mvrvForSignal !== undefined && mvrvForSignal < (mvrvZScore !== undefined ? 0.5 : S.MVRV_UNDERVALUED);
   const volNormalizing = cewsOutput !== undefined && cewsOutput.signals.volClustering.trend === "IMPROVING" && cewsOutput.signals.volClustering.level !== "ALERT";
 
   // ── Señal #8: Cycle Bottom per-asset (≥OPPORTUNITY en cualquier activo) ──
@@ -481,7 +483,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // El override está diseñado para comprar BTC en capitulación macro —
   // incluso con penalty bajo (CRISIS profunda), las señales de fondo
   // justifican una posición pequeña (25% Olympus solo en BTC).
-  const isBTC_OverrideCandidate = attackConfluence >= ATK.THRESHOLD && !tailRiskActive && regime === "CRISIS";
+  const isBTC_OverrideCandidate = attackConfluence >= ATK.THRESHOLD && !(tailRiskActive && ksScale <= 0) && regime === "CRISIS";
   if (!isBTC_OverrideCandidate) {
     if (regimePenalty <= BLK.REGIME_PENALTY_MIN) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
     if (regime === "CRISIS") return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
@@ -522,15 +524,15 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const G = ATK.GRADUATION;
   if (attackConfluence >= 6) {           // TRAMO 3: ATTACK_MAX
     olympusInvested = olympusAvailableCash * G.MAX[0] * ksScaleWithRecovery;
-    tacticalInvested = tacticalAvailableCash * G.MAX[1];
+    tacticalInvested = tacticalAvailableCash * G.MAX[1] * ksScaleWithRecovery;
     tacticalAccumulated = 0;
   } else if (attackConfluence >= 5) {    // TRAMO 2: ATTACK_STRONG
     olympusInvested = olympusAvailableCash * G.STRONG[0] * ksScaleWithRecovery;
-    tacticalInvested = tacticalAvailableCash * G.STRONG[1];
+    tacticalInvested = tacticalAvailableCash * G.STRONG[1] * ksScaleWithRecovery;
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else if (attackConfluence >= ATK.THRESHOLD) { // TRAMO 1: ATTACK_ENTRY
     olympusInvested = olympusAvailableCash * G.ENTRY[0] * ksScaleWithRecovery;
-    tacticalInvested = tacticalAvailableCash * G.ENTRY[1];
+    tacticalInvested = tacticalAvailableCash * G.ENTRY[1] * ksScaleWithRecovery;
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else {                               // DCA NORMAL
     olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION) * ksScaleWithRecovery;

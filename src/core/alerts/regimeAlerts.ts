@@ -29,6 +29,7 @@ export interface AlertInput {
   confidence: string;
   tailRiskActive: boolean;
   tailRiskReason: string;
+  killSwitchLevel: number;
   vix: number;
   portfolioDrawdown: number;
   volTargetMultiplier: number;
@@ -97,10 +98,12 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
     alerts.push({
       id: `tail_${Date.now()}`,
       timestamp: now,
-      severity: "CRITICAL",
-      title: "⚠️ Tail Risk Overlay activo",
+      severity: (input.killSwitchLevel ?? 0) >= 3 ? "CRITICAL" : "WARNING",
+      title: `⚠️ Tail Risk Overlay activo (L${input.killSwitchLevel ?? 0})`,
       message: input.tailRiskReason,
-      action: "El motor ha reducido la exposición total. No realizar compras adicionales hasta que el overlay se desactive.",
+      action: (input.killSwitchLevel ?? 0) >= 4
+        ? "El motor ha reducido la exposicion total. No realizar compras adicionales hasta que el overlay se desactive."
+        : "El motor ha reducido la exposicion. DCA escalado — compras reducidas pero permitidas.",
       dismissible: false,
       regime: input.currentRegime,
     });
@@ -178,12 +181,10 @@ function getLastTailAlertDD(): number | null {
   } catch { return null; }
 }
 
-function setLastTailAlertTimestamp(ts: number): void {
-  try { sessionStorage.setItem(TAIL_ALERT_KEY, String(ts)); } catch { /* silencio */ }
+function setLastTailAlertTimestamp(ts: number): void {      try { sessionStorage.setItem(TAIL_ALERT_KEY, String(ts)); } catch { console.warn('[regimeAlerts] sessionStorage setItem failed for TAIL_ALERT_KEY'); }
 }
 
-function setLastTailAlertDD(dd: number): void {
-  try { sessionStorage.setItem(TAIL_ALERT_DD_KEY, String(dd)); } catch { /* silencio */ }
+function setLastTailAlertDD(dd: number): void {      try { sessionStorage.setItem(TAIL_ALERT_DD_KEY, String(dd)); } catch { console.warn('[regimeAlerts] sessionStorage setItem failed for TAIL_ALERT_DD_KEY'); }
 }
 
 function worsenedRegime(prev: string, curr: string): boolean {

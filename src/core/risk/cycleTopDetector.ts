@@ -29,8 +29,14 @@ const isValidReading = (
   v?: number,
   min = -Infinity,
   max = Infinity,
-): v is number =>
-  v !== undefined && Number.isFinite(v) && v > min && v < max;
+): v is number => {
+  // FIX-H8 (Jul-2026): si el valor es exactamente 0 y min > 0, es probablemente
+  //   un dato erroneo (ej: DXY=0 por fetch fallido de Yahoo).
+  const valid = v !== undefined && Number.isFinite(v);
+  if (!valid) return false;
+  if (v === 0 && min > 0) return false; // dato claramente invalido
+  return v > min && v < max;
+}
 
 // ── Interpolación lineal entre umbrales ──────────────────────────
 // FIX-SMOOTH-THRESHOLDS (Jul-2026): reemplaza if/else duros con
@@ -822,7 +828,7 @@ function attackMultiplierForScore(score: number): number {
 //   MVRV > 3.5 = techo  →  MVRV < 1.5 = suelo
 //   RSI-W > 80 = techo  →  RSI-W < 30 = suelo
 function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { mvrvRatio, btcRsiWeekly, puellMultiple } = inputs;
+  const { mvrvRatio, mvrvZScore, btcRsiWeekly, puellMultiple } = inputs;
 
   let score = 0;
   const reasons: string[] = [];
@@ -830,10 +836,9 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
   // MVRV — invertido: bajo = infravalorado
   // CALIBRACIÓN: MVRV<1.5 + RSI<30 + Puell<0.5 debe alcanzar EXTREME (≥80).
   //   Históricamente: solo marzo 2020 (COVID) y nov 2022 (FTX).
-  if (isValidReading(mvrvRatio)) {
-    if (mvrvRatio < 1.5)        { score += 45; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — infravaloración extrema (suelo de ciclo)`); }
-    else if (mvrvRatio < 2.0)   { score += 30; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de acumulación`); }
-    else if (mvrvRatio < 2.5)   { score += 18; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — ligeramente infravalorado`); }
+  if (isValidReading(mvrvRatio)) {        if (mvrvRatio < 1.5)   { score += 45; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — infravaloración extrema (suelo de ciclo)`); }
+    else if (mvrvRatio < 2.0)  { score += 30; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de acumulación`); }
+    else if (mvrvRatio < 2.5)  { score += 18; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — ligeramente infravalorado`); }
   }
 
   // Puell Multiple — INVERTIDO: bajo = capitulación minera (suelo de ciclo)

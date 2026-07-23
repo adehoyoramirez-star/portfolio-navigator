@@ -126,11 +126,11 @@ export function setRegimeLock(regime: MasterRegimeLabel, regimePenalty: number):
   try {
     const lock: RegimeLock = { regime, regimePenalty, lockedAt: Date.now() };
     localStorage.setItem(LOCK_KEY, JSON.stringify(lock));
-  } catch { /* silencio */ }
+  } catch { console.warn("[masterRegime] localStorage read failed"); }
 }
 
 export function clearRegimeLock(): void {
-  try { localStorage.removeItem(LOCK_KEY); } catch { /* silencio */ }
+  try { localStorage.removeItem(LOCK_KEY); } catch { console.warn("[masterRegime] localStorage read failed"); }
 }
 
 export function isRegimeLocked(): RegimeLock | null {
@@ -182,7 +182,7 @@ function loadHysteresisState(): HysteresisState | null {
 function saveHysteresisState(state: HysteresisState): void {
   try {
     localStorage.setItem('olympus_regime_hysteresis_v1', JSON.stringify(state));
-  } catch { /* silencio */ }
+  } catch { console.warn("[masterRegime] localStorage read failed"); }
 }
 
 const REGIME_SEVERITY: Record<string, number> = { EXPANSION: 0, CONTRACTION: 1, CRISIS: 2 };

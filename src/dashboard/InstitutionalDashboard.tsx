@@ -853,6 +853,7 @@ soxRsiWeekly,
       tailRiskActive: engineResult.tailRiskActive,
       tailRiskReason: engineResult.tailRiskReason,
       vix,
+      killSwitchLevel: engineResult.killSwitchLevel ?? 0,
       portfolioDrawdown: portfolioDrawdown ?? 0,
       volTargetMultiplier: engineResult.volTargetMultiplier,
     });
