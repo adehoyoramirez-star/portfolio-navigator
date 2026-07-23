@@ -193,6 +193,7 @@ const formatCurrency = (value: number): string => {
   const [onChainSource, setOnChainSource] = useState<"GLASSNODE" | "MANUAL">("MANUAL");
 
   const [puellMultiple, setPuellMultiple] = useState<number | undefined>(undefined);
+  const [mvrvZScore, setMvrvZScore] = useState<number | undefined>(undefined);
   const [hashRibbonState, setHashRibbonState] = useState<"CAPITULATION" | "RECOVERY" | "EXPANSION" | undefined>(undefined);
   const [piCycleMa111, setPiCycleMa111] = useState<number | undefined>(undefined);
   const [piCycleMa350x2, setPiCycleMa350x2] = useState<number | undefined>(undefined);
@@ -503,6 +504,7 @@ const formatCurrency = (value: number): string => {
       if (savedMacro.jumpStd !== undefined) setJumpStd(savedMacro.jumpStd);
       if (savedMacro.enableJumps !== undefined) setEnableJumps(savedMacro.enableJumps);  // FIX-MC-05
       if (savedMacro.puellMultiple !== undefined) setPuellMultiple(savedMacro.puellMultiple);
+      if (savedMacro.mvrvZScore !== undefined) setMvrvZScore(savedMacro.mvrvZScore);
       if (savedMacro.hashRibbonState) setHashRibbonState(savedMacro.hashRibbonState as "CAPITULATION" | "RECOVERY" | "EXPANSION");
       if (savedMacro.piCycleMa111 !== undefined) setPiCycleMa111(savedMacro.piCycleMa111);
       if (savedMacro.piCycleMa350x2 !== undefined) setPiCycleMa350x2(savedMacro.piCycleMa350x2);
@@ -547,7 +549,7 @@ const formatCurrency = (value: number): string => {
       creditSpread, liquidityGrowth, dxy, moveIndex, btcVol,
       btcDominance, mvrvRatio,
       jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps,
-      puellMultiple, hashRibbonState,
+      puellMultiple, mvrvZScore, hashRibbonState,
       piCycleMa111, piCycleMa350x2,
       elliottCurrentWave,
       elliottPivots: elliottPivots.map((p: ElliottWavePoint) => ({
@@ -559,7 +561,7 @@ const formatCurrency = (value: number): string => {
       emxcRsiWeekly, emxcPERatio,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -692,6 +694,7 @@ const formatCurrency = (value: number): string => {
       btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
       btcRsiWeekly,
       puellMultiple,
+      mvrvZScore,
       uraniumSpotPrice: uraniumSpot,
       uraniumLTPrice: uraniumLT,
       siaSalesYoY,
@@ -708,7 +711,7 @@ soxRsiWeekly,
       dxy,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
   // ── Cycle Bottom Detection — suelos de ciclo por activo ───────────
   // Simétrico a cycleTopResult: reutiliza los mismos cycleInputs invertidos.
@@ -720,6 +723,7 @@ soxRsiWeekly,
       btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
       btcRsiWeekly,
       puellMultiple,
+      mvrvZScore,
       uraniumSpotPrice: uraniumSpot,
       uraniumLTPrice: uraniumLT,
       siaSalesYoY,
@@ -736,7 +740,7 @@ soxRsiWeekly,
       dxy,
     };
     return detectCycleBottoms(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
   
 
@@ -2206,6 +2210,12 @@ soxRsiWeekly,
             </span>
           </label>
           <input type="number" value={mvrvRatio} onChange={(e) => setMvrvRatio(Number(e.target.value))} style={styles.smallInput} step="0.01" min="0" max="10" />
+          <label style={styles.label}>MVRV Z-Score{" "}
+            <span style={{ fontSize: "0.65rem", color: "#ef4444", fontWeight: "normal" }}>
+              ● manual — Glassnode (Z &gt;7 techo, Z &lt;0 suelo)
+            </span>
+          </label>
+          <input type="number" value={mvrvZScore ?? ""} onChange={(e) => setMvrvZScore(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.01" min="-3" max="10" placeholder="— ej: 0.5" />
           <label style={styles.label}>BTC RSI Semanal{" "}
             <span style={{ fontSize: "0.65rem",
               color: marketData?.btcRsiWeekly && marketData.btcRsiWeekly !== 50 ? "#10b981" : "#6b7280",
