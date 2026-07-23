@@ -618,24 +618,28 @@ const formatCurrency = (value: number): string => {
   //   supera el maximo historico real. Si compras en suelo, DD = 0%.
   //   Si la cartera cae de verdad, el HWM queda alto y el Kill Switch protege.
   //   Hedge-fund standard: Bridgewater, AQR, Two Sigma usan HWM, no contrafactual.
+  // FIX-HWM-DEFLIQ (Jul 2026): defensiveLiquidity incluido en currentTotal.
+  //   ANTES: mover cash de cashReserve → defensiveLiquidity creaba un DD fantasma.
+  //   El total real de riqueza es posiciones + cash broker + liquidez apartada.
+  //   El HWM ahora refleja el patrimonio TOTAL, no solo la parte en broker.
   const HWM_KEY = "olympus_hwm";
   const hwmRef = useRef<number>(Number(localStorage.getItem(HWM_KEY)) || 0);
   const [hwmResetKey, setHwmResetKey] = useState(0);
   const portfolioDrawdown = useMemo(() => {
-    const currentTotal = totalPortfolioValue + cashReserve;
+    const currentTotal = totalPortfolioValue + cashReserve + defensiveLiquidity;
     if (currentTotal <= 0) return 0;
     const peak = hwmRef.current > 0 ? hwmRef.current : currentTotal;
     if (currentTotal > peak) return 0; // nuevo maximo -> DD 0%
     return (currentTotal - peak) / peak;
-  }, [totalPortfolioValue, cashReserve, hwmResetKey]);
+  }, [totalPortfolioValue, cashReserve, defensiveLiquidity, hwmResetKey]);
   // Persistir HWM como efecto puro (separa calculo de side-effect)
   useEffect(() => {
-    const currentTotal = totalPortfolioValue + cashReserve;
+    const currentTotal = totalPortfolioValue + cashReserve + defensiveLiquidity;
     if (currentTotal > hwmRef.current) {
       hwmRef.current = currentTotal;
       localStorage.setItem(HWM_KEY, String(currentTotal));
     }
-  }, [totalPortfolioValue, cashReserve, hwmResetKey]);
+  }, [totalPortfolioValue, cashReserve, defensiveLiquidity, hwmResetKey]);
   const handleResetHWM = useCallback(() => {
     if (window.confirm("¿Resetear el High-Water Mark al valor actual de la cartera?\n\nEsto reinicia el drawdown al 0%. Úsalo solo cuando:\n• Cambiaste la composición de la cartera (más/menos shares)\n• Hiciste pruebas que inflaron artificialmente el HWM\n• Quieres reiniciar la medición desde hoy")) {
       hwmRef.current = 0;
