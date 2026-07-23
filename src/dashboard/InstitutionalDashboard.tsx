@@ -1411,17 +1411,23 @@ soxRsiWeekly,
         );
         const alreadyInBuys = baseRebalance.buySuggestions.some(s => s.ticker === 'BTC-EUR');
         const hasCycleTopTrim = cycleTopResult.signals.find(s => s.ticker === 'BTC-EUR')?.shouldTrim;
+        // DEBUG-GUARD: log each condition so we can diagnose why the guard doesn't fire
+        if (typeof console !== 'undefined') {
+          console.warn('[BTC-BUY-GUARD] targetAlloc=' + btcAsset.targetAllocation.toFixed(3) + ' currentPct=' + currentPct.toFixed(4) + ' drift=' + drift.toFixed(4) + ' alreadyInBuys=' + alreadyInBuys + ' hasTrim=' + hasCycleTopTrim + ' soldBtc=' + soldTickersForGuard.has('BTC-EUR') + ' btcSh=' + currentValue.toFixed(0));
+          console.warn('[BTC-BUY-GUARD] remainingCash=' + baseRebalance.remainingCash.toFixed(0) + ' buySuggestions=' + baseRebalance.buySuggestions.length + ' sellSuggestions=' + baseRebalance.suggestions.filter(s=>s.action==='SELL').length);
+        }
         if (!alreadyInBuys && !hasCycleTopTrim && !soldTickersForGuard.has('BTC-EUR') && drift < -0.02 && currentValue > 0) {
           const totalValue = totalPortfolioValue + availableCash;
           const deficitValue = Math.max(0, btcAsset.targetAllocation * totalValue - currentValue);
           if (deficitValue > 0) {
             const maxAvailable = baseRebalance.remainingCash;
-            if (maxAvailable <= 0) return baseRebalance; // no cash left after other BUYs
+            if (maxAvailable <= 0) { if (typeof console !== 'undefined') console.warn('[BTC-BUY-GUARD] maxAvailable<=0, skipping'); return baseRebalance; }
             const cashForBtc = Math.min(deficitValue, maxAvailable);
             const sharesToBuy = Math.floor((cashForBtc / btcAsset.price) * 10000) / 10000;
             if (sharesToBuy > 0) {
               const cost = sharesToBuy * btcAsset.price;
               const absDrift = Math.abs(drift * 100);
+              if (typeof console !== 'undefined') console.warn('[BTC-BUY-GUARD] INYECTANDO BUY: shares=' + sharesToBuy + ' cost=' + cost.toFixed(0) + ' remaining=' + (baseRebalance.remainingCash - cost).toFixed(0));
               const btcBuy: RebalanceSuggestion = {
                 ticker: 'BTC-EUR', name: 'Bitcoin', action: 'BUY',
                 sharesToBuy, cost,
@@ -1438,10 +1444,16 @@ soxRsiWeekly,
                 totalCost: baseRebalance.totalCost + cost,
                 remainingCash: baseRebalance.remainingCash - cost,
               };
-            }
-          }
+            } else if (typeof console !== 'undefined') console.warn('[BTC-BUY-GUARD] sharesToBuy<=0: cashForBtc=' + cashForBtc.toFixed(0) + ' price=' + btcAsset.price);
+          } else if (typeof console !== 'undefined') console.warn('[BTC-BUY-GUARD] deficitValue<=0: ' + deficitValue.toFixed(0));
+        } else if (typeof console !== 'undefined') {
+          if (alreadyInBuys) console.warn('[BTC-BUY-GUARD] SKIP: alreadyInBuys');
+          else if (hasCycleTopTrim) console.warn('[BTC-BUY-GUARD] SKIP: hasCycleTopTrim');
+          else if (soldTickersForGuard.has('BTC-EUR')) console.warn('[BTC-BUY-GUARD] SKIP: soldBTC');
+          else if (!(drift < -0.02)) console.warn('[BTC-BUY-GUARD] SKIP: drift=' + drift.toFixed(4));
+          else if (!(currentValue > 0)) console.warn('[BTC-BUY-GUARD] SKIP: currentValue<=0');
         }
-      }
+      } else if (typeof console !== 'undefined') console.warn('[BTC-BUY-GUARD] SKIP: btcAsset null or target<=0');
       return baseRebalance;
     }
     // ALL_CASH branch: liquidar todo
