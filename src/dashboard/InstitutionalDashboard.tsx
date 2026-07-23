@@ -1213,10 +1213,20 @@ soxRsiWeekly,
       accumulatedDefensiveLiquidity: defensiveLiquidity,
       motorAllocations: engineResult.allocations.map(a => {
         const asset = portfolio.assets.find(pa => pa.name === a.name);
+        const isBtc = asset?.ticker === 'BTC-EUR';
+        const olyPctVal = olympusPct / 100;
+        const btcSatVal = (100 - olympusPct) / 100;
+        // FIX-COMPOSITE-DCA (Jul 2026): aplicar fórmula composite a las
+        // finalAllocation para que el DCA use los mismos targets que el rebalanceo.
+        // ANTES: BTC target = 2% (motor) → drift -23pp → BLOQUEADO.
+        // AHORA: BTC target = 31.4% (composite 70/30) → drift +6pp → COMPRA.
+        const compositeAlloc = isBtc
+          ? (a.finalAllocation * olyPctVal) + btcSatVal
+          : a.finalAllocation * olyPctVal;
         return {
           name: a.name,
           ticker: asset?.ticker ?? a.name,
-          finalAllocation: a.finalAllocation,
+          finalAllocation: compositeAlloc,
           price: asset?.price ?? 0,
         };
       }),
@@ -1250,7 +1260,7 @@ soxRsiWeekly,
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, olympusPct]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";

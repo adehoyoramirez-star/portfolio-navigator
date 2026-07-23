@@ -544,7 +544,17 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     tacticalInvested = 0;  // probe: sin tactico, testear el fondo
     tacticalAccumulated = tacticalAvailableCash;
   } else {                               // DCA NORMAL
-    olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION) * ksScaleWithRecovery;
+    // FIX-BOTTOM-POOL (Jul 2026): cuando hay señales de suelo (bottom),
+    // el Cycle Top no debe asfixiar las compras de activos infravalorados.
+    // Escala la fracción con el multiplicador de suelo más fuerte:
+    //   VALUE (×1.25) → 18.75% | OPPORTUNITY (×1.5) → 22.5% | EXTREME (×2.0) → 30%
+    const maxBottomBoost = bottomMultipliers.size > 0
+      ? Math.max(1.0, ...Array.from(bottomMultipliers.values()))
+      : 1.0;
+    const effectiveFraction = cycleTopActive
+      ? Math.min(NRM.OLYMPUS_FRACTION, NRM.OLYMPUS_FRACTION_CYCLE_TOP * maxBottomBoost)
+      : NRM.OLYMPUS_FRACTION;
+    olympusInvested = olympusAvailableCash * effectiveFraction * ksScaleWithRecovery;
     tacticalInvested = 0;
     tacticalAccumulated = tacticalAvailableCash;
   }
