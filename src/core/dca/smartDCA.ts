@@ -33,16 +33,17 @@ const DCA_CONFIG = {
   },
   // Parámetros de ataque y graduación Kelly-inspired
   ATTACK: {
-    THRESHOLD: 4,                      // señales mínimas para activar modo ataque
+    THRESHOLD: 3,                      // FIX-H7: bajado 4->3. PROBE (3/8) activa ataque con 25% Oly.
     MIN_MACRO_FOR_FULL_ATTACK: 2,      // señales macro mínimas para ataque a cartera completa (si <2 → BTC-only)
     BTC_OVERRIDE_FRACTION: 0.25,       // % Olympus a BTC en CRISIS + ≥4 señales
     GRADUATION: {
       // [olympusFraction, tacticalFraction] por tramo
-      MAX:    [1.00, 1.00] as const,   // Tramo 3: fat pitch, todo al mercado
-      STRONG: [0.75, 0.66] as const,   // Tramo 2: convicción alta
-      ENTRY:  [0.50, 0.33] as const,   // Tramo 1: probe inicial
+      MAX:    [1.00, 1.00] as const,   // Tramo 4: fat pitch, todo al mercado
+      STRONG: [0.75, 0.66] as const,   // Tramo 3: convicción alta
+      ENTRY:  [0.50, 0.33] as const,   // Tramo 2: probe con convicción
+      PROBE:  [0.25, 0.00] as const,   // Tramo 1: testear fondo sin quemar pólvora (FIX-H7)
     },
-    MULTIPLIERS: { MAX: 3.0, STRONG: 2.0, ENTRY: 1.5 },
+    MULTIPLIERS: { MAX: 3.0, STRONG: 2.0, ENTRY: 1.5, PROBE: 1.25 },
   },
   // DCA normal (sin ataque)
   NORMAL: {
@@ -142,7 +143,7 @@ export interface SmartDCAOutput {
   attackConfluence: number;
   attackSignals: AttackSignal[];
   attackMultiplier: number;
-  attackTranche: 0 | 1 | 2 | 3;
+  attackTranche: 0 | 1 | 2 | 3 | 4;
   olympusInvested: number;
   tacticalInvested: number;
   tacticalAccumulated: number;
@@ -379,12 +380,13 @@ function buildAllocations(
 //   L2:         50% — cautela, pero el edge sigue existiendo
 //   L3:         25% — solo las oportunidades más claras
 //   L4-L5:       0% — protección de capital, bloqueo total
-function getKillSwitchDcaScale(level: number): number {
-  if (level >= 4) return 0;
-  if (level >= 3) return 0.25;
-  if (level >= 2) return 0.50;
-  if (level >= 1) return 0.70;
-  return 1.0;
+// FIX-OVERLAY-SCALE (Jul-2026): usar tailRiskOverlay como escala continua.
+//   Elimina el mismatch level/overlay (ej: L1_5 overlay=0.65, level compartido con L1 overlay=0.80).
+//   L1: 0.80, L1_5: 0.65, L2: 0.50, L3: min(0.30,0.25)=0.25, L4+: 0.
+function getKillSwitchDcaScale(killSwitchLevel: number, tailRiskOverlay: number): number {
+  if (killSwitchLevel >= 4) return 0;
+  // Overlay como escala continua con floor 25% para L1-L3
+  return Math.max(tailRiskOverlay, 0.25);
 }
 
 export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
@@ -463,7 +465,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // ── 2. KILL SWITCH: tail risk activo ──────────────────────────
   // FIX-KS-SCALE: L4-L5 → bloqueo total. L1-L3 → escala el DCA
   // proporcionalmente al nivel de riesgo (no bloquea).
-  const ksScale = tailRiskActive ? getKillSwitchDcaScale(killSwitchLevel) : 1.0;
+  const ksScale = tailRiskActive ? getKillSwitchDcaScale(killSwitchLevel, tailRiskOverlay) : 1.0;
   if (tailRiskActive && ksScale <= 0) {
     return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk L${killSwitchLevel} (×${tailRiskOverlay.toFixed(2)}). Kill Switch crítico — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   }
@@ -526,14 +528,18 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     olympusInvested = olympusAvailableCash * G.MAX[0] * ksScaleWithRecovery;
     tacticalInvested = tacticalAvailableCash * G.MAX[1] * ksScaleWithRecovery;
     tacticalAccumulated = 0;
-  } else if (attackConfluence >= 5) {    // TRAMO 2: ATTACK_STRONG
+  } else if (attackConfluence >= 5) {    // TRAMO 3: ATTACK_STRONG (5/8)
     olympusInvested = olympusAvailableCash * G.STRONG[0] * ksScaleWithRecovery;
     tacticalInvested = tacticalAvailableCash * G.STRONG[1] * ksScaleWithRecovery;
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
-  } else if (attackConfluence >= ATK.THRESHOLD) { // TRAMO 1: ATTACK_ENTRY
+  } else if (attackConfluence >= ATK.THRESHOLD) { // TRAMO 2: ATTACK_ENTRY (4/8)
     olympusInvested = olympusAvailableCash * G.ENTRY[0] * ksScaleWithRecovery;
     tacticalInvested = tacticalAvailableCash * G.ENTRY[1] * ksScaleWithRecovery;
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
+  } else if (attackConfluence >= 3) {             // TRAMO 1: ATTACK_PROBE (3/8) — H7 grey zone
+    olympusInvested = olympusAvailableCash * G.PROBE[0] * ksScaleWithRecovery;
+    tacticalInvested = 0;  // probe: sin tactico, testear el fondo
+    tacticalAccumulated = tacticalAvailableCash;
   } else {                               // DCA NORMAL
     olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION) * ksScaleWithRecovery;
     tacticalInvested = 0;
@@ -653,8 +659,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     : `DCA normal Olympus €${olympusInvested.toFixed(0)}${recoveryMultiplier > 1 ? ` (recuperación ×${recoveryMultiplier.toFixed(1)} tras Kill Switch — quedan ${recoveryCyclesRemaining} ciclos)` : ''}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — ejecuta PRIMERO el rebalanceo)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
   const M = ATK.MULTIPLIERS;
-  const attackMultiplier = canAttack ? (attackConfluence >= 6 ? M.MAX : attackConfluence >= 5 ? M.STRONG : M.ENTRY) : 1.0;
-  const attackTranche = canAttack ? (attackConfluence >= 6 ? 3 : attackConfluence >= 5 ? 2 : 1) : 0;
+  const attackMultiplier = canAttack ? (attackConfluence >= 6 ? M.MAX : attackConfluence >= 5 ? M.STRONG : attackConfluence >= 4 ? M.ENTRY : M.PROBE) : 1.0;
+  const attackTranche = canAttack ? (attackConfluence >= 6 ? 4 : attackConfluence >= 5 ? 3 : attackConfluence >= 4 ? 2 : 1) : 0;
   return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier, attackTranche, olympusInvested, tacticalInvested, tacticalAccumulated, rebalanceFirst: cycleTopActive };
 }
 

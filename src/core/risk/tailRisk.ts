@@ -78,11 +78,10 @@ function computeKillSwitch(drawdown: number): {
   //   distinguiéndolo del verdadero L2 (0.50). Sin este fix, L1_5 y L2
   //   compartían level=2 con overlays distintos (0.65 vs 0.50).
   // FIX-H20 (Jul-2026): eliminado as any. Acceso tipado via genérico del tipo.
-  if ('L1_5' in ks) {
-    const l15 = ks.L1_5 as unknown as typeof ks['L1'];
-    if (dd >= l15.threshold) {
-      return { level: 1, name: l15.name, overlay: l15.overlay, exposureReduction: l15.reduction };
-    }
+  // FIX-H20 (Jul-2026): acceso tipado directo — L1_5 esta en el tipo KILL_SWITCH.
+  if (dd >= ks.L1_5.threshold) {
+    const l15 = ks.L1_5;
+    return { level: 1, name: l15.name, overlay: l15.overlay, exposureReduction: l15.reduction };
   }
   if (dd >= ks.L1.threshold) {
     return { level: 1, name: ks.L1.name, overlay: ks.L1.overlay, exposureReduction: ks.L1.reduction };
