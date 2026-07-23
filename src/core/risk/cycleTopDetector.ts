@@ -836,7 +836,19 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
   // MVRV — invertido: bajo = infravalorado
   // CALIBRACIÓN: MVRV<1.5 + RSI<30 + Puell<0.5 debe alcanzar EXTREME (≥80).
   //   Históricamente: solo marzo 2020 (COVID) y nov 2022 (FTX).
-  if (isValidReading(mvrvRatio)) {        if (mvrvRatio < 1.5)   { score += 45; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — infravaloración extrema (suelo de ciclo)`); }
+  //
+  // FIX-UNIFY-ZSCORE-BOTTOM (23-Jul-2026): mvrvZScore PRIMARIO con fallback a ratio.
+  //   Fronteras Z alineadas con btcCycleOverlay.ts scoreMvrv (-1/0/1).
+  //   Scores distintos (45/30/18 vs 35/32/25) porque son sistemas de puntuación diferentes.
+  //   Antes: ignoraba mvrvZScore → bottom detector y motor usaban métricas distintas.
+  if (isValidReading(mvrvZScore)) {
+    // Z-Score path — umbrales equivalentes a los del ratio:
+    //   Z<-1.0 (~ratio<1.5) → 45, Z<0 (~ratio<2.0) → 30, Z<1.0 (~ratio<2.5) → 18
+    if (mvrvZScore < -1.0)     { score += 45; reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — capitulación extrema (solo suelos históricos)`); }
+    else if (mvrvZScore < 0)   { score += 30; reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — infravalorado (bajo la media histórica)`); }
+    else if (mvrvZScore < 1.0) { score += 18; reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — zona de acumulación`); }
+  } else if (isValidReading(mvrvRatio)) {
+    if (mvrvRatio < 1.5)   { score += 45; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — infravaloración extrema (suelo de ciclo)`); }
     else if (mvrvRatio < 2.0)  { score += 30; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — zona de acumulación`); }
     else if (mvrvRatio < 2.5)  { score += 18; reasons.push(`MVRV ${mvrvRatio.toFixed(2)} — ligeramente infravalorado`); }
   }
@@ -859,7 +871,8 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
 
   const zone = scoreToZone(score);
   const parts: string[] = [];
-  if (isValidReading(mvrvRatio)) parts.push(`MVRV ${mvrvRatio.toFixed(2)}`);
+  if (isValidReading(mvrvZScore)) parts.push(`MVRV Z ${mvrvZScore.toFixed(2)}`);
+  else if (isValidReading(mvrvRatio)) parts.push(`MVRV ${mvrvRatio.toFixed(2)}`);
   if (isValidReading(puellMultiple)) parts.push(`Puell ${puellMultiple.toFixed(2)}`);
   if (isValidReading(btcRsiWeekly, 0, 100)) parts.push(`RSI-W ${btcRsiWeekly.toFixed(0)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos on-chain";
