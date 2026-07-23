@@ -1064,6 +1064,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //     7. VolTarget
   //     8. DCA contracíclico (desactivado si L4+)
   const dcaDataMissing = (input.totalPortfolioValue === undefined || input.totalPortfolioValue === null);
+  // FIX-H27 (Jul-2026): dcaEngine es capa de compatibilidad.
+  //   El dashboard usa computeSmartDCA() como fuente unica de verdad
+  //   para las decisiones de compra diarias. Este bloque solo alimenta
+  //   output.dca para retrocompatibilidad con el motor.
   const dcaBlockedByKillSwitch = tailRisk.killSwitchLevel >= 4;
   const dcaDecision = dcaBlockedByKillSwitch
     ? {

@@ -465,13 +465,25 @@ export function getDynamicCovMatrix(
 
   try {
     const dccOutput = runDCCGARCH(tickers, returnMatrix, staticCovMatrix);
+    
+    // FIX-H18 (Jul-2026): belt-and-suspenders NaN guard.
+    //   Si algun valor en la covarianza dinamica es NaN, propagarlo al motor
+    //   causaria fallos silenciosos en HRP, Black-Litterman y Kelly.
+    const hasNaN = dccOutput.dynamicCovariance.some(row => 
+      row.some(v => !isFinite(v))
+    );
+    if (hasNaN) {
+      console.warn('DCC-GARCH: NaN en covarianza dinamica, fallback a estatica');
+      return { covMatrix: staticCovMatrix, avgCorrelation: 0.3 };
+    }
+    
     saveDCCState(dccOutput.garchStates, dccOutput.dccState);
     return {
       covMatrix: dccOutput.dynamicCovariance,
       avgCorrelation: dccOutput.avgCorrelation
     };
   } catch (e) {
-    console.warn('DCC-GARCH: error en el cálculo, fallback a covarianza estática:', e);
+    console.warn('DCC-GARCH: error en el calculo, fallback a covarianza estatica:', e);
     return { covMatrix: staticCovMatrix, avgCorrelation: 0.3 };
   }
 }

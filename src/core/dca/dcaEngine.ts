@@ -1,5 +1,14 @@
 import type { BTCCycleOutput } from '../crypto/btcCycleOverlay';
 
+// ===============================================
+// FIX-H27 (Jul-2026): dcaEngine es capa de compatibilidad.
+//   Smart DCA (smartDCA.ts) es la fuente UNICA de verdad para
+//   decisiones de compra/ataque en el dashboard.
+//   dcaEngine solo alimenta el campo output.dca en olympusV3.ts
+//   para retrocompatibilidad. Los valores de INTENSITY estan
+//   alineados con Smart DCA (EXP: 0.07/sem = 30%/mes).
+// ===============================================
+
 export type PortfolioRegime = 'EXPANSION' | 'CONTRACTION' | 'CRISIS' | 'ALL_CASH';
 
 export interface DCAEngineInput {

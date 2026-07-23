@@ -216,12 +216,15 @@ export function getMasterRegime(
   const regime = [crisisLabel, stressLabel, probLabel].reduce(resolveRegime);
 
   // NIVEL 2: blend 40% binario + 60% continuo → elimina escalones bruscos
-  const binaryPenalty     = getBinaryPenalty(regime);
-  const continuousPenalty = continuousRegimePenalty(regimeProbs);
-  const regimePenalty     = Math.max(0.4, Math.min(1.0, 0.4 * binaryPenalty + 0.6 * continuousPenalty));
-
+  // FIX-H16 (Jul-2026): dominantSignal calculado antes de binaryPenalty para
+  //   contexto. Si solo STRESS_MODEL dispara CONTRACTION a VIX 20-25,
+  //   es probable falso positivo → binaryPenalty mas suave (0.92).
   const dominantSignal = getDominantSignal(crisisLabel, stressLabel, probLabel, regime);
   const confidence     = getConfidence(crisisLabel, stressLabel, probLabel);
+
+  const binaryPenalty     = getBinaryPenalty(regime, dominantSignal);
+  const continuousPenalty = continuousRegimePenalty(regimeProbs);
+  const regimePenalty     = Math.max(0.4, Math.min(1.0, 0.4 * binaryPenalty + 0.6 * continuousPenalty));
 
   // CEWS: ajustar penalización si hay historial
   let finalPenalty = regimePenalty;
@@ -359,9 +362,16 @@ function resolveRegime(a: MasterRegimeLabel, b: MasterRegimeLabel): MasterRegime
   return PRIO[a] >= PRIO[b] ? a : b;
 }
 
-function getBinaryPenalty(regime: MasterRegimeLabel): number {
+function getBinaryPenalty(regime: MasterRegimeLabel, dominantSignal?: string): number {
   if (regime === "CRISIS")      return 0.4;
-  if (regime === "CONTRACTION") return 0.85;  // FIX-CONTRACTION-LAG: subido 0.70→0.85. El stress model genera falsos positivos a VIX 20-25. Penalizacion mas suave mitiga el impacto del lag de deteccion sin cambiar la logica de entrada/salida.
+  if (regime === "CONTRACTION") {
+    // FIX-H16 (Jul-2026): si solo el stress model dice CONTRACTION pero
+    //   crisis model y probabilistic dicen EXPANSION, es probable falso
+    //   positivo a VIX 20-25. Penalizacion mas suave (0.92) para no
+    //   lastrar el motor por ruido del stress model.
+    if (dominantSignal === "STRESS_MODEL") return 0.92;
+    return 0.85;  // consenso o crisis model tambien activo → CONTRACTION real
+  }
   return 1.0;
 }
 
