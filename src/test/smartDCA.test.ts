@@ -138,7 +138,7 @@ describe("DCA Normal (< 4 señales)", () => {
     expect(result.olympusInvested).toBe(300);
   });
 
-  test("3 señales activas (solo BTC/on-chain, 0 macro) → BUY, umbral no alcanzado", () => {
+  test("3 señales activas (solo BTC/on-chain, 0 macro) → ATTACK_PROBE (THRESHOLD=3, FIX-H7)", () => {
     const result = computeSmartDCA(baseInput({
       btcRsi: 30,
       btcZScore: -2.0,
@@ -158,8 +158,8 @@ describe("DCA Normal (< 4 señales)", () => {
       mvrvRatio: 1.4,
     }));
     // Señales activas: BTC oversold (1) + BTC.D (2) + MVRV (3) = 3 total, 0 macro
-    expect(result2.action).toBe("BUY");
-    expect(result2.attackMode).toBe(false);
+    expect(result2.action).toBe("ATTACK_ENTRY");  // FIX-H7: THRESHOLD 4->3, 3 signals -> PROBE -> ATTACK_ENTRY
+    expect(result2.attackMode).toBe(true);  // canAttack=true with THRESHOLD=3
     expect(result2.attackConfluence).toBe(3);
   });
 
@@ -413,15 +413,29 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
 // ───────────────────────────────────────────────────────────────────────────
 describe("Bloqueos", () => {
 
-  test("Tail Risk activo → BLOCK_TAIL_RISK (independientemente del overlay)", () => {
+  test("Tail Risk L4+ activo → BLOCK_TAIL_RISK (FIX-KS-SCALE: L4+ bloquea)", () => {
     const result = computeSmartDCA(baseInput({
       tailRiskActive: true,
-      tailRiskOverlay: 0.80,
+      tailRiskOverlay: 0.50,
+      killSwitchLevel: 4,  // FIX-KS-SCALE: L4+ blocks, L1-L3 scales
     }));
 
     expect(result.action).toBe("BLOCK_TAIL_RISK");
     expect(result.attackMode).toBe(false);
     expect(result.totalCashToInvest).toBe(0);
+  });
+
+  test("Tail Risk L1 activo → NO bloquea, escala DCA (FIX-KS-SCALE)", () => {
+    const result = computeSmartDCA(baseInput({
+      tailRiskActive: true,
+      tailRiskOverlay: 0.80,
+    }));
+
+    expect(result.action).toBe("BUY");  // L1 escala, no bloquea
+    expect(result.attackMode).toBe(false);
+    expect(result.totalCashToInvest).toBeGreaterThan(0);
+    // ksScale = 0.80, DCA normal = 30% * 1000 * 0.80 = 240
+    expect(result.olympusInvested).toBe(240);
   });
 
   test("Stale data >72h → BLOCK_STALE_DATA (máxima prioridad)", () => {
@@ -517,7 +531,7 @@ describe("Bloqueos", () => {
     expect(result.allocationByAsset.every(a => a.ticker === "BTC-EUR")).toBe(true);
   });
 
-  test("BTC Cycle Override con tailRisk activo → NO se activa (bloqueado por tailRisk)", () => {
+  test("BTC Cycle Override con tailRisk L4+ → bloqueado (FIX-H3: L4+ bloquea override)", () => {
     const result = computeSmartDCA(baseInput({
       btcRsi: 30,
       btcZScore: -2.0,
@@ -528,10 +542,28 @@ describe("Bloqueos", () => {
       regimePenalty: 0.40,
       tailRiskActive: true,
       tailRiskOverlay: 0.50,
+      killSwitchLevel: 4,  // FIX-H3: L4+ blocks BTC override
     }));
 
-    // tailRisk check corre primero
     expect(result.action).toBe("BLOCK_TAIL_RISK");
+  });
+
+  test("BTC Cycle Override con tailRisk L2 → SÍ se activa (FIX-H3: L1-L3 permite override)", () => {
+    const result = computeSmartDCA(baseInput({
+      btcRsi: 30,
+      btcZScore: -2.0,
+      btcMomentum1m: -0.15,
+      btcDominance: 60,
+      mvrvRatio: 1.4,
+      regime: "CRISIS",
+      regimePenalty: 0.40,
+      tailRiskActive: true,
+      tailRiskOverlay: 0.50,
+      killSwitchLevel: 2,  // FIX-H3: L2 permite BTC override
+    }));
+
+    expect(result.action).toBe("BTC_CYCLE_OVERRIDE");
+    expect(result.attackConfluence).toBe(4);
   });
 });
 
@@ -635,8 +667,8 @@ describe("Edge Cases", () => {
     expect(result.allocationByAsset.length).toBeGreaterThan(1);
     // Attack multiplier: Tramo 3 (6-7/7) = 3.0
     expect(result.attackMultiplier).toBe(3.0);
-    // Attack tranche: 6+ → 3
-    expect(result.attackTranche).toBe(3);
+    // FIX-H7: Attack tranche: 6+ → 4 (MAX shifted by PROBE tramo)
+    expect(result.attackTranche).toBe(4);
   });
 
   test("Attack con 5 señales (solo 1 macro) → ATTACK_STRONG, BTC-only", () => {
@@ -653,7 +685,7 @@ describe("Edge Cases", () => {
     // macroConfluence = 1 (< 2) → BTC-only
 
     expect(result.action).toBe("ATTACK_STRONG");  // 5 → ATTACK_STRONG
-    expect(result.attackTranche).toBe(2);           // 5 → tranche 2
+    expect(result.attackTranche).toBe(3);           // FIX-H7: 5 → tranche 3 (PROBE added)
     // BTC-only
     expect(result.allocationByAsset.every(a => a.ticker === "BTC-EUR")).toBe(true);
   });
@@ -670,7 +702,7 @@ describe("Edge Cases", () => {
 
     expect(result.attackConfluence).toBe(4);
     expect(result.action).toBe("ATTACK_ENTRY");
-    expect(result.attackTranche).toBe(1);
+    expect(result.attackTranche).toBe(2);  // FIX-H7: ENTRY shifted to tramo 2
     expect(result.allocationByAsset.every(a => a.ticker === "BTC-EUR")).toBe(true);
   });
 
