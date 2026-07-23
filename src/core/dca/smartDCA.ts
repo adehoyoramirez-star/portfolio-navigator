@@ -86,6 +86,9 @@ export interface SmartDCAInput {
   tailRiskOverlay: number;
   /** Kill Switch level [0-5] del motor. 0=off, 1-3=escalado, 4-5=bloqueo total. */
   killSwitchLevel: number;
+  /** Ciclos de recuperación restantes. >0 → despliegue acelerado (2×) tras salir de Kill Switch L4+.
+   *  El dashboard pone 4 cuando Kill Switch baja de L4+ → L3-, y decrementa en cada DCA. */
+  recoveryCyclesRemaining: number;
   olympusAvailableCash: number;
   tacticalAvailableCash: number;
   accumulatedDefensiveLiquidity?: number;
@@ -383,7 +386,7 @@ function getKillSwitchDcaScale(level: number): number {
 }
 
 export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
-  const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, killSwitchLevel, olympusAvailableCash, tacticalAvailableCash, motorAllocations, totalPortfolioValueEUR } = input;
+  const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, killSwitchLevel, recoveryCyclesRemaining, olympusAvailableCash, tacticalAvailableCash, motorAllocations, totalPortfolioValueEUR } = input;
   const ATK = DCA_CONFIG.ATTACK;
   const BLK = DCA_CONFIG.BLOCKS;
   const NRM = DCA_CONFIG.NORMAL;
@@ -463,6 +466,15 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk L${killSwitchLevel} (×${tailRiskOverlay.toFixed(2)}). Kill Switch crítico — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
   }
 
+  // ── KILL SWITCH RECOVERY ───────────────────────────────────────
+  // FIX-KS-MEMORY (Jul-2026): si el Kill Switch acaba de desactivarse
+  // (L4+ → L3-), acelera el despliegue 2× durante 4 ciclos para
+  // desplegar el cash acumulado durante la fase defensiva.
+  //   recoveryCyclesRemaining: 4 → 3 → 2 → 1 → 0
+  //   recoveryMultiplier:       2× → 2× → 2× → 2× → 1×
+  const recoveryMultiplier = recoveryCyclesRemaining > 0 ? 2.0 : 1.0;
+  const ksScaleWithRecovery = Math.min(1.0, ksScale * recoveryMultiplier);
+
   // ── 3. RÉGIMEN MACRO: CRISIS o penalty crítico ────────────────
   // CRISIS bloquea DCA excepto si hay confluencia de fondo fuerte (≥4/7)
   // y no hay tail risk → en ese caso cedemos paso al BTC_CYCLE_OVERRIDE.
@@ -509,19 +521,19 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // Tramo 3 (6-7/7): fat pitch — coste de oportunidad > riesgo de caída.
   const G = ATK.GRADUATION;
   if (attackConfluence >= 6) {           // TRAMO 3: ATTACK_MAX
-    olympusInvested = olympusAvailableCash * G.MAX[0] * ksScale;
+    olympusInvested = olympusAvailableCash * G.MAX[0] * ksScaleWithRecovery;
     tacticalInvested = tacticalAvailableCash * G.MAX[1];
     tacticalAccumulated = 0;
   } else if (attackConfluence >= 5) {    // TRAMO 2: ATTACK_STRONG
-    olympusInvested = olympusAvailableCash * G.STRONG[0] * ksScale;
+    olympusInvested = olympusAvailableCash * G.STRONG[0] * ksScaleWithRecovery;
     tacticalInvested = tacticalAvailableCash * G.STRONG[1];
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else if (attackConfluence >= ATK.THRESHOLD) { // TRAMO 1: ATTACK_ENTRY
-    olympusInvested = olympusAvailableCash * G.ENTRY[0] * ksScale;
+    olympusInvested = olympusAvailableCash * G.ENTRY[0] * ksScaleWithRecovery;
     tacticalInvested = tacticalAvailableCash * G.ENTRY[1];
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else {                               // DCA NORMAL
-    olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION) * ksScale;
+    olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION) * ksScaleWithRecovery;
     tacticalInvested = 0;
     tacticalAccumulated = tacticalAvailableCash;
   }
@@ -636,7 +648,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     ? btcOnlyAttack
       ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
       : `🚀 ATAQUE — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
-    : `DCA normal Olympus €${olympusInvested.toFixed(0)}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — ejecuta PRIMERO el rebalanceo)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
+    : `DCA normal Olympus €${olympusInvested.toFixed(0)}${recoveryMultiplier > 1 ? ` (recuperación ×${recoveryMultiplier.toFixed(1)} tras Kill Switch — quedan ${recoveryCyclesRemaining} ciclos)` : ''}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — ejecuta PRIMERO el rebalanceo)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
   const M = ATK.MULTIPLIERS;
   const attackMultiplier = canAttack ? (attackConfluence >= 6 ? M.MAX : attackConfluence >= 5 ? M.STRONG : M.ENTRY) : 1.0;

@@ -21,6 +21,7 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
   tailRiskActive: false,
   tailRiskOverlay: 1.0,
   killSwitchLevel: 0,
+  recoveryCyclesRemaining: 0,
     olympusAvailableCash: 1000,
     tacticalAvailableCash: 500,
     accumulatedDefensiveLiquidity: 0,

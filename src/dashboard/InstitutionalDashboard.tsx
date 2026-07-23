@@ -291,6 +291,18 @@ const formatCurrency = (value: number): string => {
   const [cewsPreviousLevel, setCewsPreviousLevel] = useState<import("@/core/macro/crisisEarlyWarning").CEWSLevel>("CLEAR");
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
   const previousRegimeRef = useRef<string | null>(null);
+
+  // ── Kill Switch Recovery Memory ───────────────────────────────────
+  // FIX-KS-MEMORY (Jul-2026): cuando el Kill Switch baja de L4+ a L3-,
+  // activa 4 ciclos de despliegue acelerado (2×) para desplegar el cash
+  // acumulado durante la fase defensiva.
+  const [recoveryCycles, setRecoveryCycles] = useState<number>(() => {
+    try {
+      const stored = sessionStorage.getItem('olympus_recovery_cycles');
+      return stored ? parseInt(stored, 10) : 0;
+    } catch { return 0; }
+  });
+  const previousKillSwitchRef = useRef<number>(0);
   const [benchmarkStatus, setBenchmarkStatus] = useState<BenchmarkStatus | null>(null);
 
   const clippedERP = (erp: number) => Math.max(-0.03, Math.min(0.05, erp));
@@ -866,6 +878,31 @@ soxRsiWeekly,
     previousRegimeRef.current = currentRegime;
   }, [engineResult, vix, portfolioDrawdown, portfolio]);
 
+  // ── Kill Switch Recovery Memory ───────────────────────────────────
+  // Cuando el Kill Switch baja de L4+ a L3-, activa 4 ciclos de
+  // despliegue acelerado (2×) para inyectar el cash acumulado.
+  useEffect(() => {
+    const current = engineResult?.killSwitchLevel ?? 0;
+    const previous = previousKillSwitchRef.current;
+
+    if (previous >= 4 && current < 4 && current > 0) {
+      // Salida de bloqueo → activar recuperación
+      setRecoveryCycles(4);
+      try { sessionStorage.setItem('olympus_recovery_cycles', '4'); } catch {}
+    } else if (recoveryCycles > 0 && current === 0) {
+      // Kill Switch desactivado completamente → cancelar recuperación pendiente
+      setRecoveryCycles(0);
+      try { sessionStorage.removeItem('olympus_recovery_cycles'); } catch {}
+    } else if (recoveryCycles > 0) {
+      // Decrementar ciclo en cada render donde Kill Switch sigue activo
+      const next = recoveryCycles - 1;
+      setRecoveryCycles(next);
+      try { sessionStorage.setItem('olympus_recovery_cycles', String(next)); } catch {}
+    }
+
+    previousKillSwitchRef.current = current;
+  }, [engineResult]);
+
   // ── SPRINT-7: Monitoreo en Vivo — Real-Time Monitor Panel ────────
   //
 
@@ -1165,6 +1202,7 @@ soxRsiWeekly,
       volTargetMultiplier: engineResult.volTargetMultiplier,        tailRiskActive: engineResult.tailRiskActive,
         tailRiskOverlay: engineResult.tailRiskOverlay,
         killSwitchLevel: engineResult.killSwitchLevel ?? 0,
+        recoveryCyclesRemaining: recoveryCycles,
         olympusAvailableCash,
       tacticalAvailableCash,
       accumulatedDefensiveLiquidity: defensiveLiquidity,
