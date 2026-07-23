@@ -253,6 +253,7 @@ export interface OlympusEngineInput {
   };
   btcOnChain?: {
     mvrvRatio?: number;
+    mvrvZScore?: number;   // MVRV Z-Score — primario sobre ratio bruto (era ETF, Glassnode canónico)
     puellMultiple?: number;
     rsiWeekly?: number;
   };
@@ -746,7 +747,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // El ratio se define en regimeTacticalAllocation.ts → applyTacticalConstraints()
   // FIX-BTC-GATE + FIX-VVSM-GATE: pasar métricas para que los pesos tácticos
   // de BTC y VVSM se reduzcan cuando están sobrevalorados o sobrecalentados.
-  const btcMVRV = input.btcOnChain?.mvrvRatio;
+  // FEAT-ZSCORE-ENGINE (Jul-2026): Z-Score primario, ratio bruto fallback.
+  // MVRV Z-Score (Glassnode) normaliza por volatilidad histórica → más robusto en era ETF.
+  const btcMVRV = input.btcOnChain?.mvrvZScore ?? input.btcOnChain?.mvrvRatio;
   const vvsmIdx = assets.findIndex(a => {
     const t = (a.ticker ?? a.name).toLowerCase();
     return t === 'vvsm.de' || t.includes('vvsm');
@@ -805,14 +808,20 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //                 |       | de 40-60% en BTC (2017 pico, 2021 pico).
   //                 |       | Límite a 10% → drawdown máximo de -8% total.
   //
-  const mvrv = input.btcOnChain?.mvrvRatio ?? 0;
+  // FEAT-ZSCORE-ENGINE (Jul-2026): Z-Score primario para BTC cap dinámico.
+  // mvrv = Z-Score ?? ratio bruto. Umbral > 3.5 funciona para ambos:
+  // Z-Score: 3.5+ elevado, 5+ muy elevado, 7+ techo canónico
+  // Ratio bruto: > 3.5 zona de burbuja (legacy)
+  const mvrvZ = input.btcOnChain?.mvrvZScore;
+  const mvrvRatioRaw = input.btcOnChain?.mvrvRatio ?? 0;
+  const mvrv = mvrvZ ?? mvrvRatioRaw;
   // FIX-AUDIT-C7: BTC caps dinámicos centralizados en BTC_CAPS_BY_REGIME.
   // Antes hardcodeados como 0.20, 0.35, 0.10.
   let dynamicBtcCap = BTC_CAPS_BY_REGIME[masterRegime.regime] ?? 0.20;
   if (btcCycle.signal === 'STRONG_BUY' && mvrv < 3.0) {
     dynamicBtcCap = 0.35; // Permite correr el rally
   } else if (mvrv > 3.5) {
-    dynamicBtcCap = 0.10; // Protección contra euforia
+    dynamicBtcCap = 0.10; // Protección contra euforia (Z-Score o ratio > 3.5)
   }
 
   const relativeWeightsAfterCap = [...tiltedRelativeWeights];

@@ -776,6 +776,7 @@ soxRsiWeekly,
       adaptiveFactorWeights: kalmanWeights,
       btcOnChain: {
         mvrvRatio,
+        mvrvZScore,
         puellMultiple,
         rsiWeekly: btcRsiWeekly,
       },
