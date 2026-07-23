@@ -1410,13 +1410,17 @@ soxRsiWeekly,
           baseRebalance.suggestions.filter(s => s.action === 'SELL').map(s => s.ticker.split('.')[0])
         );
         const alreadyInBuys = baseRebalance.buySuggestions.some(s => s.ticker === 'BTC-EUR');
-        const hasCycleTopTrim = cycleTopResult.signals.find(s => s.ticker === 'BTC-EUR')?.shouldTrim;
-        // DEBUG-GUARD: log each condition so we can diagnose why the guard doesn't fire
+        // FIX-BTC-TRIM (Jul-2026): NO usar shouldTrim como bloqueo.
+        // detectBTCTop SIEMPRE devuelve un signal incluso sin señal de techo,
+        // y shouldTrim puede ser true por ruido en el cálculo residual de trimPct.
+        // En vez de shouldTrim, usar zone: SAFE → no hay techo. CAUTION/DANGER → sí.
+        const btcTopSignal = cycleTopResult.signals.find(s => s.ticker === 'BTC-EUR');
+        const hasActiveCycleTop = btcTopSignal ? (btcTopSignal.zone === 'CAUTION' || btcTopSignal.zone === 'DANGER') : false;
         if (typeof console !== 'undefined') {
-          console.warn('[BTC-BUY-GUARD] targetAlloc=' + btcAsset.targetAllocation.toFixed(3) + ' currentPct=' + currentPct.toFixed(4) + ' drift=' + drift.toFixed(4) + ' alreadyInBuys=' + alreadyInBuys + ' hasTrim=' + hasCycleTopTrim + ' soldBtc=' + soldTickersForGuard.has('BTC-EUR') + ' btcSh=' + currentValue.toFixed(0));
+          console.warn('[BTC-BUY-GUARD] targetAlloc=' + btcAsset.targetAllocation.toFixed(3) + ' currentPct=' + currentPct.toFixed(4) + ' drift=' + drift.toFixed(4) + ' alreadyInBuys=' + alreadyInBuys + ' zone=' + (btcTopSignal?.zone ?? 'N/A') + ' soldBtc=' + soldTickersForGuard.has('BTC-EUR') + ' btcSh=' + currentValue.toFixed(0));
           console.warn('[BTC-BUY-GUARD] remainingCash=' + baseRebalance.remainingCash.toFixed(0) + ' buySuggestions=' + baseRebalance.buySuggestions.length + ' sellSuggestions=' + baseRebalance.suggestions.filter(s=>s.action==='SELL').length);
         }
-        if (!alreadyInBuys && !hasCycleTopTrim && !soldTickersForGuard.has('BTC-EUR') && drift < -0.02 && currentValue > 0) {
+        if (!alreadyInBuys && !hasActiveCycleTop && !soldTickersForGuard.has('BTC-EUR') && drift < -0.02 && currentValue > 0) {
           const totalValue = totalPortfolioValue + availableCash;
           const deficitValue = Math.max(0, btcAsset.targetAllocation * totalValue - currentValue);
           if (deficitValue > 0) {
@@ -1448,7 +1452,7 @@ soxRsiWeekly,
           } else if (typeof console !== 'undefined') console.warn('[BTC-BUY-GUARD] deficitValue<=0: ' + deficitValue.toFixed(0));
         } else if (typeof console !== 'undefined') {
           if (alreadyInBuys) console.warn('[BTC-BUY-GUARD] SKIP: alreadyInBuys');
-          else if (hasCycleTopTrim) console.warn('[BTC-BUY-GUARD] SKIP: hasCycleTopTrim');
+          else if (hasActiveCycleTop) console.warn('[BTC-BUY-GUARD] SKIP: hasActiveCycleTop zone=' + (btcTopSignal?.zone ?? 'N/A'));
           else if (soldTickersForGuard.has('BTC-EUR')) console.warn('[BTC-BUY-GUARD] SKIP: soldBTC');
           else if (!(drift < -0.02)) console.warn('[BTC-BUY-GUARD] SKIP: drift=' + drift.toFixed(4));
           else if (!(currentValue > 0)) console.warn('[BTC-BUY-GUARD] SKIP: currentValue<=0');
