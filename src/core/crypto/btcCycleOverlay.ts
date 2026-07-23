@@ -45,18 +45,32 @@ export interface BTCCycleOutput {
 
 // FEAT-ZSCORE-OVERLAY (Jul-2026): Z-Score primario con fallback a ratio.
 // Los umbrales legacy (<1.5, <2.5) están calibrados para el ratio bruto.
-// Para Z-Score: <0 = infravalorado (capitulación), 0-2 = neutral, >2 = elevado.
-// La función recibe el valor final ya resuelto (Z-Score ?? ratio) y aplica
-// los umbrales correctos según cuál fuente se usó.
+//
+// FIX-ZSCORE-CALIBRATION (23-Jul-2026): recalibrado contra percentiles reales
+// de la distribución MVRV. La distribución es asimétrica (burbujas inflan la
+// media), por lo que Z=0 NO es "fair value" — es "media histórica" que incluye
+// 2017 y 2021. Z<1 se considera zona de acumulación razonable.
+//
+// Referencia: MVRV ratio 1.23 (~hoy) ≈ Z-Score 0.2-0.5. Con umbrales antiguos
+// esto daba 20pts (neutral), contradiciendo la lectura del ratio (35pts, extremo).
+// El nuevo umbral Z<1→25pts reduce la brecha ratio↔Z-Score de 15pts a 10pts.
 function scoreMvrv(mvrv?: number, isZScore?: boolean): number {
   if (mvrv === undefined || mvrv === null) return 17; // neutral (mid-range)
 
   if (isZScore) {
-    // Z-Score thresholds: <0 capitulación, 0-2 neutral, 2-4 elevado, >4 techo
-    if (mvrv < 0)   return 35;      // Z < 0 → infravaloración extrema (solo en suelos de ciclo)
-    if (mvrv < 2)   return 20;      // Z 0-2 → neutral
-    if (mvrv < 4)   return 10;      // Z 2-4 → elevado
-    return 0;                        // Z > 4 → sobrevalorado (techo)
+    // Z-Score thresholds calibrados (percentiles aproximados):
+    //   <-1.0: ~16% inferior   → capitulación extrema (2015, 2019, 2022)
+    //   -1..0: ~16-50%         → infravalorado
+    //    0..1: ~50-68%         → acumulación (ligeramente sobre la media)
+    //    1..2: ~68-95%         → neutral-alto
+    //    2..3.5: ~95-99.5%     → sobrevalorado
+    //    >3.5:  ~99.5%+        → techo de ciclo
+    if (mvrv < -1.0) return 35;      // capitulación extrema (solo suelos históricos)
+    if (mvrv < 0)    return 32;      // infravalorado: bajo la media histórica
+    if (mvrv < 1.0)  return 25;      // acumulación: Z 0-1 (razonable, burbujas inflan media)
+    if (mvrv < 2.0)  return 15;      // neutral-alto: 1-2 SD sobre la media
+    if (mvrv < 3.5)  return 5;       // sobrevalorado: 2-3.5 SD
+    return 0;                         // techo de ciclo: >3.5 SD
   }
 
   // Ratio bruto thresholds (legacy)
@@ -90,7 +104,10 @@ function determineSignal(btcScore: number, boostActive: boolean): BTCCycleOutput
   }
 
   // Sin boost, thresholds normales
-  if (btcScore >= 80) return 'STRONG_BUY';
+  // FIX-SMOOTH-STRONGBUY (23-Jul-2026): bajado de 80 a 77 para evitar acantilado.
+  // Con calibración Z-Score nueva, btcScore=80 es un valor frecuente (Z≈0.5 + Puell≈0.24 + RSI≈44).
+  // 80 exacto en el umbral → un cambio de 1 punto (RSI 44→45) voltea STRONG_BUY↔BUY.
+  if (btcScore >= 77) return 'STRONG_BUY';
   if (btcScore >= 60) return 'BUY';
   if (btcScore >= 40) return 'ACCUMULATE';
   if (btcScore >= 25) return 'HOLD';
@@ -118,7 +135,7 @@ export function computeBTCCycleOverlay(input: BTCCycleInput): BTCCycleOutput {
   const btcNumeric = btcScore / 100; // [0, 1]
 
   // Boost activo: MVRV en zona de acumulación Y Puell < 1
-  // Z-Score: Z < 0 = acumulación extrema. Ratio bruto: ratio < 1.5 = acumulación.
+  // Z-Score: Z < 0 = infravalorado (32+ pts). Ratio bruto: ratio < 1.5 = acumulación.
   const mvrvBoosted = isZScore ? (mvrvValue !== undefined && mvrvValue < 0) : (mvrvValue !== undefined && mvrvValue < 1.5);
   const boostActive = mvrvBoosted &&
                       (input.puellMultiple !== undefined && input.puellMultiple < 1);
@@ -131,9 +148,11 @@ export function computeBTCCycleOverlay(input: BTCCycleInput): BTCCycleOutput {
     description += '⚡ BOOST ACTIVO: MVRV<1.5 y Puell<1 — zona de acumulación histórica. ';
   }
 
-  if (mvrvScore === 35) description += 'MVRV en zona de valor extremo. ';
-  else if (mvrvScore === 20) description += 'MVRV neutral. ';
-  else if (mvrvScore === 0) description += 'MVRV sobrevalorado. ';
+  if (mvrvScore >= 32) description += mvrvScore === 35 ? 'MVRV capitulación extrema. ' : 'MVRV infravalorado. ';
+  else if (mvrvScore >= 20) description += 'MVRV en zona de acumulación. ';
+  else if (mvrvScore >= 10) description += 'MVRV neutral. ';
+  else if (mvrvScore > 0) description += 'MVRV elevado. ';
+  else description += 'MVRV sobrevalorado (techo). ';
 
   if (puellScore === 30) description += 'Puell en capitulación minera. ';
   else if (puellScore === 15) description += 'Puell neutral. ';

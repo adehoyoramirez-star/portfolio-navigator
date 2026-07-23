@@ -172,7 +172,10 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   const momentumDivergence = btcMomentum1m < S.MOMENTUM_DIVERGENCE && btcZScore > S.MOMENTUM_Z_FLOOR;
   const dominanceAccumulation = btcDominance !== undefined && btcDominance > S.BTC_DOMINANCE_ACCUMULATION;
   const mvrvForSignal = mvrvZScore ?? mvrvRatio;  // FIX-H4: Z-Score primario
-  const mvrvUndervalued = mvrvForSignal !== undefined && mvrvForSignal < (mvrvZScore !== undefined ? 0.5 : S.MVRV_UNDERVALUED);
+  // FIX-ZSCORE-UNDERVALUED (23-Jul-2026): umbral Z-Score ajustado de 0.5 → 1.0.
+  // Z<1 = zona de acumulación (misma recalibración que scoreMvrv en btcCycleOverlay.ts).
+  // Con Z=0.5 y ratio=1.23: antes decía "no infravalorado", ahora dice "infravalorado".
+  const mvrvUndervalued = mvrvForSignal !== undefined && mvrvForSignal < (mvrvZScore !== undefined ? 1.0 : S.MVRV_UNDERVALUED);
   const volNormalizing = cewsOutput !== undefined && cewsOutput.signals.volClustering.trend === "IMPROVING" && cewsOutput.signals.volClustering.level !== "ALERT";
 
   // ── Señal #8: Cycle Bottom per-asset (≥OPPORTUNITY en cualquier activo) ──
