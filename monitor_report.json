@@ -1,36 +1,24 @@
 {
-  "date": "2026-07-14",
-  "mode": "monthly",
+  "date": "2026-07-17",
+  "mode": "weekly",
   "period": {
     "start": "2025-01-01",
-    "end": "2026-04-08",
-    "days": 463
+    "end": "2026-07-14",
+    "days": 465
   },
   "marketContext": {
-    "bias": "NEUTRAL",
+    "bias": "BEAR",
     "inCrisis": false
   },
   "metrics": {
-    "sharpe": 0.717359654632413,
-    "cagr": 0.1537456233007266,
-    "maxDD": -0.16802976120094087,
-    "annVol": 0.16194461337803936,
-    "rollingSharpe": 0.5614096377183415,
-    "expansionRatio": 0.9460043196544277,
+    "sharpe": -0.39183356634834865,
+    "cagr": -0.21614093828918968,
+    "maxDD": -0.5436069743957613,
+    "annVol": 0.4088857477479026,
+    "rollingSharpe": -0.7220872919748608,
+    "expansionRatio": 0.946236559139785,
     "crisisDays": 1,
-    "contractionDays": 24,
-    "sortino": 1.0290846251089774,
-    "calmar": 0.914990429087545,
-    "recoveryFactor": 1.7840638681163665,
-    "winRate": 0.5497835497835498,
-    "maxConsecutiveLossDays": 7,
-    "ulcerIndex": 0.056217080600008955,
-    "monthlyPosRatio": 0.75,
-    "avgTurnover": 0.06719047619047619,
-    "avgCostsBps": 1.0078571428571428,
-    "ewSharpe": -0.3147976966732318,
-    "sharpeDiffVsEW": 1.0321573513056448,
-    "recoveryDays": 57
+    "contractionDays": 24
   },
   "backtest": {
     "sharpe": 0.74,
@@ -47,6 +35,10 @@
     "avgTurnover": 0.15,
     "maxConsecutiveLoss": 12
   },
-  "alerts": [],
-  "verdict": "NORMAL"
+  "alerts": [
+    "CRITICO: MaxDD > 40% (-54.4%). PAUSAR operaciones.",
+    "CRITICO: Sharpe rolling 12m < 0.30 (-0.72). PAUSAR.",
+    "CRITICO: Volatilidad > 25% (40.9%)."
+  ],
+  "verdict": "PAUSAR"
 }
