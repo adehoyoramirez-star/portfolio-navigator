@@ -3687,19 +3687,47 @@ soxRsiWeekly,
                 </tr>
               </thead>
               <tbody>
-                {taxAwareRebalance!.suggestions.map((s: RebalanceSuggestion) => (
-                  <tr key={s.ticker} style={{ borderBottom: "1px solid #1f2937", background: s.action === "SELL" ? "rgba(239,68,68,0.07)" : "transparent" }}>
-                    <td style={{ padding: "0.5rem", fontWeight: "bold" }}>{s.ticker}</td>
+                {/* FIX-HOLD-ROWS (23-Jul-2026): mostrar TODOS los activos del portfolio,
+                    no solo los que tienen BUY/SELL. Los activos sin sugerencia se muestran
+                    como HOLD con su drift, actual y objetivo. Así BTC siempre es visible. */}
+                {(() => {
+                  const olyPct = olympusPct / 100;
+                  const btcSat = (100 - olympusPct) / 100;
+                  const allRows = portfolio.assets.map(asset => {
+                    const suggestion = taxAwareRebalance!.suggestions.find(s => s.ticker === asset.ticker);
+                    if (suggestion) return { ...suggestion, _hasSuggestion: true as const };
+                    // Activo sin sugerencia → fila HOLD con estadísticas
+                    const alloc = engineResult?.allocations.find(a => a.name === asset.name);
+                    const engineAlloc = alloc?.finalAllocation ?? 0;
+                    const isBtc = asset.ticker === 'BTC-EUR';
+                    const compositeAlloc = isBtc ? (engineAlloc * olyPct) + btcSat : engineAlloc * olyPct;
+                    const currentValue = asset.shares * asset.price;
+                    const currentPct = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
+                    const drift = currentPct - compositeAlloc;
+                    return {
+                      ticker: asset.ticker, name: asset.name,
+                      action: 'HOLD' as const, currentPct, targetPct: compositeAlloc, drift,
+                      sharesToBuy: 0, sharesToSell: 0, cost: 0, proceedsIfSold: 0, trimPct: 0,
+                      reason: drift < -0.02 ? `Infraponderado ${Math.abs(drift * 100).toFixed(1)}pp` : drift > 0.02 ? `Sobreponderado ${(drift * 100).toFixed(1)}pp` : 'Dentro del rango (±2pp)',
+                      priority: 'LOW' as const, _hasSuggestion: false as const,
+                      cycleZone: undefined as string | undefined,
+                      cycleIndicator: undefined as string | undefined,
+                      cycleIndicatorValue: undefined as string | undefined,
+                    };
+                  });
+                  return allRows.map((s: any) => (
+                  <tr key={s.ticker} style={{ borderBottom: "1px solid #1f2937", background: s.action === "SELL" ? "rgba(239,68,68,0.07)" : s.action === "HOLD" ? "rgba(0,0,0,0.02)" : "transparent" }}>
+                    <td style={{ padding: "0.5rem", fontWeight: "bold", color: s.action === "HOLD" ? "#6b7280" : undefined }}>{s.ticker}</td>
                     <td style={{ padding: "0.5rem", textAlign: "center" }}>
                       <span style={{
-                        background: s.action === "SELL" ? "#7f1d1d" : "#052e16",
-                        color: s.action === "SELL" ? "#ef4444" : "#10b981",
+                        background: s.action === "SELL" ? "#7f1d1d" : s.action === "BUY" ? "#052e16" : "#1f2937",
+                        color: s.action === "SELL" ? "#ef4444" : s.action === "BUY" ? "#10b981" : "#9ca3af",
                         padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.75rem", fontWeight: "bold",
                       }}>{s.action}</span>
                     </td>
-                    <td style={{ padding: "0.5rem", textAlign: "right" }}>{(s.currentPct * 100).toFixed(1)}%</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: s.action === "HOLD" ? "#6b7280" : undefined }}>{(s.currentPct * 100).toFixed(1)}%</td>
                     <td style={{ padding: "0.5rem", textAlign: "right" }}>
-                      <span style={{ color: "#6366f1" }}>{(s.targetPct * 100).toFixed(1)}%</span>
+                      <span style={{ color: s.action === "HOLD" ? "#6b7280" : "#6366f1" }}>{(s.targetPct * 100).toFixed(1)}%</span>
                       {s.ticker === "BTC-EUR" && olympusPct < 100 && (
                         <div style={{ fontSize: "0.62rem", color: "#6b7280", marginTop: "2px", lineHeight: "1.3" }}>
                           <span style={{ color: "#818cf8" }}>motor {((engineResult?.allocations.find(a => a.name === portfolio.assets.find(p => p.ticker === "BTC-EUR")?.name)?.finalAllocation ?? 0) * olympusPct).toFixed(1)}%</span>
@@ -3708,55 +3736,66 @@ soxRsiWeekly,
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: "0.5rem", textAlign: "right", color: s.drift > 0 ? "#f59e0b" : "#ef4444" }}>{(s.drift * 100).toFixed(1)}pp</td>
-                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: s.action === "HOLD" ? "#9ca3af" : s.drift > 0 ? "#f59e0b" : "#ef4444" }}>{(s.drift * 100).toFixed(1)}pp</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#6b7280" }}>
                       {s.action === "SELL"
                         ? <span style={{ color: "#ef4444" }}>−{s.sharesToSell} ({s.trimPct}%)</span>
-                        : <span style={{ color: "#f59e0b" }}>+{s.sharesToBuy}</span>}
+                        : s.action === "BUY"
+                        ? <span style={{ color: "#f59e0b" }}>+{s.sharesToBuy}</span>
+                        : <span>—</span>}
                     </td>
-                    <td style={{ padding: "0.5rem", textAlign: "right" }}>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: "#6b7280" }}>
                       {s.action === "SELL"
                         ? <span style={{ color: "#f59e0b" }}>+€{s.proceedsIfSold.toFixed(0)}</span>
-                        : <span style={{ color: "#f59e0b" }}>−€{s.cost.toFixed(0)}</span>}
+                        : s.action === "BUY"
+                        ? <span style={{ color: "#f59e0b" }}>−€{s.cost.toFixed(0)}</span>
+                        : <span>—</span>}
                     </td>
                     <td style={{ padding: "0.5rem", fontSize: "0.78rem" }}>
-                      <span style={{
-                        backgroundColor: s.priority === "HIGH" ? "#7f1d1d" : s.priority === "MEDIUM" ? "#78350f" : "#1f2937",
-                        color: s.priority === "HIGH" ? "#ef4444" : s.priority === "MEDIUM" ? "#f59e0b" : "#9ca3af",
-                        padding: "0.1rem 0.4rem", borderRadius: 4, marginRight: "0.3rem",
-                      }}>{s.priority}</span>
-                      {/* MEJORA-4: Cycle Top override label */}
-                      {s.cycleZone && s.action === "SELL" && (
-                        <span style={{ fontSize: "0.65rem", color: "#f97316", background: "#431407", padding: "0.1rem 0.4rem", borderRadius: 4 }}>
-                          🔴 Cycle Top override · {s.cycleZone}
-                        </span>
+                      {s._hasSuggestion !== false ? (
+                        <>
+                          <span style={{
+                            backgroundColor: s.priority === "HIGH" ? "#7f1d1d" : s.priority === "MEDIUM" ? "#78350f" : "#1f2937",
+                            color: s.priority === "HIGH" ? "#ef4444" : s.priority === "MEDIUM" ? "#f59e0b" : "#9ca3af",
+                            padding: "0.1rem 0.4rem", borderRadius: 4, marginRight: "0.3rem",
+                          }}>{s.priority}</span>
+                          {s.cycleZone && s.action === "SELL" && (
+                            <span style={{ fontSize: "0.65rem", color: "#f97316", background: "#431407", padding: "0.1rem 0.4rem", borderRadius: 4 }}>
+                              🔴 Cycle Top override · {s.cycleZone}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: "#6b7280", fontSize: "0.7rem" }}>{s.reason}</span>
                       )}
                     </td>
-                    {/* MEJORA-9: Botón Ejecutado en rebalanceo */}
                     <td style={{ padding: "0.5rem" }}>
-                      <button
-                        onClick={() => {
-                          const asset = portfolio.assets.find(a => a.ticker === s.ticker);
-                          setPendingTrade({
-                            ticker: s.ticker,
-                            name: s.ticker,
-                            action: s.action as 'BUY' | 'SELL',
-                            suggestedShares: s.action === 'SELL' ? s.sharesToSell : s.sharesToBuy,
-                            suggestedPrice: asset?.price ?? 0,
-                            source: 'REBALANCE',
-                          });
-                          setExecShares(s.action === 'SELL' ? s.sharesToSell : s.sharesToBuy);
-                          setExecPrice(asset?.price ?? 0);
-                        }}
-                        style={{
-                          background: "#1e3a5f", color: "#60a5fa", border: "1px solid #3b82f6",
-                          borderRadius: 4, padding: "0.2rem 0.5rem", cursor: "pointer",
-                          fontSize: "0.72rem", whiteSpace: "nowrap",
-                        }}
-                      >✓ Ejecutado</button>
+                      {s._hasSuggestion !== false ? (
+                        <button
+                          onClick={() => {
+                            const asset = portfolio.assets.find(a => a.ticker === s.ticker);
+                            setPendingTrade({
+                              ticker: s.ticker,
+                              name: s.ticker,
+                              action: s.action as 'BUY' | 'SELL',
+                              suggestedShares: s.action === 'SELL' ? s.sharesToSell : s.sharesToBuy,
+                              suggestedPrice: asset?.price ?? 0,
+                              source: 'REBALANCE',
+                            });
+                            setExecShares(s.action === 'SELL' ? s.sharesToSell : s.sharesToBuy);
+                            setExecPrice(asset?.price ?? 0);
+                          }}
+                          style={{
+                            background: "#1e3a5f", color: "#60a5fa", border: "1px solid #3b82f6",
+                            borderRadius: 4, padding: "0.2rem 0.5rem", cursor: "pointer",
+                            fontSize: "0.72rem", whiteSpace: "nowrap",
+                          }}
+                        >✓ Ejecutado</button>
+                      ) : null}
                     </td>
                   </tr>
-                ))}
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
