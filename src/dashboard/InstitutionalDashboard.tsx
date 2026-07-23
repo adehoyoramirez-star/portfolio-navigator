@@ -739,8 +739,8 @@ soxRsiWeekly,
       emxcPERatio,
       dxy,
     };
-    return detectCycleBottoms(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+    return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals]);
 
   
 

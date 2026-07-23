@@ -1207,8 +1207,17 @@ function detectEMXCBottom(inputs: CycleTopInputs): CycleBottomSignal {
 }
 
 // ── FUNCIÓN PRINCIPAL (BOTTOMS) ──────────────────────────────────
-export function detectCycleBottoms(inputs: CycleTopInputs): CycleBottomOutput {
-  const signals: CycleBottomSignal[] = [
+// FIX-GOLD-CONTRADICTION (Jul-2026): mutual-exclusion con Cycle Top.
+//   Si el detector de techo ya dice CAUTION/DANGER/EXTREME para un activo,
+//   el detector de suelo NO puede recomendar comprarlo. La preservación
+//   de capital (top) siempre manda sobre la búsqueda de oportunidad (bottom).
+//   Sin este guard, el oro aparecía simultáneamente como CAUTION (vender)
+//   y VALUE (comprar) porque ambos usan las mismas variables (realRate, Brent).
+export function detectCycleBottoms(
+  inputs: CycleTopInputs,
+  topSignals?: CycleTopSignal[],
+): CycleBottomOutput {
+  const rawSignals: CycleBottomSignal[] = [
     detectBTCBottom(inputs),
     detectUraniumBottom(inputs),
     detectSemisBottom(inputs),
@@ -1216,6 +1225,34 @@ export function detectCycleBottoms(inputs: CycleTopInputs): CycleBottomOutput {
     detectWLGBottom(inputs),
     detectEMXCBottom(inputs),
   ];
+
+  // ── Mutual exclusion: si Cycle Top está activo, reducir Cycle Bottom ──
+  //   Supresión GRADUAL (no binaria): el score se reduce proporcionalmente al trim del top.
+  //   Top CAUTION 5% trim + Bottom OPPORTUNITY 75pts → 75*0.95=71pts (sigue OPPORTUNITY).
+  //   Top DANGER 45% trim + Bottom VALUE 50pts → 50*0.55=27pts (cae a NEUTRAL).
+  //   La preservación de capital manda, pero sin anular oportunidades legítimas
+  //   cuando el riesgo de techo es leve.
+  const signals = topSignals && topSignals.length > 0
+    ? rawSignals.map(bottom => {
+        const top = topSignals.find(t => t.ticker === bottom.ticker);
+        if (top && top.zone !== "SAFE" && bottom.zone !== "NEUTRAL") {
+          const survivalFactor = 1 - (top.trimPct / 100); // 22% trim → 0.78 survival
+          const adjustedScore = Math.round(bottom.opportunityScore * survivalFactor);
+          const adjustedZone = scoreToZone(adjustedScore);
+          const adjustedShouldAccumulate = adjustedScore >= 40;
+          const adjustedAttackMultiplier = attackMultiplierForScore(adjustedScore);
+          return {
+            ...bottom,
+            opportunityScore: adjustedScore,
+            zone: adjustedZone,
+            reason: bottom.reason + ` [Cycle Top: ${top.zone} (−${top.trimPct}% trim) → score ajustado ×${survivalFactor.toFixed(2)}: ${bottom.opportunityScore}→${adjustedScore}]`,
+            shouldAccumulate: adjustedShouldAccumulate,
+            attackMultiplier: adjustedAttackMultiplier,
+          };
+        }
+        return bottom;
+      })
+    : rawSignals;
 
   const maxOpportunityScore = Math.max(...signals.map(s => s.opportunityScore));
   const topOpportunity = signals.find(s => s.opportunityScore === maxOpportunityScore && s.opportunityScore >= 40) ?? null;
