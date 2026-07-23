@@ -18,8 +18,9 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
     regime: "EXPANSION",
     regimePenalty: 0.80, // FIX-AUDIT-R6 BATCH 3: 0.80 = healthy expansion (below R5.1 macro threshold 0.85); previene macro signal firing unintentionally en tests neutros.
     volTargetMultiplier: 1.0,
-    tailRiskActive: false,
-    tailRiskOverlay: 1.0,
+  tailRiskActive: false,
+  tailRiskOverlay: 1.0,
+  killSwitchLevel: 0,
     olympusAvailableCash: 1000,
     tacticalAvailableCash: 500,
     accumulatedDefensiveLiquidity: 0,

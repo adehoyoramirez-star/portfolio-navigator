@@ -48,7 +48,13 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
   // era siempre único → 10+ alertas idénticas en el panel. Ahora: cooldown de 1h.
   const TAIL_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hora
   const lastTailAlert = getLastTailAlertTimestamp();
-  const tailDebounced = lastTailAlert !== null && (Date.now() - lastTailAlert) < TAIL_DEBOUNCE_MS;
+  // FIX-ALERT-DD-STALE: si el DD cambió >2pp desde la última alerta,
+  // invalidar debounce. Evita que alertas con DD viejo (ej: -41%) persistan
+  // después de que el usuario resetea el HWM (DD real: -14%).
+  const lastTailAlertDD = getLastTailAlertDD();
+  const ddChangedSignificantly = lastTailAlertDD !== null &&
+    Math.abs(input.portfolioDrawdown - lastTailAlertDD) > TAIL_DD_CHANGE_THRESHOLD;
+  const tailDebounced = !ddChangedSignificantly && lastTailAlert !== null && (Date.now() - lastTailAlert) < TAIL_DEBOUNCE_MS;
 
   // ---- CAMBIO DE RÉGIMEN ----
   if (input.previousRegime && input.currentRegime !== input.previousRegime) {
@@ -87,6 +93,7 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
   // ---- TAIL RISK ACTIVADO ----
   if (input.tailRiskActive && !tailDebounced) {
     setLastTailAlertTimestamp(Date.now());
+    setLastTailAlertDD(input.portfolioDrawdown);
     alerts.push({
       id: `tail_${Date.now()}`,
       timestamp: now,
@@ -150,7 +157,12 @@ const REGIME_PRIORITY: Record<string, number> = {
 // ── DEBOUNCE HELPERS ───────────────────────────────────────────
 // FIX-ALERT-SPAM: guardar timestamp del último Tail Risk alert en sessionStorage
 // (no localStorage — se limpia al cerrar pestaña, el debounce es por sesión)
+// FIX-ALERT-DD-STALE (Jul-2026): si el DD cambia >2pp desde la última alerta,
+// invalidar el debounce. Sin esto, reseteos de HWM dejan alertas con DD del pasado.
 const TAIL_ALERT_KEY = 'olympus_last_tail_alert_ts';
+const TAIL_ALERT_DD_KEY = 'olympus_last_tail_alert_dd';
+const TAIL_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hora
+const TAIL_DD_CHANGE_THRESHOLD = 0.02;   // 2pp — si el DD cambio esto, nueva alerta
 
 function getLastTailAlertTimestamp(): number | null {
   try {
@@ -159,8 +171,19 @@ function getLastTailAlertTimestamp(): number | null {
   } catch { return null; }
 }
 
+function getLastTailAlertDD(): number | null {
+  try {
+    const raw = sessionStorage.getItem(TAIL_ALERT_DD_KEY);
+    return raw ? parseFloat(raw) : null;
+  } catch { return null; }
+}
+
 function setLastTailAlertTimestamp(ts: number): void {
   try { sessionStorage.setItem(TAIL_ALERT_KEY, String(ts)); } catch { /* silencio */ }
+}
+
+function setLastTailAlertDD(dd: number): void {
+  try { sessionStorage.setItem(TAIL_ALERT_DD_KEY, String(dd)); } catch { /* silencio */ }
 }
 
 function worsenedRegime(prev: string, curr: string): boolean {

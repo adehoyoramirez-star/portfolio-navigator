@@ -84,6 +84,8 @@ export interface SmartDCAInput {
   volTargetMultiplier: number;
   tailRiskActive: boolean;
   tailRiskOverlay: number;
+  /** Kill Switch level [0-5] del motor. 0=off, 1-3=escalado, 4-5=bloqueo total. */
+  killSwitchLevel: number;
   olympusAvailableCash: number;
   tacticalAvailableCash: number;
   accumulatedDefensiveLiquidity?: number;
@@ -365,8 +367,23 @@ function buildAllocations(
 }
 
 // ── FUNCIÓN PRINCIPAL ──────────────────────────────────────────────────
+// ── KILL SWITCH → DCA SCALE ─────────────────────────────────────────
+// FIX-KS-SCALE (Jul-2026): el Kill Switch escala el DCA proporcionalmente
+// al nivel de riesgo, en vez de bloquear binariamente.
+//   L1 (L1_5): 70% del DCA normal — transición gradual, no parada brusca
+//   L2:         50% — cautela, pero el edge sigue existiendo
+//   L3:         25% — solo las oportunidades más claras
+//   L4-L5:       0% — protección de capital, bloqueo total
+function getKillSwitchDcaScale(level: number): number {
+  if (level >= 4) return 0;
+  if (level >= 3) return 0.25;
+  if (level >= 2) return 0.50;
+  if (level >= 1) return 0.70;
+  return 1.0;
+}
+
 export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
-  const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, olympusAvailableCash, tacticalAvailableCash, motorAllocations, totalPortfolioValueEUR } = input;
+  const { regime, regimePenalty, volTargetMultiplier, tailRiskActive, tailRiskOverlay, killSwitchLevel, olympusAvailableCash, tacticalAvailableCash, motorAllocations, totalPortfolioValueEUR } = input;
   const ATK = DCA_CONFIG.ATTACK;
   const BLK = DCA_CONFIG.BLOCKS;
   const NRM = DCA_CONFIG.NORMAL;
@@ -439,9 +456,12 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   if (input.staleDataBlock) return emptyOutput("BLOCK_STALE_DATA", "🔴 Datos Yahoo >72h sin actualizar. DCA bloqueado hasta que se restaure la conexión.", attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
 
   // ── 2. KILL SWITCH: tail risk activo ──────────────────────────
-  // El engine ya decidió que hay riesgo de cola (overlay < 0.99).
-  // El DCA obedece sin segundas opiniones.
-  if (tailRiskActive) return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk activo (×${tailRiskOverlay.toFixed(2)}). Kill Switch — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  // FIX-KS-SCALE: L4-L5 → bloqueo total. L1-L3 → escala el DCA
+  // proporcionalmente al nivel de riesgo (no bloquea).
+  const ksScale = tailRiskActive ? getKillSwitchDcaScale(killSwitchLevel) : 1.0;
+  if (tailRiskActive && ksScale <= 0) {
+    return emptyOutput("BLOCK_TAIL_RISK", `Tail Risk L${killSwitchLevel} (×${tailRiskOverlay.toFixed(2)}). Kill Switch crítico — no comprar.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
+  }
 
   // ── 3. RÉGIMEN MACRO: CRISIS o penalty crítico ────────────────
   // CRISIS bloquea DCA excepto si hay confluencia de fondo fuerte (≥4/7)
@@ -489,19 +509,19 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // Tramo 3 (6-7/7): fat pitch — coste de oportunidad > riesgo de caída.
   const G = ATK.GRADUATION;
   if (attackConfluence >= 6) {           // TRAMO 3: ATTACK_MAX
-    olympusInvested = olympusAvailableCash * G.MAX[0];
+    olympusInvested = olympusAvailableCash * G.MAX[0] * ksScale;
     tacticalInvested = tacticalAvailableCash * G.MAX[1];
     tacticalAccumulated = 0;
   } else if (attackConfluence >= 5) {    // TRAMO 2: ATTACK_STRONG
-    olympusInvested = olympusAvailableCash * G.STRONG[0];
+    olympusInvested = olympusAvailableCash * G.STRONG[0] * ksScale;
     tacticalInvested = tacticalAvailableCash * G.STRONG[1];
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else if (attackConfluence >= ATK.THRESHOLD) { // TRAMO 1: ATTACK_ENTRY
-    olympusInvested = olympusAvailableCash * G.ENTRY[0];
+    olympusInvested = olympusAvailableCash * G.ENTRY[0] * ksScale;
     tacticalInvested = tacticalAvailableCash * G.ENTRY[1];
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else {                               // DCA NORMAL
-    olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION);
+    olympusInvested = olympusAvailableCash * (cycleTopActive ? NRM.OLYMPUS_FRACTION_CYCLE_TOP : NRM.OLYMPUS_FRACTION) * ksScale;
     tacticalInvested = 0;
     tacticalAccumulated = tacticalAvailableCash;
   }
