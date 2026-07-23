@@ -171,6 +171,10 @@ export interface BitcoinCycleInputs {
   // Puell Multiple (manual — lookintobitcoin.com)
   puellMultiple?: number;        // valor actual (ej: 0.8)
 
+  // MVRV Z-Score (manual — Glassnode o lookintobitcoin.com)
+  // >7 = techo canónico, <0 = infravaloración extrema
+  mvrvZScore?: number;
+
   // Hash Ribbon (manual — glassnode o lookintobitcoin)
   hashRate30ma?: number;         // MA30 hashrate en EH/s
   hashRate60ma?: number;         // MA60 hashrate en EH/s
@@ -815,7 +819,19 @@ export function analyzeBitcoinCycle(inputs: BitcoinCycleInputs): BitcoinCycleOut
   );
 
   // Score sintético
-  const cycleScore = computeCycleScore(powerLaw, halvingPhase, puellMultiple, hashRibbon, piCycle);
+  let cycleScore = computeCycleScore(powerLaw, halvingPhase, puellMultiple, hashRibbon, piCycle);
+
+  // FEAT-ZSCORE-ANALYZER (Jul-2026): MVRV Z-Score bias sobre el cycleScore.
+  // Z-Score captura dimensión de valoración no cubierta por Puell/Power Law.
+  // +10pts en suelo (Z<0), -15pts en techo (Z>7), ajuste gradual entre medias.
+  if (inputs.mvrvZScore !== undefined) {
+    const z = inputs.mvrvZScore;
+    if (z < 0)          cycleScore = Math.min(100, cycleScore + 10);
+    else if (z < 2)     cycleScore = cycleScore + 5;
+    else if (z < 4)     { /* neutral, no ajuste */ }
+    else if (z < 7)     cycleScore = Math.max(0, cycleScore - 5);
+    else                cycleScore = Math.max(0, cycleScore - 15);
+  }
 
   let cycleScoreLabel: BitcoinCycleOutput["cycleScoreLabel"];
   let actionBias: BitcoinCycleOutput["actionBias"];

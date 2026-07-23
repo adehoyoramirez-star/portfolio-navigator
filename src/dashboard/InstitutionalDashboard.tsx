@@ -1105,6 +1105,7 @@ soxRsiWeekly,
     const inputs: BitcoinCycleInputs = {
       currentPrice: btcAssetLocal.price,
       puellMultiple,
+      mvrvZScore,
       hashRibbonState,
       piCycleMa111,
       piCycleMa350x2,
@@ -1140,7 +1141,7 @@ soxRsiWeekly,
       return result;
     }
     catch { return null; }
-  }, [portfolio.assets, puellMultiple, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
+  }, [portfolio.assets, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
 
   const olympusAvailableCash = cashReserve;
   const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK >= 4/7

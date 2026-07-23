@@ -12,7 +12,8 @@
 
 export interface BTCCycleInput {
   // On-chain metrics (manuales o desde API)
-  mvrvRatio?: number;       // MVRV Z-score o ratio actual
+  mvrvRatio?: number;       // MVRV ratio actual
+  mvrvZScore?: number;       // MVRV Z-Score — primario (Glassnode, normalizado por vol histórica)
   puellMultiple?: number;   // Puell Multiple actual
   rsiWeekly?: number;       // RSI semanal de BTC
 
@@ -42,9 +43,23 @@ export interface BTCCycleOutput {
 // RSI:   <40: +25, 40-60: +10, >60: 0
 // ===============================================
 
-function scoreMvrv(mvrv?: number): number {
+// FEAT-ZSCORE-OVERLAY (Jul-2026): Z-Score primario con fallback a ratio.
+// Los umbrales legacy (<1.5, <2.5) están calibrados para el ratio bruto.
+// Para Z-Score: <0 = infravalorado (capitulación), 0-2 = neutral, >2 = elevado.
+// La función recibe el valor final ya resuelto (Z-Score ?? ratio) y aplica
+// los umbrales correctos según cuál fuente se usó.
+function scoreMvrv(mvrv?: number, isZScore?: boolean): number {
   if (mvrv === undefined || mvrv === null) return 17; // neutral (mid-range)
 
+  if (isZScore) {
+    // Z-Score thresholds: <0 capitulación, 0-2 neutral, 2-4 elevado, >4 techo
+    if (mvrv < 0)   return 35;      // Z < 0 → infravaloración extrema (solo en suelos de ciclo)
+    if (mvrv < 2)   return 20;      // Z 0-2 → neutral
+    if (mvrv < 4)   return 10;      // Z 2-4 → elevado
+    return 0;                        // Z > 4 → sobrevalorado (techo)
+  }
+
+  // Ratio bruto thresholds (legacy)
   if (mvrv < 1.5) return 35;      // Zona de acumulación extrema
   if (mvrv < 2.5) return 20;      // Zona neutral
   return 0;                        // Sobrevalorado
@@ -91,15 +106,21 @@ function determineSignal(btcScore: number, boostActive: boolean): BTCCycleOutput
  * El boost se aplica cuando MVRV<1.5 Y Puell<1 (zona de acumulación histórica).
  */
 export function computeBTCCycleOverlay(input: BTCCycleInput): BTCCycleOutput {
-  const mvrvScore = scoreMvrv(input.mvrvRatio);
+  // FEAT-ZSCORE-OVERLAY: Z-Score primario, ratio bruto fallback
+  const mvrvValue = input.mvrvZScore ?? input.mvrvRatio;
+  const isZScore = input.mvrvZScore !== undefined;
+
+  const mvrvScore = scoreMvrv(mvrvValue, isZScore);
   const puellScore = scorePuell(input.puellMultiple);
   const rsiScore = scoreRsi(input.rsiWeekly);
 
   const btcScore = mvrvScore + puellScore + rsiScore; // [0, 100]
   const btcNumeric = btcScore / 100; // [0, 1]
 
-  // Boost activo: MVRV < 1.5 Y Puell < 1
-  const boostActive = (input.mvrvRatio !== undefined && input.mvrvRatio < 1.5) &&
+  // Boost activo: MVRV en zona de acumulación Y Puell < 1
+  // Z-Score: Z < 0 = acumulación extrema. Ratio bruto: ratio < 1.5 = acumulación.
+  const mvrvBoosted = isZScore ? (mvrvValue !== undefined && mvrvValue < 0) : (mvrvValue !== undefined && mvrvValue < 1.5);
+  const boostActive = mvrvBoosted &&
                       (input.puellMultiple !== undefined && input.puellMultiple < 1);
 
   const signal = determineSignal(btcScore, boostActive);

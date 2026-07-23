@@ -380,6 +380,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // ====== CAPA 0: BTC CYCLE OVERLAY ======
   const btcCycleInput: BTCCycleInput = {
     mvrvRatio:    input.btcOnChain?.mvrvRatio,
+    mvrvZScore:   input.btcOnChain?.mvrvZScore,
     puellMultiple: input.btcOnChain?.puellMultiple,
     rsiWeekly:    input.btcOnChain?.rsiWeekly,
   };
