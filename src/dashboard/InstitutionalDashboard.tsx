@@ -1385,7 +1385,55 @@ soxRsiWeekly,
       allCashStreakRef.current = 0;
     }
     const isAllCash = allCashStreakRef.current >= DASH_ALL_CASH_HYSTERESIS_RUNS;
-    if (!isAllCash) return baseRebalance;
+    if (!isAllCash) {
+      // FIX-BTC-BUY-GUARD (Jul-2026): garantizar que BTC BUY aparece en el panel
+      // cuando el drift es significativo y no hay Cycle Top que lo bloquee.
+      // El computeRebalanceSuggestions a veces no genera el BUY por un bug de
+      // estado React no reproducible (posible race condition cycleTopResult/engineResult).
+      // Este guard es un safety net: solo inyecta el BUY si realmente debería estar.
+      const btcAsset = rebalanceAssets.find(a => a.ticker === 'BTC-EUR');
+      if (btcAsset && btcAsset.targetAllocation > 0) {
+        const currentValue = btcAsset.price * btcAsset.shares;
+        const currentPct = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
+        const drift = currentPct - btcAsset.targetAllocation;
+        const soldTickersForGuard = new Set(
+          baseRebalance.suggestions.filter(s => s.action === 'SELL').map(s => s.ticker.split('.')[0])
+        );
+        const alreadyInBuys = baseRebalance.buySuggestions.some(s => s.ticker === 'BTC-EUR');
+        const hasCycleTopTrim = cycleTopResult.signals.find(s => s.ticker === 'BTC-EUR')?.shouldTrim;
+        if (!alreadyInBuys && !hasCycleTopTrim && !soldTickersForGuard.has('BTC-EUR') && drift < -0.02 && currentValue > 0) {
+          const totalValue = totalPortfolioValue + availableCash;
+          const deficitValue = Math.max(0, btcAsset.targetAllocation * totalValue - currentValue);
+          if (deficitValue > 0) {
+            const maxAvailable = baseRebalance.remainingCash;
+            if (maxAvailable <= 0) return baseRebalance; // no cash left after other BUYs
+            const cashForBtc = Math.min(deficitValue, maxAvailable);
+            const sharesToBuy = Math.floor((cashForBtc / btcAsset.price) * 10000) / 10000;
+            if (sharesToBuy > 0) {
+              const cost = sharesToBuy * btcAsset.price;
+              const absDrift = Math.abs(drift * 100);
+              const btcBuy: RebalanceSuggestion = {
+                ticker: 'BTC-EUR', name: 'Bitcoin', action: 'BUY',
+                sharesToBuy, cost,
+                sharesToSell: 0, proceedsIfSold: 0, trimPct: 0,
+                currentPct, targetPct: btcAsset.targetAllocation, drift,
+                reason: `Infraponderado ${absDrift.toFixed(1)}pp (actual ${(currentPct * 100).toFixed(1)}% → objetivo ${(btcAsset.targetAllocation * 100).toFixed(1)}%)`,
+                priority: absDrift > 10 ? 'HIGH' : 'MEDIUM',
+                cycleZone: undefined, cycleIndicator: undefined, cycleIndicatorValue: undefined,
+              };
+              return {
+                ...baseRebalance,
+                suggestions: [...baseRebalance.suggestions, btcBuy],
+                buySuggestions: [...baseRebalance.buySuggestions, btcBuy],
+                totalCost: baseRebalance.totalCost + cost,
+                remainingCash: baseRebalance.remainingCash - cost,
+              };
+            }
+          }
+        }
+      }
+      return baseRebalance;
+    }
     // ALL_CASH branch: liquidar todo
     const liquidationSells: typeof baseRebalance.suggestions = [];
     for (const asset of rebalanceAssets) {
