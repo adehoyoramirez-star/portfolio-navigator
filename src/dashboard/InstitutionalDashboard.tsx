@@ -291,6 +291,10 @@ const formatCurrency = (value: number): string => {
   const [cewsPreviousLevel, setCewsPreviousLevel] = useState<import("@/core/macro/crisisEarlyWarning").CEWSLevel>("CLEAR");
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
   const previousRegimeRef = useRef<string | null>(null);
+  // FIX-ALERT-STALE (Jul-2026): ref independiente para limpiar alertas de Tail Risk
+  // cuando el Kill Switch baja de nivel. No interfiere con previousKillSwitchRef
+  // (usado por Recovery Memory en otro useEffect).
+  const alertKillSwitchRef = useRef<number>(0);
 
   // ── Kill Switch Recovery Memory ───────────────────────────────────
   // FIX-KS-MEMORY (Jul-2026): cuando el Kill Switch baja de L4+ a L3-,
@@ -880,6 +884,22 @@ soxRsiWeekly,
 
 
     }
+
+    // FIX-ALERT-STALE (Jul-2026): limpiar alertas de Kill Switch cuando el KS
+    // llega a CERO (totalmente desactivado). Si bajó parcialmente (L5→L3),
+    // generateAlerts ya genera la nueva alerta y no queremos borrarla.
+    // Solo limpiamos cuando KS=0 porque entonces SEGURO que todas las alertas
+    // de "Kill Switch" / "DD -" son obsoletas.
+    // FUERA del if(newAlerts) porque generateAlerts puede devolver [] con KS=0.
+    const currKill = engineResult.killSwitchLevel ?? 0;
+    if (currKill === 0 && alertKillSwitchRef.current > 0) {
+      setActiveAlerts(prev => prev.filter(a => {
+        const msg = a.message ?? '';
+        return !msg.includes('Kill Switch') && !msg.includes('DD -');
+      }));
+    }
+    alertKillSwitchRef.current = currKill;
+
     previousRegimeRef.current = currentRegime;
   }, [engineResult, vix, portfolioDrawdown, portfolio]);
 
