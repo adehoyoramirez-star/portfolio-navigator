@@ -885,20 +885,18 @@ soxRsiWeekly,
 
     }
 
-    // FIX-ALERT-STALE (Jul-2026): limpiar alertas de Kill Switch cuando el KS
-    // llega a CERO (totalmente desactivado). Si bajó parcialmente (L5→L3),
-    // generateAlerts ya genera la nueva alerta y no queremos borrarla.
-    // Solo limpiamos cuando KS=0 porque entonces SEGURO que todas las alertas
-    // de "Kill Switch" / "DD -" son obsoletas.
-    // FUERA del if(newAlerts) porque generateAlerts puede devolver [] con KS=0.
+    // FIX-ALERT-STALE-v2 (Jul-2026): cuando KS=0, TODAS las alertas de
+    // "Kill Switch" / "DD -" son basura. Limpiar SIEMPRE, sin condiciones.
+    // v1 tenia bug: alertKillSwitchRef.current > 0 bloqueaba el primer render
+    // y KS=0 nunca sube → la limpieza nunca se ejecutaba → alerta fantasma.
+    // FUERA del if(newAlerts) porque generateAlerts devuelve [] con KS=0.
     const currKill = engineResult.killSwitchLevel ?? 0;
-    if (currKill === 0 && alertKillSwitchRef.current > 0) {
+    if (currKill === 0) {
       setActiveAlerts(prev => prev.filter(a => {
         const msg = a.message ?? '';
         return !msg.includes('Kill Switch') && !msg.includes('DD -');
       }));
     }
-    alertKillSwitchRef.current = currKill;
 
     previousRegimeRef.current = currentRegime;
   }, [engineResult, vix, portfolioDrawdown, portfolio]);
