@@ -1,54 +1,101 @@
-# PAPER TRADING — Olympus V5
-# Plan de 3 meses (Jul - Sep 2026)
+# 📊 Paper Trading Institucional — Olympus V5+
 
-## Resumen ejecutivo
+## Proceso Semanal (cada viernes tras cierre de mercado)
 
-Paper trading con el motor Olympus V5 sobre el portfolio real de 6 activos.
-Capital inicial: 6,700 cash + posiciones actuales = ~13,857 total.
-Rebalanceo mensual. Benchmark: Equal-Weight (16.67% cada activo).
+### Paso 1: Actualizar datos de mercado
+```bash
+npx tsx scripts/append_weekly_data.ts
+```
+- Descarga precios de cierre de Yahoo Finance para los 14 tickers
+- Calcula BTC_VOL (volatilidad anualizada 30d)
+- Añade una fila nueva al CSV `historical_data_daily_augmented.csv`
+- **Si falla algún ticker**: carry-forward del último precio conocido (nunca 0.00)
 
-## Rutina diaria (5 min)
+### Paso 2: Simular paper trading
+```bash
+npx tsx scripts/paper_trading.ts
+```
+- Lee `paper_trading_config.json` (posiciones iniciales, cash, fecha Día 0)
+- Ejecuta el backtest del motor Olympus desde el Día 0 hacia delante
+- Compara contra **Frozen Benchmark** (do-nothing: mismas shares iniciales, sin rebalanceos)
+- Calcula Alpha = rendimiento diario motor − rendimiento diario frozen
+- Genera:
+  - `paper_trading_log.csv` — registro diario con motorValue, frozenValue, DD, régimen, allocations
+  - `paper_trading_summary.json` — resumen con Sharpe, CAGR, MaxDD, Alpha
 
-1. Abrir dashboard: npm run dev
-2. Refrescar datos: pulsar Actualizar precios
-3. Revisar regimen: EXPANSION/CONTRACTION/CRISIS
-4. Revisar seccion Rebalanceo (observar, no ejecutar)
-5. Registrar snapshot: python paper_trading.py snapshot
+### Paso 3: Monitorizar métricas
+```bash
+# Semanal (viernes)
+npx tsx scripts/monitor_v2.ts
 
-## Rutina semanal (domingo, 15 min)
+# Mensual (último viernes del mes)
+npx tsx scripts/monitor_v2.ts --monthly
+```
+- **Necesita ≥20 días** de datos para el reporte semanal
+- **Necesita ≥60 días** para el reporte mensual (Tier 2)
+- Genera `monitor_report.json` con:
+  - Tier 1: Sharpe, CAGR, MaxDD, Vol, Ratio EXPANSION, días CRISIS
+  - Tier 2 (--monthly): Sortino, Calmar, Recovery Factor, Win Rate, Ulcer Index, Turnover, Alpha vs Frozen
+- Emite **veredicto**: 🟢 NORMAL / 🟡 ATENCIÓN / 🟠 PRECAUCIÓN / 🔴 PAUSAR
 
-1. Comparar vs benchmark: python paper_trading.py weekly
-2. Revisar journal: abrir paper_trading_journal.csv
-3. Actualizar benchmark: python paper_trading.py benchmark
+### Paso 4: Revisar dashboard
+- Abrir Vercel y verificar:
+  - Alertas de Tail Risk coherentes con DD real
+  - Cycle Top/Bottom signals actualizadas
+  - Smart DCA y Rebalanceo alineados con el motor
 
-## Rutina mensual (dia 1, 30 min)
+---
 
-1. Ejecutar rebalanceo segun dashboard
-2. Registrar operaciones: python paper_trading.py trade --ticker X --action BUY/SELL --shares N --price P
-3. Generar informe: python paper_trading.py report --month 2026-07
+## Interpretación de Resultados
 
-## Metricas de aprobacion
+### Alpha (Motor − Frozen)
+| Alpha | Significativo | Interpretación |
+|---|---|---|
+| > +2% anual | ✅ t-stat > 1.96 | El motor **genera valor** sobre no hacer nada |
+| ~0% | ❌ t-stat < 1.96 | **Necesita más datos** (normal en <3 meses) |
+| < −2% anual | ✅ t-stat > 1.96 | 🔴 El motor **destruye valor** — auditar |
 
-| Metrica | Umbral | Frecuencia |
-|---------|--------|------------|
-| Sharpe ratio | > 0.5 | Mensual |
-| Consistencia vs backtest | > 70% | Mensual (mes 2-3) |
-| Max drawdown | < 25% | Diario |
-| Tracking error vs EW | < 15% anual | Mensual |
-| Operaciones | >= 1/mes | Mensual |
+### Sharpe
+| Sharpe | Señal |
+|---|---|
+| > 0.50 | Bueno |
+| 0.25–0.50 | Aceptable |
+| < 0.25 | ⚠️ Atención |
+| < 0 | 🔴 Malo |
 
-## Aprobacion final (Sep 2026)
+### MaxDD
+| MaxDD | Señal |
+|---|---|
+| < −15% | Normal para portfolio balanceado |
+| −15% a −30% | ⚠️ Elevado |
+| > −30% | 🔴 Crítico — revisar Kill Switch |
 
-APROBADO: Sharpe > 0.5, Consistencia > 70%, MaxDD < 25%
-CONDICIONAL: Sharpe 0.3-0.5 o Consistencia 60-70% -> 2 meses mas
-RECHAZADO: Sharpe < 0.3, MaxDD > 25%, o motor sin senales
+---
 
-## Reglas de oro
+## Día 0: 24 de julio de 2026
 
-1. NO intervengas manualmente. El motor manda.
-2. Registra TODO. Sin huecos.
-3. No persigas el benchmark. Validar el motor, no ganarle cada semana.
-4. Si ALL_CASH, liquida todo. Es la senal mas importante.
-5. Si bug -> anotalo pero no lo arregles durante paper trading.
+| Activo | Shares | Precio compra | Precio Día 0 |
+|---|---|---|---|
+| BTC-EUR | 0.031285 | €87.897,74 | €56.618,52 |
+| VVSM.DE | 1 | €57,49 | €100,56 |
+| 0P00000WLG.F | 19,23 | €61,52 | €62,68 |
+| URNU.DE | 74 | €24,94 | €22,02 |
+| EMXC.DE | 3 | €29,30 | €40,51 |
+| PPFB.DE | 32 | €69,66 | €68,56 |
 
-Olympus Capital - Paper Trading V5 - Julio 2026
+- **Cash broker**: €2.062
+- **Liquidez defensiva**: €10.000
+- **Valor total cartera Día 0**: €9.084 (posiciones + cash)
+- **Legacy P&L archivado**: −€1.131
+- **Forward P&L**: empieza desde CERO
+
+---
+
+## Próximos Hitos
+
+| Fecha | Qué esperar |
+|---|---|
+| **31 jul 2026** | 5 días forward — aún insuficiente para monitor |
+| **14 ago 2026** | 15 días forward — primera señal de tendencia |
+| **28 ago 2026** | ~25 días — **primer monitor semanal** válido |
+| **24 oct 2026** | 3 meses — **primer monitor mensual** con Alpha y Frozen Benchmark |
