@@ -716,10 +716,31 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     });
     const btcReturns12m = btcAsset?.returns12m;
 
-    // Gate 1: Absolute Trend — todos los activos negativos en 3 meses
+    // FEAT-BEAR-VETO (Jul-2026): price-action circuit breaker.
+    // Cross-sectional models (BL+HRP) are blind to absolute market direction.
+    // In synchronized bear markets, the "best" asset is still losing money.
+    // These gates trigger BEFORE the engine concentrates into relative winners.
+    //
+    // Gate 1a: Majority Bearish — >50% of assets negative in 3 months
+    //   → exposure cap 60%. The engine can still invest but must diversify.
+    const negativeCount = assets.filter(a => a.returns3m < 0).length;
+    const negativePct = assets.length > 0 ? negativeCount / assets.length : 0;
+    
+    if (negativePct > 0.75) {
+      multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.MOST_BEARISH_CAP);
+      reasons.push(`bear-veto: ${(negativePct*100).toFixed(0)}% activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.MOST_BEARISH_CAP * 100).toFixed(0)}%`);
+    } else if (negativePct > 0.50) {
+      multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.MAJORITY_BEARISH_CAP);
+      reasons.push(`bear-veto: ${(negativePct*100).toFixed(0)}% activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.MAJORITY_BEARISH_CAP * 100).toFixed(0)}%`);
+    }
+    
+    // Gate 1b (legacy): ALL assets negative — superado por MOST (75%)
+    // Mantenido como safety net; MOST lo captura antes.
     if (assets.length > 0 && assets.every(a => a.returns3m < 0)) {
       multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP);
-      reasons.push(`abs-trend: todos los activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP * 100).toFixed(0)}%`);
+      if (!reasons.some(r => r.includes('bear-veto'))) {
+        reasons.push(`abs-trend: todos los activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP * 100).toFixed(0)}%`);
+      }
     }
 
     // Gate 2: BTC Bear Market — returns12m < -30%
@@ -1289,6 +1310,19 @@ function applyRegimeTilt(
   assets: AssetInput[],
   regime: string
 ): number[] {
+  // FEAT-BEAR-VETO (Jul-2026): price-action veto sobre el regime tilt.
+  // Si >50% de los activos tienen returns3m < 0, el mercado está cayendo
+  // independientemente de lo que diga el regimen macro (VIX, M2, yield curve).
+  // En esta situación, el tilt de regimen (ej: EXPANSION → +40% crypto) empuja
+  // capital hacia los activos que más están cayendo. El precio manda.
+  const negativeCount = assets.filter(a => a.returns3m < 0).length;
+  const negativePct = assets.length > 0 ? negativeCount / assets.length : 0;
+  if (negativePct > 0.50) {
+    // Bear market sincronizado: el regime tilt se desactiva.
+    // Los pesos vuelven tal cual (sin tilt sectorial) para no concentrar en perdedores.
+    return weights;
+  }
+
   const tilts = (REGIME_TILT as Record<string, Record<string, number>>)[regime]
     ?? (REGIME_TILT as Record<string, Record<string, number>>)['EXPANSION'];
 

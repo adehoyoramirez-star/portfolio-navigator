@@ -90,8 +90,15 @@ export const CORRELATION_PANIC_CONFIG = {
 //   - BTC bear market → cap adicional al 35% (BTC arrastra al portfolio)
 //   - Correlation convergence → -0pp (desactivado, redundante con panic)
 //   - Floor absoluto: 25% (nunca ir a 0 por estos gates, Tail Risk decide)
+// FEAT-BEAR-VETO (Jul-2026): price-action veto sobre el motor cross-sectional.
+// El motor rankea activos relativamente (BL+HRP) — en mercados bajistas sincronizados,
+// el "mejor" activo sigue perdiendo dinero. Los absolute trend gates actúan como
+// circuit breaker: si la mayoría de activos pierde, reducimos exposición.
+// Umbrales calibrados contra drawdowns históricos (2020 COVID, 2022 Fed, 2025).
 export const ABSOLUTE_TREND_GATE = {
-  ALL_BEARISH_CAP: 0.50,        // todos los activos returns3m < 0 → max 50%
+  MAJORITY_BEARISH_CAP: 0.60,   // >50% activos returns3m < 0 → max 60%
+  MOST_BEARISH_CAP: 0.40,       // >75% activos returns3m < 0 → max 40%
+  ALL_BEARISH_CAP: 0.50,        // todos los activos returns3m < 0 → max 50% (legacy, superado por MOST)
   BTC_BEAR_CAP: 0.35,           // BTC returns12m < -30% → max 35%
   BTC_BEAR_THRESHOLD: -0.30,    // umbral de bear market BTC (12 meses)
   CORR_EARLY_PENALTY: 0.0,      // desactivado (redundante con Correlation Panic + Tail Risk corr penalty)
