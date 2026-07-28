@@ -152,7 +152,7 @@ export interface SmartDCAOutput {
 }
 
 // ── SEÑALES DE CONFLUENCIA DE FONDO (8 señales: 4 BTC + 3 Macro + 1 per-asset) ──
-function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
+export function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio, mvrvZScore, cycleBottomSignals } = input;
 
   const S = DCA_CONFIG.SIGNALS;
@@ -228,14 +228,14 @@ function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
 //   VALUE (×1.25)     → +1.5pp overweight permitido
 //   OPPORTUNITY (×1.5) → +3.0pp
 //   EXTREME (×2.0)    → +5.0pp
-function getBottomDriftFloor(attackMultiplier: number): number {
+export function getBottomDriftFloor(attackMultiplier: number): number {
   if (attackMultiplier >= 2.0) return 0.050;  // EXTREME: 5.0pp
   if (attackMultiplier >= 1.5) return 0.030;  // OPPORTUNITY: 3.0pp
   if (attackMultiplier > 1.0) return 0.015;   // VALUE: 1.5pp
   return 0;
 }
 
-function buildAllocations(
+export function buildAllocations(
   totalCash: number,
   assets: { ticker: string; name: string; finalAllocation: number; price: number }[],
   trancheLabel: string,
@@ -386,7 +386,7 @@ function buildAllocations(
 // FIX-OVERLAY-SCALE (Jul-2026): usar tailRiskOverlay como escala continua.
 //   Elimina el mismatch level/overlay (ej: L1_5 overlay=0.65, level compartido con L1 overlay=0.80).
 //   L1: 0.80, L1_5: 0.65, L2: 0.50, L3: min(0.30,0.25)=0.25, L4+: 0.
-function getKillSwitchDcaScale(killSwitchLevel: number, tailRiskOverlay: number): number {
+export function getKillSwitchDcaScale(killSwitchLevel: number, tailRiskOverlay: number): number {
   if (killSwitchLevel >= 4) return 0;
   // Overlay como escala continua con floor 25% para L1-L3
   return Math.max(tailRiskOverlay, 0.25);
