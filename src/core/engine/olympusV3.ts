@@ -118,6 +118,17 @@ export interface AssetInput {
   sector?: string;
 }
 
+// FEAT-PROVENANCE (Jul-2026): trazabilidad por capa para cada activo.
+// Cada campo captura el peso relativo del activo DESPUÉS de aplicar cada capa.
+// Esto permite al dashboard mostrar "¿Por qué este peso?" desglosado paso a paso.
+// Los pesos son relativos (suman 1.0 en cada etapa) hasta finalAllocation.
+export interface AllocationProvenance {
+  regimeTiltMultiplier: number;   // × por REGIME_TILT (EXPANSION: crypto +40%, CONTRACTION: gold +40%)
+  btcCapMultiplier: number;       // × por BTC cap dinámico (1.0 = sin cap, <1.0 = cap aplicado)
+  cycleTopMultiplier: number;     // × por Cycle Top detection (1.0 = SAFE, <1.0 = CAUTION/DANGER trim)
+  finalPreExposure: number;       // peso relativo final (suma 1.0) antes de × totalInvested
+}
+
 export interface OlympusOutput {
   name: string;
   momentumScore: number;
@@ -138,6 +149,8 @@ export interface OlympusOutput {
   blendedAllocation: number;
   volAdjustedAllocation: number;
   finalAllocation: number;
+  // FEAT-PROVENANCE: trazabilidad por capa
+  provenance?: AllocationProvenance;
 }
 
 export type { PortfolioRegime };
@@ -1100,6 +1113,24 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   };
 
   // ====== OUTPUT FINAL ======
+  // FEAT-PROVENANCE (Jul-2026): computar multiplicadores por capa para trazabilidad.
+  // Cada activo recibe un objeto provenance que el dashboard puede desplegar.
+  const regimeTiltMult = relativeWeights.map((w, i) => {
+    const denom = w > 0.00001 ? w : 0.00001;
+    return tiltedRelativeWeights[i] / denom;
+  });
+  const btcIdxProv = assets.findIndex(a => {
+    const n = (a.ticker ?? a.name).toLowerCase();
+    return n.includes('btc') || n.includes('bitcoin');
+  });
+  // CycleTop multipliers per asset (capturados ANTES de aplicar al array)
+  const cycleTopMult = assets.map((_, i) => {
+    const ticker = assets[i].ticker ?? assets[i].name;
+    const baseTicker = ticker.split(".")[0];
+    const sig = activeCycleSignals.find(s => s.ticker === ticker || s.ticker.split(".")[0] === baseTicker);
+    return sig?.allocationMultiplier ?? 1.0;
+  });
+
   const allocations: OlympusOutput[] = kellyNorm.map(
     ({ asset, momentum, value, quality, lowVol, rawExpectedReturn, normalizedExpectedReturn, kelly, kellyNormalized }, i) => {
       const relW   = relativeWeightsAfterCap[i];
@@ -1107,6 +1138,18 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       // FIX-ERP-EQUITY: ERP cap solo para equity, non-equity sin cap
       const isEquityAsset = assets[i].earningsYield > 0;
       const final  = relW * totalInvested_base * (isEquityAsset ? erpCapFactor : 1.0);
+
+      // FEAT-PROVENANCE: trazabilidad por capa
+      const btcCapped = (i === btcIdxProv) && tiltedRelativeWeights[i] > dynamicBtcCap;
+      const btcCapMult = btcCapped
+        ? dynamicBtcCap / Math.max(0.00001, tiltedRelativeWeights[i])
+        : 1.0;
+      const provenance: AllocationProvenance = {
+        regimeTiltMultiplier: parseFloat(regimeTiltMult[i].toFixed(3)),
+        btcCapMultiplier:     parseFloat(btcCapMult.toFixed(3)),
+        cycleTopMultiplier:   parseFloat(cycleTopMult[i].toFixed(3)),
+        finalPreExposure:     parseFloat(relW.toFixed(6)),
+      };
 
       return {
         name:                     asset.name,
@@ -1128,6 +1171,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         blendedAllocation:        relW,
         volAdjustedAllocation:    volAdj,
         finalAllocation:          final,
+        provenance,
       };
     }
   );

@@ -60,8 +60,7 @@ for (let i = 0; i < minLen; i++) {
 
 const baseInput = { closesHistory, macroHistory:{vix,yieldSpread,creditSpread,move,dxyTrend,btcVol}, lookbackDays:252, rebalanceDays:21, initialCapital:10000, transactionCostBps:15 };
 const startLine = lines[1]?.split(',')[0] ?? '?';
-console.log('Datos: ' + minLen + ' dias (' + startLine + ' -> ' + lines[lines.length-1]?.split(',')[0] + ')\
-');
+console.log('Datos: ' + minLen + ' dias (' + startLine + ' -> ' + lines[lines.length-1]?.split(',')[0] + ')\n');
 
 const SEP = '█'.repeat(80);
 
@@ -279,4 +278,21 @@ const res = tc - (btcS+momC+valC+qualC+lvC+regC+rebC);
 console.log('  Componente               | Contribucion | % del total');
 console.log('  ' + '-'.repeat(55));
 console.log('  BTC Satellite (buy&hold)  | ' + (btcS*100).toFixed(1).padStart(6) + '%      | ' + (btcS/tc*100).toFixed(0).padStart(3) + '%');
-console.log('  Factor Momentum           | ' + (momC*100).toFixed(1).padStart(6) + '%  
+console.log('  Factor Momentum           | ' + (momC*100).toFixed(1).padStart(6) + '%      | ' + (momC/tc*100).toFixed(0).padStart(3) + '%');
+console.log('  Factor Value              | ' + (valC*100).toFixed(1).padStart(6) + '%      | ' + (valC/tc*100).toFixed(0).padStart(3) + '%');
+console.log('  Factor Quality            | ' + (qualC*100).toFixed(1).padStart(6) + '%      | ' + (qualC/tc*100).toFixed(0).padStart(3) + '%');
+console.log('  Factor LowVol             | ' + (lvC*100).toFixed(1).padStart(6) + '%      | ' + (lvC/tc*100).toFixed(0).padStart(3) + '%');
+console.log('  Regime Timing             | ' + (regC*100).toFixed(1).padStart(6) + '%      | ' + (regC/tc*100).toFixed(0).padStart(3) + '%');
+console.log('  Rebalanceo Dinamico       | ' + (rebC*100).toFixed(1).padStart(6) + '%      | ' + (rebC/tc*100).toFixed(0).padStart(3) + '%');
+console.log('  Residual (sin atribuir)   | ' + (res*100).toFixed(1).padStart(6) + '%      | ' + (res/tc*100).toFixed(0).padStart(3) + '%');
+
+console.log('\nDONE - institutional_audit.json saved');
+fs.writeFileSync(path.join(process.cwd(), 'institutional_audit.json'), JSON.stringify({
+  baseline: { sharpe: bm.sharpe, cagr: bm.cagr, maxdd: bm.maxDrawdown, calmar: bm.calmar, vol: bm.volatility, totalCosts: baseline.totalTransactionCosts },
+  oos: { isSharpe: isR.metrics.sharpe, oosSharpe: oosR.metrics.sharpe, degradation: pS },
+  bootstrap: { p5Sharpe: bSharpes[500], p50Sharpe: bSharpes[5000], p95Sharpe: bSharpes[9500] },
+  deflatedSharpe: { dsr: dsrVal, pValue: dsrP },
+  pbo: pboVal,
+  pRuin: { ruin50: rc50/RS, ruin25: rc25/RS },
+  monteCarlo: { p5Sharpe: msp[50], p50Sharpe: msp[500], p95Sharpe: msp[950] },
+}, null, 2));
