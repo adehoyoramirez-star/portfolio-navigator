@@ -56,7 +56,7 @@ const smoothScore = (
 ): number => {
   if (thresholds.length === 0) return 0;
   const sorted = [...thresholds].sort((a, b) => a[0] - b[0]);
-  if (x <= sorted[0][0]) return sorted[0][1];
+  if (x <= sorted[0][0]) return 0;
   if (x >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
   for (let i = 0; i < sorted.length - 1; i++) {
     const [t1, s1] = sorted[i];
@@ -72,7 +72,11 @@ const smoothScore = (
 // Convierte topSignals (0-7+) en [multiplier, zone, trimPct] usando
 // rampas lineales entre los puntos de anclaje originales.
 const multiplierFromScore = (score: number): { multiplier: number; zone: CycleTopSignal["zone"]; trimPct: number } => {
-  // Puntos de anclaje: [topSignals, multiplier]. Incluye [0, 1.0] → sin rama manual.
+  // Guard: score 0 = no hay senales de techo. SAFE, sin trim.
+  // smoothScore retorna 0 para x <= primer umbral → multiplier=0 → falso 95% trim.
+  if (score <= 0) return { multiplier: 1.0, zone: "SAFE", trimPct: 0 };
+  // Puntos de anclaje: [topSignals, multiplier]. [0, 1.0] sirve como ancla
+  // para interpolar scores (0, 0.5) — el guard maneja score=0 por separado.
   const multiplier = smoothScore(score, [
     [0, 1.0],
     [0.5, 0.75],
