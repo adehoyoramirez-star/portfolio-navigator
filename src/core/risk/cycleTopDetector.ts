@@ -372,22 +372,22 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
     else if (soxSpyRelativeStrength > 1.0)   { topSignals += 0.75; reasons.push(`SOX/SPX RS Z ${soxSpyRelativeStrength.toFixed(2)} — semis outperforming, vigilar`); }
   }
 
-  // SIA Sales YoY% — DEGRADADO a CONFIRMATORIO (Jul 2026)
-  //   P1 (Comité): corte al 50% del peso original. ANTES: primario (+2/+1/+0.5).
-  //   AHORA: confirmatorio (exactamente la mitad: +1.0/+0.5/+0.25).
-  //   Razón: SIA es coincidente/lagging (mide ventas YA realizadas).
-  //   SOX/SPX RS es leading (mide expectativas de mercado). La combinación
-  //   de ambos es más robusta que cualquiera por separado.
+  // SIA Sales YoY% — DEGRADADO A INFORMATIVO (Jul 2026, Comité)
+  //   P0 original: primario (+2/+1/+0.5). P1: corte al 50% (+1.0/+0.5/+0.25).
+  //   AHORA: 0 peso en scoring. SIA es COINCIDENTE/LAGGING (mide ventas YA realizadas,
+  //   dato mensual). Un solo mes de +104% no justifica un trim del 35% cuando
+  //   SOX/SPX RS (leading, basado en expectativas de mercado) dice 0.68 (neutral)
+  //   y SOX RSI-W dice 56 (neutral).
+  //   SIA se mantiene como contexto en el reason para que el operador tenga
+  //   visibilidad completa, pero no mueve el multiplier. Los únicos triggers
+  //   accionables son SOX/SPX RS (leading) y SOX RSI-W (momentum).
   if (isValidReading(siaSalesYoY, -100)) {
     if (siaSalesYoY > 40) {
-      topSignals += 1.0;
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — euforia insostenible (datos realizados, 50% peso)`);
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — contexto: euforia en ventas (dato coincidente, informativo)`);
     } else if (siaSalesYoY > 30) {
-      topSignals += 0.5;
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — ciclo muy caliente (datos realizados, 50% peso)`);
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — contexto: ciclo caliente (dato coincidente, informativo)`);
     } else if (siaSalesYoY > 25) {
-      topSignals += 0.25;
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — crecimiento elevado, vigilar`);
+      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — contexto: crecimiento elevado (dato coincidente, informativo)`);
     }
   }
 
