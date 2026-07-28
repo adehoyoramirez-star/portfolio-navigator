@@ -733,6 +733,10 @@ soxRsiWeekly,
     return detectCycleTops(cycleInputs);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
+  // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
+  // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.
+  const [currentRegime, setCurrentRegimeRaw] = useState<string | undefined>(undefined);
+
   // ── Cycle Bottom Detection — suelos de ciclo por activo ───────────
   // Simétrico a cycleTopResult: reutiliza los mismos cycleInputs invertidos.
   // Detecta activos infravalorados/oversold con opportunityScore 0-100.
@@ -758,9 +762,12 @@ soxRsiWeekly,
       emxcRsiWeekly,
       emxcPERatio,
       dxy,
+      // TACTICAL-DAILY (Jul 2026): pasar price histories al detector de suelos
+      priceHistories: marketData?.closesHistory,
+      regime: currentRegime,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, currentRegime]);
 
   
 
@@ -826,11 +833,15 @@ soxRsiWeekly,
   // FIX-AUDIT-TRANSVERSAL-R3: regimeHistory añadido a deps para regimeDuration.
   }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult, regimeHistory]);
 
+  // TACTICAL-DAILY (Jul 2026): sync regime to state so cycleBottomResult reacts.
+  // currentRegime is used by the tactical daily layer in applyTacticalDaily().
   useEffect(() => {
     if (engineResult?.regime && engineResult.regime !== lastRegime) {
       setLastRegime(engineResult.regime);
       setRegimeChangeCounter(c => c + 1);
     }
+    // Always sync regime, even for undefined → guards work on first render too.
+    setCurrentRegimeRaw(engineResult?.regime);
   }, [engineResult?.regime, lastRegime]);
 
 
