@@ -254,7 +254,7 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── URANIO ───────────────────────────────────────────────────────
 function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { uraniumSpotPrice, uraniumLTPrice, priceHistories, regime } = inputs;
+  const { uraniumSpotPrice, uraniumLTPrice } = inputs;
 
   if (!isValidReading(uraniumSpotPrice) || !isValidReading(uraniumLTPrice) || uraniumLTPrice === 0) {
     return {
@@ -426,7 +426,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── ORO ──────────────────────────────────────────────────────────
 function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { bondYield10y, inflationBreakeven, brentOil, priceHistories, regime } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil } = inputs;
 
   if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
@@ -519,7 +519,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 //   ANTES: max(CAPE_score=2.5, P/E_score=0) = 2.5 → DANGER, trim 60%
 //   AHORA: P/E_score=1.0 + CAPE_confirm=0.5 = 1.5 → CAUTION, trim 35%
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, priceHistories, regime } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -646,7 +646,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 //   3. Comprime los márgenes de exportadores EM (commodities nominados en USD)
 // El DXY tiene peso 1.5× sobre P/E porque es más predictivo en ciclos EM.
 function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { emxcRsiWeekly, emxcPERatio, dxy, priceHistories, regime } = inputs;
+  const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
 
   if (!isValidReading(emxcRsiWeekly, 0, 100) && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
     return {
