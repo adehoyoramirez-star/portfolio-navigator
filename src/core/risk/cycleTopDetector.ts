@@ -558,10 +558,19 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   // FIX-INSTITUTIONAL (Jul-2026) + FIX-SMOOTH-THRESHOLDS (Jul-2026):
-  //   P/E PRIMARIO, CAPE CONFIRMATORIO. Ambos con interpolación lineal.
-  //   Umbrales P/E: [17→1.0, 22→1.5, 25→2.0, 30→2.5] (media ~17).
-  //   Umbrales CAPE: [27→1.5, 30→2.0, 33→2.5, 38→3.0, 44→3.5] (cap).
-  //   Con P/E 19.3: score=1.0+0.5×(19.3-17)/(22-17)=1.23 (antes 1.0, cliff en 19).
+  //   P/E PRIMARIO. CAPE/S&P 500 P/E DEGRADADO A INFORMATIVO (Jul 2026, Comité).
+  //
+  //   Tres razones institucionales:
+  //   1. Es un PROXY de otro índice (S&P 500), no del MSCI World que poseemos.
+  //      "Vendimos WLG porque el P/E del S&P 500 estaba a X" no se defiende.
+  //   2. Naming incorrecto: el código decía "CAPE" pero el dato real es
+  //      marketData.per = P/E TTM del S&P 500 vía FRED. Los umbrales de CAPE
+  //      (27-44) no aplican a P/E TTM (15-25 es el rango normal).
+  //   3. El P/E real del MSCI World (wlgPERatio) ya cubre la valoración
+  //      del activo que poseemos. Usamos el dato del activo, no un proxy.
+  //
+  //   Umbrales P/E: [17→1.0, 22→1.5, 25→2.0, 30→2.5] (media histórica ~17).
+  //   Con P/E 19.3: score = 1.0 + 0.5×(19.3-17)/(22-17) = 1.23.
   let valuationScore = 0;
   const valuationReasons: string[] = [];
   const hasPE = isValidReading(wlgPERatio);
@@ -580,33 +589,27 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     else if (valuationScore >= 1.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~17)`);
     else if (valuationScore > 0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — ligeramente por encima de la media`);
 
-    // CAPE confirmatorio: +0.5 si está más alarmado que el P/E
+    // ── CAPE / S&P 500 P/E — INFORMATIVO (Jul 2026, Comité) ──
+    //   El dato es P/E TTM del S&P 500 vía FRED, no Shiller CAPE.
+    //   Es un proxy de otro índice. Se muestra como contexto,
+    //   pero NO modifica el multiplier. Mismo criterio que SIA y P/E EMXC.
     if (hasCAPE) {
-      const capeScore = smoothScore(wlgCAPE, [
-        [27, 0.75],
-        [30, 1.5],
-        [33, 2.0],
-        [38, 2.5],
-        [44, 3.0],
-      ]);
-      if (capeScore > valuationScore) {
-        valuationScore += 0.5;
-        valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — confirma sobrevaloración (proxy, no dato del fondo)`);
-      }
+      valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — contexto: proxy de otro índice (dato informativo, no puntúa)`);
     }
   } else if (hasCAPE) {
+    // FALLBACK sin P/E real — usar solo S&P 500 P/E como referencia
+    //   (en este caso SÍ puntúa porque no hay dato del activo real)
     valuationScore = smoothScore(wlgCAPE, [
-      [27, 0.75],
-      [30, 1.5],
-      [33, 2.0],
-      [38, 2.5],
-      [44, 3.0],
+      [17, 1.0],
+      [22, 1.5],
+      [25, 2.0],
+      [30, 2.5],
     ]);
-    if (valuationScore >= 3.0) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — nivel de burbuja dot-com (récord: 44.2 en 1999) [fallback: sin P/E]`);
-    else if (valuationScore >= 2.5) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — sobrevaloración extrema (>38: solo 1999 y 2021) [fallback: sin P/E]`);
-    else if (valuationScore >= 2.0) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado significativamente caro [fallback: sin P/E]`);
-    else if (valuationScore >= 1.5) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro [fallback: sin P/E]`);
-    else if (valuationScore > 0) valuationReasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por encima de la media [fallback: sin P/E]`);
+    if (valuationScore >= 2.5) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — valoración extrema [fallback: sin P/E MSCI World]`);
+    else if (valuationScore >= 2.0) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — mercado muy caro [fallback: sin P/E MSCI World]`);
+    else if (valuationScore >= 1.5) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro [fallback: sin P/E MSCI World]`);
+    else if (valuationScore >= 1.0) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — por encima de la media [fallback: sin P/E MSCI World]`);
+    else if (valuationScore > 0) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — ligeramente por encima de la media [fallback: sin P/E MSCI World]`);
   }
 
   topSignals += valuationScore;
@@ -617,7 +620,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 
   const parts: string[] = [];
   if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
-  if (isValidReading(wlgCAPE)) parts.push(`CAPE ${wlgCAPE.toFixed(1)}`);
+  if (isValidReading(wlgCAPE)) parts.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)}`);
   if (isValidReading(wlgPERatio)) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
@@ -1335,7 +1338,7 @@ function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
 const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
-  if (isValidReading(wlgCAPE)) parts.push(`CAPE ${wlgCAPE.toFixed(1)}`);
+  if (isValidReading(wlgCAPE)) parts.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)}`);
   if (isValidReading(wlgPERatio)) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
 
   return {
