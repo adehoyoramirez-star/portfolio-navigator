@@ -710,25 +710,20 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  // P/E del MSCI Emerging Markets — smoothScore (FIX-SMOOTH-EMXC Jul 2026)
-  //   Rampa: [12->0, 15->0.5, 18->1, 20->1.5, 25->2, 30->3].
-  //   Elimina el acantilado P/E 19.99->+1 y 20.01->+1.5.
-  //   Anclajes: P/E 15 (media) -> 0.5, P/E 20 (caro) -> 1.5, P/E 25 (burbuja) -> 2.
+  // P/E del MSCI Emerging Markets — DEGRADADO A INFORMATIVO (Jul 2026, Comité)
+  //   Mismo criterio que SIA en Semis: dato trimestral/manual no debe
+  //   mover el multiplier por sí solo cuando DXY y RSI-W están neutrales.
+  //   DXY es diario (leading, mercado de divisas en tiempo real).
+  //   RSI-W es semanal (momentum, precio en tiempo real).
+  //   P/E es trimestral como máximo (coincidente, basado en earnings reportados).
+  //   Se mantiene como contexto en el reason; los únicos triggers accionables
+  //   son DXY (primario, BIS-documented) y RSI-W (momentum).
   if (isValidReading(emxcPERatio)) {
-    const peScore = smoothScore(emxcPERatio, [
-      [12, 0],
-      [15, 0.5],
-      [18, 1],
-      [20, 1.5],
-      [25, 2],
-      [30, 3],
-    ]);
-    topSignals += peScore;
-    if (emxcPERatio > 30)       reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes en burbuja extrema`);
-    else if (emxcPERatio > 25)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes en burbuja (historico: >20 = caro)`);
-    else if (emxcPERatio > 20)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes caros (media historica ~15)`);
-    else if (emxcPERatio > 18)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — Emergentes por encima de su media`);
-    else if (peScore > 0)       reasons.push(`P/E ${emxcPERatio.toFixed(1)} — ligeramente por encima de la media`);
+    if (emxcPERatio > 30)       reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: Emergentes en burbuja extrema (dato trimestral, informativo)`);
+    else if (emxcPERatio > 25)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: Emergentes en burbuja (dato trimestral, informativo)`);
+    else if (emxcPERatio > 20)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: Emergentes caros, media ~15 (dato trimestral, informativo)`);
+    else if (emxcPERatio > 18)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: por encima de su media (dato trimestral, informativo)`);
+    else if (emxcPERatio > 12)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: ligeramente por encima de la media`);
   }
 
   // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
