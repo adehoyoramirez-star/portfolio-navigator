@@ -56,7 +56,7 @@ const smoothScore = (
 ): number => {
   if (thresholds.length === 0) return 0;
   const sorted = [...thresholds].sort((a, b) => a[0] - b[0]);
-  if (x <= sorted[0][0]) return 0;
+  if (x <= sorted[0][0]) return sorted[0][1];
   if (x >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
   for (let i = 0; i < sorted.length - 1; i++) {
     const [t1, s1] = sorted[i];
@@ -889,7 +889,7 @@ function computeDailyReturn(history: number[]): number | undefined {
  *    RSI:     mapeado como smoothScore(100-RSI, ...). RSI bajo = más puntos.
  *    Z-score: mapeado como smoothScore(-Z, ...). Z muy negativo = más puntos.
  *    Ambos con interpolación lineal entre los umbrales originales. */
-function applyTacticalDaily(
+export function applyTacticalDaily(
   structuralScore: number,
   history: number[] | undefined,
   regime: string | undefined,
