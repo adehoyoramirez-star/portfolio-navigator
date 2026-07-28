@@ -186,6 +186,38 @@ describe("isBTCDominanceFalling", () => {
   test("caida <1.5pp", () => expect(isBTCDominanceFalling(58, 59)).toBe(false));
 });
 
+describe("REGRESION: WLG con datos reales (bug smoothScore Jul-2026)", () => {
+  // Estos datos (RSI 58, P/E 19.3, CAPE 40.5) son los que el usuario tiene
+  // en el dashboard. El bug de smoothScore (commit 3387c54) hacia que RSI 58
+  // contribuyera +1.0 falso → topSignals subia de 1.73 a 2.73 → DANGER 68%.
+  // Este test previene que ese bug reaparezca.
+  test("RSI 58 + P/E 19.3 + CAPE 40.5 -> CAUTION ~50% (NO DANGER)", () => {
+    const r = detectCycleTops({
+      wlgRsiWeekly: 58,
+      wlgPERatio: 19.3,
+      wlgCAPE: 40.5,
+      bondYield10y: 4.7,
+    });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    // RSI 58 no esta sobrecomprado → NO debe empujar el score
+    expect(wlg.zone).toBe("CAUTION");  // NO DANGER
+    expect(wlg.trimPct).toBeLessThan(60);  // ~50%, no 68%
+    expect(wlg.trimPct).toBeGreaterThan(30);
+    // Verificar que el RSI no aparece como senal de sobrecompra
+    expect(wlg.reason).not.toContain("sobrecompra");
+  });
+
+  test("WLG SAFE con datos bajos", () => {
+    const r = detectCycleTops({
+      wlgRsiWeekly: 50,
+      wlgPERatio: 15,
+      wlgCAPE: 25,
+      bondYield10y: 4.0,
+    });
+    expect(r.signals.find(s => s.ticker === "0P00000WLG.F")!.zone).toBe("SAFE");
+  });
+});
+
 describe("Edge cases", () => {
   test("detectCycleTops sin datos no crashea", () => {
     expect(() => detectCycleTops({ bondYield10y: 4.0 })).not.toThrow();
