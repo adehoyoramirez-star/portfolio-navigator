@@ -132,6 +132,15 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
   dxy?: number;              // DXY spot — índice del dólar USA. #1 factor de riesgo EM (BIS).
                               //   DXY > 106 = estrés, > 110 = crisis EM.
                               //   Solo se considera válido si dxy > 50 (guarda sanitario contra 0 = fetch fallido).
+
+  // ── Capa Táctica Diaria (TACTICAL-DAILY Jul 2026) ──────────────
+  //   Price histories desde el CSV para computar indicadores diarios
+  //   (RSI-14, Z-score MA50) que capturan pánico intradía invisible
+  //   para los detectores semanales/mensuales.
+  priceHistories?: Record<string, number[]>;  // ticker → daily closes
+  //   Guard de régimen: las señales tácticas solo se activan si el
+  //   régimen NO es CRISIS (en crisis, el pánico diario = más pánico).
+  regime?: string;
 }
 
 export interface CycleTopSignal {
@@ -241,7 +250,7 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── URANIO ───────────────────────────────────────────────────────
 function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { uraniumSpotPrice, uraniumLTPrice } = inputs;
+  const { uraniumSpotPrice, uraniumLTPrice, priceHistories, regime } = inputs;
 
   if (!isValidReading(uraniumSpotPrice) || !isValidReading(uraniumLTPrice) || uraniumLTPrice === 0) {
     return {
@@ -413,7 +422,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── ORO ──────────────────────────────────────────────────────────
 function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { bondYield10y, inflationBreakeven, brentOil } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil, priceHistories, regime } = inputs;
 
   if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
@@ -506,7 +515,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 //   ANTES: max(CAPE_score=2.5, P/E_score=0) = 2.5 → DANGER, trim 60%
 //   AHORA: P/E_score=1.0 + CAPE_confirm=0.5 = 1.5 → CAUTION, trim 35%
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, priceHistories, regime } = inputs;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -633,7 +642,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 //   3. Comprime los márgenes de exportadores EM (commodities nominados en USD)
 // El DXY tiene peso 1.5× sobre P/E porque es más predictivo en ciclos EM.
 function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
+  const { emxcRsiWeekly, emxcPERatio, dxy, priceHistories, regime } = inputs;
 
   if (!isValidReading(emxcRsiWeekly, 0, 100) && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
     return {
@@ -823,12 +832,116 @@ function attackMultiplierForScore(score: number): number {
   return 1.0;
 }
 
+// ── Helpers para Capa Táctica Diaria (TACTICAL-DAILY Jul 2026) ──
+//   Computan indicadores de corto plazo desde arrays de precios diarios.
+//   Capturan pánico intradía invisible para los detectores semanales.
+
+/** RSI(14) diario — Wilder smoothing */
+function computeDailyRSI(history: number[]): number | undefined {
+  if (!history || history.length < 15) return undefined;
+  const n = history.length;
+  let gains = 0, losses = 0;
+  for (let i = n - 14; i < n; i++) {
+    const change = history[i] - history[i - 1];
+    if (change > 0) gains += change;
+    else losses += Math.abs(change);
+  }
+  const avgGain = gains / 14;
+  const avgLoss = losses / 14;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+/** Z-score vs MA50 — (precio - MA50) / σ50 */
+function computeZScoreMA50(history: number[]): number | undefined {
+  if (!history || history.length < 50) return undefined;
+  const n = history.length;
+  const window = history.slice(n - 50);
+  const ma50 = window.reduce((s, p) => s + p, 0) / 50;
+  const variance = window.reduce((s, p) => s + (p - ma50) ** 2, 0) / 50;
+  const std50 = Math.sqrt(variance);
+  if (std50 === 0) return 0;
+  return (history[n - 1] - ma50) / std50;
+}
+
+/** Retorno diario (1 día) */
+function computeDailyReturn(history: number[]): number | undefined {
+  if (!history || history.length < 2) return undefined;
+  const n = history.length;
+  return (history[n - 1] - history[n - 2]) / history[n - 2];
+}
+
+/** Aplica capa táctica diaria a un score de bottom detection.
+ *  ADDITIVE-ONLY: solo puede subir el score, nunca bajarlo.
+ *  Guard de régimen: si regime=CRISIS, no se aplica (pánico = más pánico).
+ *  Retorna { score, reasons } para que el caller los añada.
+ *
+ *  FIX-SMOOTH-TACTICAL (Jul-2026): interpolación continua vía smoothScore.
+ *    Reemplaza los if/else duros por rampas lineales, eliminando el cliff
+ *    donde RSI 24.99→+10 y RSI 25.01→+0. Mismo tratamiento que
+ *    detectGoldTop y detectWLGTop (commits 5f63b7c, 8259a9b).
+ *
+ *    RSI:     mapeado como smoothScore(100-RSI, ...). RSI bajo = más puntos.
+ *    Z-score: mapeado como smoothScore(-Z, ...). Z muy negativo = más puntos.
+ *    Ambos con interpolación lineal entre los umbrales originales. */
+function applyTacticalDaily(
+  structuralScore: number,
+  history: number[] | undefined,
+  regime: string | undefined,
+  assetName: string,
+  rsiThresholds: [number, number][],   // [RSI_max, points] — RSI más bajo = más puntos
+  zScoreThresholds: [number, number][], // [Z_min, points] — Z más negativo = más puntos
+): { score: number; reasons: string[] } {
+  if (regime === "CRISIS" || regime === "ALL_CASH") return { score: structuralScore, reasons: [] };
+  if (!history || history.length < 50) return { score: structuralScore, reasons: [] };
+
+  let tacticalScore = 0;
+  const tacticalReasons: string[] = [];
+
+  const rsi = computeDailyRSI(history);
+  const zScore = computeZScoreMA50(history);
+
+  // RSI diario — smoothScore: RSI bajo = oversold = oportunidad.
+  //   Convertimos RSI a escala 100-RSI (crece con la oportunidad).
+  //   Ej: rsiThresholds [[20,15],[30,10],[40,5]] → mapeado [[50,0],[60,5],[70,10],[80,15]].
+  //   RSI 25 → 100-25=75 → smoothScore(75) = 10 + (15-10)*(75-70)/(80-70) = 12.5
+  if (rsi !== undefined) {
+    const mapped: [number, number][] = [[50, 0]];
+    for (const [t, p] of rsiThresholds) mapped.push([100 - t, p]);
+    const pts = smoothScore(100 - rsi, mapped);
+    if (pts > 0) {
+      tacticalScore += pts;
+      tacticalReasons.push(`RSI diario ${rsi.toFixed(0)} — oversold táctico (${assetName})`);
+    }
+  }
+
+  // Z-score MA50 — smoothScore: Z muy negativo = pánico = oportunidad.
+  //   Convertimos Z a escala -Z (crece con la oportunidad).
+  //   Ej: zScoreThresholds [[-2.5,15],[-2.0,10],[-1.5,5]] → mapeado [[1.0,0],[1.5,5],[2.0,10],[2.5,15]].
+  //   Z -2.25 → 2.25 → smoothScore(2.25) = 10 + (15-10)*(2.25-2.0)/(2.5-2.0) = 12.5
+  if (zScore !== undefined) {
+    const mapped: [number, number][] = [[1.0, 0]];
+    for (const [t, p] of zScoreThresholds) mapped.push([-t, p]);
+    const pts = smoothScore(-zScore, mapped);
+    if (pts > 0) {
+      tacticalScore += pts;
+      tacticalReasons.push(`Z-score MA50 ${zScore.toFixed(2)} — pánico táctico (${assetName})`);
+    }
+  }
+
+  return {
+    score: structuralScore + tacticalScore,
+    reasons: tacticalReasons,
+  };
+}
+
 // ── BTC Bottom ───────────────────────────────────────────────────
 // Invierte la lógica de detectBTCTop:
 //   MVRV > 3.5 = techo  →  MVRV < 1.5 = suelo
 //   RSI-W > 80 = techo  →  RSI-W < 30 = suelo
 function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { mvrvRatio, mvrvZScore, btcRsiWeekly, puellMultiple } = inputs;
+  const { mvrvRatio, mvrvZScore, btcRsiWeekly, puellMultiple, priceHistories, regime } = inputs;
 
   let score = 0;
   const reasons: string[] = [];
@@ -869,6 +982,19 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
     else if (btcRsiWeekly < 45)   { score += 10; reasons.push(`RSI semanal ${btcRsiWeekly.toFixed(0)} — zona baja`); }
   }
 
+  // ── Capa Táctica Diaria (BTC) ──────────────────────────────────
+  //   Max +20 pts (+12 RSI +8 Z). BTC es el activo más volátil del universo
+  //   (3-5% diario normal, σ~40% anual). Umbrales estrechos para evitar falsos
+  //   positivos en su ruido diario intrínseco. La señal de suelo la da MVRV/Puell,
+  //   la capa táctica solo añade precisión de timing.
+  const btcTactical = applyTacticalDaily(
+    score, priceHistories?.["BTC-EUR"], regime, "BTC",
+    [[25, 12], [35, 8], [45, 4]],      // RSI: <25→+12, <35→+8, <45→+4
+    [[-2.5, 8], [-1.5, 5], [-0.5, 3]], // Z: <-2.5→+8, <-1.5→+5, <-0.5→+3
+  );
+  score = btcTactical.score;
+  reasons.push(...btcTactical.reasons);
+
   const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(mvrvZScore)) parts.push(`MVRV Z ${mvrvZScore.toFixed(2)}`);
@@ -883,7 +1009,7 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
     opportunityScore: score,
     zone,
     reason: reasons.length > 0 ? reasons.join(" · ") : "BTC en zona neutra — sin señal de suelo de ciclo",
-    indicator: "MVRV + Puell + RSI Semanal (invertido)",
+    indicator: "MVRV + Puell + RSI Semanal + Táctico Diario",
     indicatorValue,
     shouldAccumulate: score >= 40,
     attackMultiplier: attackMultiplierForScore(score),
@@ -896,7 +1022,7 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
 // El top detector ya reconoce ratios <0.85 como "ventana de acumulación"
 // y <0.70 como "acumulación agresiva". Aquí lo convertimos en score.
 function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { uraniumSpotPrice, uraniumLTPrice } = inputs;
+  const { uraniumSpotPrice, uraniumLTPrice, priceHistories, regime } = inputs;
 
   if (!isValidReading(uraniumSpotPrice) || !isValidReading(uraniumLTPrice) || uraniumLTPrice === 0) {
     return {
@@ -930,7 +1056,20 @@ function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
     reason = `Spot/LT ${ratio.toFixed(2)} — spot en prima o equilibrio. Sin señal de suelo.`;
   }
 
-  const zone = scoreToZone(score);
+  // ── Capa Táctica Diaria (Uranio) ──────────────────────────────
+  //   Max +30 pts (+15 RSI +15 Z). URNU tiene σ~35% anual y gaps frecuentes
+  //   de -5/-8% en un día (mercado físico ilíquido). Umbrales amplios para
+  //   capturar pánico real, no ruido. Es el activo más extremo del universo
+  //   junto con Semis: caídas del -10% en 48h no son raras.
+  const t_uran = applyTacticalDaily(
+    score, priceHistories?.["URNU.DE"], regime, "Uranio",
+    [[20, 15], [30, 10], [40, 5]],
+    [[-2.5, 15], [-2.0, 10], [-1.5, 5]]
+  );
+  score = t_uran.score;
+  if (t_uran.reasons.length > 0) reason = reason ? reason + " · " + t_uran.reasons.join(" · ") : t_uran.reasons.join(" · ");
+
+const zone = scoreToZone(score);
 
   return {
     asset: "Uranium",
@@ -950,7 +1089,7 @@ function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
 //   SIA Sales > 25% + SOX RSI > 80 = techo
 //   SOX RSI < 35 + SIA Sales < 0% = suelo (recession pricing)
 function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { siaSalesYoY, soxRsiWeekly } = inputs;
+  const { siaSalesYoY, soxRsiWeekly, priceHistories, regime } = inputs;
 
   if (!isValidReading(siaSalesYoY, -100) && !isValidReading(soxRsiWeekly, 0, 100)) {
     return {
@@ -983,7 +1122,19 @@ function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
     else if (siaSalesYoY < 10)    { score += 5;  reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — crecimiento modesto, no es techo`); }
   }
 
-  const zone = scoreToZone(score);
+  // ── Capa Táctica Diaria (Semis) ───────────────────────────────
+  //   Max +30 pts (+15 RSI +15 Z). VVSM tiene σ~40% anual, el más volátil
+  //   del universo equity. Gaps de -8% en el día son frecuentes en correcciones
+  //   del SOX. Umbrales amplios para no perderse liquidaciones intradía.
+  const t_semi = applyTacticalDaily(
+    score, priceHistories?.["VVSM.DE"], regime, "Semis",
+    [[20, 15], [30, 10], [40, 5]],
+    [[-2.5, 15], [-2.0, 10], [-1.5, 5]]
+  );
+  score = t_semi.score;
+  reasons.push(...t_semi.reasons);
+
+const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(siaSalesYoY, -100)) parts.push(`SIA sales ${siaSalesYoY > 0 ? "+" : ""}${siaSalesYoY.toFixed(1)}% YoY`);
   if (isValidReading(soxRsiWeekly, 0, 100)) parts.push(`SOX RSI-W ${soxRsiWeekly.toFixed(0)}`);
@@ -1006,7 +1157,7 @@ function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
 //   Tipo real > 0.5% = presión (techo)  →  Tipo real > 2.0% = sobrecastigado (suelo)
 //   Brent alto protege al oro en ambos casos.
 function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { bondYield10y, inflationBreakeven, brentOil } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil, priceHistories, regime } = inputs;
 
   if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
@@ -1058,7 +1209,21 @@ function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
     }
   }
 
-  const zone = scoreToZone(score);
+  // ── Capa Táctica Diaria (Oro) ─────────────────────────────────
+  //   Max +30 pts (+15 RSI +15 Z). PPFB es defensivo (σ~15% anual) pero sensible
+  //   a shocks de tipo real y Brent. Umbrales MUY estrictos (RSI<15, Z<-3.0):
+  //   solo disparamos en pánico genuino, no en correcciones normales del -2%.
+  //   El oro no debería tener falsos positivos tácticos — su señal real es el
+  //   tipo real estructural, no el precio diario.
+  const t_oro = applyTacticalDaily(
+    score, priceHistories?.["PPFB.DE"], regime, "Oro",
+    [[15, 15], [25, 10], [35, 5]],
+    [[-3.0, 15], [-2.5, 10], [-2.0, 5]]
+  );
+  score = t_oro.score;
+  reasons.push(...t_oro.reasons);
+
+const zone = scoreToZone(score);
 
   return {
     asset: "Gold (ETC)",
@@ -1079,7 +1244,7 @@ function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
 //   P/E < 14 + CAPE < 20 + RSI < 35 = suelo
 // Misma jerarquía institucional: P/E primario, CAPE confirmatorio.
 function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, priceHistories, regime } = inputs;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -1130,7 +1295,19 @@ function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
     else if (wlgCAPE < 28)        { score += 8;  reasons.push(`CAPE S&P 500 ${wlgCAPE.toFixed(1)} — valoración razonable [fallback: sin P/E]`); }
   }
 
-  const zone = scoreToZone(score);
+  // ── Capa Táctica Diaria (WLG) ─────────────────────────────────
+  //   Max +20 pts (+10 RSI +10 Z). WLG es equity índice global (σ~15% anual).
+  //   Umbrales moderados: no queremos comprar cada -2% del MSCI World.
+  //   La señal de suelo la da P/E estructural, la capa táctica añade precisión.
+  const t_wlg = applyTacticalDaily(
+    score, priceHistories?.["0P00000WLG.F"], regime, "WLG",
+    [[25, 10], [35, 5]],
+    [[-2.5, 10], [-2.0, 5]]
+  );
+  score = t_wlg.score;
+  reasons.push(...t_wlg.reasons);
+
+const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
   if (isValidReading(wlgCAPE)) parts.push(`CAPE ${wlgCAPE.toFixed(1)}`);
@@ -1156,7 +1333,7 @@ function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
 // El DXY extremo significa que EM están en oferta por flight-to-safety,
 // no por deterioro fundamental. Es el momento clásico de comprar EM.
 function detectEMXCBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
+  const { emxcRsiWeekly, emxcPERatio, dxy, priceHistories, regime } = inputs;
 
   if (!isValidReading(emxcRsiWeekly, 0, 100) && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
     return {
@@ -1205,7 +1382,19 @@ function detectEMXCBottom(inputs: CycleTopInputs): CycleBottomSignal {
     else if (emxcRsiWeekly < 50)  { score += 5;  reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — zona baja`); }
   }
 
-  const zone = scoreToZone(score);
+  // ── Capa Táctica Diaria (EMXC) ───────────────────────────────
+  //   Max +24 pts (+12 RSI +12 Z). EMXC tiene σ~20% anual, más volátil que WLG
+  //   pero menos que semis/uranio. Umbrales intermedios: captura oversold sin
+  //   disparar con cada ruido de mercados emergentes.
+  const t_emxc = applyTacticalDaily(
+    score, priceHistories?.["EMXC.DE"], regime, "EMXC",
+    [[20, 12], [30, 8], [40, 4]],
+    [[-2.5, 12], [-2.0, 8], [-1.5, 4]]
+  );
+  score = t_emxc.score;
+  reasons.push(...t_emxc.reasons);
+
+const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);
   if (isValidReading(emxcRsiWeekly, 0, 100)) parts.push(`RSI-W ${emxcRsiWeekly.toFixed(0)}`);
