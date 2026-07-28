@@ -762,12 +762,15 @@ soxRsiWeekly,
       emxcRsiWeekly,
       emxcPERatio,
       dxy,
-      // TACTICAL-DAILY (Jul 2026): pasar price histories al detector de suelos
+      // TACTICAL-DAILY (Jul 2026): pasar price histories + currentPrices
+      //   al detector de suelos. currentPrices inyecta el near-real-time
+      //   de Yahoo (delay ~15min) para capturar caídas intradía.
       priceHistories: marketData?.closesHistory,
+      currentPrices: marketData?.prices,
       regime: currentRegime,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, currentRegime]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime]);
 
   
 

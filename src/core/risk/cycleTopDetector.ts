@@ -134,10 +134,14 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
                               //   Solo se considera válido si dxy > 50 (guarda sanitario contra 0 = fetch fallido).
 
   // ── Capa Táctica Diaria (TACTICAL-DAILY Jul 2026) ──────────────
-  //   Price histories desde el CSV para computar indicadores diarios
-  //   (RSI-14, Z-score MA50) que capturan pánico intradía invisible
-  //   para los detectores semanales/mensuales.
-  priceHistories?: Record<string, number[]>;  // ticker → daily closes
+  //   Price histories desde Yahoo Finance (EOD closes) para computar
+  //   indicadores diarios (RSI-14, Z-score MA50).
+  //   INTRADAY-FIX (Jul-2026): currentPrices inyecta el precio near-real-time
+  //     de Yahoo (delay 15min) como último elemento del array antes de calcular
+  //     RSI y Z-score. Esto captura caídas intradía (-8% a las 14:00) sin
+  //     esperar al cierre del mercado.
+  priceHistories?: Record<string, number[]>;  // ticker → daily EOD closes
+  currentPrices?: Record<string, number>;     // ticker → near-real-time price (Yahoo, ~15min delay)
   //   Guard de régimen: las señales tácticas solo se activan si el
   //   régimen NO es CRISIS (en crisis, el pánico diario = más pánico).
   regime?: string;
@@ -892,15 +896,32 @@ function applyTacticalDaily(
   assetName: string,
   rsiThresholds: [number, number][],   // [RSI_max, points] — RSI más bajo = más puntos
   zScoreThresholds: [number, number][], // [Z_min, points] — Z más negativo = más puntos
+  currentPrice?: number,               // INTRADAY-FIX: near-real-time price (Yahoo, ~15min delay)
 ): { score: number; reasons: string[] } {
   if (regime === "CRISIS" || regime === "ALL_CASH") return { score: structuralScore, reasons: [] };
   if (!history || history.length < 50) return { score: structuralScore, reasons: [] };
 
+  // INTRADAY-FIX (Jul-2026): inyectar currentPrice como último elemento para
+  //   capturar caídas intradía. Ej: VVSM -8% a las 14:00 → RSI y Z-score lo ven.
+  //   Sin esto, el array de EOD closes está desactualizado hasta el cierre.
+  //   Guard: solo se inyecta si currentPrice es razonable (dentro del ±40% del
+  //   último cierre para filtrar datos corruptos de Yahoo).
+  let effectiveHistory = history;
+  if (currentPrice !== undefined && Number.isFinite(currentPrice) && currentPrice > 0) {
+    const lastClose = history[history.length - 1];
+    if (lastClose > 0) {
+      const pctChange = Math.abs((currentPrice - lastClose) / lastClose);
+      if (pctChange < 0.40) { // sanity check: no más de ±40% del último cierre
+        effectiveHistory = [...history, currentPrice];
+      }
+    }
+  }
+
   let tacticalScore = 0;
   const tacticalReasons: string[] = [];
 
-  const rsi = computeDailyRSI(history);
-  const zScore = computeZScoreMA50(history);
+  const rsi = computeDailyRSI(effectiveHistory);
+  const zScore = computeZScoreMA50(effectiveHistory);
 
   // RSI diario — smoothScore: RSI bajo = oversold = oportunidad.
   //   Convertimos RSI a escala 100-RSI (crece con la oportunidad).
@@ -941,7 +962,7 @@ function applyTacticalDaily(
 //   MVRV > 3.5 = techo  →  MVRV < 1.5 = suelo
 //   RSI-W > 80 = techo  →  RSI-W < 30 = suelo
 function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { mvrvRatio, mvrvZScore, btcRsiWeekly, puellMultiple, priceHistories, regime } = inputs;
+  const { mvrvRatio, mvrvZScore, btcRsiWeekly, puellMultiple, priceHistories, currentPrices, regime } = inputs;
 
   let score = 0;
   const reasons: string[] = [];
@@ -991,6 +1012,7 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
     score, priceHistories?.["BTC-EUR"], regime, "BTC",
     [[25, 12], [35, 8], [45, 4]],      // RSI: <25→+12, <35→+8, <45→+4
     [[-2.5, 8], [-1.5, 5], [-0.5, 3]], // Z: <-2.5→+8, <-1.5→+5, <-0.5→+3
+    currentPrices?.["BTC-EUR"],         // INTRADAY-FIX: precio near-real-time
   );
   score = btcTactical.score;
   reasons.push(...btcTactical.reasons);
@@ -1022,7 +1044,7 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
 // El top detector ya reconoce ratios <0.85 como "ventana de acumulación"
 // y <0.70 como "acumulación agresiva". Aquí lo convertimos en score.
 function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { uraniumSpotPrice, uraniumLTPrice, priceHistories, regime } = inputs;
+  const { uraniumSpotPrice, uraniumLTPrice, priceHistories, currentPrices, regime } = inputs;
 
   if (!isValidReading(uraniumSpotPrice) || !isValidReading(uraniumLTPrice) || uraniumLTPrice === 0) {
     return {
@@ -1064,7 +1086,8 @@ function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
   const t_uran = applyTacticalDaily(
     score, priceHistories?.["URNU.DE"], regime, "Uranio",
     [[20, 15], [30, 10], [40, 5]],
-    [[-2.5, 15], [-2.0, 10], [-1.5, 5]]
+    [[-2.5, 15], [-2.0, 10], [-1.5, 5]],
+    currentPrices?.["URNU.DE"],
   );
   score = t_uran.score;
   if (t_uran.reasons.length > 0) reason = reason ? reason + " · " + t_uran.reasons.join(" · ") : t_uran.reasons.join(" · ");
@@ -1089,7 +1112,7 @@ const zone = scoreToZone(score);
 //   SIA Sales > 25% + SOX RSI > 80 = techo
 //   SOX RSI < 35 + SIA Sales < 0% = suelo (recession pricing)
 function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { siaSalesYoY, soxRsiWeekly, priceHistories, regime } = inputs;
+  const { siaSalesYoY, soxRsiWeekly, priceHistories, currentPrices, regime } = inputs;
 
   if (!isValidReading(siaSalesYoY, -100) && !isValidReading(soxRsiWeekly, 0, 100)) {
     return {
@@ -1129,7 +1152,8 @@ function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
   const t_semi = applyTacticalDaily(
     score, priceHistories?.["VVSM.DE"], regime, "Semis",
     [[20, 15], [30, 10], [40, 5]],
-    [[-2.5, 15], [-2.0, 10], [-1.5, 5]]
+    [[-2.5, 15], [-2.0, 10], [-1.5, 5]],
+    currentPrices?.["VVSM.DE"],
   );
   score = t_semi.score;
   reasons.push(...t_semi.reasons);
@@ -1157,7 +1181,7 @@ const zone = scoreToZone(score);
 //   Tipo real > 0.5% = presión (techo)  →  Tipo real > 2.0% = sobrecastigado (suelo)
 //   Brent alto protege al oro en ambos casos.
 function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { bondYield10y, inflationBreakeven, brentOil, priceHistories, regime } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil, priceHistories, currentPrices, regime } = inputs;
 
   if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
@@ -1218,7 +1242,8 @@ function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
   const t_oro = applyTacticalDaily(
     score, priceHistories?.["PPFB.DE"], regime, "Oro",
     [[15, 15], [25, 10], [35, 5]],
-    [[-3.0, 15], [-2.5, 10], [-2.0, 5]]
+    [[-3.0, 15], [-2.5, 10], [-2.0, 5]],
+    currentPrices?.["PPFB.DE"],
   );
   score = t_oro.score;
   reasons.push(...t_oro.reasons);
@@ -1244,7 +1269,7 @@ const zone = scoreToZone(score);
 //   P/E < 14 + CAPE < 20 + RSI < 35 = suelo
 // Misma jerarquía institucional: P/E primario, CAPE confirmatorio.
 function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, priceHistories, regime } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, priceHistories, currentPrices, regime } = inputs;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -1302,7 +1327,8 @@ function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
   const t_wlg = applyTacticalDaily(
     score, priceHistories?.["0P00000WLG.F"], regime, "WLG",
     [[25, 10], [35, 5]],
-    [[-2.5, 10], [-2.0, 5]]
+    [[-2.5, 10], [-2.0, 5]],
+    currentPrices?.["0P00000WLG.F"],
   );
   score = t_wlg.score;
   reasons.push(...t_wlg.reasons);
@@ -1333,7 +1359,7 @@ const zone = scoreToZone(score);
 // El DXY extremo significa que EM están en oferta por flight-to-safety,
 // no por deterioro fundamental. Es el momento clásico de comprar EM.
 function detectEMXCBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { emxcRsiWeekly, emxcPERatio, dxy, priceHistories, regime } = inputs;
+  const { emxcRsiWeekly, emxcPERatio, dxy, priceHistories, currentPrices, regime } = inputs;
 
   if (!isValidReading(emxcRsiWeekly, 0, 100) && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
     return {
@@ -1389,7 +1415,8 @@ function detectEMXCBottom(inputs: CycleTopInputs): CycleBottomSignal {
   const t_emxc = applyTacticalDaily(
     score, priceHistories?.["EMXC.DE"], regime, "EMXC",
     [[20, 12], [30, 8], [40, 4]],
-    [[-2.5, 12], [-2.0, 8], [-1.5, 4]]
+    [[-2.5, 12], [-2.0, 8], [-1.5, 4]],
+    currentPrices?.["EMXC.DE"],
   );
   score = t_emxc.score;
   reasons.push(...t_emxc.reasons);
