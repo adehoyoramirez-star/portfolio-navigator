@@ -194,6 +194,25 @@ const formatCurrency = (value: number): string => {
 
   const [puellMultiple, setPuellMultiple] = useState<number | undefined>(undefined);
   const [mvrvZScore, setMvrvZScore] = useState<number | undefined>(undefined);
+  // MVRV-Z-STALE (Jul-2026): el Z-Score es manual (Glassnode). Si el usuario
+  //   no lo actualiza en >7 días, se degrada automáticamente a undefined →
+  //   el fallback a MVRV Ratio en detectBTCTop/detectBTCBottom se activa solo.
+  //   Previene operar con un Z-Score stale sin que el motor lo sepa.
+  //   Se computa en cada render (coste trivial: 1 localStorage read + 1 comparación).
+  const MVRV_ZSCORE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const MVRV_ZSCORE_TS_KEY = 'olympus_mvrv_zscore_updated_at';
+  const mvrvZScoreEffective = (() => {
+    if (mvrvZScore === undefined) return undefined;
+    try {
+      const ts = parseInt(localStorage.getItem(MVRV_ZSCORE_TS_KEY) ?? '0');
+      if (!ts) return mvrvZScore; // sin timestamp = asumir fresco (primera carga)
+      if (Date.now() - ts > MVRV_ZSCORE_MAX_AGE_MS) {
+        console.warn(`[MVRV-Z] Z-Score stale (${Math.round((Date.now()-ts)/86400000)}d sin actualizar) → degradado a MVRV Ratio`);
+        return undefined; // trigger fallback
+      }
+    } catch { /* localStorage no disponible → asumir fresco */ }
+    return mvrvZScore;
+  })();
   const [hashRibbonState, setHashRibbonState] = useState<"CAPITULATION" | "RECOVERY" | "EXPANSION" | undefined>(undefined);
   const [piCycleMa111, setPiCycleMa111] = useState<number | undefined>(undefined);
   const [piCycleMa350x2, setPiCycleMa350x2] = useState<number | undefined>(undefined);
@@ -714,7 +733,7 @@ const formatCurrency = (value: number): string => {
       btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
       btcRsiWeekly,
       puellMultiple,
-      mvrvZScore,
+      mvrvZScore: mvrvZScoreEffective,
       uraniumSpotPrice: uraniumSpot,
       uraniumLTPrice: uraniumLT,
       siaSalesYoY,
@@ -731,7 +750,7 @@ soxRsiWeekly,
       dxy,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
 
   // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
   // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.
@@ -747,7 +766,7 @@ soxRsiWeekly,
       btcDominanceFalling: isBTCDominanceFalling(btcDominance, prevBtcDominance),
       btcRsiWeekly,
       puellMultiple,
-      mvrvZScore,
+      mvrvZScore: mvrvZScoreEffective,
       uraniumSpotPrice: uraniumSpot,
       uraniumLTPrice: uraniumLT,
       siaSalesYoY,
@@ -770,7 +789,7 @@ soxRsiWeekly,
       regime: currentRegime,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScore, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime]);
 
   
 
@@ -806,7 +825,7 @@ soxRsiWeekly,
       adaptiveFactorWeights: kalmanWeights,
       btcOnChain: {
         mvrvRatio,
-        mvrvZScore,
+        mvrvZScore: mvrvZScoreEffective,
         puellMultiple,
         rsiWeekly: btcRsiWeekly,
       },
@@ -1179,7 +1198,7 @@ soxRsiWeekly,
     const inputs: BitcoinCycleInputs = {
       currentPrice: btcAssetLocal.price,
       puellMultiple,
-      mvrvZScore,
+      mvrvZScore: mvrvZScoreEffective,
       hashRibbonState,
       piCycleMa111,
       piCycleMa350x2,
@@ -1215,7 +1234,7 @@ soxRsiWeekly,
       return result;
     }
     catch { return null; }
-  }, [portfolio.assets, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
+  }, [portfolio.assets, puellMultiple, mvrvZScoreEffective, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
 
   const olympusAvailableCash = cashReserve;
   const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK >= 4/7
@@ -2366,7 +2385,7 @@ soxRsiWeekly,
               ● manual — Glassnode (Z &gt;7 techo, Z &lt;0 suelo)
             </span>
           </label>
-          <input type="number" value={mvrvZScore ?? ""} onChange={(e) => setMvrvZScore(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.01" min="-3" max="10" placeholder="— ej: 0.5" />
+          <input type="number" value={mvrvZScore ?? ""} onChange={(e) => { const v = e.target.value === "" ? undefined : Number(e.target.value); setMvrvZScore(v); if (v !== undefined) try { localStorage.setItem(MVRV_ZSCORE_TS_KEY, Date.now().toString()); } catch {} }} style={styles.smallInput} step="0.01" min="-3" max="10" placeholder="— ej: 0.5" />
           <label style={styles.label}>BTC RSI Semanal{" "}
             <span style={{ fontSize: "0.65rem",
               color: marketData?.btcRsiWeekly && marketData.btcRsiWeekly !== 50 ? "#10b981" : "#6b7280",
