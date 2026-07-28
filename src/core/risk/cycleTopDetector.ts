@@ -149,6 +149,16 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
   //   Guard de régimen: las señales tácticas solo se activan si el
   //   régimen NO es CRISIS (en crisis, el pánico diario = más pánico).
   regime?: string;
+
+  // ── P1: REGIME-CONDITIONED VALUATION (Jul 2026, Comité) ───────
+  //   Shift aplicado al indicador de valoración ANTES de smoothScore.
+  //   Se computa en el dashboard con rampa temporal (5 sesiones) para
+  //   evitar saltos bruscos al cambiar de régimen.
+  //   EXPANSION → shift positivo (tolera más valoración, tipos bajos).
+  //   CRISIS    → shift negativo (castiga valoración, liquidez escasa).
+  //   El dashboard ya aplicó la rampa; el detector solo consume el shift.
+  regimeShiftPE?: number;   // shift para P/E (WLG) — ±2.0 suavizado
+  regimeShiftBTC?: number;  // shift para MVRV Z-Score (BTC) — ±1.0 suavizado
 }
 
 export interface CycleTopSignal {
@@ -171,7 +181,7 @@ export interface CycleTopOutput {
 
 // ── BTC ──────────────────────────────────────────────────────────
 function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { mvrvRatio, btcDominanceFalling, btcRsiWeekly, puellMultiple, mvrvZScore } = inputs;
+  const { mvrvRatio, btcDominanceFalling, btcRsiWeekly, puellMultiple, mvrvZScore, regimeShiftBTC } = inputs;
 
   // Contar señales de techo activas
   let topSignals = 0;
@@ -180,19 +190,25 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
   // MVRV Z-Score — PRIMARIO si está disponible (más robusto en era ETF).
   //   Umbral canónico: Z > 7 = techo (solo 2013, 2017, 2021).
   //   Si no hay Z-Score, fallback al ratio bruto con smoothScore.
+  // P1-REGIME (Jul 2026): aplicar shift de régimen (EXPANSION +1, CRISIS -1)
+  //   para tolerar más valoración con tipos bajos y castigar con tipos altos.
+  //   El dashboard ya suavizó la transición (rampa en 5 sesiones).
   if (isValidReading(mvrvZScore)) {
+    const regimeShift = regimeShiftBTC ?? 0;
+    const effectiveZ = mvrvZScore - regimeShift;
     // Z-Score: rampa suave [5→0, 6→1, 7→3, 8→4] — preserva el umbral canónico 7.
-    const zScore = smoothScore(mvrvZScore, [
+    const zScore = smoothScore(effectiveZ, [
       [5, 0],
       [6, 1],
       [7, 3],
       [8, 4],
     ]);
     topSignals += zScore;
-    if (mvrvZScore > 8)       reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — techo confirmado (Z>8 solo en 2013, 2017, 2021)`);
-    else if (mvrvZScore > 7)  reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — zona de techo canónico (>7)`);
-    else if (mvrvZScore > 6)  reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — acercándose a techo`);
-    else if (zScore > 0)      reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)} — por encima de la media`);
+    const zNote = regimeShift !== 0 ? ` (efectivo ${effectiveZ.toFixed(2)} por régimen)` : '';
+    if (mvrvZScore > 8)       reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)}${zNote} — techo confirmado (Z>8 solo en 2013, 2017, 2021)`);
+    else if (mvrvZScore > 7)  reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)}${zNote} — zona de techo canónico (>7)`);
+    else if (mvrvZScore > 6)  reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)}${zNote} — acercándose a techo`);
+    else if (zScore > 0)      reasons.push(`MVRV Z ${mvrvZScore.toFixed(2)}${zNote} — por encima de la media`);
   } else if (isValidReading(mvrvRatio)) {
     // FIX-SMOOTH-MVRV (Jul-2026): rampa suave elimina el acantilado donde
     //   MVRV 4.49→+1 y 4.51→+2. Rampa: [2.0→0, 3.5→1, 4.5→2, 6.0→3, 7.5→3.5].
@@ -523,7 +539,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 //   ANTES: max(CAPE_score=2.5, P/E_score=0) = 2.5 → DANGER, trim 60%
 //   AHORA: P/E_score=1.0 + CAPE_confirm=0.5 = 1.5 → CAUTION, trim 35%
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { wlgRsiWeekly, wlgPERatio, wlgCAPE } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, regimeShiftPE } = inputs;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -577,12 +593,20 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   const hasCAPE = isValidReading(wlgCAPE);
 
   if (hasPE) {
-    valuationScore = smoothScore(wlgPERatio, [
+    // P1-REGIME (Jul 2026): aplicar shift de régimen (EXPANSION +2, CRISIS -2)
+    //   para tolerar más valoración con tipos bajos y castigar con tipos altos.
+    //   El dashboard ya suavizó la transición (rampa en 5 sesiones).
+    const peShift = regimeShiftPE ?? 0;
+    const effectivePE = wlgPERatio - peShift;
+    valuationScore = smoothScore(effectivePE, [
       [17, 1.0],
       [22, 1.5],
       [25, 2.0],
       [30, 2.5],
     ]);
+    if (peShift !== 0 && valuationScore > 0) {
+      valuationReasons.push(`P/E ajustado por régimen: ${wlgPERatio.toFixed(1)} → ${effectivePE.toFixed(1)} efectivo`);
+    }
     if (valuationScore >= 2.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración extrema (solo 2000 y 2021)`);
     else if (valuationScore >= 2.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado muy caro`);
     else if (valuationScore >= 1.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado caro`);
@@ -787,6 +811,25 @@ export function detectCycleTops(inputs: CycleTopInputs): CycleTopOutput {
 export function isBTCDominanceFalling(current: number, previous?: number): boolean {
   if (previous === undefined) return false;
   return previous > 58 && current < previous - 1.5; // caída de >1.5pp desde nivel alto
+}
+
+// ── P1: REGIME-CONDITIONED VALUATION SHIFT (Jul 2026, Comité) ──
+//   Calcula el shift base para un tipo de valoración según el régimen.
+//   NO aplica rampa temporal — esa responsabilidad es del dashboard
+//   (interpola oldShift → newShift en 5 sesiones y pasa el resultado
+//   como regimeShiftPE/regimeShiftBTC en CycleTopInputs).
+//
+//   TS: parámetro obligatorio 'type' precede al opcional 'regime'
+//   (corrección del bug donde el opcional precedía al obligatorio).
+//
+//   EXPANSION:   tipos bajos, liquidez abundante → tolerar múltiplos más altos
+//   CONTRACTION: baseline, sin ajuste
+//   CRISIS:      tipos altos, liquidez escasa → castigar múltiplos más rápido
+export function regimeValuationShift(type: 'equity' | 'btc', regime?: string): number {
+  if (!regime || regime === 'CONTRACTION') return 0;
+  if (regime === 'EXPANSION') return type === 'equity' ? 2.0 : 1.0;
+  if (regime === 'CRISIS')     return type === 'equity' ? -2.0 : -1.0;
+  return 0;
 }
 
 // ===============================================

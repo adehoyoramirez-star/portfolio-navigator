@@ -88,6 +88,7 @@ import {
   detectCycleTops,
   detectCycleBottoms,
   isBTCDominanceFalling,
+  regimeValuationShift,
   type CycleTopInputs,
   type CycleTopSignal,
   type CycleBottomSignal,
@@ -727,6 +728,13 @@ const formatCurrency = (value: number): string => {
     }
   }, [marketData?.closesHistory, marketData?.covMatrix]);
 
+  // ── P1: REGIME-CONDITIONED VALUATION STATE (Jul 2026, Comité) ──
+  //   Declarado ANTES de cycleTopResult (TS: no puede usar variable
+  //   antes de su declaración). El ramp useEffect que los escribe
+  //   está después de currentRegime porque necesita leerlo.
+  const [smoothedShiftPE, setSmoothedShiftPE] = useState<number>(0);
+  const [smoothedShiftBTC, setSmoothedShiftBTC] = useState<number>(0);
+
   const cycleTopResult = useMemo(() => {
     const cycleInputs: CycleTopInputs = {
       mvrvRatio,
@@ -748,13 +756,65 @@ soxRsiWeekly,
       emxcRsiWeekly,
       emxcPERatio,
       dxy,
+      regimeShiftPE: smoothedShiftPE,
+      regimeShiftBTC: smoothedShiftBTC,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC]);
 
   // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
   // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.
   const [currentRegime, setCurrentRegimeRaw] = useState<string | undefined>(undefined);
+
+  // ── P1: REGIME-CONDITIONED VALUATION RAMP (Jul 2026, Comité) ─────
+  //   Cuando el régimen cambia, el shift de valoración transiciona
+  //   suavemente en 5 días (rampa temporal). Esto evita saltos de
+  //   14pp de trim en una sola sesión si EXPANSION→CRISIS.
+  //   Usa setInterval para progresar con el tiempo real, no con renders.
+  //   Los estados smoothedShiftPE/BTC están declarados antes de
+  //   cycleTopResult (TS: no pueden usarse antes de declararse).
+  useEffect(() => {
+    const RAMP_KEY = 'olympus_regime_ramp';
+    const RAMP_DAYS = 5;
+    const RAMP_INTERVAL_MS = 5 * 60 * 1000;
+
+    const computeRamp = () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem(RAMP_KEY) ?? 'null');
+        if (!stored) { setSmoothedShiftPE(0); setSmoothedShiftBTC(0); return; }
+        const elapsed = Date.now() - stored.startTs;
+        const progress = Math.min(1.0, elapsed / (RAMP_DAYS * 24 * 60 * 60 * 1000));
+        setSmoothedShiftPE(parseFloat((stored.startPE + (stored.targetPE - stored.startPE) * progress).toFixed(4)));
+        setSmoothedShiftBTC(parseFloat((stored.startBTC + (stored.targetBTC - stored.startBTC) * progress).toFixed(4)));
+      } catch { setSmoothedShiftPE(0); setSmoothedShiftBTC(0); }
+    };
+
+    if (currentRegime) {
+      const targetPE = regimeValuationShift('equity', currentRegime);
+      const targetBTC = regimeValuationShift('btc', currentRegime);
+      let startPE = 0, startBTC = 0, startTs = Date.now();
+      try {
+        const prev = JSON.parse(localStorage.getItem(RAMP_KEY) ?? 'null');
+        const isSameRegime = prev?.targetRegime === currentRegime;
+        if (isSameRegime) {
+          // P1-FIX-TS (Jul 2026): preservar startTs original al continuar
+          //   el mismo régimen tras un page reload. ANTES: startTs=Date.now()
+          //   siempre → la rampa se reseteaba en cada recarga.
+          startPE = prev.startPE;
+          startBTC = prev.startBTC;
+          startTs = prev.startTs ?? Date.now();
+        } else if (prev) {
+          startPE = prev.targetPE;
+          startBTC = prev.targetBTC;
+        }
+      } catch {}
+      localStorage.setItem(RAMP_KEY, JSON.stringify({ startTs, startPE, startBTC, targetPE, targetBTC, targetRegime: currentRegime }));
+    }
+
+    computeRamp();
+    const interval = setInterval(computeRamp, RAMP_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [currentRegime]);
 
   // ── Cycle Bottom Detection — suelos de ciclo por activo ───────────
   // Simétrico a cycleTopResult: reutiliza los mismos cycleInputs invertidos.
@@ -787,9 +847,11 @@ soxRsiWeekly,
       priceHistories: marketData?.closesHistory,
       currentPrices: marketData?.prices,
       regime: currentRegime,
+      regimeShiftPE: smoothedShiftPE,
+      regimeShiftBTC: smoothedShiftBTC,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC]);
 
   
 

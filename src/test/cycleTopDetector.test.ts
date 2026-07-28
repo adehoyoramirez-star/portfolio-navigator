@@ -4,6 +4,7 @@ import {
   detectCycleTops,
   detectCycleBottoms,
   isBTCDominanceFalling,
+  regimeValuationShift,
   type CycleTopInputs,
   type CycleTopSignal,
 } from "@/core/risk/cycleTopDetector";
@@ -229,4 +230,123 @@ describe("Edge cases", () => {
   });
   test("NaN en mvrvZScore no rompe", () => expect(() => detectCycleTops({ mvrvZScore: NaN, bondYield10y: 4.0 })).not.toThrow());
   test("DXY=0 rechazado", () => expect(detectCycleTops({ dxy: 0, bondYield10y: 4.0 }).signals.find(s => s.ticker === "EMXC.DE")!.zone).toBe("SAFE"));
+});
+
+// ── P1: REGIME-CONDITIONED VALUATION (Jul 2026, Comité) ──────────
+//   Tests de sensibilidad para los shifts de régimen.
+//   Validan que ±1/±2/±3 producen resultados coherentes y que
+//   el backtest de sensibilidad puede discriminar entre calibraciones.
+describe("P1: regimeValuationShift", () => {
+  test("CONTRACTION -> 0 (baseline)", () => {
+    expect(regimeValuationShift('equity', 'CONTRACTION')).toBe(0);
+    expect(regimeValuationShift('btc', 'CONTRACTION')).toBe(0);
+  });
+
+  test("regime undefined -> 0", () => {
+    expect(regimeValuationShift('equity', undefined)).toBe(0);
+    expect(regimeValuationShift('btc')).toBe(0);
+  });
+
+  test("EXPANSION: equity +2.0, btc +1.0", () => {
+    expect(regimeValuationShift('equity', 'EXPANSION')).toBe(2.0);
+    expect(regimeValuationShift('btc', 'EXPANSION')).toBe(1.0);
+  });
+
+  test("CRISIS: equity -2.0, btc -1.0", () => {
+    expect(regimeValuationShift('equity', 'CRISIS')).toBe(-2.0);
+    expect(regimeValuationShift('btc', 'CRISIS')).toBe(-1.0);
+  });
+
+  test("TS: type (required) before regime (optional)", () => {
+    // If this compiles, the TS bug is fixed (optional after required = error).
+    const a: number = regimeValuationShift('equity');
+    const b: number = regimeValuationShift('btc', 'EXPANSION');
+    expect(typeof a).toBe('number');
+    expect(typeof b).toBe('number');
+  });
+});
+
+describe("P1: WLG sensitivity — P/E shift by regime", () => {
+  // P/E 22 = "caro" sin shift. En EXPANSION (+2) deberia ser neutral.
+  // En CRISIS (-2) deberia ser "muy caro".
+  const base: CycleTopInputs = { bondYield10y: 4.0, wlgPERatio: 22, wlgRsiWeekly: 55 };
+
+  test("P/E 22 sin shift -> CAUTION (~40% trim)", () => {
+    const r = detectCycleTops(base);
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.zone).toBe("CAUTION");
+    expect(wlg.trimPct).toBeGreaterThan(25);
+  });
+
+  test("P/E 22 en EXPANSION (+2 shift) -> menos trim", () => {
+    const r = detectCycleTops({ ...base, regimeShiftPE: 2.0 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    // effectivePE = 22 - 2 = 20 → score 1.3 → multiplier 0.59 → trim ~41%
+    // Sin shift: score 1.5 → multiplier 0.55 → trim 45% → +2 shift reduce 4pp
+    expect(wlg.trimPct).toBeLessThan(45);
+  });
+
+  test("P/E 22 en CRISIS (-2 shift) -> mas trim", () => {
+    const r = detectCycleTops({ ...base, regimeShiftPE: -2.0 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    // effectivePE = 22 - (-2) = 24 -> score mayor
+    expect(wlg.trimPct).toBeGreaterThan(40);
+  });
+
+  test("shift=0 no afecta resultado vs sin shift", () => {
+    const r0 = detectCycleTops({ ...base, regimeShiftPE: 0 });
+    const rNone = detectCycleTops(base);
+    expect(r0.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct)
+      .toBe(rNone.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct);
+  });
+
+  test("SENSIBILIDAD ±1/±2/±3: trim crece monotonicamente", () => {
+    const trims = [1, -1, 2, -2, 3, -3].map(s => {
+      const r = detectCycleTops({ ...base, regimeShiftPE: s });
+      return r.signals.find(w => w.ticker === "0P00000WLG.F")!.trimPct;
+    });
+    // En orden: +1(laxo), -1(estricto), +2, -2, +3, -3
+    // Cuanto mas negativo el shift, mas trim.
+    expect(trims[0]).toBeLessThan(trims[1]);  // +1 < -1 → shift positivo reduce trim
+    expect(trims[2]).toBeLessThan(trims[3]);  // +2 < -2
+    expect(trims[4]).toBeLessThan(trims[5]);  // +3 < -3
+    // Y dentro de un mismo signo, ±3 produce mas efecto que ±1
+    expect(trims[2]).toBeLessThan(trims[0]);  // +2 < +1 (mas laxo = menos trim)
+    expect(trims[3]).toBeGreaterThan(trims[1]); // -2 > -1 (mas estricto = mas trim)
+  });
+});
+
+describe("P1: BTC sensitivity — Z-Score shift by regime", () => {
+  // MVRV Z=6.5 con shift 0 -> ~1.25 topSignals (zona CAUTION baja).
+  // En EXPANSION (+1) deberia ser SAFE o CAUTION minima.
+  // En CRISIS (-1) deberia ser CAUTION clara.
+  const base: CycleTopInputs = { bondYield10y: 4.0, mvrvZScore: 6.5 };
+
+  test("Z=6.5 sin shift -> CAUTION", () => {
+    const r = detectCycleTops(base);
+    const btc = r.signals.find(s => s.ticker === "BTC-EUR")!;
+    expect(btc.zone).toBe("CAUTION");
+  });
+
+  test("Z=6.5 en EXPANSION (+1) -> CAUTION reducida", () => {
+    const r = detectCycleTops({ ...base, regimeShiftBTC: 1.0 });
+    const btc = r.signals.find(s => s.ticker === "BTC-EUR")!;
+    // effectiveZ = 6.5 - 1.0 = 5.5 → score 0.5 → multiplier 0.75 → trim ~25%
+    // Sin shift: Z=6.5 → score 2.0 → multiplier 0.45 → trim 55% → +1 reduce 30pp
+    expect(btc.trimPct).toBeLessThan(30);
+  });
+
+  test("Z=6.5 en CRISIS (-1) -> CAUTION mas fuerte", () => {
+    const r = detectCycleTops({ ...base, regimeShiftBTC: -1.0 });
+    const btc = r.signals.find(s => s.ticker === "BTC-EUR")!;
+    // effectiveZ = 6.5 - (-1) = 7.5 → umbral canonico 7 superado
+    expect(btc.trimPct).toBeGreaterThan(30);
+  });
+
+  test("shift=0 no afecta", () => {
+    const r0 = detectCycleTops({ ...base, regimeShiftBTC: 0 });
+    const rNone = detectCycleTops(base);
+    expect(r0.signals.find(s => s.ticker === "BTC-EUR")!.trimPct)
+      .toBe(rNone.signals.find(s => s.ticker === "BTC-EUR")!.trimPct);
+  });
 });
