@@ -93,11 +93,36 @@ export interface RegimeHistoryEntry {
 //   Nivel 2 (HARD): si el nuevo régimen es más severo (upgrade de riesgo: CRISIS)
 //     → aplicar SIEMPRE, sin hysteresis. Las crisis sí pueden ocurrir rápido.
 //
-// STORAGE: localStorage con key 'olympus_regime_hysteresis_v1'
+// STORAGE: localStorage (browser) + fallback Map en memoria (Deno/Edge Functions).
+//   FIX-DENO-STORAGE (Jul-2026): localStorage no existe en el runtime de Deno
+//   (Supabase Edge Functions). Sin este fix, el regime stabilizer nunca operó
+//   en producción, causando whipsaws de régimen intra-día. El fallback en memoria
+//   garantiza que la hysteresis funcione en cualquier runtime.
 // RESET: se limpia automáticamente si han pasado más de HYSTERESIS_MAX_HOURS horas.
 //
 const HYSTERESIS_DOWNGRADE_HOURS = 6;  // mínimas horas para downgrade (si no hay refresh manual)
 const HYSTERESIS_MAX_HOURS = 72;        // reset completo después de 3 días
+
+// FIX-DENO-STORAGE (Jul-2026): localStorage no existe en Deno/Edge Functions.
+//   Fallback en memoria (Map a nivel de módulo) para que la hysteresis funcione
+//   en cualquier runtime (browser, Deno, Node). La misma key → mismo valor,
+//   independientemente del backend de almacenamiento.
+const _memoryStore = new Map<string, string>();
+
+function _storageGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch {}
+  return _memoryStore.get(key) ?? null;
+}
+
+function _storageSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); return; } catch {}
+  _memoryStore.set(key, value);
+}
+
+function _storageRemove(key: string): void {
+  try { localStorage.removeItem(key); return; } catch {}
+  _memoryStore.delete(key);
+}
 
 // ── BYPASS: cuando el usuario pulsa "Actualizar datos", la hysteresis se salta ──
 // Lógica: datos manuales actualizados INTENCIONALMENTE = foto real del mercado ahora.
@@ -125,21 +150,21 @@ export interface RegimeLock {
 export function setRegimeLock(regime: MasterRegimeLabel, regimePenalty: number): void {
   try {
     const lock: RegimeLock = { regime, regimePenalty, lockedAt: Date.now() };
-    localStorage.setItem(LOCK_KEY, JSON.stringify(lock));
-  } catch { console.warn("[masterRegime] localStorage read failed"); }
+    _storageSet(LOCK_KEY, JSON.stringify(lock));
+  } catch { console.warn("[masterRegime] storage write failed"); }
 }
 
 export function clearRegimeLock(): void {
-  try { localStorage.removeItem(LOCK_KEY); } catch { console.warn("[masterRegime] localStorage read failed"); }
+  try { _storageRemove(LOCK_KEY); } catch { console.warn("[masterRegime] storage remove failed"); }
 }
 
 export function isRegimeLocked(): RegimeLock | null {
   try {
-    const raw = localStorage.getItem(LOCK_KEY);
+    const raw = _storageGet(LOCK_KEY);
     if (!raw) return null;
     const lock = JSON.parse(raw) as RegimeLock;
     if (Date.now() - lock.lockedAt > LOCK_MAX_MS) {
-      localStorage.removeItem(LOCK_KEY); // auto-unlock
+      _storageRemove(LOCK_KEY); // auto-unlock
       return null;
     }
     return lock;
@@ -150,13 +175,13 @@ export function isRegimeLocked(): RegimeLock | null {
 
 function isManualRefreshActive(): boolean {
   try {
-    const ts = parseInt(localStorage.getItem(HYSTERESIS_BYPASS_KEY) ?? '0');
+    const ts = parseInt(_storageGet(HYSTERESIS_BYPASS_KEY) ?? '0');
     return (Date.now() - ts) < BYPASS_VALID_MS;
   } catch { return false; }
 }
 
 export function signalManualRefresh(): void {
-  try { localStorage.setItem(HYSTERESIS_BYPASS_KEY, Date.now().toString()); } catch {}
+  try { _storageSet(HYSTERESIS_BYPASS_KEY, Date.now().toString()); } catch {}
 }
 
 interface HysteresisState {
@@ -167,12 +192,12 @@ interface HysteresisState {
 
 function loadHysteresisState(): HysteresisState | null {
   try {
-    const raw = localStorage.getItem('olympus_regime_hysteresis_v1');
+    const raw = _storageGet('olympus_regime_hysteresis_v1');
     if (!raw) return null;
     const state = JSON.parse(raw) as HysteresisState;
     const hoursElapsed = (Date.now() - state.lastTimestamp) / 3_600_000;
     if (hoursElapsed > HYSTERESIS_MAX_HOURS) {
-      localStorage.removeItem('olympus_regime_hysteresis_v1');
+      _storageRemove('olympus_regime_hysteresis_v1');
       return null;
     }
     return state;
@@ -181,8 +206,8 @@ function loadHysteresisState(): HysteresisState | null {
 
 function saveHysteresisState(state: HysteresisState): void {
   try {
-    localStorage.setItem('olympus_regime_hysteresis_v1', JSON.stringify(state));
-  } catch { console.warn("[masterRegime] localStorage read failed"); }
+    _storageSet('olympus_regime_hysteresis_v1', JSON.stringify(state));
+  } catch { console.warn("[masterRegime] storage write failed"); }
 }
 
 const REGIME_SEVERITY: Record<string, number> = { EXPANSION: 0, CONTRACTION: 1, CRISIS: 2 };

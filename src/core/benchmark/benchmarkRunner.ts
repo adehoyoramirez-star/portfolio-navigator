@@ -361,10 +361,15 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   const engineVol = Math.sqrt(engineVar) * Math.sqrt(periodsPerYear);
   const benchmarkVol = Math.sqrt(benchmarkVar) * Math.sqrt(periodsPerYear);
 
-  const engineSharpe3m = engineVol > 0
+  // FIX-BENCH-SHARPE-GUARD (Jul-2026): cuando hasEnoughData=false, el periodo real
+  //   es <30 días. La anualización del Sharpe vía periodsPerYear = windowSize/effectiveYears
+  //   infla artificialmente el ratio si hay muchas snapshots en pocos días (ej: 500 snapshots
+  //   en 8h → periodsPerYear = 500/0.082 = 6097 → Sharpe ×√6097 → valores absurdos como 22.53).
+  //   Sin datos suficientes, Sharpe=0 (no es calculable).
+  const engineSharpe3m = hasEnoughData && engineVol > 0
     ? (engineMean * periodsPerYear) / engineVol
     : 0;
-  const benchmarkSharpe3m = benchmarkVol > 0
+  const benchmarkSharpe3m = hasEnoughData && benchmarkVol > 0
     ? (benchmarkMean * periodsPerYear) / benchmarkVol
     : 0;
 
