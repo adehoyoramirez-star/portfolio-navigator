@@ -30,6 +30,7 @@ const DCA_CONFIG = {
     MIN_FINAL_ALLOCATION: 0.02,  // target < 2% → no comprar (demasiado pequeño)
     MIN_DRIFT: 0.005,            // drift < 0.5pp → no comprar (ya está en peso)
     MAX_OVERWEIGHT_BUY: -0.02,   // permitir comprar hasta 2pp sobreponderado (oportunidad > peso exacto)
+    MAX_OVERWEIGHT_BUY_EXTREME: -0.10, // EXTREME bottom signal: permitir hasta 10pp overweight (suelo generacional)
   },
   // Parámetros de ataque y graduación Kelly-inspired
   ATTACK: {
@@ -267,12 +268,20 @@ export function buildAllocations(
   // 2. Filtrar: activos con target > MIN, precio > 0, sin techo de ciclo.
   //    Drift: permitir hasta -2pp (ligeramente sobreponderado) para no bloquear
   //    compras por oportunidad cuando el sobrepeso es mínimo.
+  //
+  // FEAT-EXTREME-OVERWEIGHT (Jul-2026): señal EXTREME de Cycle Bottom (×2.0)
+  //   puede anular MAX_OVERWEIGHT_BUY (-2pp) y permitir comprar hasta -10pp
+  //   overweight. Exit pasivo: cuando zone baje de EXTREME, el bypass se
+  //   desactiva solo y el motor vuelve a respetar MAX_OVERWEIGHT_BUY.
+  //   Sin venta activa — el overweight táctico se disuelve por dilución.
+  //   Defendible ante comité: limitado a EXTREME, drift floor +5pp cap,
+  //   sin martingala (exit automático por zona).
   const ALLOC = DCA_CONFIG.ALLOCATION;
   const eligible = withDrift.filter(a =>
     a.finalAllocation > ALLOC.MIN_FINAL_ALLOCATION &&
     a.price > 0 &&
     !skipTickers.has(a.ticker) &&
-    a.drift > ALLOC.MAX_OVERWEIGHT_BUY
+    (a.drift > ALLOC.MAX_OVERWEIGHT_BUY || ((bottomMultipliers.get(a.ticker) ?? 1.0) >= 2.0 && a.drift > ALLOC.MAX_OVERWEIGHT_BUY_EXTREME))
   );
 
   if (eligible.length === 0) return [];
