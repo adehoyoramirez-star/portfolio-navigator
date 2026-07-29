@@ -611,6 +611,13 @@ const formatCurrency = (value: number): string => {
     [portfolio.assets]
   );
 
+  // FEAT-EY-DYNAMIC (Jul-2026): earnings yield derivado de P/E manual.
+  //   WLG y EMXC: si el usuario introdujo P/E Forward en el panel de datos macro,
+  //   se calcula earningsYield = 1 / P/E automáticamente. Esto vincula el Value
+  //   Score (percentil Val pX) con los mismos datos que alimentan Cycle Top/Bottom.
+  //   Sin P/E → fallback al valor manual del panel de distribución.
+  //   Sin nada → fallback al hardcodeado de assetRegistry (0.05 para equity).
+  //   BTC, Oro, URNU, VVSM: sin P/E macro → usan el valor manual del panel.
   const assetInputs: AssetInput[] = useMemo(() => {
     return portfolio.assets.map(asset => {
       // FEAT: manual forward-looking vol override
@@ -618,18 +625,25 @@ const formatCurrency = (value: number): string => {
       const effectiveVol = manualVol !== undefined && manualVol > 0
         ? manualVol
         : asset.volatility / 100;
+      // Derivar earnings yield del P/E manual si está disponible
+      let ey = asset.earningsYield ?? 0;
+      if (asset.ticker === '0P00000WLG.F' && wlgPERatio !== undefined && wlgPERatio > 0) {
+        ey = 1 / wlgPERatio;
+      } else if (asset.ticker === 'EMXC.DE' && emxcPERatio !== undefined && emxcPERatio > 0) {
+        ey = 1 / emxcPERatio;
+      }
       return {
         name: asset.name,
         ticker: asset.ticker,
         returns12m: asset.return12m ?? 0.01,
         returns3m: asset.return3m ?? 0.01,
         returns1m: asset.return1m ?? 0.01,
-        earningsYield: asset.earningsYield ?? 0,
+        earningsYield: ey,
         volatility: effectiveVol,
         sector: asset.sector,
       };
     });
-  }, [portfolio.assets, manualVols]);
+  }, [portfolio.assets, manualVols, wlgPERatio, emxcPERatio]);
 
   const yieldSpread = manualBond10y - bond2y;
 
