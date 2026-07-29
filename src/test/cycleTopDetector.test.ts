@@ -247,13 +247,13 @@ describe("P1: regimeValuationShift", () => {
     expect(regimeValuationShift('btc')).toBe(0);
   });
 
-  test("EXPANSION: equity +2.0, btc +1.0", () => {
-    expect(regimeValuationShift('equity', 'EXPANSION')).toBe(2.0);
+  test("EXPANSION: equity +1.5, btc +1.0", () => {
+    expect(regimeValuationShift('equity', 'EXPANSION')).toBe(1.5);
     expect(regimeValuationShift('btc', 'EXPANSION')).toBe(1.0);
   });
 
-  test("CRISIS: equity -2.0, btc -1.0", () => {
-    expect(regimeValuationShift('equity', 'CRISIS')).toBe(-2.0);
+  test("CRISIS: equity -1.5, btc -1.0", () => {
+    expect(regimeValuationShift('equity', 'CRISIS')).toBe(-1.5);
     expect(regimeValuationShift('btc', 'CRISIS')).toBe(-1.0);
   });
 

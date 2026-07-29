@@ -169,8 +169,9 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
   //   EXPANSION → shift positivo (tolera más valoración, tipos bajos).
   //   CRISIS    → shift negativo (castiga valoración, liquidez escasa).
   //   El dashboard ya aplicó la rampa; el detector solo consume el shift.
-  regimeShiftPE?: number;   // shift para P/E (WLG) — ±2.0 suavizado
-  regimeShiftBTC?: number;  // shift para MVRV Z-Score (BTC) — ±1.0 suavizado
+  //   Calibrado a Forward P/E: ±1.5 equity, ±1.0 BTC.
+  regimeShiftPE?: number;   // shift para P/E Forward (WLG) — ±1.5 suavizado por rampa
+  regimeShiftBTC?: number;  // shift para MVRV Z-Score (BTC) — ±1.0 suavizado por rampa
 }
 
 export interface CycleTopSignal {
@@ -604,8 +605,10 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   const hasCAPE = isValidReading(wlgCAPE);
 
   if (hasPE) {
-    // P1-REGIME (Jul 2026): aplicar shift de régimen (EXPANSION +2, CRISIS -2)
+    // P1-REGIME (Jul 2026): aplicar shift de régimen (EXPANSION +1.5, CRISIS -1.5)
     //   para tolerar más valoración con tipos bajos y castigar con tipos altos.
+    //   Recalibrado a Forward P/E (±1.5) desde TTM (±2.0) — rango Forward ~10-25
+    //   es más estrecho que TTM ~13-30, mismo impacto relativo (~13%).
     //   El dashboard ya suavizó la transición (rampa en 5 sesiones).
     const peShift = regimeShiftPE ?? 0;
     const effectivePE = wlgPERatio - peShift;
@@ -857,10 +860,15 @@ export function isBTCDominanceFalling(current: number, previous?: number): boole
 //   EXPANSION:   tipos bajos, liquidez abundante → tolerar múltiplos más altos
 //   CONTRACTION: baseline, sin ajuste
 //   CRISIS:      tipos altos, liquidez escasa → castigar múltiplos más rápido
+//
+//   CALIBRACIÓN FORWARD P/E (Jul 2026): shift ±1.5 para equity (rango Forward
+//   ~10-25, más estrecho que TTM ~13-30). ±2.0 era para TTM y resultaba
+//   proporcionalmente ~40% más agresivo con Forward. ±1.5 preserva el mismo
+//   impacto relativo (~13% del rango de valoración).
 export function regimeValuationShift(type: 'equity' | 'btc', regime?: string): number {
   if (!regime || regime === 'CONTRACTION') return 0;
-  if (regime === 'EXPANSION') return type === 'equity' ? 2.0 : 1.0;
-  if (regime === 'CRISIS')     return type === 'equity' ? -2.0 : -1.0;
+  if (regime === 'EXPANSION') return type === 'equity' ? 1.5 : 1.0;
+  if (regime === 'CRISIS')     return type === 'equity' ? -1.5 : -1.0;
   return 0;
 }
 
