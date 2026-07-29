@@ -428,7 +428,7 @@ describe("P1.2: WLG — credit spread amplifier", () => {
       .toBe(rNone.signals.find(s => s.ticker === "BTC-EUR")!.trimPct);
   });
 
-  test("REGREION: P/E Forward 15.5 + RSI 58 + spread 2.69% -> CAUTION ~30-50%", () => {
+  test("REGRESION: P/E Forward 15.5 + RSI 58 + spread 2.69% -> CAUTION ~30-50%", () => {
     // Datos reales del dashboard (28 Jul 2026) calibrados a Forward P/E
     const r = detectCycleTops({
       bondYield10y: 4.7,
@@ -444,5 +444,100 @@ describe("P1.2: WLG — credit spread amplifier", () => {
     expect(wlg.trimPct).toBeLessThan(55);
     expect(wlg.reason).not.toContain("complacencia");
     expect(wlg.reason).not.toContain("estrés");
+  });
+});
+
+// ── P1.3: PEG MODIFIER (Jul 2026, Comité) ──────────────────
+//   PEG = P/E Forward ÷ EPS Growth (%). Modula valuationScore.
+//   - PEG < 0.8: crecimiento justifica múltiplo → ×0.70 → menos trim
+//   - PEG 0.8-1.2: valoración justa → sin ajuste
+//   - PEG 1.2-2.0: múltiplo estirado → ×1.10 → más trim
+//   - PEG > 2.0: crecimiento no justifica → ×1.25 → más trim
+//   Sin wlgEpsGrowth → sin ajuste (el motor no asume nada).
+describe("P1.3: WLG — PEG modifier", () => {
+  const base: CycleTopInputs = {
+    bondYield10y: 4.7,
+    wlgPERatio: 19.1,
+    wlgRsiWeekly: 58,
+    wlgCAPE: 40.5,
+  };
+
+  test("Sin EPS Growth -> sin ajuste", () => {
+    const r = detectCycleTops(base);
+    const rWith = detectCycleTops({ ...base, wlgEpsGrowth: undefined });
+    expect(r.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct)
+      .toBe(rWith.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct);
+  });
+
+  test("EPS Growth 25% -> PEG=0.76 -> menos trim (×0.70)", () => {
+    // P/E 19.1 / 25 = 0.76 → PEG < 0.8 → crecimiento justifica el múltiplo
+    const r = detectCycleTops({ ...base, wlgEpsGrowth: 25 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    const rNone = detectCycleTops(base);
+    const wlgNone = rNone.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.trimPct).toBeLessThan(wlgNone.trimPct);
+    expect(wlg.reason).toContain("PEG");
+    expect(wlg.reason).toContain("justifica");
+  });
+
+  test("EPS Growth 18% -> PEG=1.06 -> sin ajuste (PEG razonable)", () => {
+    const r = detectCycleTops({ ...base, wlgEpsGrowth: 18 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    // PEG en rango 0.8-1.2 → no modifica valuationScore
+    const rNone = detectCycleTops(base);
+    const wlgNone = rNone.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.trimPct).toBe(wlgNone.trimPct);
+  });
+
+  test("EPS Growth 12% -> PEG=1.59 -> mas trim (×1.10)", () => {
+    const r = detectCycleTops({ ...base, wlgEpsGrowth: 12 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    const rNone = detectCycleTops(base);
+    const wlgNone = rNone.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.trimPct).toBeGreaterThan(wlgNone.trimPct);
+  });
+
+  test("EPS Growth 4% -> PEG=4.78 -> mucho mas trim (×1.25)", () => {
+    const r = detectCycleTops({ ...base, wlgEpsGrowth: 4 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    const rNone = detectCycleTops(base);
+    const wlgNone = rNone.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.trimPct).toBeGreaterThan(wlgNone.trimPct);
+    expect(wlg.reason).toContain("no justifica");
+  });
+
+  test("EPS Growth < 1% (floor) -> PEG usa 1 como divisor minimo", () => {
+    // EPS Growth 0.5% → floor en 1% → PEG = 19.1/1 = 19.1 → >2.0 → ×1.25
+    const r = detectCycleTops({ ...base, wlgEpsGrowth: 0.5 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.trimPct).toBeGreaterThan(0);
+  });
+
+  test("PEG no afecta si P/E es SAFE (valuationScore=0)", () => {
+    const r = detectCycleTops({
+      ...base,
+      wlgPERatio: 12,
+      wlgRsiWeekly: 50,
+      wlgEpsGrowth: 5,
+    });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.zone).toBe("SAFE");
+    expect(wlg.reason).not.toContain("PEG");
+  });
+
+  test("REGREION: P/E 19.1 + EPS 18% + spread 2.69% -> CAUTION", () => {
+    // Datos reales estimados: P/E 19.1, EPS ~18% MSCI World
+    const r = detectCycleTops({
+      bondYield10y: 4.7,
+      wlgPERatio: 19.1,
+      wlgEpsGrowth: 18,
+      wlgRsiWeekly: 58,
+      wlgCAPE: 40.5,
+      creditSpread: 2.69,
+    });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.zone).toBe("CAUTION");
+    // PEG ≈ 1.06 → sin ajuste → trim sin cambios respecto a sin EPS
+    expect(wlg.trimPct).toBeGreaterThan(30);
   });
 });

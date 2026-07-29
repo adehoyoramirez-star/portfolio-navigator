@@ -129,6 +129,11 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
                               //   Preferible a TTM cuando los beneficios crecen rápido (>20% YoY):
                               //   el TTM usa beneficios de hace 12 meses (menores) → infla el P/E artificialmente.
                               //   Media histórica forward: ~14-15 (20-25 años, múltiples ciclos).
+  wlgEpsGrowth?: number;     // Forward EPS Growth estimado (%) — FactSet, Yardeni, o TradingView.
+                              //   Usado para calcular PEG = P/E ÷ EPS Growth y modular el score de valoración.
+                              //   PEG < 1 → crecimiento justifica el múltiplo → reducir trim.
+                              //   PEG > 2 → crecimiento no justifica → aumentar trim.
+                              //   Impacto máximo: ±30% sobre valuationScore. Sin dato → sin ajuste.
   wlgCAPE?: number;          // Shiller CAPE del S&P 500 vía FRED. PROXY del MSCI World (USA ~70% del índice).
                               //   ⚠️ S&P 500 es estructuralmente más caro que el MSCI World por concentración Mag7/tech.
                               //   CAPE > 30 desde S&P 500 puede sobrestimar la valoración global. Los reasons
@@ -539,7 +544,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 //   ANTES (TTM): P/E 19.3 → score 1.23 → CAUTION 40% (sobrestimado por TTM)
 //   AHORA (Forward): P/E 15 → score 1.13 → CAUTION ~35% (beneficios creciendo +37.9%)
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, regimeShiftPE, creditSpread } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, wlgCAPE, regimeShiftPE, creditSpread } = inputs;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -627,6 +632,29 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
       } else if (creditSpread > 3.5) {
         valuationScore *= 0.70;
         valuationReasons.push(`Crédito ${creditSpread.toFixed(1)}% — estrés en bonos contradice techo de ciclo (×0.70 valoración)`);
+      }
+    }
+
+    // P1.3: PEG MODIFIER (Jul 2026, Comité) — modular valoración por crecimiento de beneficios.
+    //   PEG = P/E Forward ÷ EPS Growth (%). PEG < 1 → crecimiento justifica el múltiplo.
+    //   PEG > 2 → crecimiento no justifica el múltiplo (caro aunque crezca).
+    //   Impacto limitado a ±30% sobre valuationScore. No usa división directa del P/E
+    //   (sería doble contabilidad: el Forward P/E ya incorpora el EPS estimado a 12m).
+    //   Sin dato de EPS Growth → sin ajuste (el motor no asume nada).
+    if (valuationScore > 0 && isValidReading(wlgEpsGrowth) && isValidReading(wlgPERatio)) {
+      const peg = wlgPERatio / Math.max(1, wlgEpsGrowth); // EPS Growth floor 1% para evitar PEG infinito
+      if (peg < 0.8) {
+        valuationScore *= 0.70;
+        valuationReasons.push(`PEG ${peg.toFixed(2)} — crecimiento (${wlgEpsGrowth.toFixed(0)}%) justifica el múltiplo (×0.70 valoración)`);
+      } else if (peg >= 0.8 && peg <= 1.2) {
+        // PEG razonable — sin ajuste, pero se documenta
+        valuationReasons.push(`PEG ${peg.toFixed(2)} — valoración ajustada al crecimiento (sin modificación)`);
+      } else if (peg > 2.0) {
+        valuationScore *= 1.25;
+        valuationReasons.push(`PEG ${peg.toFixed(2)} — crecimiento (${wlgEpsGrowth.toFixed(0)}%) no justifica el múltiplo (×1.25 valoración)`);
+      } else if (peg > 1.2) {
+        valuationScore *= 1.10;
+        valuationReasons.push(`PEG ${peg.toFixed(2)} — múltiplo estirado para el crecimiento (×1.10 valoración)`);
       }
     }
 

@@ -73,6 +73,7 @@ export interface PersistedMacro {
   elliottPivots?: Array<{ price: number; dateStr: string; type: string }>;
   wlgRsiWeekly?: number;
   wlgPERatio?: number;
+  wlgEpsGrowth?: number;
   emxcRsiWeekly?: number;
   emxcPERatio?: number;
   savedAt: string;

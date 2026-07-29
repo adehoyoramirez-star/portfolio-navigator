@@ -267,6 +267,7 @@ const formatCurrency = (value: number): string => {
   const [inflationBreakeven, setInflationBreakeven] = useState<number | undefined>(undefined);
   const [wlgRsiWeekly, setWlgRsiWeekly] = useState<number | undefined>(undefined);
   const [wlgPERatio, setWlgPERatio] = useState<number | undefined>(undefined);
+  const [wlgEpsGrowth, setWlgEpsGrowth] = useState<number | undefined>(undefined);
   const [emxcRsiWeekly, setEmxcRsiWeekly] = useState<number | undefined>(undefined);
   const [emxcPERatio, setEmxcPERatio] = useState<number | undefined>(undefined);
 
@@ -556,6 +557,7 @@ const formatCurrency = (value: number): string => {
       }
       if (savedMacro.wlgRsiWeekly !== undefined) setWlgRsiWeekly(savedMacro.wlgRsiWeekly);
       if (savedMacro.wlgPERatio !== undefined) setWlgPERatio(savedMacro.wlgPERatio);
+      if (savedMacro.wlgEpsGrowth !== undefined) setWlgEpsGrowth(savedMacro.wlgEpsGrowth);
       if (savedMacro.emxcRsiWeekly !== undefined) setEmxcRsiWeekly(savedMacro.emxcRsiWeekly);
       if (savedMacro.emxcPERatio !== undefined) setEmxcPERatio(savedMacro.emxcPERatio);
     }
@@ -592,12 +594,11 @@ const formatCurrency = (value: number): string => {
         price: p.price,
         dateStr: p.date ? p.date.toISOString() : new Date().toISOString(),
         type: p.label,
-      })),
-      wlgRsiWeekly, wlgPERatio,
-      emxcRsiWeekly, emxcPERatio,
+      })),        wlgRsiWeekly, wlgPERatio, wlgEpsGrowth,
+        emxcRsiWeekly, emxcPERatio,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -775,7 +776,9 @@ soxRsiWeekly,
       creditSpread,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil,        wlgRsiWeekly, wlgPERatio,
+        emxcRsiWeekly, emxcPERatio,
+        wlgEpsGrowth, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
 
   // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
   // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.
@@ -867,7 +870,9 @@ soxRsiWeekly,
       creditSpread,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil,        wlgRsiWeekly, wlgPERatio,
+        emxcRsiWeekly, emxcPERatio,
+        wlgEpsGrowth, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
 
   
 
@@ -2519,6 +2524,10 @@ soxRsiWeekly,
             <div>
               <label style={styles.label}>WLG P/E Forward {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URTH · P/E (Forward)</span></label>
               <input type="number" placeholder="—" value={wlgPERatio ?? ""} onChange={e => setWlgPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
+            </div>
+            <div>
+              <label style={styles.label}>WLG EPS Growth % {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>Forward 12m — FactSet / Yardeni</span></label>
+              <input type="number" placeholder="—" value={wlgEpsGrowth ?? ""} onChange={e => setWlgEpsGrowth(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" />
             </div>
             <div>
               <label style={styles.label}>EMXC RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · W · RSI(14)</span></label>
