@@ -401,24 +401,12 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
     else if (soxSpyRelativeStrength > 1.0)   { topSignals += 0.75; reasons.push(`SOX/SPX RS Z ${soxSpyRelativeStrength.toFixed(2)} — semis outperforming, vigilar`); }
   }
 
-  // SIA Sales YoY% — DEGRADADO A INFORMATIVO (Jul 2026, Comité)
-  //   P0 original: primario (+2/+1/+0.5). P1: corte al 50% (+1.0/+0.5/+0.25).
-  //   AHORA: 0 peso en scoring. SIA es COINCIDENTE/LAGGING (mide ventas YA realizadas,
-  //   dato mensual). Un solo mes de +104% no justifica un trim del 35% cuando
-  //   SOX/SPX RS (leading, basado en expectativas de mercado) dice 0.68 (neutral)
-  //   y SOX RSI-W dice 56 (neutral).
-  //   SIA se mantiene como contexto en el reason para que el operador tenga
-  //   visibilidad completa, pero no mueve el multiplier. Los únicos triggers
-  //   accionables son SOX/SPX RS (leading) y SOX RSI-W (momentum).
-  if (isValidReading(siaSalesYoY, -100)) {
-    if (siaSalesYoY > 40) {
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — contexto: euforia en ventas (dato coincidente, informativo)`);
-    } else if (siaSalesYoY > 30) {
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — contexto: ciclo caliente (dato coincidente, informativo)`);
-    } else if (siaSalesYoY > 25) {
-      reasons.push(`Ventas SIA +${siaSalesYoY.toFixed(1)}% YoY — contexto: crecimiento elevado (dato coincidente, informativo)`);
-    }
-  }
+  // SIA Sales YoY% — ELIMINADO del scoring de techo (Jul 2026, Comité).
+  //   Motivo: no puntúa (era informativo), no mueve el multiplier.
+  //   SIA es COINCIDENTE/LAGGING: mide ventas YA realizadas, dato mensual.
+  //   Los únicos triggers accionables son SOX/SPX RS (leading) y SOX RSI-W (momentum).
+  //   SIA sigue puntuando en detectSemisBottom (suelos) donde la contracción
+  //   de ventas (<0% YoY) sí es señal de recession pricing. Permanece en indicatorValue.
 
   // Evaluar RSI semanal del SOX
   if (isValidReading(soxRsiWeekly, 0, 100)) {
@@ -772,21 +760,11 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  // P/E del MSCI Emerging Markets — DEGRADADO A INFORMATIVO (Jul 2026, Comité)
-  //   Mismo criterio que SIA en Semis: dato trimestral/manual no debe
-  //   mover el multiplier por sí solo cuando DXY y RSI-W están neutrales.
-  //   DXY es diario (leading, mercado de divisas en tiempo real).
-  //   RSI-W es semanal (momentum, precio en tiempo real).
-  //   P/E es trimestral como máximo (coincidente, basado en earnings reportados).
-  //   Se mantiene como contexto en el reason; los únicos triggers accionables
-  //   son DXY (primario, BIS-documented) y RSI-W (momentum).
-  if (isValidReading(emxcPERatio)) {
-    if (emxcPERatio > 30)       reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: Emergentes en burbuja extrema (dato trimestral, informativo)`);
-    else if (emxcPERatio > 25)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: Emergentes en burbuja (dato trimestral, informativo)`);
-    else if (emxcPERatio > 20)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: Emergentes caros, media ~15 (dato trimestral, informativo)`);
-    else if (emxcPERatio > 18)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: por encima de su media (dato trimestral, informativo)`);
-    else if (emxcPERatio > 12)  reasons.push(`P/E ${emxcPERatio.toFixed(1)} — contexto: ligeramente por encima de la media`);
-  }
+  // P/E del MSCI Emerging Markets — ELIMINADO del scoring de techo (Jul 2026, Comité).
+  //   Motivo: no puntúa (era informativo), no mueve el multiplier.
+  //   Los únicos triggers accionables son DXY (primario, BIS-documented) y RSI-W (momentum).
+  //   El P/E sigue puntuando en detectEMXCBottom (suelos) donde los múltiplos bajos
+  //   sí generan señales de acumulación. Permanece en indicatorValue como display.
 
   // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
   //   multiplierFromScore con rampas suaves. EMXC mapea casi exacto a los anclajes genéricos:

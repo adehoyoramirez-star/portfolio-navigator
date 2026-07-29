@@ -2480,8 +2480,7 @@ soxRsiWeekly,
               <input type="number" placeholder="—" value={uraniumLT ?? ""} onChange={e => setUraniumLT(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" />
             </div>
             <div>
-            <div>
-  <label style={styles.label}>Semis SIA Sales YoY% {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>SIA/WSTS mensual</span></label>
+            <div>              <label style={styles.label}>Semis SIA Sales YoY% {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>SIA/WSTS mensual — solo para suelos</span></label>
   <input type="number" placeholder="—" value={siaSalesYoY ?? ""} onChange={e => setSiaSalesYoY(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" />
 </div>
 <div>
@@ -2512,7 +2511,7 @@ soxRsiWeekly,
               <input type="number" placeholder="—" value={emxcRsiWeekly ?? ""} onChange={e => setEmxcRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
             </div>
             <div>
-              <label style={styles.label}>EMXC P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · P/E (TTM)</span></label>
+              <label style={styles.label}>EMXC P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · P/E — solo para suelos</span></label>
               <input type="number" placeholder="—" value={emxcPERatio ?? ""} onChange={e => setEmxcPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
             </div>
           </div>
