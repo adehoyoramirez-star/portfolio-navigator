@@ -758,9 +758,10 @@ soxRsiWeekly,
       dxy,
       regimeShiftPE: smoothedShiftPE,
       regimeShiftBTC: smoothedShiftBTC,
+      creditSpread,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
 
   // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
   // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.
@@ -849,9 +850,10 @@ soxRsiWeekly,
       regime: currentRegime,
       regimeShiftPE: smoothedShiftPE,
       regimeShiftBTC: smoothedShiftBTC,
+      creditSpread,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC]);
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil, wlgRsiWeekly, wlgPERatio, emxcRsiWeekly, emxcPERatio, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
 
   
 

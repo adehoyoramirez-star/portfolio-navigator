@@ -137,6 +137,14 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
                               //   DXY > 106 = estrés, > 110 = crisis EM.
                               //   Solo se considera válido si dxy > 50 (guarda sanitario contra 0 = fetch fallido).
 
+  // P1.2: CREDIT-SPREAD (Jul 2026, Comité) — amplificador/atenuador de valoración
+  //   Spreads estrechos (<1.5%): complacencia de crédito → confirma euforia → amplifica trim.
+  //   Spreads normales (1.5-3.5%): sin ajuste.
+  //   Spreads amplios (>3.5%): estrés en crédito → mercado de bonos huele problemas
+  //     que equities aún no descuentan. Señal contrarian para techos: el miedo en crédito
+  //     suele estar más cerca del suelo que del techo → atenúa trim.
+  creditSpread?: number;
+
   // ── Capa Táctica Diaria (TACTICAL-DAILY Jul 2026) ──────────────
   //   Price histories desde Yahoo Finance (EOD closes) para computar
   //   indicadores diarios (RSI-14, Z-score MA50).
@@ -539,7 +547,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 //   ANTES: max(CAPE_score=2.5, P/E_score=0) = 2.5 → DANGER, trim 60%
 //   AHORA: P/E_score=1.0 + CAPE_confirm=0.5 = 1.5 → CAUTION, trim 35%
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, regimeShiftPE } = inputs;
+  const { wlgRsiWeekly, wlgPERatio, wlgCAPE, regimeShiftPE, creditSpread } = inputs;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -607,6 +615,27 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     if (peShift !== 0 && valuationScore > 0) {
       valuationReasons.push(`P/E ajustado por régimen: ${wlgPERatio.toFixed(1)} → ${effectivePE.toFixed(1)} efectivo`);
     }
+
+    // P1.2: CREDIT-SPREAD (Jul 2026, Comité) — amplificador/atenuador de valoración.
+    //   El credit spread es el "canario en la mina" del crédito corporativo.
+    //   - Spreads estrechos (<1.5%): complacencia → el crédito y las equities
+    //     están de acuerdo en que todo va bien. Si el P/E ya está alto, esto
+    //     confirma euforia generalizada → ×1.25 al score de valoración.
+    //   - Spreads normales (1.5-3.5%): sin ajuste. El crédito no añade información.
+    //   - Spreads amplios (>3.5%): el mercado de bonos está en modo pánico.
+    //     Señal contrarian para techos de equity: si el crédito ya descuenta
+    //     problemas severos, estamos más cerca del suelo que del techo.
+    //     → ×0.70 al score de valoración (el miedo contradice la euforia).
+    if (valuationScore > 0 && isValidReading(creditSpread)) {
+      if (creditSpread < 1.5) {
+        valuationScore *= 1.25;
+        valuationReasons.push(`Crédito ${creditSpread.toFixed(1)}% — spreads estrechos confirman complacencia (×1.25 valoración)`);
+      } else if (creditSpread > 3.5) {
+        valuationScore *= 0.70;
+        valuationReasons.push(`Crédito ${creditSpread.toFixed(1)}% — estrés en bonos contradice techo de ciclo (×0.70 valoración)`);
+      }
+    }
+
     if (valuationScore >= 2.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración extrema (solo 2000 y 2021)`);
     else if (valuationScore >= 2.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado muy caro`);
     else if (valuationScore >= 1.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado caro`);

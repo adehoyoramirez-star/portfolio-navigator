@@ -350,3 +350,99 @@ describe("P1: BTC sensitivity — Z-Score shift by regime", () => {
       .toBe(rNone.signals.find(s => s.ticker === "BTC-EUR")!.trimPct);
   });
 });
+
+// ── P1.2: CREDIT-SPREAD (Jul 2026, Comité) ──────────────────
+//   Credit spread como amplificador/atenuador de valoración en WLG.
+//   - Spreads <1.5%: complacencia de crédito → ×1.25 al score → más trim
+//   - Spreads 1.5-3.5%: sin ajuste
+//   - Spreads >3.5%: estrés en crédito → contrarian para tops → ×0.70 → menos trim
+describe("P1.2: WLG — credit spread amplifier", () => {
+  // Base: P/E 19.3, RSI 58 → esto da CAUTION ~40% sin credit spread
+  const base: CycleTopInputs = {
+    bondYield10y: 4.7,
+    wlgPERatio: 19.3,
+    wlgRsiWeekly: 58,
+    wlgCAPE: 40.5,
+  };
+
+  test("Spread normal 2.0% -> mismo trim que sin credit", () => {
+    const rNorm = detectCycleTops({ ...base, creditSpread: 2.0 });
+    const rNone = detectCycleTops(base);
+    expect(rNorm.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct)
+      .toBe(rNone.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct);
+  });
+
+  test("Spread estrecho 1.2% -> mas trim (complacencia ×1.25)", () => {
+    const r = detectCycleTops({ ...base, creditSpread: 1.2 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    const rNone = detectCycleTops(base);
+    const wlgNone = rNone.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    // Complacencia amplifica → mas trim que sin spread
+    expect(wlg.trimPct).toBeGreaterThan(wlgNone.trimPct);
+    expect(wlg.reason).toContain("complacencia");
+  });
+
+  test("Spread amplio 4.0% -> menos trim (estres contradice ×0.70)", () => {
+    const r = detectCycleTops({ ...base, creditSpread: 4.0 });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    const rNone = detectCycleTops(base);
+    const wlgNone = rNone.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    // Estrés crediticio → contrarian para equity tops → menos trim
+    expect(wlg.trimPct).toBeLessThan(wlgNone.trimPct);
+    expect(wlg.reason).toContain("estrés");
+  });
+
+  test("Spread 1.5% (umbral exacto) -> sin ajuste", () => {
+    const r = detectCycleTops({ ...base, creditSpread: 1.5 });
+    const rNone = detectCycleTops(base);
+    expect(r.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct)
+      .toBe(rNone.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct);
+  });
+
+  test("Spread 3.5% (umbral exacto) -> sin ajuste", () => {
+    const r = detectCycleTops({ ...base, creditSpread: 3.5 });
+    const rNone = detectCycleTops(base);
+    expect(r.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct)
+      .toBe(rNone.signals.find(s => s.ticker === "0P00000WLG.F")!.trimPct);
+  });
+
+  test("Credit spread no afecta si P/E es SAFE (valuationScore=0)", () => {
+    // P/E 15 con spread estrecho: P/E bajo → score 0 → no dispara amplificador
+    const r = detectCycleTops({
+      ...base,
+      wlgPERatio: 15,
+      wlgRsiWeekly: 50,
+      creditSpread: 1.0,
+    });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.zone).toBe("SAFE");
+    // No deberia mencionar credit porque valuationScore=0
+    expect(wlg.reason).not.toContain("Crédito");
+  });
+
+  test("Credit spread no afecta a otros detectores (solo WLG)", () => {
+    // BTC no usa credit spread
+    const rNone = detectCycleTops({ bondYield10y: 4.0, mvrvZScore: 1.0 });
+    const rWith = detectCycleTops({ bondYield10y: 4.0, mvrvZScore: 1.0, creditSpread: 1.2 });
+    expect(rWith.signals.find(s => s.ticker === "BTC-EUR")!.trimPct)
+      .toBe(rNone.signals.find(s => s.ticker === "BTC-EUR")!.trimPct);
+  });
+
+  test("REGREION: P/E 19.3 + RSI 58 + spread 2.69% -> CAUTION ~35-45%", () => {
+    // Datos reales del dashboard (28 Jul 2026)
+    const r = detectCycleTops({
+      bondYield10y: 4.7,
+      wlgPERatio: 19.3,
+      wlgRsiWeekly: 58,
+      wlgCAPE: 40.5,
+      creditSpread: 2.69,
+    });
+    const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    expect(wlg.zone).toBe("CAUTION");
+    // 2.69% está en zona normal (1.5-3.5) → sin ajuste → ~40% trim
+    expect(wlg.trimPct).toBeGreaterThan(30);
+    expect(wlg.trimPct).toBeLessThan(55);
+    expect(wlg.reason).not.toContain("complacencia");
+    expect(wlg.reason).not.toContain("estrés");
+  });
+});
