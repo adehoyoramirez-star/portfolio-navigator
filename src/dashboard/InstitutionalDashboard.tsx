@@ -2504,7 +2504,7 @@ soxRsiWeekly,
               <input type="number" placeholder="—" value={wlgRsiWeekly ?? ""} onChange={e => setWlgRsiWeekly(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" max="100" />
             </div>
             <div>
-              <label style={styles.label}>WLG P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URTH · P/E (TTM)</span></label>
+              <label style={styles.label}>WLG P/E Forward {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URTH · P/E (Forward)</span></label>
               <input type="number" placeholder="—" value={wlgPERatio ?? ""} onChange={e => setWlgPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
             </div>
             <div>

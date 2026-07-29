@@ -7,7 +7,7 @@
 //   Uranio    → Spot/LT ratio (mercado físico)
 //   Semis     → Book-to-Bill ratio (SEMI.org)
 //   Oro       → Tipo real (bono 10y − inflación implícita)
-//   WLG       → RSI semanal MSCI World + P/E MSCI World (manual) — sustituye a IS3Q y XNAS
+//   WLG       → RSI semanal MSCI World + P/E Forward MSCI World (manual, TradingView/Yardeni) — sustituye a IS3Q y XNAS
 //   EMXC      → RSI semanal EEM + P/E Emergentes (manual)
 //
 // Output: un multiplicador [0, 1] por activo
@@ -48,8 +48,8 @@ const isValidReading = (
 //   x ≥ thresholds[last][0] → thresholds[last][1]
 //   entre medias → interpolación lineal
 //
-//   Ejemplo: P/E 19.3 con thresholds [[17,1.0],[22,1.5],[30,2.5]]
-//     → score = 1.0 + (1.5-1.0)×(19.3-17)/(22-17) = 1.0 + 0.23 = 1.23
+//   Ejemplo: P/E Forward 15.5 con thresholds [[14,1.0],[18,1.5],[25,2.5]]
+//     → score = 1.0 + (1.5-1.0)×(15.5-14)/(18-14) = 1.0 + 0.19 = 1.19
 const smoothScore = (
   x: number,
   thresholds: [number, number][],
@@ -124,7 +124,11 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
 
   // WLG (Vanguard Global Stock — MSCI World)
   wlgRsiWeekly?: number;     // RSI semanal URTH (proxy MSCI World) — TradingView, período 14, timeframe W
-  wlgPERatio?: number;       // P/E del MSCI World (manual — multpl.com o Yardeni)
+  wlgPERatio?: number;       // P/E Forward del MSCI World (manual — TradingView: URTH · P/E Forward, o Yardeni)
+                              //   Forward = precio / beneficios estimados próximos 12 meses.
+                              //   Preferible a TTM cuando los beneficios crecen rápido (>20% YoY):
+                              //   el TTM usa beneficios de hace 12 meses (menores) → infla el P/E artificialmente.
+                              //   Media histórica forward: ~14-15 (20-25 años, múltiples ciclos).
   wlgCAPE?: number;          // Shiller CAPE del S&P 500 vía FRED. PROXY del MSCI World (USA ~70% del índice).
                               //   ⚠️ S&P 500 es estructuralmente más caro que el MSCI World por concentración Mag7/tech.
                               //   CAPE > 30 desde S&P 500 puede sobrestimar la valoración global. Los reasons
@@ -531,8 +535,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 // ── WLG (Vanguard Global Stock — MSCI World) ─────────────────────
 // El MSCI World es el índice de developed markets más amplio.
 // Señales de techo:
-//   RSI Semanal > 75 → sobrecompra. > 80 → sobrecompra extrema.
-//   P/E MSCI World → indicador PRIMARIO (dato real del fondo, URTH vía TradingView).
+//   RSI Semanal > 75 → sobrecompra. > 80 → sobrecompra extrema.  //   P/E Forward MSCI World → indicador PRIMARIO (dato real del fondo, URTH vía TradingView).
 //   Shiller CAPE S&P 500 → CONFIRMATORIO (+0.5 si confirma sobrevaloración).
 //
 // FIX-INSTITUTIONAL (Jul-2026): Jerarquía invertida por principios de ingeniería
@@ -543,9 +546,9 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 //   S&P 500..." no. El CAPE del S&P 500 sobrestima la valoración global por
 //   concentración Mag7/tech — sirve como confirmación, no como driver.
 //
-//   Con datos actuales (P/E 19.4 + CAPE 41.7):
-//   ANTES: max(CAPE_score=2.5, P/E_score=0) = 2.5 → DANGER, trim 60%
-//   AHORA: P/E_score=1.0 + CAPE_confirm=0.5 = 1.5 → CAUTION, trim 35%
+//   Con datos actuales (P/E Forward ~15 + CAPE 40.5):
+//   ANTES (TTM): P/E 19.3 → score 1.23 → CAUTION 40% (sobrestimado por TTM)
+//   AHORA (Forward): P/E 15 → score 1.13 → CAUTION ~35% (beneficios creciendo +37.9%)
 function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   const { wlgRsiWeekly, wlgPERatio, wlgCAPE, regimeShiftPE, creditSpread } = inputs;
 
@@ -593,8 +596,8 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   //   3. El P/E real del MSCI World (wlgPERatio) ya cubre la valoración
   //      del activo que poseemos. Usamos el dato del activo, no un proxy.
   //
-  //   Umbrales P/E: [17→1.0, 22→1.5, 25→2.0, 30→2.5] (media histórica ~17).
-  //   Con P/E 19.3: score = 1.0 + 0.5×(19.3-17)/(22-17) = 1.23.
+  //   Umbrales P/E Forward: [14→1.0, 18→1.5, 21→2.0, 25→2.5] (media histórica ~14, 20-25 años).
+  //   Con P/E Forward 15: score = 1.0 + (1.5-1.0)×(15-14)/(18-14) = 1.13.
   let valuationScore = 0;
   const valuationReasons: string[] = [];
   const hasPE = isValidReading(wlgPERatio);
@@ -607,10 +610,10 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     const peShift = regimeShiftPE ?? 0;
     const effectivePE = wlgPERatio - peShift;
     valuationScore = smoothScore(effectivePE, [
-      [17, 1.0],
-      [22, 1.5],
-      [25, 2.0],
-      [30, 2.5],
+      [14, 1.0],
+      [18, 1.5],
+      [21, 2.0],
+      [25, 2.5],
     ]);
     if (peShift !== 0 && valuationScore > 0) {
       valuationReasons.push(`P/E ajustado por régimen: ${wlgPERatio.toFixed(1)} → ${effectivePE.toFixed(1)} efectivo`);
@@ -639,7 +642,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     if (valuationScore >= 2.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración extrema (solo 2000 y 2021)`);
     else if (valuationScore >= 2.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado muy caro`);
     else if (valuationScore >= 1.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado caro`);
-    else if (valuationScore >= 1.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~17)`);
+    else if (valuationScore >= 1.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~14, forward)`);
     else if (valuationScore > 0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — ligeramente por encima de la media`);
 
     // ── CAPE / S&P 500 P/E — INFORMATIVO (Jul 2026, Comité) ──
@@ -653,10 +656,10 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     // FALLBACK sin P/E real — usar solo S&P 500 P/E como referencia
     //   (en este caso SÍ puntúa porque no hay dato del activo real)
     valuationScore = smoothScore(wlgCAPE, [
-      [17, 1.0],
-      [22, 1.5],
-      [25, 2.0],
-      [30, 2.5],
+      [14, 1.0],
+      [18, 1.5],
+      [21, 2.0],
+      [25, 2.5],
     ]);
     if (valuationScore >= 2.5) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — valoración extrema [fallback: sin P/E MSCI World]`);
     else if (valuationScore >= 2.0) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — mercado muy caro [fallback: sin P/E MSCI World]`);
@@ -1373,12 +1376,13 @@ function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
   const hasPE = isValidReading(wlgPERatio);
   const hasCAPE = isValidReading(wlgCAPE);
 
-  // CALIBRACIÓN: P/E<13 + RSI<30 + CAPE<20 debe alcanzar EXTREME (≥80).
+  // CALIBRACIÓN: P/E Forward<10 + RSI<30 + CAPE<20 debe alcanzar EXTREME (≥80).
   //   Históricamente: solo marzo 2009 (GFC) y marzo 2020 (COVID).
+  //   Forward P/E ~3 puntos por debajo del TTM (media forward ~14 vs TTM ~17).
   if (hasPE) {
-    if (wlgPERatio < 13)          { score += 45; reasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — infravaloración histórica (solo crisis severas)`); }
-    else if (wlgPERatio < 15)     { score += 30; reasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado barato (por debajo de la media histórica)`); }
-    else if (wlgPERatio < 17)     { score += 15; reasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración razonable`); }
+    if (wlgPERatio < 10)          { score += 45; reasons.push(`P/E Forward MSCI World ${wlgPERatio.toFixed(1)} — infravaloración histórica (solo crisis severas)`); }
+    else if (wlgPERatio < 12)     { score += 30; reasons.push(`P/E Forward MSCI World ${wlgPERatio.toFixed(1)} — mercado barato (por debajo de la media histórica)`); }
+    else if (wlgPERatio < 14)     { score += 15; reasons.push(`P/E Forward MSCI World ${wlgPERatio.toFixed(1)} — valoración razonable`); }
 
     // CAPE confirmatorio: si CAPE está más barato que lo que sugiere el P/E
     if (hasCAPE) {

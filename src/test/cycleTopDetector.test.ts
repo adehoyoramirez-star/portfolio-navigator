@@ -172,7 +172,7 @@ describe("detectCycleBottoms - Gold contradiction", () => {
 
 describe("detectCycleTops - central clamp", () => {
   test("allocationMultiplier en [0,1] con datos extremos", () => {
-    const r = detectCycleTops({ bondYield10y: 4.0, mvrvZScore: 10, uraniumSpotPrice: 200, uraniumLTPrice: 100, siaSalesYoY: 80, soxRsiWeekly: 90, inflationBreakeven: 2.0, wlgPERatio: 35, wlgRsiWeekly: 85, emxcPERatio: 28, dxy: 115 });
+    const r = detectCycleTops({ bondYield10y: 4.0, mvrvZScore: 10, uraniumSpotPrice: 200, uraniumLTPrice: 100, siaSalesYoY: 80, soxRsiWeekly: 90, inflationBreakeven: 2.0, wlgPERatio: 25, wlgRsiWeekly: 85, emxcPERatio: 28, dxy: 115 });
     for (const s of r.signals) { expect(s.allocationMultiplier).toBeGreaterThanOrEqual(0); expect(s.allocationMultiplier).toBeLessThanOrEqual(1); }
   });
 
@@ -188,30 +188,30 @@ describe("isBTCDominanceFalling", () => {
 });
 
 describe("REGRESION: WLG con datos reales (bug smoothScore Jul-2026)", () => {
-  // Estos datos (RSI 58, P/E 19.3, CAPE 40.5) son los que el usuario tiene
-  // en el dashboard. El bug de smoothScore (commit 3387c54) hacia que RSI 58
-  // contribuyera +1.0 falso → topSignals subia de 1.73 a 2.73 → DANGER 68%.
-  // Este test previene que ese bug reaparezca.
-  test("RSI 58 + P/E 19.3 + CAPE 40.5 -> CAUTION ~50% (NO DANGER)", () => {
+  // Datos calibrados a Forward P/E (Jul 2026). El forward P/E es ~3 puntos
+  // menor que el TTM cuando los beneficios crecen (ahora +37.9% YoY).
+  // Forward P/E 15-16 es el equivalente institucional del TTM 19-20.
+  test("RSI 58 + P/E Forward 15.5 + CAPE 40.5 -> CAUTION ~35% (NO DANGER)", () => {
     const r = detectCycleTops({
       wlgRsiWeekly: 58,
-      wlgPERatio: 19.3,
+      wlgPERatio: 15.5,
       wlgCAPE: 40.5,
       bondYield10y: 4.7,
     });
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
     // RSI 58 no esta sobrecomprado → NO debe empujar el score
+    // P/E Forward 15.5 → smoothScore([14,1.0],[18,1.5]...) ≈ 1.19 → CAUTION
     expect(wlg.zone).toBe("CAUTION");  // NO DANGER
-    expect(wlg.trimPct).toBeLessThan(60);  // ~50%, no 68%
-    expect(wlg.trimPct).toBeGreaterThan(30);
+    expect(wlg.trimPct).toBeLessThan(55);
+    expect(wlg.trimPct).toBeGreaterThan(25);
     // Verificar que el RSI no aparece como senal de sobrecompra
     expect(wlg.reason).not.toContain("sobrecompra");
   });
 
-  test("WLG SAFE con datos bajos", () => {
+  test("WLG SAFE con datos bajos (Forward P/E 12)", () => {
     const r = detectCycleTops({
       wlgRsiWeekly: 50,
-      wlgPERatio: 15,
+      wlgPERatio: 12,
       wlgCAPE: 25,
       bondYield10y: 4.0,
     });
@@ -267,29 +267,29 @@ describe("P1: regimeValuationShift", () => {
 });
 
 describe("P1: WLG sensitivity — P/E shift by regime", () => {
-  // P/E 22 = "caro" sin shift. En EXPANSION (+2) deberia ser neutral.
+  // P/E Forward 18 = "caro" sin shift. En EXPANSION (+2) deberia ser neutral.
   // En CRISIS (-2) deberia ser "muy caro".
-  const base: CycleTopInputs = { bondYield10y: 4.0, wlgPERatio: 22, wlgRsiWeekly: 55 };
+  const base: CycleTopInputs = { bondYield10y: 4.0, wlgPERatio: 18, wlgRsiWeekly: 55 };
 
-  test("P/E 22 sin shift -> CAUTION (~40% trim)", () => {
+  test("P/E 18 sin shift -> CAUTION (~40% trim)", () => {
     const r = detectCycleTops(base);
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
     expect(wlg.zone).toBe("CAUTION");
     expect(wlg.trimPct).toBeGreaterThan(25);
   });
 
-  test("P/E 22 en EXPANSION (+2 shift) -> menos trim", () => {
+  test("P/E 18 en EXPANSION (+2 shift) -> menos trim", () => {
     const r = detectCycleTops({ ...base, regimeShiftPE: 2.0 });
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
-    // effectivePE = 22 - 2 = 20 → score 1.3 → multiplier 0.59 → trim ~41%
-    // Sin shift: score 1.5 → multiplier 0.55 → trim 45% → +2 shift reduce 4pp
+    // effectivePE = 18 - 2 = 16 → score 1.0 + 0.5*2/4 = 1.25
+    // Sin shift: score 1.5 → multiplier 0.55 → trim 45% → +2 shift reduce ~5pp
     expect(wlg.trimPct).toBeLessThan(45);
   });
 
-  test("P/E 22 en CRISIS (-2 shift) -> mas trim", () => {
+  test("P/E 18 en CRISIS (-2 shift) -> mas trim", () => {
     const r = detectCycleTops({ ...base, regimeShiftPE: -2.0 });
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
-    // effectivePE = 22 - (-2) = 24 -> score mayor
+    // effectivePE = 18 - (-2) = 20 -> score mayor
     expect(wlg.trimPct).toBeGreaterThan(40);
   });
 
@@ -357,10 +357,10 @@ describe("P1: BTC sensitivity — Z-Score shift by regime", () => {
 //   - Spreads 1.5-3.5%: sin ajuste
 //   - Spreads >3.5%: estrés en crédito → contrarian para tops → ×0.70 → menos trim
 describe("P1.2: WLG — credit spread amplifier", () => {
-  // Base: P/E 19.3, RSI 58 → esto da CAUTION ~40% sin credit spread
+  // Base: P/E Forward 15.5, RSI 58 → esto da CAUTION ~35% sin credit spread
   const base: CycleTopInputs = {
     bondYield10y: 4.7,
-    wlgPERatio: 19.3,
+    wlgPERatio: 15.5,
     wlgRsiWeekly: 58,
     wlgCAPE: 40.5,
   };
@@ -407,10 +407,10 @@ describe("P1.2: WLG — credit spread amplifier", () => {
   });
 
   test("Credit spread no afecta si P/E es SAFE (valuationScore=0)", () => {
-    // P/E 15 con spread estrecho: P/E bajo → score 0 → no dispara amplificador
+    // P/E Forward 12 (barato) con spread estrecho: score 0 → no dispara amplificador
     const r = detectCycleTops({
       ...base,
-      wlgPERatio: 15,
+      wlgPERatio: 12,
       wlgRsiWeekly: 50,
       creditSpread: 1.0,
     });
@@ -428,11 +428,11 @@ describe("P1.2: WLG — credit spread amplifier", () => {
       .toBe(rNone.signals.find(s => s.ticker === "BTC-EUR")!.trimPct);
   });
 
-  test("REGREION: P/E 19.3 + RSI 58 + spread 2.69% -> CAUTION ~35-45%", () => {
-    // Datos reales del dashboard (28 Jul 2026)
+  test("REGREION: P/E Forward 15.5 + RSI 58 + spread 2.69% -> CAUTION ~30-50%", () => {
+    // Datos reales del dashboard (28 Jul 2026) calibrados a Forward P/E
     const r = detectCycleTops({
       bondYield10y: 4.7,
-      wlgPERatio: 19.3,
+      wlgPERatio: 15.5,
       wlgRsiWeekly: 58,
       wlgCAPE: 40.5,
       creditSpread: 2.69,
