@@ -128,7 +128,7 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
                               //   Forward = precio / beneficios estimados próximos 12 meses.
                               //   Preferible a TTM cuando los beneficios crecen rápido (>20% YoY):
                               //   el TTM usa beneficios de hace 12 meses (menores) → infla el P/E artificialmente.
-                              //   Media histórica forward: ~14-15 (20-25 años, múltiples ciclos).
+                              //   Media histórica forward: ~16 (10-15 años, post-2010, estándar institucional).
   wlgEpsGrowth?: number;     // Forward EPS Growth estimado (%) — FactSet, Yardeni, o TradingView.
                               //   Usado para calcular PEG = P/E ÷ EPS Growth y modular el score de valoración.
                               //   PEG < 1 → crecimiento justifica el múltiplo → reducir trim.
@@ -590,7 +590,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   //   3. El P/E real del MSCI World (wlgPERatio) ya cubre la valoración
   //      del activo que poseemos. Usamos el dato del activo, no un proxy.
   //
-  //   Umbrales P/E Forward: [14→1.0, 18→1.5, 21→2.0, 25→2.5] (media histórica ~14, 20-25 años).
+  //   Umbrales P/E Forward: [16→1.0, 20→1.5, 23→2.0, 27→2.5] (media institucional ~16, 10-15 años).
   //   Con P/E Forward 15: score = 1.0 + (1.5-1.0)×(15-14)/(18-14) = 1.13.
   let valuationScore = 0;
   const valuationReasons: string[] = [];
@@ -606,10 +606,10 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     const peShift = regimeShiftPE ?? 0;
     const effectivePE = wlgPERatio - peShift;
     valuationScore = smoothScore(effectivePE, [
-      [14, 1.0],
-      [18, 1.5],
-      [21, 2.0],
-      [25, 2.5],
+      [16, 1.0],
+      [20, 1.5],
+      [23, 2.0],
+      [27, 2.5],
     ]);
     if (peShift !== 0 && valuationScore > 0) {
       valuationReasons.push(`P/E ajustado por régimen: ${wlgPERatio.toFixed(1)} → ${effectivePE.toFixed(1)} efectivo`);
@@ -661,7 +661,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     if (valuationScore >= 2.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — valoración extrema (solo 2000 y 2021)`);
     else if (valuationScore >= 2.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado muy caro`);
     else if (valuationScore >= 1.5) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — mercado caro`);
-    else if (valuationScore >= 1.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~14, forward)`);
+    else if (valuationScore >= 1.0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — por encima de la media (~16, forward)`);
     else if (valuationScore > 0) valuationReasons.push(`P/E MSCI World ${wlgPERatio.toFixed(1)} — ligeramente por encima de la media`);
 
     // ── CAPE / S&P 500 P/E — INFORMATIVO (Jul 2026, Comité) ──
@@ -679,7 +679,7 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
       [18, 1.5],
       [21, 2.0],
       [25, 2.5],
-    ]);
+    ]);  // FALLBACK: usa 14 (P/E S&P 500 TTM, no Forward — media distinta)
     if (valuationScore >= 2.5) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — valoración extrema [fallback: sin P/E MSCI World]`);
     else if (valuationScore >= 2.0) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — mercado muy caro [fallback: sin P/E MSCI World]`);
     else if (valuationScore >= 1.5) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro [fallback: sin P/E MSCI World]`);

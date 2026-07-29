@@ -188,19 +188,18 @@ describe("isBTCDominanceFalling", () => {
 });
 
 describe("REGRESION: WLG con datos reales (bug smoothScore Jul-2026)", () => {
-  // Datos calibrados a Forward P/E (Jul 2026). El forward P/E es ~3 puntos
-  // menor que el TTM cuando los beneficios crecen (ahora +37.9% YoY).
-  // Forward P/E 15-16 es el equivalente institucional del TTM 19-20.
-  test("RSI 58 + P/E Forward 15.5 + CAPE 40.5 -> CAUTION ~35% (NO DANGER)", () => {
+  // Datos calibrados a Forward P/E institucional (Jul 2026, media ~16).
+  // Umbrales: [16,1.0],[20,1.5],[23,2.0],[27,2.5].
+  test("RSI 58 + P/E Forward 17.5 + CAPE 40.5 -> CAUTION ~40% (NO DANGER)", () => {
     const r = detectCycleTops({
       wlgRsiWeekly: 58,
-      wlgPERatio: 15.5,
+      wlgPERatio: 17.5,
       wlgCAPE: 40.5,
       bondYield10y: 4.7,
     });
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
     // RSI 58 no esta sobrecomprado → NO debe empujar el score
-    // P/E Forward 15.5 → smoothScore([14,1.0],[18,1.5]...) ≈ 1.19 → CAUTION
+    // P/E Forward 17.5 → smoothScore([16,1.0],[20,1.5]...) ≈ 1.19 → CAUTION
     expect(wlg.zone).toBe("CAUTION");  // NO DANGER
     expect(wlg.trimPct).toBeLessThan(55);
     expect(wlg.trimPct).toBeGreaterThan(25);
@@ -274,6 +273,7 @@ describe("P1: WLG sensitivity — P/E shift by regime", () => {
   test("P/E 18 sin shift -> CAUTION (~40% trim)", () => {
     const r = detectCycleTops(base);
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+    // smoothScore(18,[[16,1.0],[20,1.5]...]) = 1.25 → multiplier 0.60 → trim ~40%
     expect(wlg.zone).toBe("CAUTION");
     expect(wlg.trimPct).toBeGreaterThan(25);
   });
@@ -281,15 +281,14 @@ describe("P1: WLG sensitivity — P/E shift by regime", () => {
   test("P/E 18 en EXPANSION (+2 shift) -> menos trim", () => {
     const r = detectCycleTops({ ...base, regimeShiftPE: 2.0 });
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
-    // effectivePE = 18 - 2 = 16 → score 1.0 + 0.5*2/4 = 1.25
-    // Sin shift: score 1.5 → multiplier 0.55 → trim 45% → +2 shift reduce ~5pp
+    // effectivePE = 18 - 2 = 16 → smoothScore(16) = 1.0 → multiplier 0.65 → trim ~35%
     expect(wlg.trimPct).toBeLessThan(45);
   });
 
   test("P/E 18 en CRISIS (-2 shift) -> mas trim", () => {
     const r = detectCycleTops({ ...base, regimeShiftPE: -2.0 });
     const wlg = r.signals.find(s => s.ticker === "0P00000WLG.F")!;
-    // effectivePE = 18 - (-2) = 20 -> score mayor
+    // effectivePE = 18 - (-2) = 20 → smoothScore(20) = 1.5 → multiplier 0.55 → trim ~45%
     expect(wlg.trimPct).toBeGreaterThan(40);
   });
 
@@ -357,10 +356,10 @@ describe("P1: BTC sensitivity — Z-Score shift by regime", () => {
 //   - Spreads 1.5-3.5%: sin ajuste
 //   - Spreads >3.5%: estrés en crédito → contrarian para tops → ×0.70 → menos trim
 describe("P1.2: WLG — credit spread amplifier", () => {
-  // Base: P/E Forward 15.5, RSI 58 → esto da CAUTION ~35% sin credit spread
+  // Base: P/E Forward 17.5, RSI 58 → CAUTION ~40% sin credit spread (media institucional 16)
   const base: CycleTopInputs = {
     bondYield10y: 4.7,
-    wlgPERatio: 15.5,
+    wlgPERatio: 17.5,
     wlgRsiWeekly: 58,
     wlgCAPE: 40.5,
   };
@@ -428,11 +427,11 @@ describe("P1.2: WLG — credit spread amplifier", () => {
       .toBe(rNone.signals.find(s => s.ticker === "BTC-EUR")!.trimPct);
   });
 
-  test("REGRESION: P/E Forward 15.5 + RSI 58 + spread 2.69% -> CAUTION ~30-50%", () => {
-    // Datos reales del dashboard (28 Jul 2026) calibrados a Forward P/E
+  test("REGRESION: P/E Forward 17.5 + RSI 58 + spread 2.69% -> CAUTION ~30-50%", () => {
+    // Datos reales del dashboard (Jul 2026) calibrados a Forward P/E institucional (media 16)
     const r = detectCycleTops({
       bondYield10y: 4.7,
-      wlgPERatio: 15.5,
+      wlgPERatio: 17.5,
       wlgRsiWeekly: 58,
       wlgCAPE: 40.5,
       creditSpread: 2.69,
