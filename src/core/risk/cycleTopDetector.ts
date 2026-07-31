@@ -292,7 +292,7 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── URANIO ───────────────────────────────────────────────────────
 function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { uraniumSpotPrice, uraniumLTPrice } = inputs;
+  const { uraniumSpotPrice, uraniumLTPrice, priceHistories } = inputs;
 
   if (!isValidReading(uraniumSpotPrice) || !isValidReading(uraniumLTPrice) || uraniumLTPrice === 0) {
     return {
@@ -356,6 +356,26 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
   // FIX-AUDIT-URANIO-CLAMP (Jul-2026): el clamp [0,1] ahora se aplica
   //   centralizadamente en detectCycleTops() para TODOS los detectores.
   //   Ver contrato del output al inicio del archivo.
+
+  // ── Momentum 3m como indicador secundario (Jul 2026) ──────────
+  //   URNU tiene σ~35% anual. Un rally de +50% en 3 meses es euforia
+  //   (solo en 2007, 2020, 2023). +100% es burbuja especulativa.
+  //   El Spot/LT ratio mide el mercado físico. El momentum mide el
+  //   sentimiento del equity (URNU = ETF de mineras, no spot físico).
+  let momentumNote = '';
+  const urnuPrices = priceHistories?.['URNU.DE'];
+  if (urnuPrices && urnuPrices.length >= 63) {
+    const ret3m = (urnuPrices[urnuPrices.length - 1] / urnuPrices[urnuPrices.length - 63] - 1);
+    if (ret3m > 1.0) {
+      // +100% en 3 meses → euforia extrema
+      momentumNote = ` · URNU +${(ret3m*100).toFixed(0)}% en 3 meses — euforia especulativa (solo 2007, 2020).`;
+      reason += momentumNote;
+    } else if (ret3m > 0.50) {
+      // +50% en 3 meses → rally fuerte, posible techo táctico
+      momentumNote = ` · URNU +${(ret3m*100).toFixed(0)}% en 3 meses — rally fuerte. Vigilar toma de beneficios.`;
+      reason += momentumNote;
+    }
+  }
 
   return {
     asset: "Uranium",
@@ -452,7 +472,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── ORO ──────────────────────────────────────────────────────────
 function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { bondYield10y, inflationBreakeven, brentOil } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil, dxy } = inputs;
 
   if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
@@ -508,7 +528,22 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
   }
 
   // Paso 3: multiplier = base + relief, clamp a [0.05, 1.0]
-  const multiplier = Math.max(0.05, Math.min(1.0, baseMultiplier + relief));
+  let multiplier = Math.max(0.05, Math.min(1.0, baseMultiplier + relief));
+
+  // ── DXY como indicador secundario (Jul 2026) ──────────────────
+  //   DXY > 106: dólar fuerte → presión adicional sobre el oro
+  //     (encarece el oro en otras divisas, flight-to-USD). ×0.85 al multiplier.
+  //   DXY < 95: dólar débil → viento de cola para el oro. +0.10 relief.
+  //   Evidencia: BIS, correlación inversa oro-DXY es -0.45 en 20 años.
+  if (isValidReading(dxy, 50)) {
+    if (dxy > 106) {
+      multiplier = Math.max(0.05, multiplier * 0.85);
+      reason += ` · DXY ${dxy.toFixed(1)} — dólar fuerte presiona al oro (×0.85 trim)`;
+    } else if (dxy < 95) {
+      multiplier = Math.min(1.0, multiplier + 0.10);
+      reason += ` · DXY ${dxy.toFixed(1)} — dólar débil favorece al oro (+0.10 alivio)`;
+    }
+  }
   const zone: CycleTopSignal["zone"] =
     multiplier <= 0.30 ? "DANGER" : multiplier < 1.0 ? "CAUTION" : "SAFE";
   const trimPct = Math.round((1 - multiplier) * 100);
@@ -519,8 +554,8 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
     allocationMultiplier: multiplier,
     zone,
     reason,
-    indicator: "Tipo Real + Brent Crude Oil",
-    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"}`,
+    indicator: "Tipo Real + Brent Crude Oil + DXY",
+    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"}`,
     shouldTrim: trimPct > 0,
     trimPct,
   };
@@ -1183,6 +1218,22 @@ function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
   score = t_uran.score;
   if (t_uran.reasons.length > 0) reason = reason ? reason + " · " + t_uran.reasons.join(" · ") : t_uran.reasons.join(" · ");
 
+  // ── Momentum 3m como indicador secundario (Jul 2026) ──────────
+  //   URNU -30% en 3 meses = capitulación en el equity de mineras.
+  //   El Spot/LT mide el mercado físico, el momentum mide el sentimiento.
+  //   Ambos alineados (spot barato + equity castigado) = suelo de ciclo.
+  const urnuPrices = priceHistories?.['URNU.DE'];
+  if (urnuPrices && urnuPrices.length >= 63) {
+    const ret3m = (urnuPrices[urnuPrices.length - 1] / urnuPrices[urnuPrices.length - 63] - 1);
+    if (ret3m < -0.40) {
+      score += 12;
+      reason = (reason ? reason + ' · ' : '') + `URNU ${(ret3m*100).toFixed(0)}% en 3 meses — capitulación en el equity de mineras de uranio.`;
+    } else if (ret3m < -0.30) {
+      score += 8;
+      reason = (reason ? reason + ' · ' : '') + `URNU ${(ret3m*100).toFixed(0)}% en 3 meses — castigo significativo.`;
+    }
+  }
+
 const zone = scoreToZone(score);
 
   return {
@@ -1272,7 +1323,7 @@ const zone = scoreToZone(score);
 //   Tipo real > 0.5% = presión (techo)  →  Tipo real > 2.0% = sobrecastigado (suelo)
 //   Brent alto protege al oro en ambos casos.
 function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
-  const { bondYield10y, inflationBreakeven, brentOil, priceHistories, currentPrices, regime } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil, dxy, priceHistories, currentPrices, regime } = inputs;
 
   if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
@@ -1330,6 +1381,18 @@ function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
   //   solo disparamos en pánico genuino, no en correcciones normales del -2%.
   //   El oro no debería tener falsos positivos tácticos — su señal real es el
   //   tipo real estructural, no el precio diario.
+
+  // ── DXY como indicador secundario (Jul 2026) ──────────────────
+  //   DXY > 106: dólar extremadamente fuerte → el oro está sobrecastigado
+  //     por el flight-to-USD. Históricamente, DXY > 110 precede rallies de oro.
+  //   DXY < 95: dólar débil → sin presión adicional (el oro ya debería estar bien).
+  if (isValidReading(dxy, 50)) {
+    if (dxy > 106) {
+      score += 15;
+      reasons.push(`DXY ${dxy.toFixed(1)} — dólar en niveles de estrés. Históricamente, DXY extremo precede rallies de oro (flight-to-USD se revierte).`);
+    }
+  }
+
   const t_oro = applyTacticalDaily(
     score, priceHistories?.["PPFB.DE"], regime, "Oro",
     [[15, 15], [25, 10], [35, 5]],
@@ -1347,8 +1410,8 @@ const zone = scoreToZone(score);
     opportunityScore: score,
     zone,
     reason: reasons.length > 0 ? reasons.join(" · ") : "Oro en zona neutra — sin señal de suelo de ciclo",
-    indicator: "Tipo Real + Brent Crude Oil",
-    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"}`,
+    indicator: "Tipo Real + Brent Crude Oil + DXY",
+    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"}`,
     shouldAccumulate: score >= 40,
     attackMultiplier: attackMultiplierForScore(score),
   };
