@@ -4186,6 +4186,27 @@ soxRsiWeekly,
                   <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f59e0b", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(2)}</td>
                   <td></td>
                 </tr>
+                {(() => {
+                  const availableCashNow = cashReserve + monthlyInjection;
+                  const idealTotal = smartDCAResult?.totalCashToInvest ?? 0;
+                  if (idealTotal <= 0) return null;
+                  const capped = Math.min(idealTotal, availableCashNow);
+                  if (capped >= idealTotal) return null; // cash suficiente → no mostrar aviso
+                  return (
+                    <tr style={{ backgroundColor: "#0f172a" }}>
+                      <td colSpan={4} style={{ padding: "0.25rem 0.5rem", color: "#6b7280", textAlign: "right", fontSize: "0.78rem" }}>
+                        {isCapped ? "↳ Realista (cash disponible):" : "↳ Cash disponible:"}
+                      </td>
+                      <td style={{ padding: "0.25rem 0.5rem", textAlign: "right", fontWeight: 600, 
+                        color: isCapped ? "#f59e0b" : "#10b981", fontSize: "0.85rem" }}>
+                        €{capped.toFixed(2)}
+                      </td>
+                      <td style={{ padding: "0.25rem 0.5rem", fontSize: "0.7rem", color: "#6b7280" }}>
+                        {isCapped ? `(de €${availableCashNow.toFixed(0)} disponible)` : `(€${availableCashNow.toFixed(0)})`}
+                      </td>
+                    </tr>
+                  );
+                })()}
               </tfoot>
             </table>
           </div>
