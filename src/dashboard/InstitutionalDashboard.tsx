@@ -91,6 +91,7 @@ import {
   regimeValuationShift,
   type CycleTopInputs,
   type CycleTopSignal,
+  type CycleTopOutput,
   type CycleBottomSignal,
   type CycleBottomOutput,
 } from "@/core/risk/cycleTopDetector";
@@ -1877,6 +1878,36 @@ soxRsiWeekly,
     if (rsiVal < 30) reasons.push(`RSI ${rsiVal.toFixed(1)} (sobreventa extrema, potencial rebote)`);
     if (zScoreVal < -1.5) reasons.push(`Z-Score ${zScoreVal.toFixed(2)} (precio ${Math.abs(zScoreVal).toFixed(1)} desviaciones por debajo de la media, infravaloración significativa)`);
     return reasons.join('. ');
+  };
+
+  // ── BUY-SIGNAL (Jul 2026): combina CycleTop + CycleBottom en un semáforo por activo ──
+  const getAssetBuySignal = (
+    ticker: string,
+    cycleTop?: CycleTopOutput,
+    cycleBottom?: CycleBottomOutput,
+  ): { emoji: string; label: string; color: string; tooltip: string } => {
+    const bottom = cycleBottom?.signals.find(s => s.ticker === ticker);
+    const top = cycleTop?.signals.find(s => s.ticker === ticker);
+    // Priority 1: Bottom EXTREME/OPPORTUNITY → buy aggressively
+    if (bottom?.zone === 'EXTREME') {
+      return { emoji: '🟢', label: 'COMPRAR', color: '#10b981', tooltip: `Suelo EXTREME (${bottom.opportunityScore}/100) — DCA ×${bottom.attackMultiplier}` };
+    }
+    if (bottom?.zone === 'OPPORTUNITY') {
+      return { emoji: '🟢', label: 'COMPRAR', color: '#10b981', tooltip: `Oportunidad (${bottom.opportunityScore}/100) — DCA ×${bottom.attackMultiplier}` };
+    }
+    if (bottom?.zone === 'VALUE') {
+      return { emoji: '🟡', label: 'POCO', color: '#f59e0b', tooltip: `Valor (${bottom.opportunityScore}/100) — DCA ×${bottom.attackMultiplier}` };
+    }
+    // Priority 2: Top DANGER/EXTREME → block purchases
+    if (top?.zone === 'DANGER' || top?.zone === 'EXTREME') {
+      return { emoji: '🛑', label: 'ESPERAR', color: '#ef4444', tooltip: `Techo ${top.zone} — no comprar (trim ${top.trimPct}%)` };
+    }
+    // Priority 3: Top CAUTION → gray zone, buy little
+    if (top?.zone === 'CAUTION') {
+      return { emoji: '🐢', label: 'POCO', color: '#f59e0b', tooltip: `Techo CAUTION — comprar poco (trim ${top.trimPct}%)` };
+    }
+    // Priority 4: Neither → gray zone
+    return { emoji: '🐢', label: 'POCO', color: '#6b7280', tooltip: 'Zona gris — ni caro ni barato. Comprar con moderación.' };
   };
 
   const totalGainLoss = portfolio.assets.reduce(
@@ -4192,7 +4223,7 @@ soxRsiWeekly,
               <tr>
                 <th>Activo</th><th>Precio (€)</th><th>Particip.</th><th>Valor (€)</th><th>Precio compra</th>
                 <th>Earnings Yield %</th><th>Ret 12m %</th><th>Ret 3m %</th><th>Ret 1m %</th>
-                <th>Ganancia/pérdida</th><th>Peso obj.</th><th>Peso act.</th><th>Ataque</th>
+                <th>Ganancia/pérdida</th><th>Peso obj.</th><th>Peso act.</th><th>Señal</th>
               </tr>
             </thead>
             <tbody>
@@ -4201,8 +4232,7 @@ soxRsiWeekly,
                 const pesoActual = (valor / totalPortfolioValue) * 100;
                 const ganancia = (asset.price - asset.avgPrice) * asset.shares;
                 const gananciaPorcentaje = ((asset.price - asset.avgPrice) / asset.avgPrice) * 100;
-                const attack = isAttackMode(asset);
-                const attackReason = attack ? getAttackReason(asset) : "";
+                const buySignal = getAssetBuySignal(asset.ticker, cycleTopResult ?? undefined, cycleBottomResult ?? undefined);
                 const valorCompra = asset.avgPrice * asset.shares;
                 return (
                   <tr key={asset.ticker}>
@@ -4254,7 +4284,7 @@ soxRsiWeekly,
                       }%
                     </td>
                     <td>{pesoActual.toFixed(1)}%</td>
-                    <td title={attackReason}>{attack ? "⚔️" : ""}</td>
+                    <td title={buySignal.tooltip}><span style={{ fontSize: '0.78rem', fontWeight: 600, color: buySignal.color }}>{buySignal.emoji} {buySignal.label}</span></td>
                   </tr>
                 );
               })}
