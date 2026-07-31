@@ -119,6 +119,18 @@ export const DEFAULT_DCC_PARAMS: DCCParams = {
 const STORAGE_KEY = 'olympus_dcc_garch_v1';
 const ANNUALIZATION = 252;  // días de trading por año
 
+// FIX-DENO-STORAGE (Jul-2026): localStorage no existe en Deno/Edge Functions.
+//   Fallback Map en memoria para que DCC-GARCH funcione en cualquier runtime.
+const _dccMemory = new Map<string, string>();
+function _storageGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch {}
+  return _dccMemory.get(key) ?? null;
+}
+function _storageSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); return; } catch {}
+  _dccMemory.set(key, value);
+}
+
 // ── GARCH(1,1) ────────────────────────────────────────────────────────────────
 
 /**
@@ -420,13 +432,13 @@ export function runDCCGARCH(
 
 export function saveDCCState(garchStates: GARCHState[], dccState: DCCState): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ garchStates, dccState }));
+    _storageSet(STORAGE_KEY, JSON.stringify({ garchStates, dccState }));
   } catch { /* silencio */ }
 }
 
 export function loadDCCState(): { garchStates: GARCHState[] | null; dccState: DCCState | null } {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = _storageGet(STORAGE_KEY);
     if (!raw) return { garchStates: null, dccState: null };
     return JSON.parse(raw);
   } catch { return { garchStates: null, dccState: null }; }

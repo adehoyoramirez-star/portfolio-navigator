@@ -125,6 +125,18 @@ const STORAGE_KEY = 'olympus_hmm_params_v1';
 const N_STATES = 3;
 const LOG_EPSILON = -1e10; // log(0) safe value
 
+// FIX-DENO-STORAGE (Jul-2026): localStorage no existe en Deno/Edge Functions.
+//   Fallback Map en memoria para que el HMM funcione en cualquier runtime.
+const _hmmMemory = new Map<string, string>();
+function _storageGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch {}
+  return _hmmMemory.get(key) ?? null;
+}
+function _storageSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); return; } catch {}
+  _hmmMemory.set(key, value);
+}
+
 // ── UTILIDADES MATEMÁTICAS ────────────────────────────────────────────────────
 
 function logGaussianDensity(
@@ -341,7 +353,7 @@ function baumWelchOnlineStep(
 
 export function loadHMMParams(): HMMParameters {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = _storageGet(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_HMM_PARAMS };
     const saved = JSON.parse(raw) as HMMParameters;
     // Validar que la estructura sea correcta
@@ -359,7 +371,7 @@ export function loadHMMParams(): HMMParameters {
 
 export function saveHMMParams(params: HMMParameters): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+    _storageSet(STORAGE_KEY, JSON.stringify(params));
   } catch {
     // silencio — localStorage puede estar lleno
   }

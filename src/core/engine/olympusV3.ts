@@ -228,7 +228,7 @@ export interface EngineOutput {
     consecutiveErrors: number;
     recommendation: string;
   };
-  killSwitchLevel: 0 | 1 | 2 | 3 | 4 | 5;
+  killSwitchLevel: 0 | 1 | 1.5 | 2 | 3 | 4 | 5;
   killSwitchName: string;
 }
 

@@ -40,7 +40,7 @@ export interface TailRiskOutput {
   overlay: number;
   isActive: boolean;
   triggerReason: string;
-  killSwitchLevel: 0 | 1 | 2 | 3 | 4 | 5;
+  killSwitchLevel: 0 | 1 | 1.5 | 2 | 3 | 4 | 5;
   killSwitchName: string;
   exposureReduction: number;
   drawdownOverlay: number;
@@ -51,7 +51,7 @@ export interface TailRiskOutput {
 
 // ── KILL SWITCH GRANULAR — FIX-SCALE-01 ──────────────────────────────────
 function computeKillSwitch(drawdown: number): {
-  level: 0 | 1 | 2 | 3 | 4 | 5;
+  level: 0 | 1 | 1.5 | 2 | 3 | 4 | 5;
   name: string;
   overlay: number;
   exposureReduction: number;
@@ -72,16 +72,15 @@ function computeKillSwitch(drawdown: number): {
   if (dd >= ks.L2.threshold) {
     return { level: 2, name: ks.L2.name, overlay: ks.L2.overlay, exposureReduction: ks.L2.reduction };
   }
-  // FIX A2: banda intermedia L1.5 entre L1 y L2.
-  // FIX-H1 (Jul-2026): L1_5 ahora tiene su propio level=1 (no usurpa level=2).
-  //   Esto permite que getKillSwitchDcaScale(1) devuelva 0.70 para L1_5,
-  //   distinguiéndolo del verdadero L2 (0.50). Sin este fix, L1_5 y L2
-  //   compartían level=2 con overlays distintos (0.65 vs 0.50).
-  // FIX-H20 (Jul-2026): eliminado as any. Acceso tipado via genérico del tipo.
-  // FIX-H20 (Jul-2026): acceso tipado directo — L1_5 esta en el tipo KILL_SWITCH.
+  // FIX A2 + FIX-H1 (Jul-2026): banda intermedia L1.5 entre L1 y L2.
+  //   L1_5 devuelve level=1.5 (no usurpa level=1 de L1 ni level=2 de L2).
+  //   Esto permite que getKillSwitchDcaScale distinga los 3 niveles:
+  //     L1 (DD 10%):   overlay 0.75, DCA scale max(0.75, 0.25)=0.75
+  //     L1_5 (DD 13.5%): overlay 0.65, DCA scale max(0.65, 0.25)=0.65
+  //     L2 (DD 15%):   overlay 0.50, DCA scale max(0.50, 0.25)=0.50
   if (dd >= ks.L1_5.threshold) {
     const l15 = ks.L1_5;
-    return { level: 1, name: l15.name, overlay: l15.overlay, exposureReduction: l15.reduction };
+    return { level: 1.5, name: l15.name, overlay: l15.overlay, exposureReduction: l15.reduction };
   }
   if (dd >= ks.L1.threshold) {
     return { level: 1, name: ks.L1.name, overlay: ks.L1.overlay, exposureReduction: ks.L1.reduction };

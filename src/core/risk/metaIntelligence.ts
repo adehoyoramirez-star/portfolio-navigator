@@ -87,9 +87,25 @@ export interface MetaIntelligenceOutput {
 const STORAGE_KEY = 'olympus_meta_intelligence_v1';
 const MAX_HISTORY = 90;  // días máximo de historial
 
+// FIX-DENO-STORAGE (Jul-2026): localStorage no existe en Deno/Edge Functions.
+//   Fallback Map en memoria para que la meta-inteligencia funcione en cualquier runtime.
+const _metaMemory = new Map<string, string>();
+function _storageGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch {}
+  return _metaMemory.get(key) ?? null;
+}
+function _storageSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); return; } catch {}
+  _metaMemory.set(key, value);
+}
+function _storageRemove(key: string): void {
+  try { localStorage.removeItem(key); return; } catch {}
+  _metaMemory.delete(key);
+}
+
 export function loadPredictionHistory(): PredictionRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = _storageGet(STORAGE_KEY);
     if (!raw) return [];
     const records: PredictionRecord[] = JSON.parse(raw);
     // Mantener solo los últimos MAX_HISTORY días
@@ -109,13 +125,13 @@ export function savePredictionRecord(record: Omit<PredictionRecord, 'timestamp'>
   };
   const updated = [...history, newRecord].slice(-MAX_HISTORY);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    _storageSet(STORAGE_KEY, JSON.stringify(updated));
   } catch { /* noop */ }
   return updated;
 }
 
 export function clearPredictionHistory(): void {
-  try { localStorage.removeItem(STORAGE_KEY); } catch { /* noop */ }
+  try { _storageRemove(STORAGE_KEY); } catch { /* noop */ }
 }
 
 // ── EVALUACIÓN DE ACIERTO ─────────────────────────────────────────────────

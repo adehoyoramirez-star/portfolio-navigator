@@ -348,6 +348,22 @@ function emptyCEWS(): CEWSOutput {
 const CEWS_STORAGE_KEY = "olympus_cews_history_v1";
 const CEWS_SUPABASE_TABLE = "cews_history";
 
+// FIX-DENO-STORAGE (Jul-2026): localStorage no existe en Deno/Edge Functions.
+//   Fallback Map en memoria para que el CEWS funcione en cualquier runtime.
+const _cewsMemory = new Map<string, string>();
+function _storageGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch {}
+  return _cewsMemory.get(key) ?? null;
+}
+function _storageSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); return; } catch {}
+  _cewsMemory.set(key, value);
+}
+function _storageRemove(key: string): void {
+  try { localStorage.removeItem(key); return; } catch {}
+  _cewsMemory.delete(key);
+}
+
 // Tipo para la configuración de persistencia
 export interface CEWSPersistenceConfig {
   useLocalStorage: boolean;
@@ -358,7 +374,7 @@ export interface CEWSPersistenceConfig {
 // ── LocalStorage (fallback, siempre disponible) ───────────────────────────
 export function loadCEWSHistory(): CEWSDataPoint[] {
   try {
-    const raw = localStorage.getItem(CEWS_STORAGE_KEY);
+    const raw = _storageGet(CEWS_STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -379,7 +395,7 @@ export function saveCEWSDataPoint(point: Omit<CEWSDataPoint, "timestamp">): CEWS
   // Mantener máximo 24 semanas de historial (168 días aprox)
   const updated = [...filtered, newPoint].slice(-168);
   try {
-    localStorage.setItem(CEWS_STORAGE_KEY, JSON.stringify(updated));
+    _storageSet(CEWS_STORAGE_KEY, JSON.stringify(updated));
   } catch {
     // localStorage lleno — no bloquear
   }
@@ -387,7 +403,7 @@ export function saveCEWSDataPoint(point: Omit<CEWSDataPoint, "timestamp">): CEWS
 }
 
 export function clearCEWSHistory(): void {
-  try { localStorage.removeItem(CEWS_STORAGE_KEY); } catch { /* noop */ }
+  try { _storageRemove(CEWS_STORAGE_KEY); } catch { /* noop */ }
 }
 
 // ── Supabase Persistence (REMOVED) ───────────────────────────────
