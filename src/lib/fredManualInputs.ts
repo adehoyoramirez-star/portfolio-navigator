@@ -71,6 +71,10 @@ export function saveFredManual(data: Partial<FredManualData> & { updatedBy?: str
     cape: data.cape ?? current.cape,
     creditSpread: data.creditSpread ?? current.creditSpread,
     inflationBreakeven5y: data.inflationBreakeven5y ?? current.inflationBreakeven5y,
+    // LIQ-AUTO (Ago-2026): propagar WALCL + ECBASSETSW al persistir
+    fedBalanceSheet: data.fedBalanceSheet ?? current.fedBalanceSheet,
+    ecbBalanceSheet: data.ecbBalanceSheet ?? current.ecbBalanceSheet,
+    cbLiquidityGrowth: data.cbLiquidityGrowth ?? current.cbLiquidityGrowth,
     lastUpdated: new Date().toISOString(),
     updatedBy: data.updatedBy,
     // Si el usuario guarda manualmente, activamos el override
