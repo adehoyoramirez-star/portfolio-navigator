@@ -12,11 +12,15 @@ interface FredManualPanelProps {
 }
 
 const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
-  const [m2, setM2] = useState(() => loadFredManual().m2GrowthYoY);
-  const [cape, setCAPE] = useState(() => loadFredManual().cape);
-  const [credit, setCredit] = useState(() => loadFredManual().creditSpread);
-  const [be, setBE] = useState(() => loadFredManual().inflationBreakeven5y);
-  const [lastUpdated, setLastUpdated] = useState(() => loadFredManual().lastUpdated);
+  const initial = loadFredManual();
+  const [m2, setM2] = useState(initial.m2GrowthYoY);
+  const [cape, setCAPE] = useState(initial.cape);
+  const [credit, setCredit] = useState(initial.creditSpread);
+  const [be, setBE] = useState(initial.inflationBreakeven5y);
+  // LIQ-AUTO (Ago-2026): WALCL + ECBASSETSW para Liquidez Global automática
+  const [fedBS, setFedBS] = useState<number | undefined>(initial.fedBalanceSheet);
+  const [ecbBS, setEcbBS] = useState<number | undefined>(initial.ecbBalanceSheet);
+  const [lastUpdated, setLastUpdated] = useState(initial.lastUpdated);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   const fresh = isFredDataFresh(7);
@@ -25,7 +29,10 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
   const serverAvailable = hasServerOverride();
 
   const handleSave = () => {
-    const updated = saveFredManual({ m2GrowthYoY: m2, cape, creditSpread: credit, inflationBreakeven5y: be });
+    const updated = saveFredManual({
+      m2GrowthYoY: m2, cape, creditSpread: credit, inflationBreakeven5y: be,
+      fedBalanceSheet: fedBS, ecbBalanceSheet: ecbBS,
+    });
     setLastUpdated(updated.lastUpdated);
     setSaveMsg("Guardado - refrescando...");
     if (onSaved) onSaved();
@@ -38,6 +45,8 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
     setCAPE(defaults.cape);
     setCredit(defaults.creditSpread);
     setBE(defaults.inflationBreakeven5y);
+    setFedBS(undefined);
+    setEcbBS(undefined);
     saveFredManual(defaults);
     setLastUpdated(new Date().toISOString());
     setSaveMsg("Restaurado a defaults");
@@ -51,6 +60,8 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
       setCAPE(synced.cape);
       setCredit(synced.creditSpread);
       setBE(synced.inflationBreakeven5y);
+      setFedBS(synced.fedBalanceSheet);
+      setEcbBS(synced.ecbBalanceSheet);
       setLastUpdated(synced.lastUpdated);
       setSaveMsg("Sync a servidor — override desactivado");
       if (onSaved) onSaved();
@@ -99,8 +110,12 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
         <div><label style={lbl}>Credit Spread HY% <span style={{fontSize:"0.6rem",color:"#64748b"}}>BAMLH0A0HYM2</span></label><input type="number" value={credit} onChange={e => setCredit(Number(e.target.value))} style={inp} step="0.1" /></div>
         <div><label style={lbl}>Breakeven 5y% <span style={{fontSize:"0.6rem",color:"#64748b"}}>T5YIFR</span></label><input type="number" value={be} onChange={e => setBE(Number(e.target.value))} style={inp} step="0.01" /></div>
       </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.75rem", marginTop: "0.75rem" }}>
+        <div><label style={lbl}>Fed Balance Sheet (bill. $) <span style={{fontSize:"0.6rem",color:"#64748b"}}>WALCL</span></label><input type="number" value={fedBS ?? ''} onChange={e => { const v = e.target.value; setFedBS(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 6.80" /></div>
+        <div><label style={lbl}>ECB Balance Sheet (bill. €) <span style={{fontSize:"0.6rem",color:"#64748b"}}>ECBASSETSW</span></label><input type="number" value={ecbBS ?? ''} onChange={e => { const v = e.target.value; setEcbBS(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 4.00" /></div>
+      </div>
       <div style={{ marginTop: "8px", fontSize: "0.62rem", color: "#4b5563", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span>Fuentes: M2SL · Shiller CAPE · BAMLH0A0HYM2 · T5YIFR · Actualizado: {new Date(lastUpdated).toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
+        <span>Fuentes: M2SL · Shiller CAPE · BAMLH0A0HYM2 · T5YIFR · WALCL · ECBASSETSW · Actualizado: {new Date(lastUpdated).toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
         <span style={{ color: isOverride ? "#fbbf24" : "#10b981", fontWeight: 600 }}>
           {isOverride ? "Usando: MANUAL (override)" : "Usando: FRED Server"}
         </span>

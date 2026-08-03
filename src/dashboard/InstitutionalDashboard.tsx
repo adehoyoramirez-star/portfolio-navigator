@@ -368,6 +368,10 @@ const formatCurrency = (value: number): string => {
       if (md.dxy > 0) setDxy(parseFloat(md.dxy.toFixed(2)));
       if (md.wtiOil > 0) setWtiOil(parseFloat(md.wtiOil.toFixed(2)));
       if (md.moveIndex && md.moveIndex > 0) setMoveIndex(parseFloat(md.moveIndex.toFixed(1)));
+      // LIQ-AUTO (Ago-2026): sincronizar Liquidez Global desde WALCL+ECBASSETSW auto-computado
+      if (md.cbLiquidityGrowth !== undefined && md.cbLiquiditySource === "FRED") {
+        setLiquidityGrowth(parseFloat(md.cbLiquidityGrowth.toFixed(2)));
+      }
       if (md.m2Growth !== undefined && md.m2Growth !== null) setM2Growth(parseFloat(md.m2Growth.toFixed(2))); // FIX-FRED-SYNC: always sync from FRED panel
       // FIX-PER-MANUAL: PER S&P 500 ahora es 100% manual (P/E Ratio TTM, no Shiller CAPE).
       // El CAPE de FRED usa beneficios promedio 10 años → sobrestima el PER → subestima el ERP.
@@ -2442,8 +2446,8 @@ soxRsiWeekly,
           <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.0001" min="-1" max="1" />
         </div>
         <div>
-          <label style={styles.label}>Liquidez Global % <span style={{ fontSize: "0.65rem", color: "#f59e0b", fontWeight: "normal" }}>● manual (Fed+ECB)</span></label>
-          <input type="number" value={liquidityGrowth} onChange={(e) => setLiquidityGrowth(Number(e.target.value))} style={styles.smallInput} step="0.1" />
+          <label style={styles.label}>Liquidez Global % <span style={{ fontSize: "0.65rem", color: marketData?.cbLiquiditySource === "FRED" ? "#10b981" : "#f59e0b", fontWeight: "normal" }}>{marketData?.cbLiquiditySource === "FRED" ? "● auto (WALCL+ECBASSETSW)" : "● manual (Fed+ECB)"}</span></label>
+          <input type="number" value={liquidityGrowth} onChange={(e) => setLiquidityGrowth(Number(e.target.value))} style={{...styles.smallInput, borderColor: marketData?.cbLiquiditySource === "FRED" ? "#10b981" : undefined}} step="0.1" />
         </div>
         <div>
           <label style={styles.label}>DXY (Dólar){" "}
@@ -2783,9 +2787,9 @@ soxRsiWeekly,
         <div>
           <h4>Liquidez Global</h4>
           <p>Régimen: <strong>{liquidityOutput.regime}</strong></p>
-          <p>Crec: {liquidityGrowth}%</p>
+          <p>Crec: {liquidityGrowth.toFixed(1)}%{marketData?.cbLiquiditySource === "FRED" && marketData.cbLiquidityGrowth !== undefined ? <span style={{fontSize:"0.65rem",color:"#10b981",marginLeft:"4px"}}>(Fed+ECB auto)</span> : null}</p>
           <p>DXY Trend: {(liquidityOutput.dxyTrend * 100).toFixed(1)}%</p>
-          <p style={{ fontSize: "0.75rem", color: "#f59e0b" }}>Fuente: manual + DXY Yahoo</p>
+          <p style={{ fontSize: "0.75rem", color: marketData?.cbLiquiditySource === "FRED" ? "#10b981" : "#f59e0b" }}>Fuente: {marketData?.cbLiquiditySource === "FRED" ? "WALCL+ECBASSETSW auto" : "manual + DXY Yahoo"}</p>
         </div>
         <div>
           <h4>Régimen Global</h4>
