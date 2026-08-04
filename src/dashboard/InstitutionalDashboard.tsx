@@ -163,6 +163,12 @@ const InstitutionalDashboard: React.FC = () => {
   const [momentum, setMomentum] = useState(0.2);
 
   const [liquidityGrowth, setLiquidityGrowth] = useState(3.2);
+  // LIQ-OVERRIDE (Ago-2026): toggle AUTO/MANUAL para Liquidez Global.
+  // Cuando el usuario edita el campo manualmente, se activa el override
+  // y el auto-sync de WALCL+ECBASSETSW no pisa el valor.
+  const [liquidityOverride, setLiquidityOverride] = useState(() => {
+    try { return localStorage.getItem('olympus_liquidity_override') === 'true'; } catch { return false; }
+  });
   const [dxy, setDxy] = useState(99.7);
   const [moveIndex, setMoveIndex] = useState(120);
   const [wtiOil, setWtiOil] = useState<number>(98);
@@ -368,8 +374,9 @@ const formatCurrency = (value: number): string => {
       if (md.dxy > 0) setDxy(parseFloat(md.dxy.toFixed(2)));
       if (md.wtiOil > 0) setWtiOil(parseFloat(md.wtiOil.toFixed(2)));
       if (md.moveIndex && md.moveIndex > 0) setMoveIndex(parseFloat(md.moveIndex.toFixed(1)));
-      // LIQ-AUTO (Ago-2026): sincronizar Liquidez Global desde WALCL+ECBASSETSW auto-computado
-      if (md.cbLiquidityGrowth !== undefined && md.cbLiquiditySource === "FRED") {
+      // LIQ-AUTO (Ago-2026): sincronizar Liquidez Global desde WALCL+ECBASSETSW auto-computado.
+      // Respeta el toggle manual: si el usuario activó override, no pisar su valor.
+      if (!liquidityOverride && md.cbLiquidityGrowth !== undefined && md.cbLiquiditySource === "FRED") {
         setLiquidityGrowth(parseFloat(md.cbLiquidityGrowth.toFixed(2)));
       }
       if (md.m2Growth !== undefined && md.m2Growth !== null) setM2Growth(parseFloat(md.m2Growth.toFixed(2))); // FIX-FRED-SYNC: always sync from FRED panel
@@ -941,7 +948,7 @@ soxRsiWeekly,
   // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
   // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
   // FIX-AUDIT-TRANSVERSAL-R3: regimeHistory añadido a deps para regimeDuration.
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult, regimeHistory]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, liquidityGrowth, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult, regimeHistory]);
 
   // TACTICAL-DAILY (Jul 2026): sync regime to state so cycleBottomResult reacts.
   // currentRegime is used by the tactical daily layer in applyTacticalDaily().
@@ -2446,8 +2453,13 @@ soxRsiWeekly,
           <input type="number" value={momentum} onChange={(e) => setMomentum(Number(e.target.value))} style={styles.smallInput} step="0.0001" min="-1" max="1" />
         </div>
         <div>
-          <label style={styles.label}>Liquidez Global % <span style={{ fontSize: "0.65rem", color: marketData?.cbLiquiditySource === "FRED" ? "#10b981" : "#f59e0b", fontWeight: "normal" }}>{marketData?.cbLiquiditySource === "FRED" ? "● auto (WALCL+ECBASSETSW)" : "● manual (Fed+ECB)"}</span></label>
-          <input type="number" value={liquidityGrowth} onChange={(e) => setLiquidityGrowth(Number(e.target.value))} style={{...styles.smallInput, borderColor: marketData?.cbLiquiditySource === "FRED" ? "#10b981" : undefined}} step="0.1" />
+          <label style={styles.label}>Liquidez Global % <span style={{ fontSize: "0.65rem", color: liquidityOverride ? "#f59e0b" : (marketData?.cbLiquiditySource === "FRED" ? "#10b981" : "#f59e0b"), fontWeight: "normal" }}>{liquidityOverride ? "● manual (override)" : (marketData?.cbLiquiditySource === "FRED" ? "● auto (WALCL+ECBASSETSW)" : "● manual (Fed+ECB)")}</span></label>
+          <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+            <input type="number" value={liquidityGrowth} onChange={(e) => { setLiquidityGrowth(Number(e.target.value)); if (!liquidityOverride) { setLiquidityOverride(true); localStorage.setItem('olympus_liquidity_override', 'true'); } }} style={{...styles.smallInput, borderColor: liquidityOverride ? "#f59e0b" : (marketData?.cbLiquiditySource === "FRED" ? "#10b981" : undefined), flex: 1}} step="0.1" />
+            {liquidityOverride && (
+              <button onClick={() => { setLiquidityOverride(false); localStorage.removeItem('olympus_liquidity_override'); if (marketData?.cbLiquidityGrowth !== undefined) { setLiquidityGrowth(parseFloat(marketData.cbLiquidityGrowth.toFixed(2))); } }} title="Volver a modo AUTO — usar WALCL+ECBASSETSW" style={{ background: "none", border: "1px solid #10b981", color: "#10b981", borderRadius: 4, padding: "2px 6px", cursor: "pointer", fontSize: "0.7rem", whiteSpace: "nowrap" }}>AUTO</button>
+            )}
+          </div>
         </div>
         <div>
           <label style={styles.label}>DXY (Dólar){" "}
