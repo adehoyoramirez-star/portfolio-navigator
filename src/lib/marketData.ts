@@ -533,36 +533,70 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   // M2 real de FRED (server o localStorage)
   const m2Growth = fredManual.m2GrowthYoY;
 
-  // Global CB Liquidity Growth YoY% — Fed (WALCL) + BCE (ECBASSETSW)
-  //   Computado comparando valores actuales vs previos almacenados en localStorage.
-  //   Si no hay datos previos, cbLiquidityGrowth queda undefined (el engine lo salta).
+  // Global CB Liquidity Growth — Fed (WALCL) + BCE (ECBASSETSW)
+  //   ESTÁNDAR INSTITUCIONAL (Ago-2026): horizonte trimestral (13 semanas).
+  //   Se guarda un historial de snapshots fechados. Al computar el crecimiento,
+  //   se busca el snapshot más cercano a 91 días atrás (±14 días de tolerancia).
+  //   Si no hay suficiente historial, se usa el dato más antiguo disponible.
+  //   Transición natural: WoW → QoQ a medida que se acumulan datos.
+  const LIQ_HISTORY_KEY = 'olympus_cb_liquidity_history';
+  const LIQ_TARGET_DAYS = 91;   // 13 semanas = horizonte trimestral estándar
+  const LIQ_TOLERANCE_DAYS = 14; // ±2 semanas de margen para el match
   let cbLiquidityGrowth: number | undefined = fredManual.cbLiquidityGrowth;
   let cbLiquiditySource: "FRED" | "MANUAL" = "MANUAL";
   if (cbLiquidityGrowth === undefined) {
-    // Intentar computar desde fedBalanceSheet + ecbBalanceSheet con prev-persist
     const fedNow = fredManual.fedBalanceSheet;
     const ecbNow = fredManual.ecbBalanceSheet;
     if (fedNow !== undefined && ecbNow !== undefined) {
-      const PREV_KEY = 'olympus_cb_liquidity_prev';
       try {
-        const prevRaw = localStorage.getItem(PREV_KEY);
-        if (prevRaw) {
-          const prev = JSON.parse(prevRaw);
-          if (typeof prev.fed === 'number' && typeof prev.ecb === 'number' && prev.fed > 0 && prev.ecb > 0) {
-    // ECB balance sheet está en billions EUR → convertir a USD (~1.08, aproximado).
-            // TODO: usar EUR/USD real del dashboard en vez de hardcodeado.
-            const ecbUsd = ecbNow * 1.08;
-            const ecbPrevUsd = prev.ecb * 1.08;
-            const totalNow = fedNow + ecbUsd;
-            const totalPrev = prev.fed + ecbPrevUsd;
-            if (totalPrev > 0) {
-              cbLiquidityGrowth = ((totalNow - totalPrev) / totalPrev) * 100;
-              cbLiquiditySource = "FRED";
-            }
+        // Limpiar key antigua (v1 single-value) si existe
+        try { localStorage.removeItem('olympus_cb_liquidity_prev'); } catch {}
+        // ── Cargar historial de snapshots ──
+        const raw = localStorage.getItem(LIQ_HISTORY_KEY);
+        const history: { fed: number; ecb: number; ts: number }[] = raw
+          ? JSON.parse(raw)
+          : [];
+
+        // ── Buscar snapshot más cercano a 13 semanas atrás ──
+        const targetTs = Date.now() - LIQ_TARGET_DAYS * 24 * 60 * 60 * 1000;
+        let bestEntry: { fed: number; ecb: number; ts: number } | null = null;
+        let bestDelta = Infinity;
+        for (const entry of history) {
+          const delta = Math.abs(entry.ts - targetTs);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestEntry = entry;
           }
         }
-        // Guardar actual para la próxima comparación
-        localStorage.setItem(PREV_KEY, JSON.stringify({ fed: fedNow, ecb: ecbNow, ts: Date.now() }));
+
+        // ── Calcular crecimiento si hay entrada válida (dentro de tolerancia o fallback al más antiguo) ──
+        const withinTolerance = bestEntry !== null && bestDelta <= LIQ_TOLERANCE_DAYS * 24 * 60 * 60 * 1000;
+        const useEntry = withinTolerance
+          ? bestEntry
+          : (history.length > 0 ? history[0] : null); // fallback: entrada más antigua
+
+        if (useEntry) {
+          const ecbUsd = ecbNow * 1.08;
+          const ecbPrevUsd = useEntry.ecb * 1.08;
+          const totalNow = fedNow + ecbUsd;
+          const totalPrev = useEntry.fed + ecbPrevUsd;
+          if (totalPrev > 0) {
+            cbLiquidityGrowth = ((totalNow - totalPrev) / totalPrev) * 100;
+            cbLiquiditySource = "FRED";
+          }
+        }
+
+        // ── Añadir snapshot actual al historial (solo si cambió vs el último) ──
+        const lastEntry = history.length > 0 ? history[history.length - 1] : null;
+        const isDuplicate = lastEntry !== null
+          && lastEntry.fed === fedNow
+          && lastEntry.ecb === ecbNow;
+        if (!isDuplicate) {
+          history.push({ fed: fedNow, ecb: ecbNow, ts: Date.now() });
+          // Mantener solo últimos 26 snapshots (~6 meses)
+          if (history.length > 26) history.splice(0, history.length - 26);
+          localStorage.setItem(LIQ_HISTORY_KEY, JSON.stringify(history));
+        }
       } catch { /* localStorage no disponible */ }
     }
   } else {
