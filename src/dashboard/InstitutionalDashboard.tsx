@@ -691,15 +691,21 @@ const formatCurrency = (value: number): string => {
         : asset.volatility / 100;
       // Derivar earnings yield del P/E manual si está disponible
       let ey = asset.earningsYield ?? 0;
+      let eySource = 'fallback';
       if (asset.ticker === '0P00000WLG.F' && wlgPERatio !== undefined && wlgPERatio > 0) {
         ey = 1 / wlgPERatio;
+        eySource = `1/${wlgPERatio}=${(ey*100).toFixed(2)}%`;
       } else if (asset.ticker === 'EMXC.DE' && emxcPERatio !== undefined && emxcPERatio > 0) {
         ey = 1 / emxcPERatio;
+        eySource = `1/${emxcPERatio}=${(ey*100).toFixed(2)}%`;
       } else if (asset.ticker === 'URNU.DE' && urnuPERatio !== undefined && urnuPERatio > 0) {
         ey = 1 / urnuPERatio;
+        eySource = `1/${urnuPERatio}=${(ey*100).toFixed(2)}%`;
       } else if (asset.ticker === 'VVSM.DE' && vvsmPERatio !== undefined && vvsmPERatio > 0) {
         ey = 1 / vvsmPERatio;
+        eySource = `1/${vvsmPERatio}=${(ey*100).toFixed(2)}%`;
       }
+      console.log(`[EY-DERIVE] ${asset.ticker}: ey=${(ey*100).toFixed(2)}% (source: ${eySource})`);
       return {
         name: asset.name,
         ticker: asset.ticker,
