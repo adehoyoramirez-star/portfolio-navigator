@@ -77,6 +77,8 @@ export interface PersistedMacro {
   wlgEpsGrowth?: number;
   emxcRsiWeekly?: number;
   emxcPERatio?: number;
+  urnuPERatio?: number;
+  vvsmPERatio?: number;
   savedAt: string;
 }
 

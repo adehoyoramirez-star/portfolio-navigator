@@ -322,6 +322,8 @@ const formatCurrency = (value: number): string => {
   const [wlgEpsGrowth, setWlgEpsGrowth] = useState<number | undefined>(undefined);
   const [emxcRsiWeekly, setEmxcRsiWeekly] = useState<number | undefined>(undefined);
   const [emxcPERatio, setEmxcPERatio] = useState<number | undefined>(undefined);
+  const [urnuPERatio, setUrnuPERatio] = useState<number | undefined>(undefined);
+  const [vvsmPERatio, setVvsmPERatio] = useState<number | undefined>(undefined);
 
   const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
@@ -617,6 +619,8 @@ const formatCurrency = (value: number): string => {
       if (savedMacro.wlgEpsGrowth !== undefined) setWlgEpsGrowth(savedMacro.wlgEpsGrowth);
       if (savedMacro.emxcRsiWeekly !== undefined) setEmxcRsiWeekly(savedMacro.emxcRsiWeekly);
       if (savedMacro.emxcPERatio !== undefined) setEmxcPERatio(savedMacro.emxcPERatio);
+      if (savedMacro.urnuPERatio !== undefined) setUrnuPERatio(savedMacro.urnuPERatio);
+      if (savedMacro.vvsmPERatio !== undefined) setVvsmPERatio(savedMacro.vvsmPERatio);
     }
     refreshMarketData();
   }, []);
@@ -654,9 +658,10 @@ const formatCurrency = (value: number): string => {
         type: p.label,
       })),        wlgRsiWeekly, wlgPERatio, wlgEpsGrowth,
         emxcRsiWeekly, emxcPERatio,
+        urnuPERatio, vvsmPERatio,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -690,6 +695,10 @@ const formatCurrency = (value: number): string => {
         ey = 1 / wlgPERatio;
       } else if (asset.ticker === 'EMXC.DE' && emxcPERatio !== undefined && emxcPERatio > 0) {
         ey = 1 / emxcPERatio;
+      } else if (asset.ticker === 'URNU.DE' && urnuPERatio !== undefined && urnuPERatio > 0) {
+        ey = 1 / urnuPERatio;
+      } else if (asset.ticker === 'VVSM.DE' && vvsmPERatio !== undefined && vvsmPERatio > 0) {
+        ey = 1 / vvsmPERatio;
       }
       return {
         name: asset.name,
@@ -702,7 +711,7 @@ const formatCurrency = (value: number): string => {
         sector: asset.sector,
       };
     });
-  }, [portfolio.assets, manualVols, wlgPERatio, emxcPERatio]);
+  }, [portfolio.assets, manualVols, wlgPERatio, emxcPERatio, urnuPERatio, vvsmPERatio]);
 
   const yieldSpread = manualBond10y - bond2y;
 
@@ -2630,6 +2639,14 @@ soxRsiWeekly,
               <label style={styles.label}>EMXC P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · P/E — solo para suelos</span></label>
               <input type="number" placeholder="—" value={emxcPERatio ?? ""} onChange={e => setEmxcPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
             </div>
+            <div>
+              <label style={styles.label}>URNU P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URA · P/E (TTM)</span></label>
+              <input type="number" placeholder="—" value={urnuPERatio ?? ""} onChange={e => setUrnuPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
+            </div>
+            <div>
+              <label style={styles.label}>VVSM P/E Ratio {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: SMH · P/E (TTM)</span></label>
+              <input type="number" placeholder="—" value={vvsmPERatio ?? ""} onChange={e => setVvsmPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
+            </div>
           </div>
         </div>
 
@@ -4315,15 +4332,7 @@ soxRsiWeekly,
                     <td>{formatCurrency(valor)}</td>
                     <td><input id={`avgPrice-${asset.ticker}`} name={`avgPrice-${asset.ticker}`} type="number" value={asset.avgPrice} onChange={(e) => updateAsset(asset.ticker, "avgPrice", Number(e.target.value))} style={styles.smallInput} step="0.01" aria-label={`Precio de compra de ${asset.name}`} /></td>
                     <td>
-                      {asset.ticker === 'URNU.DE' || asset.ticker === 'VVSM.DE' ? (
-                        <input id={`earnings-${asset.ticker}`} name={`earnings-${asset.ticker}`} type="number"
-                          value={asset.earningsYield ?? 0}
-                          onChange={(e) => updateAsset(asset.ticker, "earningsYield", Number(e.target.value))}
-                          style={styles.smallInput} step="0.01" min="0" max="0.5"
-                          aria-label={`Earnings Yield de ${asset.name}`} />
-                      ) : (
-                        <span style={{ color: "#4b5563", fontSize: "0.7rem" }}>—</span>
-                      )}
+                      <span style={{ color: "#4b5563", fontSize: "0.7rem" }}>—</span>
                     </td>
                     <td>
                       <input id={`return12m-${asset.ticker}`} name={`return12m-${asset.ticker}`} type="number"
