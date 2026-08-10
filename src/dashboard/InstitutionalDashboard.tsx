@@ -283,6 +283,10 @@ const formatCurrency = (value: number): string => {
   // Ahora: defensiveLiquidity es el único colchón de oportunidad, gestionado 100% manual.
   // transferAmount: importe que el usuario quiere mover de cashReserve → defensiveLiquidity
   const [transferAmount, setTransferAmount] = useState<number>(0);
+  // depositAmount: nuevo efectivo externo que entra al sistema (aumenta NAV total)
+  const [depositAmount, setDepositAmount] = useState<number>(0);
+  // withdrawAmount: efectivo que sale del sistema (reduce NAV total)
+  const [withdrawAmount, setWithdrawAmount] = useState<number>(0);
 
 
   // MEJORA-9: Log de operaciones ejecutadas — persiste en localStorage
@@ -2168,8 +2172,9 @@ soxRsiWeekly,
                 <span style={{ fontSize: '0.75rem', color: '#475569' }}>€</span>
                 <input
                   type="number" value={cashReserve} min={0} step={10}
-                  onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
-                  style={{ width: '100px', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem' }}
+                  readOnly
+                  title="Solo transferencias atómicas — usa los botones 'Def' / 'Cash' o ejecuta operaciones"
+                  style={{ width: '100px', background: '#0f172a', border: '1px solid #475569', color: '#fbbf24', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem', cursor: 'not-allowed', opacity: 0.85 }}
                 />
               </div>
             </div>
@@ -2181,12 +2186,9 @@ soxRsiWeekly,
                 <span style={{ fontSize: '0.75rem', color: '#475569' }}>€</span>
                 <input
                   type="number" value={defensiveLiquidity} min={0} step={10}
-                  onChange={(e) => {
-                    const val = Math.max(0, Number(e.target.value));
-                    setDefensiveLiquidity(val);
-                    try { localStorage.setItem('olympus_defensive_liq', String(val)); } catch {}
-                  }}
-                  style={{ width: '100px', background: '#0f172a', border: '1px solid #f59e0b', color: '#fbbf24', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem' }}
+                  readOnly
+                  title="Solo transferencias atómicas — usa los botones 'Def' / 'Cash'"
+                  style={{ width: '100px', background: '#0f172a', border: '1px solid #475569', color: '#fbbf24', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem', cursor: 'not-allowed', opacity: 0.85 }}
                 />
               </div>
             </div>
@@ -3253,8 +3255,8 @@ soxRsiWeekly,
           <div>
             <label htmlFor="cashReserve" style={styles.label}>Caja de reserva (€)</label>
             <input id="cashReserve" name="cashReserve" type="number" value={cashReserve}
-              onChange={(e) => setCashReserve(Number(e.target.value))} style={styles.input} />
-            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "140px" }}>Cash total en cuenta ahora mismo</p>
+              readOnly title="Usa los botones de transferencia o ejecuta operaciones" style={{ ...styles.input, cursor: 'not-allowed', opacity: 0.85 }} />
+            <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "200px" }}>🔒 Solo lectura — usa transferencias atómicas</p>
           </div>
 
           <div>
@@ -3266,9 +3268,9 @@ soxRsiWeekly,
           <div style={{ borderLeft: "2px solid #16a34a", paddingLeft: "1rem" }}>
             <label htmlFor="defensiveLiqInput" style={{ ...styles.label, color: "#4ade80" }}>💰 Liquidez defensiva acumulada (€)</label>
             <input id="defensiveLiqInput" type="number" value={defensiveLiquidity} min={0} step={50}
-              onChange={(e) => { const val = Math.max(0, Number(e.target.value)); setDefensiveLiquidity(val); try { localStorage.setItem("olympus_defensive_liq", String(val)); } catch {} }}
-              style={{ ...styles.input, borderColor: "#16a34a", backgroundColor: "#052e16" }} />
-            <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "160px" }}>Acumulado en meses de bloqueo DCA</p>
+              readOnly title="Solo transferencias atómicas — usa los botones 'Def' / 'Cash'"
+              style={{ ...styles.input, borderColor: "#374151", backgroundColor: "#052e16", cursor: 'not-allowed', opacity: 0.85 }} />
+            <p style={{ fontSize: "0.7rem", color: "#4ade80", marginTop: "3px", maxWidth: "200px" }}>🔒 Solo lectura — usa transferencias atómicas</p>
           </div>
           <div style={{ borderLeft: "2px solid #22c55e", paddingLeft: "1rem" }}>
           </div>
@@ -3287,8 +3289,9 @@ soxRsiWeekly,
               <span style={{ color: "#6b7280", fontSize: "0.85rem" }}>EUR</span>
               <input
                 type="number" value={cashReserve} min={0} step={100}
-                onChange={(e) => setCashReserve(Math.max(0, Number(e.target.value)))}
-                style={{ width: "130px", background: "#0f172a", border: "1px solid #3b82f6", color: "#60a5fa", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold" }}
+                readOnly
+                title="Solo transferencias atómicas o ejecución de operaciones"
+                style={{ width: "130px", background: "#0f172a", border: "1px solid #475569", color: "#60a5fa", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold", cursor: 'not-allowed', opacity: 0.85 }}
               />
             </div>
           </div>
@@ -3327,6 +3330,35 @@ soxRsiWeekly,
             </div>
           </div>
 
+          {/* ── Depósito / Retirada externa ── */}
+          <div style={{ borderTop: "1px solid #374151", paddingTop: "0.4rem", marginTop: "0.3rem" }}>
+            <label style={{ fontSize: "0.65rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>
+              💳 Depósito / Retirada externa
+            </label>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "0.6rem", color: "#475569" }}>€</span>
+              <input type="number" value={depositAmount || ''} min={0} step={100} placeholder="Depósito"
+                onChange={(e) => setDepositAmount(Math.max(0, Number(e.target.value) || 0))}
+                style={{ width: "75px", background: "#0f172a", border: "1px solid #10b981", color: "#10b981", borderRadius: "4px", padding: "2px 4px", fontSize: "0.7rem" }} />
+              <button
+                onClick={() => { if (depositAmount > 0) { setCashReserve(prev => prev + depositAmount); setDepositAmount(0); } }}
+                disabled={depositAmount <= 0}
+                title="Añadir efectivo externo — aumenta el NAV total"
+                style={{ background: depositAmount > 0 ? "#052e16" : "#1f2937", color: depositAmount > 0 ? "#10b981" : "#4b5563", border: "1px solid #10b981", borderRadius: "4px", padding: "2px 6px", cursor: depositAmount > 0 ? "pointer" : "not-allowed", fontSize: "0.6rem", fontWeight: "bold", whiteSpace: "nowrap" }}
+              >➕</button>
+              <input type="number" value={withdrawAmount || ''} min={0} step={100} placeholder="Retirada"
+                onChange={(e) => setWithdrawAmount(Math.max(0, Number(e.target.value) || 0))}
+                style={{ width: "75px", background: "#0f172a", border: "1px solid #ef4444", color: "#ef4444", borderRadius: "4px", padding: "2px 4px", fontSize: "0.7rem" }} />
+              <button
+                onClick={() => { if (withdrawAmount > 0) { setCashReserve(prev => Math.max(0, prev - Math.min(withdrawAmount, prev))); setWithdrawAmount(0); } }}
+                disabled={withdrawAmount <= 0}
+                title="Retirar efectivo — reduce el NAV total"
+                style={{ background: withdrawAmount > 0 ? "#450a0a" : "#1f2937", color: withdrawAmount > 0 ? "#ef4444" : "#4b5563", border: "1px solid #ef4444", borderRadius: "4px", padding: "2px 6px", cursor: withdrawAmount > 0 ? "pointer" : "not-allowed", fontSize: "0.6rem", fontWeight: "bold", whiteSpace: "nowrap" }}
+              >➖</button>
+            </div>
+            <p style={{ fontSize: "0.55rem", color: "#4b5563", marginTop: "2px" }}>El depósito/retirada SÍ cambia el NAV total. Para mover entre cuentas usa Def/Cash arriba.</p>
+          </div>
+
           <div>
             <label style={{ fontSize: "0.72rem", color: "#94a3b8", display: "block", marginBottom: "4px" }}>
               Liquidez Defensiva
@@ -3335,12 +3367,9 @@ soxRsiWeekly,
               <span style={{ color: "#6b7280", fontSize: "0.85rem" }}>EUR</span>
               <input
                 type="number" value={defensiveLiquidity} min={0} step={100}
-                onChange={(e) => {
-                  const val = Math.max(0, Number(e.target.value));
-                  setDefensiveLiquidity(val);
-                  try { localStorage.setItem("olympus_defensive_liq", String(val)); } catch {}
-                }}
-                style={{ width: "130px", background: "#0f172a", border: "1px solid #f59e0b", color: "#fbbf24", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold" }}
+                readOnly
+                title="Solo transferencias atómicas — usa los botones 'Def' / 'Cash'"
+                style={{ width: "130px", background: "#0f172a", border: "1px solid #475569", color: "#fbbf24", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold", cursor: 'not-allowed', opacity: 0.85 }}
               />
             </div>
           </div>
