@@ -4315,11 +4315,15 @@ soxRsiWeekly,
                     <td>{formatCurrency(valor)}</td>
                     <td><input id={`avgPrice-${asset.ticker}`} name={`avgPrice-${asset.ticker}`} type="number" value={asset.avgPrice} onChange={(e) => updateAsset(asset.ticker, "avgPrice", Number(e.target.value))} style={styles.smallInput} step="0.01" aria-label={`Precio de compra de ${asset.name}`} /></td>
                     <td>
-                      <input id={`earnings-${asset.ticker}`} name={`earnings-${asset.ticker}`} type="number"
-                        value={asset.earningsYield ?? 0}
-                        onChange={(e) => updateAsset(asset.ticker, "earningsYield", Number(e.target.value))}
-                        style={styles.smallInput} step="0.01" min="0" max="0.5"
-                        aria-label={`Earnings Yield de ${asset.name}`} />
+                      {asset.ticker === 'URNU.DE' || asset.ticker === 'VVSM.DE' ? (
+                        <input id={`earnings-${asset.ticker}`} name={`earnings-${asset.ticker}`} type="number"
+                          value={asset.earningsYield ?? 0}
+                          onChange={(e) => updateAsset(asset.ticker, "earningsYield", Number(e.target.value))}
+                          style={styles.smallInput} step="0.01" min="0" max="0.5"
+                          aria-label={`Earnings Yield de ${asset.name}`} />
+                      ) : (
+                        <span style={{ color: "#4b5563", fontSize: "0.7rem" }}>—</span>
+                      )}
                     </td>
                     <td>
                       <input id={`return12m-${asset.ticker}`} name={`return12m-${asset.ticker}`} type="number"
