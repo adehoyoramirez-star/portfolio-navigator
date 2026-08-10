@@ -42,6 +42,7 @@ export interface PersistedPosition {
 export interface PersistedPortfolio {
   positions: PersistedPosition[];
   cashReserve: number;
+  defensiveLiquidity?: number;  // CASH-UNIFICADO (Ago-2026): añadido para persistir junto con cashReserve
   monthlyInjection: number;
   savedAt: string;
 }

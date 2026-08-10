@@ -138,7 +138,57 @@ const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"
 // ==================== COMPONENTE PRINCIPAL ====================
 const InstitutionalDashboard: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
-  const [cashReserve, setCashReserve] = useState(portfolio.cashReserve);
+
+  // ── CASH-UNIFICADO (Ago-2026, Comité): single source of truth para NAV ──
+  //   ANTES: cashReserve y defensiveLiquidity eran useState independientes.
+  //   Mover dinero entre ellos creaba renderizaciones intermedias donde el
+  //   NAV total bajaba artificialmente → Kill Switch espurio (DD -49%).
+  //   AHORA: PortfolioCash es atómico. Cualquier transferencia ocurre en
+  //   UNA sola actualización de estado. El HWM nunca ve un NAV parcial.
+  //   Hedge-fund standard: Bridgewater, AQR, Millennium — el patrimonio
+  //   total es una cifra única. Las subcuentas son derivaciones, no fuentes.
+  interface PortfolioCash { operational: number; defensive: number; }
+  const [portfolioCash, setPortfolioCash] = useState<PortfolioCash>(() => ({
+    operational: portfolio.cashReserve,
+    defensive: (() => { try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; } })(),
+  }));
+  // Derivados — mantienen compatibilidad con el resto del código.
+  // Son lecturas del estado unificado, NUNCA se desincronizan.
+  const cashReserve = portfolioCash.operational;
+  const defensiveLiquidity = portfolioCash.defensive;
+  // Wrappers atómicos para setters — misma firma que antes.
+  const setCashReserve = useCallback((action: number | ((prev: number) => number)) => {
+    setPortfolioCash(prev => ({
+      ...prev,
+      operational: typeof action === 'function' ? action(prev.operational) : action,
+    }));
+  }, []);
+  const setDefensiveLiquidity = useCallback((action: number | ((prev: number) => number)) => {
+    setPortfolioCash(prev => {
+      const newVal = typeof action === 'function' ? action(prev.defensive) : action;
+      try { localStorage.setItem('olympus_defensive_liq', String(newVal)); } catch {}
+      return { ...prev, defensive: newVal };
+    });
+  }, []);
+  // Transferencias atómicas — mueven dinero entre cuentas en UN solo paso.
+  // El NAV total no cambia → HWM no se dispara → Kill Switch no fantasma.
+  const transferToDefensive = useCallback((amount: number) => {
+    setPortfolioCash(prev => {
+      const effective = Math.min(amount, prev.operational);
+      const newDefensive = prev.defensive + effective;
+      try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
+      return { operational: prev.operational - effective, defensive: newDefensive };
+    });
+  }, []);
+  const transferFromDefensive = useCallback((amount: number) => {
+    setPortfolioCash(prev => {
+      const effective = Math.min(amount, prev.defensive);
+      const newDefensive = prev.defensive - effective;
+      try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
+      return { operational: prev.operational + effective, defensive: newDefensive };
+    });
+  }, []);
+
   const [monthlyInjection, setMonthlyInjection] = useState(portfolio.monthlyInjection);
   // PERSIST-01: rastrea cuándo se guardaron los datos por última vez y si hay
   // cambios sin guardar desde la última sesión (para mostrar el banner de confirmación)
@@ -228,11 +278,6 @@ const formatCurrency = (value: number): string => {
   const [elliottCurrentWave, setElliottCurrentWave] = useState<ElliottWaveLabel | undefined>(undefined);
   const [elliottPivotsText, setElliottPivotsText] = useState<string>("");
 
-
-
-  const [defensiveLiquidity, setDefensiveLiquidity] = useState<number>(() => {
-    try { return parseFloat(localStorage.getItem('olympus_defensive_liq') ?? '0') || 0; } catch { return 0; }
-  });
   // CASH-REDESIGN: tacticalAccumulated y tacticalPct eliminados.
   // El táctico era una subcuenta automática que nunca existía en el broker real.
   // Ahora: defensiveLiquidity es el único colchón de oportunidad, gestionado 100% manual.
@@ -581,6 +626,7 @@ const formatCurrency = (value: number): string => {
     savePortfolio({
       positions: portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice })),
       cashReserve,
+      defensiveLiquidity,  // CASH-UNIFICADO: persistir junto con cashReserve
       monthlyInjection,
       savedAt: now,
     });
@@ -591,7 +637,7 @@ const formatCurrency = (value: number): string => {
         hour: '2-digit', minute: '2-digit',
       })
     );
-  }, [portfolio.assets, cashReserve, monthlyInjection]);
+  }, [portfolio.assets, cashReserve, defensiveLiquidity, monthlyInjection]);
 
   useEffect(() => {
     saveMacro({
@@ -3237,12 +3283,7 @@ soxRsiWeekly,
                 onClick={() => {
                   const amt = Math.min(transferAmount, cashReserve);
                   if (amt <= 0) return;
-                  setCashReserve(cr => Math.round((cr - amt) * 100) / 100);
-                  setDefensiveLiquidity(dl => {
-                    const nd = Math.round((dl + amt) * 100) / 100;
-                    try { localStorage.setItem("olympus_defensive_liq", String(nd)); } catch {}
-                    return nd;
-                  });
+                  transferToDefensive(Math.round(amt * 100) / 100);  // ATÓMICO: NAV total no cambia
                   setTransferAmount(0);
                 }}
                 disabled={transferAmount <= 0}
@@ -3253,12 +3294,7 @@ soxRsiWeekly,
                 onClick={() => {
                   const amt = Math.min(transferAmount, defensiveLiquidity);
                   if (amt <= 0) return;
-                  setDefensiveLiquidity(dl => {
-                    const nd = Math.round((dl - amt) * 100) / 100;
-                    try { localStorage.setItem("olympus_defensive_liq", String(nd)); } catch {}
-                    return nd;
-                  });
-                  setCashReserve(cr => Math.round((cr + amt) * 100) / 100);
+                  transferFromDefensive(Math.round(amt * 100) / 100);  // ATÓMICO: NAV total no cambia
                   setTransferAmount(0);
                 }}
                 disabled={transferAmount <= 0}
