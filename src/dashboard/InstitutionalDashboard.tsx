@@ -3566,7 +3566,7 @@ soxRsiWeekly,
                   {Object.entries(perf.regimeDistribution).map(([regime, pct]) => (
                     <div key={regime} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span style={{ color: regimeColors[regime as keyof typeof regimeColors] || "#9ca3af" }}>{regime}</span>
-                      <span style={{ color: "#d1d5db" }}>{(pct * 100).toFixed(0)}%</span>
+                      <span style={{ color: "#d1d5db" }}>{((pct / (perf.totalRecords || 1)) * 100).toFixed(0)}%</span>
                     </div>
                   ))}
                   {Object.keys(perf.regimeDistribution).length === 0 && <span style={{ color: "#6b7280" }}>Sin datos</span>}
