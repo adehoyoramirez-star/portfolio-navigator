@@ -4291,7 +4291,7 @@ soxRsiWeekly,
                   <td></td>
                 </tr>
                 {(() => {
-                  const availableCashNow = cashReserve + monthlyInjection;
+                  const availableCashNow = cashReserve; // FIX-CASH-02: no sumar monthlyInjection (no está en el broker aún)
                   const idealTotal = smartDCAResult?.totalCashToInvest ?? 0;
                   if (idealTotal <= 0) return null;
                   const capped = Math.min(idealTotal, availableCashNow);
