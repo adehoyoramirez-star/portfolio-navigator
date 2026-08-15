@@ -40,6 +40,7 @@ import {
 import { liquidityScore } from "@/core/macro/liquidity";
 import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/portfolio";
 import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
+import { computeRealizedReturns, recordCurrentPositions, loadPositionHistory } from "@/core/data/positionHistory";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
 import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked } from "@/core/macro/masterRegime";
@@ -1991,26 +1992,31 @@ soxRsiWeekly,
     0
   );
 
+  // FIX-FORENSIC-H6: registrar snapshot diario de posiciones reales (upsert por día).
+  // Gate en marketData para no capturar el portfolio mock del primer render.
+  // Si el usuario opera intra-día, el upsert del handler de trade sobreescribe
+  // las shares del día actual con las nuevas.
+  useEffect(() => {
+    if (!marketData || !portfolio.assets.length) return;
+    const positions: Record<string, number> = {};
+    for (const a of portfolio.assets) positions[a.ticker] = a.shares;
+    recordCurrentPositions(positions);
+  }, [marketData, portfolio.assets]);
+
   const portfolioAnalytics = useMemo(() => {
     if (!portfolioVol || portfolioVol === 0) return null;
     const rf = (portfolio.riskFreeRate ?? 4) / 100;
     const annualReturn = expectedReturn; // μ forward — se muestra por separado como "Retorno Esp."
 
-    const dailyPortfolioReturns: number[] = [];
-    if (portfolio.assets.length > 0 && portfolio.assets[0].history.length > 1) {
-      const totalVal = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
-      const numDays = portfolio.assets[0].history.length;
-      for (let t = 1; t < numDays; t++) {
-        let dayRet = 0;
-        for (const asset of portfolio.assets) {
-          if (asset.history[t] && asset.history[t - 1]) {
-            const w = (asset.price * asset.shares) / (totalVal || 1);
-            dayRet += w * (asset.history[t] / asset.history[t - 1] - 1);
-          }
-        }
-        dailyPortfolioReturns.push(dayRet);
-      }
-    }
+    // FIX-FORENSIC-H6: retornos REALIZADOS con pesos variables en el tiempo
+    // (posiciones reales día a día), NO pesos actuales sobre todo el histórico.
+    // Antes: w = (price*shares)/totalVal fijo aplicado a TODO el histórico
+    // → look-ahead bias (el "retorno" de hace años usaba las shares de hoy).
+    const trackedSnapshots = loadPositionHistory();
+    const trackedHistories: Record<string, number[]> = {};
+    for (const a of portfolio.assets) trackedHistories[a.ticker] = a.history;
+    const dailyPortfolioReturns = computeRealizedReturns(trackedHistories, trackedSnapshots);
+    const realizedSince = trackedSnapshots.length >= 2 ? trackedSnapshots[0].date : null;
 
     // FIX-FORENSIC-H1: métricas con numerador y denominador del MISMO origen.
     // Antes Sharpe/Sortino/Calmar/Jensen mezclaban μ forward (numerador) con riesgo
@@ -2071,7 +2077,7 @@ soxRsiWeekly,
     const MAX_HISTORICAL_DD = 0.50;
     const effectiveMaxDD = Math.min(realizedMaxDD, MAX_HISTORICAL_DD);
     const calmar = effectiveMaxDD > 0 ? realizedCagr / effectiveMaxDD : 0;
-    return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol, beta, alpha, mcRoute, hasCovMatrix };
+    return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol, beta, alpha, mcRoute, hasCovMatrix, realizedSince };
   }, [portfolioVol, expectedReturn, portfolio.riskFreeRate, portfolioDrawdown, portfolio.assets, marketData?.covMatrix]);
 
   return (
@@ -3081,8 +3087,10 @@ soxRsiWeekly,
         <div style={styles.card}>
           <h2>📊 Portfolio Analytics (Forward-Looking)</h2>
           <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "-0.3rem", marginBottom: "0.75rem" }}>
-            Estimaciones forward-looking basadas en condiciones actuales de mercado — no es backtest histórico.
-            Sharpe, Sortino y Alpha usan el expected return estimado (μ), no retornos realizados.
+            {portfolioAnalytics.realizedSince
+              ? `Métricas realizadas desde ${portfolioAnalytics.realizedSince} con posiciones reales día a día (sin look-ahead).`
+              : "Sin historial de posiciones suficiente aún (≥10 días de tracking): se muestran estimaciones forward (μ)."}
+            {" "}El "Retorno Esp." (μ) se muestra por separado y no se mezcla con lo realizado.
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "1rem" }}>
             <div style={{ background: portfolioAnalytics.sharpe >= 1 ? "#065f46" : portfolioAnalytics.sharpe >= 0.5 ? "#1e3a5f" : portfolioAnalytics.sharpe >= 0 ? "#78350f" : "#7f1d1d", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>

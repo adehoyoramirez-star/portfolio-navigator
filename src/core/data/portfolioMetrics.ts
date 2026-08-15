@@ -8,7 +8,11 @@ import { Asset } from "@/core/types/portfolio";
 export { realizedVolatility } from "@/core/data/volatility";
 
 /**
- * Calcula los retornos diarios de la cartera ponderados por el valor de cada activo.
+ * ⚠️ LEGACY / SUPERSEDED — FIX-FORENSIC-H6:
+ *   Esta función aplica los PESOS ACTUALES sobre TODO el histórico → look-ahead bias.
+ *   NO usarla para métricas realizadas. Usar computeRealizedReturns() de
+ *   @/core/data/positionHistory (pesos variables en el tiempo con posiciones reales).
+ *   Se mantiene solo por compatibilidad; no hay callers activos.
  */
 export function calculatePortfolioReturns(assets: Asset[], totalValue: number): number[] {
   if (assets.length === 0 || assets[0].history.length < 2) return [];
@@ -69,7 +73,11 @@ export function calculateCorrelationMatrix(assets: Asset[]): number[][] {
 }
 
 /**
- * Calcula el drawdown actual respecto al máximo histórico.
+ * ⚠️ LEGACY / SUPERSEDED — FIX-FORENSIC-H6:
+ *   Drawdown con participaciones ACTUALES sobre todo el histórico → look-ahead bias.
+ *   NO usarla para métricas realizadas. Usar computeRealizedReturns() de
+ *   @/core/data/positionHistory para reconstruir la serie de NAV con posiciones reales.
+ *   Se mantiene solo por compatibilidad; no hay callers activos.
  */
 export function calculateDrawdown(assets: Asset[], currentTotal: number): number {
   if (assets.length === 0 || assets[0].history.length === 0) return 0;
