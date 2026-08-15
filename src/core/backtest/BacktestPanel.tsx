@@ -10,6 +10,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, AreaChart, Area,
 } from "recharts";
 import { runBacktest, BacktestOutput, BacktestMetrics, RegimeMetrics, PROXY_MAP } from "./backtestEngine";
+import { computeCompositeMetrics } from "./compositeMetrics";
 import { MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
 import { loadCSVBacktestData, buildMacroHistoryFromCSV, CSVBacktestData } from "@/lib/csvBacktestProvider";
@@ -583,56 +584,9 @@ function CompositeStrategy({
   const fmt = (v: number) => `${(v * 100).toFixed(1)}%`;
 
   const metrics = useMemo(() => {
-    const btcPct = (100 - olympusPct) / 100;
-    const olyPct = olympusPct / 100;
-
-    const olympusRets = result.dailyRecords.map((r, i) => {
-      const prev = i === 0 ? initialCapital : result.dailyRecords[i-1].portfolioValue;
-      return prev > 0 ? r.portfolioValue / prev - 1 : 0;
-    });
-
-    // BTC daily returns from REAL prices (aligned with backtest window)
-    const btcLen = btcPrices.length;
-    const recLen = result.dailyRecords.length;
-    // FIX-FORENSIC-COMPOSITE: antes `btcLen - recLen - 252` evaluaba a 0 (doble resta
-    // del lookback), desalineando BTC ~1 año respecto a Olympus → MaxDD -34% en vez de -45%.
-    // Correcto: alinear el FINAL de BTC con el FINAL de la ventana del backtest.
-    const btcStart = Math.max(0, btcLen - recLen);
-    const btcRets: number[] = [];
-    for (let i = 0; i < recLen; i++) {
-      const idx = btcStart + i;
-      if (idx > 0 && idx < btcLen && btcPrices[idx-1] > 0 && btcPrices[idx] > 0) {
-        btcRets.push(btcPrices[idx] / btcPrices[idx-1] - 1);
-      } else {
-        btcRets.push(0);
-      }
-    }
-
-    const compositeRets = olympusRets.map((or, i) => olyPct * or + btcPct * (btcRets[i] ?? 0));
-
-    let value = initialCapital;
-    let peak = initialCapital;
-    let maxDD = 0;
-    for (const r of compositeRets) {
-      value *= (1 + r);
-      if (value > peak) peak = value;
-      const dd = (value - peak) / peak;
-      if (dd < maxDD) maxDD = dd;
-    }
-
-    const years = compositeRets.length / 252;
-    const totalRet = value / initialCapital - 1;
-    const cagr = years > 0 && totalRet > -1 ? Math.pow(1 + totalRet, 1 / years) - 1 : 0;
-    const mean = compositeRets.reduce((a, b) => a + b, 0) / compositeRets.length;
-    const vol = Math.sqrt(compositeRets.reduce((s, r) => s + (r - mean) ** 2, 0) / compositeRets.length * 252);
-    const rfDaily = 0.04 / 252;
-    const excess = compositeRets.map(r => r - rfDaily);
-    const exMean = excess.reduce((a, b) => a + b, 0) / excess.length;
-    const exStd = Math.sqrt(excess.reduce((s, r) => s + (r - exMean) ** 2, 0) / excess.length * 252);
-    const sharpe = exStd > 0 ? (exMean * 252) / exStd : 0;
-    const calmar = maxDD < 0 ? cagr / Math.abs(maxDD) : 0;
-
-    return { cagr, sharpe, maxDrawdown: maxDD, calmar, volatility: vol, finalValue: value, totalReturn: totalRet, winRate: 0, sortino: 0, betaVsBenchmark: 0, alphaVsBenchmark: 0, hhi: 0 };
+    const olympusDailyValues = result.dailyRecords.map(r => r.portfolioValue);
+    const m = computeCompositeMetrics({ olympusDailyValues, btcPrices, olympusPct, initialCapital });
+    return { ...m, winRate: 0, sortino: 0, betaVsBenchmark: 0, alphaVsBenchmark: 0, hhi: 0 };
   }, [olympusPct, result, initialCapital, btcPrices]);
 
   return (
