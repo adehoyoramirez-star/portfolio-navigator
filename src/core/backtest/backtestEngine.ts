@@ -932,7 +932,7 @@ function computeRollingSharpe(window: number[]): number {
   return isFinite(sharpe) ? sharpe : 0;
 }
 
-function computeMetrics(dailyRets: number[], initialCapital: number, finalValue: number, benchmarkRets?: number[]): BacktestMetrics {
+export function computeMetrics(dailyRets: number[], initialCapital: number, finalValue: number, benchmarkRets?: number[]): BacktestMetrics {
   const clean = dailyRets.filter(r => isFinite(r));
   if (clean.length === 0) return emptyMetrics(initialCapital);
   const years = clean.length / 252;
