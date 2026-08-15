@@ -6,6 +6,7 @@
   "installCommand": "npm install",
   "rewrites": [
     { "source": "/_proxy/yahoo-finance", "destination": "/api/proxy/yahoo-finance" },
+    { "handle": "filesystem" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
