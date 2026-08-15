@@ -594,7 +594,10 @@ function CompositeStrategy({
     // BTC daily returns from REAL prices (aligned with backtest window)
     const btcLen = btcPrices.length;
     const recLen = result.dailyRecords.length;
-    const btcStart = Math.max(0, btcLen - recLen - 252); // rough alignment with lookback offset
+    // FIX-FORENSIC-COMPOSITE: antes `btcLen - recLen - 252` evaluaba a 0 (doble resta
+    // del lookback), desalineando BTC ~1 año respecto a Olympus → MaxDD -34% en vez de -45%.
+    // Correcto: alinear el FINAL de BTC con el FINAL de la ventana del backtest.
+    const btcStart = Math.max(0, btcLen - recLen);
     const btcRets: number[] = [];
     for (let i = 0; i < recLen; i++) {
       const idx = btcStart + i;

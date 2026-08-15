@@ -261,6 +261,9 @@ export function buildAllocations(
   // 1. Calcular drift para cada activo
   const withDrift = deduped.map(a => {
     const currentWeight = currentAllocations.get(a.ticker) ?? 0;
+    // CONVENCIÓN DRIFT (smartDCA): drift = target − current.
+    //   POSITIVO = infraponderado (comprar) · NEGATIVO = sobreponderado (no comprar).
+    //   ⚠️ OPUESTA a rebalancer.ts (current − target). No cruzar valores entre módulos.
     const drift = a.finalAllocation - currentWeight;
     return { ...a, drift, currentWeight };
   });

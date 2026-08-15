@@ -1994,9 +1994,7 @@ soxRsiWeekly,
   const portfolioAnalytics = useMemo(() => {
     if (!portfolioVol || portfolioVol === 0) return null;
     const rf = (portfolio.riskFreeRate ?? 4) / 100;
-    const annualReturn = expectedReturn;
-    const excessReturn = annualReturn - rf;
-    const sharpe = excessReturn / portfolioVol;
+    const annualReturn = expectedReturn; // μ forward — se muestra por separado como "Retorno Esp."
 
     const dailyPortfolioReturns: number[] = [];
     if (portfolio.assets.length > 0 && portfolio.assets[0].history.length > 1) {
@@ -2013,9 +2011,27 @@ soxRsiWeekly,
         dailyPortfolioReturns.push(dayRet);
       }
     }
-    const sortino = dailyPortfolioReturns.length >= 10
-      ? sortinoRatioReal(dailyPortfolioReturns, annualReturn, rf)
-      : excessReturn / (portfolioVol / Math.sqrt(2));
+
+    // FIX-FORENSIC-H1: métricas con numerador y denominador del MISMO origen.
+    // Antes Sharpe/Sortino/Calmar/Jensen mezclaban μ forward (numerador) con riesgo
+    // realizado (denominador) → ratios sistemáticamente inflados (ej. Jensen 13.1%,
+    // Calmar 3.51). Ahora se calculan sobre retornos REALIZADOS consistentes.
+    const hasRealized = dailyPortfolioReturns.length >= 10;
+    const realizedMean = hasRealized
+      ? dailyPortfolioReturns.reduce((a, b) => a + b, 0) / dailyPortfolioReturns.length
+      : 0;
+    const realizedAnnual = hasRealized ? realizedMean * 252 : annualReturn;
+    const realizedVariance = hasRealized
+      ? dailyPortfolioReturns.reduce((s, r) => s + (r - realizedMean) ** 2, 0) / dailyPortfolioReturns.length
+      : 0;
+    const realizedVol = hasRealized ? Math.sqrt(realizedVariance) * Math.sqrt(252) : portfolioVol;
+
+    // Sharpe realizado = (retorno realizado - rf) / vol realizada
+    const sharpe = realizedVol > 0 ? (realizedAnnual - rf) / realizedVol : 0;
+
+    const sortino = hasRealized
+      ? sortinoRatioReal(dailyPortfolioReturns, realizedAnnual, rf)
+      : (annualReturn - rf) / (portfolioVol / Math.sqrt(2));
 
     const benchmarkAsset = portfolio.assets.find(a => a.ticker === '0P00000WLG.F');
     let beta = 1.0, alpha = 0;
@@ -2029,16 +2045,32 @@ soxRsiWeekly,
       if (benchReturns.length >= 20) {
         beta = betaVsBenchmark(dailyPortfolioReturns, benchReturns);
         const benchAnnualReturn = benchReturns.reduce((a, b) => a + b, 0) / benchReturns.length * 252;
-        alpha = jensenAlpha(annualReturn, beta, benchAnnualReturn, rf);
+        // Jensen con retorno REALIZADO del portfolio (consistente con el bench realizado)
+        alpha = jensenAlpha(realizedAnnual, beta, benchAnnualReturn, rf);
       }
     }
 
     const hasCovMatrix = marketData?.covMatrix && marketData.covMatrix.length > 1;
     const mcRoute = hasCovMatrix ? "✅ Multivariante (Cholesky + correlaciones reales)" : "⚠️ Univariante (fallback — sin covMatrix)";
 
+    // Calmar realizado: CAGR realizado / MaxDD realizado (sin mezclar μ forward)
+    let realizedCagr = annualReturn;
+    let realizedMaxDD = Math.abs(portfolioDrawdown);
+    if (hasRealized) {
+      let val = 1, peak = 1, maxDD = 0;
+      for (const r of dailyPortfolioReturns) {
+        val *= (1 + r);
+        if (val > peak) peak = val;
+        const dd = (val - peak) / peak;
+        if (dd < maxDD) maxDD = dd;
+      }
+      const years = dailyPortfolioReturns.length / 252;
+      realizedCagr = val > 0 ? Math.pow(val, 1 / years) - 1 : -1;
+      realizedMaxDD = Math.abs(maxDD);
+    }
     const MAX_HISTORICAL_DD = 0.50;
-    const effectiveMaxDD = Math.min(Math.abs(portfolioDrawdown), MAX_HISTORICAL_DD);
-    const calmar = effectiveMaxDD > 0 ? annualReturn / effectiveMaxDD : 0;
+    const effectiveMaxDD = Math.min(realizedMaxDD, MAX_HISTORICAL_DD);
+    const calmar = effectiveMaxDD > 0 ? realizedCagr / effectiveMaxDD : 0;
     return { sharpe, sortino, calmar, annualReturn, rf, portfolioVol, beta, alpha, mcRoute, hasCovMatrix };
   }, [portfolioVol, expectedReturn, portfolio.riskFreeRate, portfolioDrawdown, portfolio.assets, marketData?.covMatrix]);
 

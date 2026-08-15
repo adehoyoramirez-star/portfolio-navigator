@@ -78,6 +78,9 @@ export function computeRebalanceSuggestions(
     const currentValue = asset.price * asset.shares;
     const currentPct   = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
     const targetPct    = asset.targetAllocation;
+    // CONVENCIÓN DRIFT (rebalancer): drift = current − target.
+    //   POSITIVO = sobreponderado (vender) · NEGATIVO = infraponderado (comprar).
+    //   ⚠️ OPUESTA a smartDCA.ts (target − current). No cruzar valores entre módulos.
     const drift        = currentPct - targetPct;
     const deficitValue = Math.max(0, targetPct * totalValue - currentValue);
     // FIX-CYCLEMATCH: matching exchange-agnostic para cubrir alias de ticker

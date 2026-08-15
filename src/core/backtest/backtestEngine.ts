@@ -959,7 +959,8 @@ function computeMetrics(dailyRets: number[], initialCapital: number, finalValue:
     months++;
   }
   // FIX-AUDIT-R10: métricas institucionales adicionales
-  const sortinoValue = sortino(clean, RISK_FREE_RATE_ANNUAL, 0);
+  // FIX-FORENSIC-H2: MAR = rf (antes se pasaba 0, y el rfAnnual de la firma era ignorado).
+  const sortinoValue = sortino(clean, RISK_FREE_RATE_ANNUAL, RISK_FREE_RATE_ANNUAL);
   const betaValue = benchmarkRets && benchmarkRets.length > 20 ? computeBeta(clean, benchmarkRets) : 1;
   const alphaValue = benchmarkRets && benchmarkRets.length > 20 ? computeAlpha(clean, benchmarkRets, RISK_FREE_RATE_ANNUAL) : 0;
   // FIX-AUDIT-B4: HHI computado en runBacktest desde las allocations finales.

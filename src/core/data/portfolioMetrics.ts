@@ -110,14 +110,14 @@ export function sortinoRatioReal(
 ): number {
   if (dailyReturns.length < 10) return 0;
   const rfDaily = riskFreeRate / 252;
-  // Solo retornos por debajo del MAR (Minimum Acceptable Return = rf diario)
-  const negativeExcess = dailyReturns.filter(r => r < rfDaily);
-  if (negativeExcess.length === 0) return Infinity; // sin retornos negativos = Sortino perfecto
-  // Semi-desviación: std de los retornos negativos en exceso del MAR
-  const meanNeg = negativeExcess.reduce((a, b) => a + b, 0) / negativeExcess.length;
-  const variance = negativeExcess.reduce((s, r) => s + (r - meanNeg) ** 2, 0) / negativeExcess.length;
-  const downsideDev = Math.sqrt(variance) * Math.sqrt(252); // anualizar
-  if (downsideDev === 0) return 0;
+  // FIX-FORENSIC-H4: semi-desviación estándar (Sortino) centrada en el MAR (= rf),
+  // NO en la media de los retornos negativos. Antes se centraba en meanNeg, lo que
+  // infraestimaba la desviación a la baja y por tanto inflaba el Sortino.
+  // downsideDev = sqrt( mean( min(0, r - MAR)^2 ) ) × √252
+  const downsideSq = dailyReturns.map(r => Math.min(0, r - rfDaily) ** 2);
+  const meanDownSq = downsideSq.reduce((s, v) => s + v, 0) / dailyReturns.length;
+  const downsideDev = Math.sqrt(meanDownSq) * Math.sqrt(252);
+  if (downsideDev <= 1e-10) return Infinity; // sin riesgo a la baja = Sortino perfecto
   return (annualReturn - riskFreeRate) / downsideDev;
 }
 
@@ -141,8 +141,11 @@ export function betaVsBenchmark(
 ): number {
   const n = Math.min(portfolioReturns.length, benchmarkReturns.length);
   if (n < 20) return 1; // fallback neutro con pocos datos
-  const pRet = portfolioReturns.slice(0, n);
-  const bRet = benchmarkReturns.slice(0, n);
+  // FIX-FORENSIC-H3: usar slice(-n) (ventana más reciente), consistente con
+  // riskMetrics.beta() que usa slice(-minLen). Antes slice(0, n) tomaba la
+  // ventana MÁS ANTIGUA → beta calculada sobre periodo distinto al resto.
+  const pRet = portfolioReturns.slice(-n);
+  const bRet = benchmarkReturns.slice(-n);
   const pMean = pRet.reduce((a, b) => a + b, 0) / n;
   const bMean = bRet.reduce((a, b) => a + b, 0) / n;
   let cov = 0, varB = 0;
