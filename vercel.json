@@ -5,8 +5,13 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "rewrites": [
-    { "source": "/_proxy/yahoo-finance", "destination": "/api/proxy/yahoo-finance" },
-    { "handle": "filesystem" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/_proxy/yahoo-finance",
+      "destination": "/api/proxy/yahoo-finance"
+    },
+    {
+      "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)",
+      "destination": "/index.html"
+    }
   ]
 }
