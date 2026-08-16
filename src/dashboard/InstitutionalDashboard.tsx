@@ -572,6 +572,12 @@ const formatCurrency = (value: number): string => {
       }));
       setCashReserve(savedPortfolio.cashReserve);
       setMonthlyInjection(savedPortfolio.monthlyInjection);
+      // FIX-DEFLIQ-LOAD (Ago-2026): restaurar la liquidez defensiva desde el
+      // portfolio guardado (fuente única), no solo desde la clave antigua
+      // olympus_defensive_liq. Evita desincronización si una clave se pierde.
+      if (savedPortfolio.defensiveLiquidity !== undefined) {
+        setDefensiveLiquidity(savedPortfolio.defensiveLiquidity);
+      }
 
       if (savedPortfolio.cashReserve !== initialPortfolio.cashReserve)
         changes.push(`Cash: ${savedPortfolio.cashReserve}€`);
@@ -630,7 +636,15 @@ const formatCurrency = (value: number): string => {
     refreshMarketData();
   }, []);
 
+  // FIX-SAVE-CLOBBER (Ago-2026): NO guardar en el montaje inicial. El efecto de
+  // carga corre antes, pero sus setState son asíncronos — si guardáramos aquí con
+  // el estado por defecto, pisaríamos el localStorage real (posiciones/cash).
+  const skipInitialSaveRef = useRef(true);
   useEffect(() => {
+    if (skipInitialSaveRef.current) {
+      skipInitialSaveRef.current = false;
+      return; // skip primer run (estado por defecto)
+    }
     const now = new Date().toISOString();
     savePortfolio({
       positions: portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice })),
