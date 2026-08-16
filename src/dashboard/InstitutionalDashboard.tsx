@@ -4243,11 +4243,15 @@ soxRsiWeekly,
                             color: s.priority === "HIGH" ? "#ef4444" : s.priority === "MEDIUM" ? "#f59e0b" : "#9ca3af",
                             padding: "0.1rem 0.4rem", borderRadius: 4, marginRight: "0.3rem",
                           }}>{s.priority}</span>
-                          {s.cycleZone && s.action === "SELL" && (
+                          {s.action === "SELL" && s.isOverweightTrim ? (
+                            <span style={{ fontSize: "0.65rem", color: "#f59e0b", background: "#422006", padding: "0.1rem 0.4rem", borderRadius: 4 }}>
+                              ⚖️ Sobrepeso {Math.abs(s.drift * 100).toFixed(1)}pp
+                            </span>
+                          ) : s.cycleZone && s.action === "SELL" ? (
                             <span style={{ fontSize: "0.65rem", color: "#f97316", background: "#431407", padding: "0.1rem 0.4rem", borderRadius: 4 }}>
                               🔴 Cycle Top override · {s.cycleZone}
                             </span>
-                          )}
+                          ) : null}
                         </>
                       ) : (
                         <span style={{ color: "#6b7280", fontSize: "0.7rem" }}>{s.reason}</span>

@@ -65,6 +65,8 @@ export interface RebalanceSuggestion {
   cycleZone?: string;
   cycleIndicator?: string;
   cycleIndicatorValue?: string;
+  /** True si es recorte de concentración (sobrepeso), NO señal de techo. */
+  isOverweightTrim?: boolean;
 }
 
 export interface RebalanceOutput {
@@ -208,9 +210,7 @@ export function computeRebalanceSuggestions(
         ? `⚖️ SOBREPESO ${(asset.drift * 100).toFixed(1)}pp — recorte sobre target ${(asset.targetPct * 100).toFixed(1)}% + suelo ${bottom?.zone ?? ""} (+${(floor * 100).toFixed(1)}pp permitido)`
         : `⚖️ SOBREPESO ${(asset.drift * 100).toFixed(1)}pp — recorte hacia target ${(asset.targetPct * 100).toFixed(1)}% (sin señal de techo)`,
       priority: "MEDIUM",
-      cycleZone: bottom?.zone,
-      cycleIndicator: bottom?.indicator,
-      cycleIndicatorValue: bottom?.indicatorValue,
+      isOverweightTrim: true,
     });
   }
 
