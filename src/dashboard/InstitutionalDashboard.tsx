@@ -4405,28 +4405,41 @@ soxRsiWeekly,
                 ))}
               </tbody>
               <tfoot>
+                {/* FIX-CASH-BREAKDOWN (Ago-2026): desglosar por fuente de financiación.
+                    ANTES: "Realista" = min(total, cashReserve) mezclaba dos carteras
+                    (broker + defensiva) y daba €2.982 aunque el total era fundable.
+                    AHORA: Olympus se financia con broker, Táctico con defensiva. */}
+                <tr style={{ borderTop: "1px solid #374151", backgroundColor: "#0f172a" }}>
+                  <td colSpan={4} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>↳ Olympus (cash broker):</td>
+                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f9fafb" }}>€{(smartDCAResult?.olympusInvested ?? 0).toFixed(0)}</td>
+                  <td style={{ padding: "0.5rem", fontSize: "0.7rem", color: "#6b7280" }}>(de €{cashReserve.toFixed(0)})</td>
+                </tr>
+                {(smartDCAResult?.tacticalInvested ?? 0) > 0 && (
+                  <tr style={{ backgroundColor: "#0f172a" }}>
+                    <td colSpan={4} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>↳ Táctico (liquidez defensiva):</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f9fafb" }}>€{(smartDCAResult?.tacticalInvested ?? 0).toFixed(0)}</td>
+                    <td style={{ padding: "0.5rem", fontSize: "0.7rem", color: "#6b7280" }}>(de €{defensiveLiquidity.toFixed(0)})</td>
+                  </tr>
+                )}
                 <tr style={{ borderTop: "1px solid #374151", backgroundColor: "#0f172a" }}>
                   <td colSpan={4} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>Total a desembolsar:</td>
-                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f59e0b", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(2)}</td>
-                  <td></td>
+                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f59e0b", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(0)}</td>
+                  <td style={{ padding: "0.5rem", fontSize: "0.7rem", color: "#4ade80" }}>✅ cubierto (broker + defensiva)</td>
                 </tr>
                 {(() => {
-                  const availableCashNow = cashReserve; // FIX-CASH-02: no sumar monthlyInjection (no está en el broker aún)
+                  const realTotal = (smartDCAResult?.allocationByAsset ?? []).reduce((s, a) => s + a.actualCost, 0);
                   const idealTotal = smartDCAResult?.totalCashToInvest ?? 0;
-                  if (idealTotal <= 0) return null;
-                  const capped = Math.min(idealTotal, availableCashNow);
-                  if (capped >= idealTotal) return null; // cash suficiente → no mostrar aviso
+                  if (realTotal >= idealTotal - 0.5) return null; // sin caps relevantes
                   return (
                     <tr style={{ backgroundColor: "#0f172a" }}>
                       <td colSpan={4} style={{ padding: "0.25rem 0.5rem", color: "#6b7280", textAlign: "right", fontSize: "0.78rem" }}>
-                        ↳ Realista (cash disponible):
+                        ↳ Real (tras caps por drift):
                       </td>
-                      <td style={{ padding: "0.25rem 0.5rem", textAlign: "right", fontWeight: 600, 
-                        color: "#f59e0b", fontSize: "0.85rem" }}>
-                        €{capped.toFixed(2)}
+                      <td style={{ padding: "0.25rem 0.5rem", textAlign: "right", fontWeight: 600, color: "#22c55e", fontSize: "0.85rem" }}>
+                        €{realTotal.toFixed(0)}
                       </td>
                       <td style={{ padding: "0.25rem 0.5rem", fontSize: "0.7rem", color: "#6b7280" }}>
-                        (de €{availableCashNow.toFixed(0)} disponible)
+                        (lo que suman las filas — el resto queda sin invertir)
                       </td>
                     </tr>
                   );
