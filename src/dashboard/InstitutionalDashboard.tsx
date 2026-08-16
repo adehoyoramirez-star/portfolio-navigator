@@ -2016,13 +2016,13 @@ soxRsiWeekly,
     const trackedHistories: Record<string, number[]> = {};
     for (const a of portfolio.assets) trackedHistories[a.ticker] = a.history;
     const dailyPortfolioReturns = computeRealizedReturns(trackedHistories, trackedSnapshots);
-    const realizedSince = trackedSnapshots.length >= 2 ? trackedSnapshots[0].date : null;
+    const hasRealized = dailyPortfolioReturns.length >= 10;
+    const realizedSince = hasRealized && trackedSnapshots.length >= 2 ? trackedSnapshots[0].date : null;
 
     // FIX-FORENSIC-H1: métricas con numerador y denominador del MISMO origen.
     // Antes Sharpe/Sortino/Calmar/Jensen mezclaban μ forward (numerador) con riesgo
     // realizado (denominador) → ratios sistemáticamente inflados (ej. Jensen 13.1%,
     // Calmar 3.51). Ahora se calculan sobre retornos REALIZADOS consistentes.
-    const hasRealized = dailyPortfolioReturns.length >= 10;
     const realizedMean = hasRealized
       ? dailyPortfolioReturns.reduce((a, b) => a + b, 0) / dailyPortfolioReturns.length
       : 0;
@@ -3085,12 +3085,23 @@ soxRsiWeekly,
 
       {portfolioAnalytics && (
         <div style={styles.card}>
-          <h2>📊 Portfolio Analytics (Forward-Looking)</h2>
+          <h2>
+            {portfolioAnalytics.realizedSince
+              ? "📊 Portfolio Analytics (Realizado)"
+              : "📊 Portfolio Analytics — Estimaciones (aún sin 10 días de tracking)"}
+          </h2>
+          {!portfolioAnalytics.realizedSince && (
+            <div style={{
+              background: "#78350f", border: "1px solid #b45309", borderRadius: "0.5rem",
+              padding: "0.6rem 0.75rem", marginBottom: "0.75rem", fontSize: "0.78rem", color: "#fde68a",
+            }}>
+              ⚠️ Sin historial de posiciones suficiente aún (≥10 días de tracking). Los ratios de abajo son <strong>estimaciones forward (μ)</strong>, no resultados reales. Beta y Alpha aparecen en blanco («—») porque todavía no hay datos para comparar la cartera con el mercado.
+            </div>
+          )}
           <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "-0.3rem", marginBottom: "0.75rem" }}>
             {portfolioAnalytics.realizedSince
               ? `Métricas realizadas desde ${portfolioAnalytics.realizedSince} con posiciones reales día a día (sin look-ahead).`
-              : "Sin historial de posiciones suficiente aún (≥10 días de tracking): se muestran estimaciones forward (μ)."}
-            {" "}El "Retorno Esp." (μ) se muestra por separado y no se mezcla con lo realizado.
+              : "El \"Retorno Esp.\" (μ) se muestra por separado y no se mezcla con lo realizado."}
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "1rem" }}>
             <div style={{ background: portfolioAnalytics.sharpe >= 1 ? "#065f46" : portfolioAnalytics.sharpe >= 0.5 ? "#1e3a5f" : portfolioAnalytics.sharpe >= 0 ? "#78350f" : "#7f1d1d", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
@@ -3145,17 +3156,17 @@ soxRsiWeekly,
               </div>
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>×{(engineResult?.masterRegime.regimePenalty ?? 1).toFixed(2)} penalty régimen</div>
             </div>
-            <div style={{ background: (portfolioAnalytics.beta ?? 1) > 1.3 ? "#78350f" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "#1e3a5f" : "#065f46", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
+            <div style={{ background: !portfolioAnalytics.realizedSince ? "#1f2937" : (portfolioAnalytics.beta ?? 1) > 1.3 ? "#78350f" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "#1e3a5f" : "#065f46", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
               <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Beta vs WLG (MSCI World)</div>
-              <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#ffffff" }}>{(portfolioAnalytics.beta ?? 1).toFixed(2)}</div>
+              <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#ffffff" }}>{portfolioAnalytics.realizedSince ? (portfolioAnalytics.beta ?? 1).toFixed(2) : "—"}</div>
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>
-                {(portfolioAnalytics.beta ?? 1) > 1.2 ? "Agresivo" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "Mercado" : "Defensivo"}
+                {!portfolioAnalytics.realizedSince ? "Pendiente (sin histórico)" : (portfolioAnalytics.beta ?? 1) > 1.2 ? "Agresivo" : (portfolioAnalytics.beta ?? 1) > 0.8 ? "Mercado" : "Defensivo"}
               </div>
             </div>
-            <div style={{ background: (portfolioAnalytics.alpha ?? 0) > 0.02 ? "#065f46" : (portfolioAnalytics.alpha ?? 0) > 0 ? "#1e3a5f" : "#7f1d1d", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
+            <div style={{ background: !portfolioAnalytics.realizedSince ? "#1f2937" : (portfolioAnalytics.alpha ?? 0) > 0.02 ? "#065f46" : (portfolioAnalytics.alpha ?? 0) > 0 ? "#1e3a5f" : "#7f1d1d", borderRadius: "0.5rem", padding: "1rem", textAlign: "center" }}>
               <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.25rem" }}>Alpha de Jensen</div>
-              <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: (portfolioAnalytics.alpha ?? 0) >= 0 ? "#10b981" : "#ef4444" }}>
-                {((portfolioAnalytics.alpha ?? 0) * 100).toFixed(1)}%
+              <div style={{ fontSize: "1.8rem", fontWeight: "bold", color: !portfolioAnalytics.realizedSince ? "#9ca3af" : (portfolioAnalytics.alpha ?? 0) >= 0 ? "#10b981" : "#ef4444" }}>
+                {portfolioAnalytics.realizedSince ? `${((portfolioAnalytics.alpha ?? 0) * 100).toFixed(1)}%` : "—"}
               </div>
               <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>r_p - [rf + β(r_m - rf)]</div>
             </div>
