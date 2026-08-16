@@ -65,3 +65,45 @@ describe("H-5 — convención drift OPUESTA rebalancer vs smartDCA", () => {
     expect(Math.sign(dcaDrift)).toBe(1);
   });
 });
+
+describe("OVERWEIGHT TRIM — recorte institucional de sobrepeso (FIX-OVERWEIGHT-TRIM)", () => {
+  test("sobreponderado SIN techo ni suelo → SELL hacia target", () => {
+    const assets = [
+      { ticker: "BTC-EUR", name: "Bitcoin", price: 100, shares: 5, targetAllocation: 0.20 },
+    ];
+    // currentPct 0.50, target 0.20 → drift +0.30 (sobreponderado)
+    const out = computeRebalanceSuggestions(assets, 0, 1000, 0.02, [], []);
+    expect(out.sellSuggestions.length).toBe(1);
+    const sell = out.sellSuggestions[0]!;
+    expect(sell.ticker).toBe("BTC-EUR");
+    // exceso sobre target = 500 - 200 = 300 → 3 acciones
+    expect(sell.sharesToSell).toBeCloseTo(3, 5);
+    expect(sell.proceedsIfSold).toBeCloseTo(300, 5);
+  });
+
+  test("sobreponderado CON suelo EXTREME → solo recorta exceso sobre floor +5pp", () => {
+    const assets = [
+      { ticker: "BTC-EUR", name: "Bitcoin", price: 100, shares: 5, targetAllocation: 0.20 },
+    ];
+    const out = computeRebalanceSuggestions(assets, 0, 1000, 0.02, [], [
+      { ticker: "BTC-EUR", attackMultiplier: 2.0, shouldAccumulate: true, zone: "EXTREME" },
+    ]);
+    expect(out.sellSuggestions.length).toBe(1);
+    const sell = out.sellSuggestions[0]!;
+    // floor +5pp → allowedValue = (0.20+0.05)*1000 = 250 → exceso 250 → 2.5 acciones
+    expect(sell.sharesToSell).toBeCloseTo(2.5, 5);
+    expect(sell.proceedsIfSold).toBeCloseTo(250, 5);
+  });
+
+  test("sobreponderado dentro del floor del suelo → NO vender", () => {
+    const assets = [
+      { ticker: "URNU.DE", name: "Uranium", price: 10, shares: 24, targetAllocation: 0.20 },
+    ];
+    // currentValue 240, totalPortfolioValue 1000 → currentPct 0.24, drift +0.04
+    // floor EXTREME +5pp → 0.04 ≤ 0.05 → dentro del rango permitido
+    const out = computeRebalanceSuggestions(assets, 0, 1000, 0.02, [], [
+      { ticker: "URNU.DE", attackMultiplier: 2.0, shouldAccumulate: true, zone: "EXTREME" },
+    ]);
+    expect(out.sellSuggestions.length).toBe(0);
+  });
+});

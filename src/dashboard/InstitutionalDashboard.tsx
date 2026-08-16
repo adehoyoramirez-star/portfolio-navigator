@@ -85,6 +85,7 @@ import {
   RebalanceAsset,
   RebalanceSuggestion,
 } from "@/core/portfolio/rebalancer";
+import { loadCycleManual, saveCycleManual } from "@/lib/cycleManualInputs";
 import {
   detectCycleTops,
   detectCycleBottoms,
@@ -339,19 +340,31 @@ const formatCurrency = (value: number): string => {
   const [execPrice, setExecPrice] = useState<number>(0);
   const [execShares, setExecShares] = useState<number>(0);
 
-  const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(undefined);
-  const [uraniumLT, setUraniumLT] = useState<number | undefined>(undefined);
- const [siaSalesYoY, setSiaSalesYoY] = useState<number | undefined>(undefined);
- const [soxRsiWeekly, setSoxRsiWeekly] = useState<number | undefined>(undefined);
+  const [uraniumSpot, setUraniumSpot] = useState<number | undefined>(() => loadCycleManual().uraniumSpot);
+  const [uraniumLT, setUraniumLT] = useState<number | undefined>(() => loadCycleManual().uraniumLT);
+ const [siaSalesYoY, setSiaSalesYoY] = useState<number | undefined>(() => loadCycleManual().siaSalesYoY);
+ const [soxRsiWeekly, setSoxRsiWeekly] = useState<number | undefined>(() => loadCycleManual().soxRsiWeekly);
  const [soxSpyRS, setSoxSpyRS] = useState<number>(0);
   const [inflationBreakeven, setInflationBreakeven] = useState<number | undefined>(undefined);
-  const [wlgRsiWeekly, setWlgRsiWeekly] = useState<number | undefined>(undefined);
-  const [wlgPERatio, setWlgPERatio] = useState<number | undefined>(undefined);
-  const [wlgEpsGrowth, setWlgEpsGrowth] = useState<number | undefined>(undefined);
-  const [emxcRsiWeekly, setEmxcRsiWeekly] = useState<number | undefined>(undefined);
-  const [emxcPERatio, setEmxcPERatio] = useState<number | undefined>(undefined);
-  const [urnuPERatio, setUrnuPERatio] = useState<number | undefined>(undefined);
-  const [vvsmPERatio, setVvsmPERatio] = useState<number | undefined>(undefined);
+  const [wlgRsiWeekly, setWlgRsiWeekly] = useState<number | undefined>(() => loadCycleManual().wlgRsiWeekly);
+  const [wlgPERatio, setWlgPERatio] = useState<number | undefined>(() => loadCycleManual().wlgPERatio);
+  const [wlgEpsGrowth, setWlgEpsGrowth] = useState<number | undefined>(() => loadCycleManual().wlgEpsGrowth);
+  const [emxcRsiWeekly, setEmxcRsiWeekly] = useState<number | undefined>(() => loadCycleManual().emxcRsiWeekly);
+  const [emxcPERatio, setEmxcPERatio] = useState<number | undefined>(() => loadCycleManual().emxcPERatio);
+  const [urnuPERatio, setUrnuPERatio] = useState<number | undefined>(() => loadCycleManual().urnuPERatio);
+  const [vvsmPERatio, setVvsmPERatio] = useState<number | undefined>(() => loadCycleManual().vvsmPERatio);
+
+  // FIX-CYCLE-PERSIST (Ago-2026): guardar inputs manuales del detector
+  // de techo/suelo para que no se pierdan al recargar. Antes volvían a
+  // undefined y los detectores se quedaban ciegos (ej: Uranio EXTREME
+  // desaparecía del panel de oportunidades).
+  useEffect(() => {
+    saveCycleManual({
+      uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly,
+      wlgRsiWeekly, wlgPERatio, wlgEpsGrowth,
+      emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio,
+    });
+  }, [uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio]);
 
   const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
@@ -1635,7 +1648,8 @@ soxRsiWeekly,
       availableCash,
       totalPortfolioValue,
       0.02,
-      cycleTopResult.signals
+      cycleTopResult.signals,
+      cycleBottomResult?.signals
     );
     // FIX-AUDIT-R3 R3-01: trigger extendido para liquidación total.
     // ANTES: solo `regime === "ALL_CASH"` disparaba el branch de liquidación. PERO el engine
@@ -1756,7 +1770,7 @@ soxRsiWeekly,
       coverageRatio: 0,
       isFullyFunded: false,
     };
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult]);
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult]);
 
   const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
     const sells = rebalanceFinal?.sellSuggestions ?? [];
