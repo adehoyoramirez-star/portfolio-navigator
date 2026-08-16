@@ -2114,12 +2114,33 @@ soxRsiWeekly,
                 </span>
               )}
             </div>
-            <button
-              onClick={() => setShowSessionBanner(false)}
-              style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 16px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
-            >
-              ✓ Todo correcto — continuar
-            </button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  // Restaurar cartera real (valores de comité — Ago 2026).
+                  // Usa initialPortfolio (defaults ya alineados a la cartera real).
+                  setPortfolio(prev => ({
+                    ...prev,
+                    assets: prev.assets.map(a => {
+                      const d = initialPortfolio.assets.find(x => x.ticker === a.ticker);
+                      return d ? { ...a, shares: d.shares, avgPrice: d.avgPrice } : a;
+                    }),
+                  }));
+                  setCashReserve(initialPortfolio.cashReserve);
+                  setMonthlyInjection(initialPortfolio.monthlyInjection);
+                  setDefensiveLiquidity(10000);
+                }}
+                style={{ background: '#0f766e', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 16px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
+              >
+                🔄 Restaurar cartera real
+              </button>
+              <button
+                onClick={() => setShowSessionBanner(false)}
+                style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 16px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
+              >
+                ✓ Todo correcto — continuar
+              </button>
+            </div>
           </div>
 
           {/* Instrucción */}
