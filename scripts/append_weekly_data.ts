@@ -92,11 +92,17 @@ async function main() {
     process.exit(1);
   }
 
-  // Weekend guard: markets closed Sat/Sun
-  const dayOfWeek = new Date().getDay();
-  if (dayOfWeek === 0 || dayOfWeek === 6) {
-    console.log('Weekend — markets closed. Run on Friday (after close) or Monday.');
-    process.exit(0);
+  // Optional --date YYYY-MM-DD to backfill a specific trading day (e.g. missed Friday)
+  const dateArgIdx = process.argv.indexOf('--date');
+  const overrideDate = dateArgIdx !== -1 && process.argv[dateArgIdx + 1] ? process.argv[dateArgIdx + 1] : null;
+
+  // Weekend guard: markets closed Sat/Sun (skip when explicitly backfilling a date)
+  if (!overrideDate) {
+    const dayOfWeek = new Date().getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      console.log('Weekend — markets closed. Run on Friday (after close) or Monday, or pass --date YYYY-MM-DD to backfill.');
+      process.exit(0);
+    }
   }
 
   // Read last row for fallback prices and date check
@@ -108,8 +114,8 @@ async function main() {
   // Extract previous prices for carry-forward on API failure
   const lastPrices = lastLine.split(',').slice(1, 1 + TICKERS.length).map(Number);
 
-  // Today's date in YYYY-MM-DD
-  const today = new Date().toISOString().split('T')[0];
+  // Target date in YYYY-MM-DD (today by default, or --date override for backfill)
+  const today = overrideDate || new Date().toISOString().split('T')[0];
 
   // Don't append if today already exists
   if (lastDate === today) {
