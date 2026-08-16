@@ -137,6 +137,29 @@ import { monteCarloJumpDiffusion, choleskyDecomposition, randomNormal } from "@/
 const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 // ==================== COMPONENTE PRINCIPAL ====================
+// MIGRATION-CLOBBER (Ago-2026): firma de los defaults ANTIGUOS que el bug de
+// clobber podía escribir en localStorage. Si el portfolio guardado coincide
+// exactamente con esta firma, es estado corrupto → restaurar cartera real.
+function isLegacyClobberedPortfolio(p: {
+  cashReserve: number;
+  monthlyInjection: number;
+  positions: Array<{ ticker: string; shares: number }>;
+}): boolean {
+  if (p.cashReserve !== 150 || p.monthlyInjection !== 400) return false;
+  const legacyShares: Record<string, number> = {
+    "VVSM.DE": 2,
+    "0P00000WLG.F": 26,
+    "URNU.DE": 13,
+    "EMXC.DE": 31,
+    "PPFB.DE": 4,
+  };
+  for (const [ticker, shares] of Object.entries(legacyShares)) {
+    const pos = p.positions.find(x => x.ticker === ticker);
+    if (!pos || pos.shares !== shares) return false;
+  }
+  return true;
+}
+
 const InstitutionalDashboard: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
 
@@ -539,7 +562,18 @@ const formatCurrency = (value: number): string => {
 
   useEffect(() => {
     const savedPortfolio = loadPortfolio();
-    if (savedPortfolio) {
+    if (savedPortfolio && isLegacyClobberedPortfolio(savedPortfolio)) {
+      // Clobber detectado: restaurar cartera real automáticamente.
+      setPortfolio(prev => ({
+        ...prev,
+        assets: prev.assets.map(a => {
+          const d = initialPortfolio.assets.find(x => x.ticker === a.ticker);
+          return d ? { ...a, shares: d.shares, avgPrice: d.avgPrice } : a;
+        }),
+      }));
+      setCashReserve(initialPortfolio.cashReserve);
+      setMonthlyInjection(initialPortfolio.monthlyInjection);
+    } else if (savedPortfolio) {
       // PERSIST-02: Detectar qué cambió desde la última vez que el usuario
       // introdujo datos. Si el sistema cargó valores guardados, mostramos
       // un banner de confirmación en lugar de sobreescribir silenciosamente.
