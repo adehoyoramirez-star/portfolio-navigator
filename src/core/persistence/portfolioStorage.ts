@@ -79,6 +79,7 @@ export interface PersistedMacro {
   emxcPERatio?: number;
   urnuPERatio?: number;
   vvsmPERatio?: number;
+  goldCbPurchases?: number;
   savedAt: string;
 }
 

@@ -353,6 +353,7 @@ const formatCurrency = (value: number): string => {
   const [emxcPERatio, setEmxcPERatio] = useState<number | undefined>(() => loadCycleManual().emxcPERatio);
   const [urnuPERatio, setUrnuPERatio] = useState<number | undefined>(() => loadCycleManual().urnuPERatio);
   const [vvsmPERatio, setVvsmPERatio] = useState<number | undefined>(() => loadCycleManual().vvsmPERatio);
+  const [goldCbPurchases, setGoldCbPurchases] = useState<number | undefined>(() => loadCycleManual().goldCbPurchases);
 
   // FIX-CYCLE-PERSIST (Ago-2026): guardar inputs manuales del detector
   // de techo/suelo para que no se pierdan al recargar. Antes volvían a
@@ -362,9 +363,9 @@ const formatCurrency = (value: number): string => {
     saveCycleManual({
       uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly,
       wlgRsiWeekly, wlgPERatio, wlgEpsGrowth,
-      emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio,
+      emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio, goldCbPurchases,
     });
-  }, [uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio]);
+  }, [uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio, goldCbPurchases]);
 
   const [erpValue, setErpValue] = useState(0.025);
   const [liquidity, setLiquidity] = useState(0.5);
@@ -679,6 +680,7 @@ const formatCurrency = (value: number): string => {
       if (savedMacro.emxcPERatio !== undefined) setEmxcPERatio(savedMacro.emxcPERatio);
       if (savedMacro.urnuPERatio !== undefined) setUrnuPERatio(savedMacro.urnuPERatio);
       if (savedMacro.vvsmPERatio !== undefined) setVvsmPERatio(savedMacro.vvsmPERatio);
+      if (savedMacro.goldCbPurchases !== undefined) setGoldCbPurchases(savedMacro.goldCbPurchases);
     }
     refreshMarketData();
   }, []);
@@ -724,10 +726,10 @@ const formatCurrency = (value: number): string => {
         type: p.label,
       })),        wlgRsiWeekly, wlgPERatio, wlgEpsGrowth,
         emxcRsiWeekly, emxcPERatio,
-        urnuPERatio, vvsmPERatio,
+        urnuPERatio, vvsmPERatio, goldCbPurchases,
       savedAt: new Date().toISOString(),
     });
-  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio]);
+  }, [vix, manualPER, manualBond10y, bond2y, m2Growth, creditSpread, liquidityGrowth, dxy, moveIndex, btcVol, btcDominance, mvrvRatio, jumpIntensity, jumpIntensityPortfolio, jumpMean, jumpStd, enableJumps, puellMultiple, mvrvZScore, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottCurrentWave, elliottPivots, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio, goldCbPurchases]);
 
   const totalPortfolioValue = portfolio.assets.reduce(
     (sum, asset) => sum + asset.price * asset.shares,
@@ -913,11 +915,12 @@ soxRsiWeekly,
       regimeShiftPE: smoothedShiftPE,
       regimeShiftBTC: smoothedShiftBTC,
       creditSpread,
+      goldCbPurchases,
     };
     return detectCycleTops(cycleInputs);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil,        wlgRsiWeekly, wlgPERatio,
         emxcRsiWeekly, emxcPERatio,
-        wlgEpsGrowth, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
+        wlgEpsGrowth, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
 
   // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
   // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.
@@ -1007,11 +1010,12 @@ soxRsiWeekly,
       regimeShiftPE: smoothedShiftPE,
       regimeShiftBTC: smoothedShiftBTC,
       creditSpread,
+      goldCbPurchases,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil,        wlgRsiWeekly, wlgPERatio,
         emxcRsiWeekly, emxcPERatio,
-        wlgEpsGrowth, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread]);
+        wlgEpsGrowth, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
 
   
 
@@ -2747,6 +2751,10 @@ soxRsiWeekly,
                 </span>
               </label>
               <input type="number" placeholder="—" value={inflationBreakeven ?? ""} onChange={e => setInflationBreakeven(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" max="10" />
+            </div>
+            <div>
+              <label style={styles.label}>Oro BC compras netas t/año{" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>World Gold Council trimestral</span></label>
+              <input type="number" placeholder="—" value={goldCbPurchases ?? ""} onChange={e => setGoldCbPurchases(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="10" min="0" />
             </div>
             <div>
               <label style={styles.label}>WLG RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URTH · W · RSI(14)</span></label>

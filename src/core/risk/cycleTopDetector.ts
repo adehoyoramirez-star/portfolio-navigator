@@ -121,6 +121,12 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
   bondYield10y: number;        // ya disponible en dashboard
   inflationBreakeven?: number; // TradingView: T5YIE — breakeven inflación 5 años EEUU
   brentOil?: number;           // $/barril — si >$95 la guerra/inflación protege al oro → override HOLD
+  goldCbPurchases?: number;   // GOLD-CB-SENSOR (Ago-2026, Comité): compras netas de oro de
+                              //   bancos centrales (toneladas/año, World Gold Council trimestral).
+                              //   COINCIDENTE/estructural, NO leading → NO puntúa: actúa como
+                              //   atenuador del trim (peso bajo) cuando los BC compran récord.
+                              //   Media 2010-2020 ~450 t/año; 2022-2024 ~1.000-1.100 t/año (récord).
+                              //   Rampa de atenuación: 500→0, 800→+0.10, 1200→+0.20 de relief.
 
   // WLG (Vanguard Global Stock — MSCI World)
   wlgRsiWeekly?: number;     // RSI semanal URTH (proxy MSCI World) — TradingView, período 14, timeframe W
@@ -472,7 +478,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── ORO ──────────────────────────────────────────────────────────
 function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { bondYield10y, inflationBreakeven, brentOil, dxy } = inputs;
+  const { bondYield10y, inflationBreakeven, brentOil, dxy, goldCbPurchases } = inputs;
 
   if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
     return {
@@ -544,6 +550,26 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
       reason += ` · DXY ${dxy.toFixed(1)} — dólar débil favorece al oro (+0.10 alivio)`;
     }
   }
+
+  // ── GOLD-CB-SENSOR (Ago 2026, Comité) ──────────────────────────
+  //   Compra de bancos centrales como atenuador del trim (NO puntúa).
+  //   2022+ rompió la relación "tipo real ↑ → oro ↓": de-dolarización
+  //   y compras récord de BC (China, India, Polonia…) sostienen el oro
+  //   pese a tipos reales positivos. Si los BC compran récord, el
+  //   detector degrada su agresividad (relief hasta +0.20) en vez de
+  //   vender a ciegas. Es corroboración, no señal primaria: jamás
+  //   convierte un SAFE en techo, solo suaviza un trim existente.
+  if (isValidReading(goldCbPurchases, 0) && goldCbPurchases > 500) {
+    const cbRelief = smoothScore(goldCbPurchases, [
+      [500, 0],
+      [800, 0.10],
+      [1200, 0.20],
+    ]);
+    if (cbRelief > 0) {
+      multiplier = Math.min(1.0, multiplier + cbRelief);
+      reason += ` · Bancos centrales ~${goldCbPurchases.toFixed(0)} t/año (WGC) — de-dolarización: comprador estructural sostiene el oro pese al tipo real (régimen roto 2022+, +${Math.round(cbRelief * 100)} de alivio)`;
+    }
+  }
   const zone: CycleTopSignal["zone"] =
     multiplier <= 0.30 ? "DANGER" : multiplier < 1.0 ? "CAUTION" : "SAFE";
   const trimPct = Math.round((1 - multiplier) * 100);
@@ -554,8 +580,8 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
     allocationMultiplier: multiplier,
     zone,
     reason,
-    indicator: "Tipo Real + Brent Crude Oil + DXY",
-    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"}`,
+    indicator: "Tipo Real + Brent Crude Oil + DXY + Bancos Centrales",
+    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"} · BC ${goldCbPurchases !== undefined ? goldCbPurchases.toFixed(0) + " t/año" : "—"}`,
     shouldTrim: trimPct > 0,
     trimPct,
   };

@@ -23,6 +23,7 @@ export interface CycleManualInputs {
   emxcPERatio?: number;
   urnuPERatio?: number;
   vvsmPERatio?: number;
+  goldCbPurchases?: number; // GOLD-CB-SENSOR: compras netas oro BC (t/año, World Gold Council)
 }
 
 const STORAGE_KEY = "olympus_cycle_manual";

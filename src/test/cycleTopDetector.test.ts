@@ -180,6 +180,35 @@ describe("detectCycleTops - central clamp", () => {
   test("hasActiveWarnings false todo SAFE", () => expect(detectCycleTops({ bondYield10y: 4.0, mvrvZScore: 1.0 }).hasActiveWarnings).toBe(false));
 });
 
+describe("detectGoldTop - GOLD-CB-SENSOR (Ago 2026)", () => {
+  // realRate = 4.7 − 2.3 = 2.4 → baseMultiplier 0.225 → DANGER sin CB
+  const base = { bondYield10y: 4.7, inflationBreakeven: 2.3 };
+  const gold = (r: ReturnType<typeof detectCycleTops>) => r.signals.find(s => s.ticker === "PPFB.DE")!;
+
+  test("sin compras de BC → DANGER (trim agresivo)", () => {
+    expect(gold(detectCycleTops(base)).zone).toBe("DANGER");
+  });
+
+  test("compras récord de BC (1100 t/año) → atenúa a CAUTION", () => {
+    const g = gold(detectCycleTops({ ...base, goldCbPurchases: 1100 }));
+    expect(g.zone).toBe("CAUTION");
+    expect(g.allocationMultiplier).toBeCloseTo(0.40, 2);
+  });
+
+  test("BC récord atenúa (multiplier mayor) pero NO convierte en SAFE", () => {
+    const sin = gold(detectCycleTops(base));
+    const con = gold(detectCycleTops({ ...base, goldCbPurchases: 1100 }));
+    expect(con.allocationMultiplier).toBeGreaterThan(sin.allocationMultiplier);
+    expect(con.allocationMultiplier).toBeLessThan(1.0);
+  });
+
+  test("BC normal (450 t/año) → sin efecto (umbral en 500)", () => {
+    const sin = gold(detectCycleTops(base));
+    const con = gold(detectCycleTops({ ...base, goldCbPurchases: 450 }));
+    expect(con.allocationMultiplier).toBeCloseTo(sin.allocationMultiplier, 6);
+  });
+});
+
 describe("isBTCDominanceFalling", () => {
   test("cae desde >58% >1.5pp", () => expect(isBTCDominanceFalling(55, 60)).toBe(true));
   test("cae desde <58%", () => expect(isBTCDominanceFalling(50, 55)).toBe(false));
