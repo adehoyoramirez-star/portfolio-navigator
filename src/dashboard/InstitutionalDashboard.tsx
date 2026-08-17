@@ -4552,12 +4552,25 @@ soxRsiWeekly,
                 {totalUnrealizedGain >= 0 ? "+" : ""}{formatCurrency(totalUnrealizedGain)} ({totalUnrealizedPct.toFixed(1)}%)
               </div>
             </div>
-            <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", border: "1px solid #334155", minWidth: 200 }}>
+            <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", border: "1px solid #334155", minWidth: 220 }}>
               <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Retorno total del patrimonio</div>
               <div style={{ fontSize: "1.1rem", fontWeight: 700, color: totalReturnAmount >= 0 ? "#10b981" : "#ef4444" }}>
                 {totalReturnAmount >= 0 ? "+" : ""}{formatCurrency(totalReturnAmount)} ({totalReturnPct.toFixed(1)}%)
               </div>
-              <div style={{ fontSize: "0.6rem", color: "#64748b" }}>Valor + cash − aportado</div>
+              <div style={{ fontSize: "0.6rem", color: "#64748b", display: "flex", alignItems: "center", gap: 4, marginTop: 2, flexWrap: "wrap" }}>
+                <span>Aportado</span>
+                <input
+                  type="number"
+                  value={totalNetContributions ?? ''}
+                  min={0}
+                  step={100}
+                  placeholder="auto"
+                  onChange={(e) => setTotalNetContributions(e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0))}
+                  title="Total aportado (depósitos − retiradas). Vacío = backfill automático (coste + cash + defensiva)."
+                  style={{ width: "82px", background: "#0f172a", border: "1px solid #334155", color: "#e5e7eb", borderRadius: "4px", padding: "1px 4px", fontSize: "0.65rem" }}
+                />
+                <span>€</span>
+              </div>
             </div>
           </div>
           <table style={styles.table}>
