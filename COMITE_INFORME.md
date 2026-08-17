@@ -1,129 +1,133 @@
 # Olympus V5 — Informe para Comité de Inversiones
 
-**Fecha**: 25 Julio 2026 · **Versión motor**: v5.2.3 · **Estado**: Arquitectura congelada ✅
+**Fecha**: 17 Agosto 2026 · **Estado**: Paper trading activo · **Fase**: validación (congelado funcional)
 
 ---
 
 ## 1. Resumen Ejecutivo
 
-Olympus V5 es un motor cuantitativo de asignación de activos para family office/hedge fund. Combina **Black-Litterman + HRP + Kelly** con 11 capas de gestión de riesgo, **356 tests unitarios**, TypeScript estricto, y datos reales de mercado (Yahoo Finance, FRED, on-chain manual).
+Olympus V5 es un motor cuantitativo de asignación de activos (family office / hedge fund) que combina
+**Black-Litterman + HRP + MinVar + Kelly** sobre una cartera de 6 activos. La arquitectura está
+**congelada funcionalmente** desde la auditoría forense de Agosto 2026: no se añaden indicadores nuevos
+sin validación. El esfuerzo actual es **demostrar con evidencia** que las decisiones ya tomadas son robustas
+(paper trading, backtest fuera de muestra, ablación, sensibilidad).
 
-La arquitectura fue sometida a una **auditoría forense completa** (Julio 2026) que identificó y corrigió **17 bugs**, incluyendo un problema de sobreajuste severo resuelto con el **circuit breaker BEAR-VETO**.
-
----
-
-## 2. Backtest Institucional (2015-2026)
-
-| Métrica | Valor | Interpretación |
-|---|---|---|
-| **Sharpe Ratio** | 0.344 | Aceptable (>0.3) |
-| **CAGR** | 7.66% | Sobre inflación |
-| **Max Drawdown** | -55.7% | Controlado por Kill Switch |
-| **Volatilidad** | 17.5% | Bajo target 20% |
-| **PBO** | 17.6% | MODERADO (10-20%) |
-| **P(Ruin 50% en 10a)** | 3.54% | Aceptable (<5%) |
-| **Mediana 10a (100K)** | EUR 185K | x1.85 |
-
-### OOS Validation (2025+, datos nunca vistos)
-
-| Métrica | Sin BEAR-VETO | Con BEAR-VETO | Mejora |
-|---|---|---|---|
-| Forward Sharpe | -0.373 | **-0.280** | +25% |
-| Forward CAGR | -24.4% | **-9.2%** | +62% |
-| Forward MaxDD | -57.9% | **-37.6%** | -35% |
-| vs Equal-Weight | PEOR | **IGUALA** | ✅ |
-
-> **Nota**: 2025+ fue un mercado bajista sincronizado (BTC -40%, Semis -60%, Global Stocks -60%, Oro -71%). El BEAR-VETO asegura que el motor no amplifique pérdidas.
+**Tests**: 415 pasando / 416 (1 fallo flaky conocido: `allocationLogger` timeout de 5s, ajeno a la lógica).
 
 ---
 
-## 3. Arquitectura del Motor (11 capas)
+## 2. Cartera (6 activos)
 
-| Capa | Función | Parámetros |
-|---|---|---|
-| 0. BTC Cycle | Señal on-chain | MVRV Z-Score, Puell, RSI-W |
-| 1. Meta-Inteligencia | Salud del modelo | Confidence [0.70-1.0] |
-| 2. Régimen Unificado | Macro + stress | VIX, spreads, yield curve, M2, WTI |
-| 3. Factor Scores | Mom/Val/Qual/LowVol | Pesos Kalman-adaptativos |
-| 4. Kelly Fraction | Sizing | Half-Kelly, cap 0.20 |
-| 5. BL+HRP Blend | Cartera óptima | BLx0.24+HRPx0.76 (EXP) |
-| 6. Regime Tilt | Sesgo sectorial | EXP: +40% crypto, +30% semis |
-| 🛡️ **BEAR-VETO** | **Price-action veto** | **>50% caen = anula tilt · >75% = cap 40%** |
-| 7. BTC Cap | Límite BTC | 10-35% dinámico (MVRV+régimen) |
-| 8. Cycle Top | Techos | 5 detectores (WLG, Oro, Semis, Uranio, EM) |
-| 9. Vol Target | Control vol | 20% anual, core ex-BTC |
-| 10. Tail Risk | Kill Switch | 5 niveles DD [0.05-1.0] |
+| Activo | Ticker | Clase | Detector techo | Detector suelo |
+|---|---|---|---|---|
+| Bitcoin | BTC-EUR | Cripto | MVRV Z, Puell, RSI-W | MVRV Z, Puell, RSI-W, BTC.D |
+| Semiconductores | VVSM.DE | Renta variable | SOX/SPX RS, SOX RSI-W | SOX RSI, SOX/SPX RS |
+| Global (MSCI World) | 0P00000WLG.F | Renta variable | Forward P/E, EPS Growth, RSI-W, Credit Spread | RSI-W, P/E bajo |
+| Uranio | URNU.DE | Materia prima | Spot/LT ratio, RSI diario | Spot/LT ratio (suelo), RSI, Z-score |
+| Emergentes | EMXC.DE | Renta variable | RSI-W, DXY | RSI-W, P/E bajo |
+| Oro (ETC) | PPFB.DE | Materia prima | Tipo real (10Y−BE5Y), Brent, DXY, **BC compras** | Tipo real bajo |
 
 ---
 
-## 4. Controles de Riesgo (todos verificados)
+## 3. Arquitectura de decisión (TOP → BOTTOM → DCA)
 
-| Control | ¿Real? | Evidencia |
+La decisión está separada en tres capas que no se mezclan:
+
+| Capa | Función | Salida |
 |---|---|---|
-| Kill Switch 5 niveles | ✅ | totalInvested real, cash no se renormaliza |
-| BEAR-VETO | ✅ | Validado en 5 crisis (COVID, QT22, Bear25) |
-| BTC Cap dinámico | ✅ | 10-35% según MVRV+régimen |
-| Cycle Top Detection | ✅ | 32 tests unitarios con datos reales |
-| Correlation Panic | ✅ | Cap 50% si corr>0.85 |
-| Absolute Trend Gates | ✅ | Circuit breaker por price-action |
+| **Cycle Top** | ¿Rentabilidad futura esperada ha caído por valoración/euforia? | trim % (SAFE/CAUTION/DANGER) |
+| **Cycle Bottom** | ¿Rentabilidad esperada ha subido mucho por infravaloración? | score + multiplicador (VALUE ×1.25 / OPPORTUNITY ×1.5 / EXTREME ×2.0) |
+| **Smart DCA** | ¿Cuánto desplegar y en qué activos? | órdenes con cap de drift y cash real |
+
+Principios institucionales aplicados:
+
+- **Solo lo *leading* puntúa.** Los datos coincidentes/proxy (SIA Sales, P/E trimestral, CAPE proxy) se degradan a **informativos** y no mueven el multiplicador por sí solos.
+- **Multiplier como fuente única de verdad.** `trimPct = (1 − multiplier) × 100` derivado siempre del multiplier (elimina bugs de sincronización).
+- **Rampas suaves** en vez de umbrales duros (anti-whipsaw).
+- **Guard de contradicción** (techo bloquea suelo del mismo activo).
 
 ---
 
-## 5. Pipeline de Datos
+## 4. Controles de riesgo (verificados)
 
-| Fuente | Datos | Frecuencia |
-|---|---|---|
-| **Yahoo Finance** | Precios, VIX, RSI, DXY, Brent | Tiempo real (~15min) |
-| **FRED** | M2, CAPE, spreads, breakeven | Manual semanal |
-| **On-chain manual** | MVRV Z-Score, Puell, BTC.D | Manual |
-| **CSV histórico** | 4120 días (2015-2026) | 6 activos |
+| Control | Detalle |
+|---|---|
+| **Kill Switch L1–L5** | Por drawdown real (−12/−15/−20/−25/−32%). No por sobrepeso ni por mover cash. |
+| **Cap de drift / sobrecompra** | `tope = drift × valor cartera`. Impide concentrar todo el cash en un activo. |
+| **Bypass EXTREME** | Solo en suelo EXTREME (×2.0) se permite sobrecomprar hasta −10pp. |
+| **Recorte de sobrepeso** | Activo sobreponderado sin techo se recorta hacia target, respetando el floor de suelo. |
+| **CASH-UNIFICADO** | cash broker + liquidez defensiva en estado atómico → no hay Kill Switch fantasma al mover dinero. |
+| **Correlation Panic / Vol Target / Regime penalty** | Capas adicionales heredadas (BL×0.20 + HRP×0.55 + MinVar×0.25). |
 
 ---
 
-## 6. Bugs corregidos (auditoría Julio 2026)
+## 5. Cambios de Agosto 2026 (este ciclo)
 
-| Bug | Impacto | Fix |
+| Área | Cambio | Justificación |
 |---|---|---|
-| Kill Switch decorativo | Exposición siempre 100% | FIX-V5-2: cash real |
-| smoothScore falso | WLG DANGER con RSI 58 | Guard multiplierFromScore(0) |
-| Cycle Top ignorado | Señales no llegaban al motor | Pipeline dashboard→engine |
-| Sobreajuste OOS | -58% MaxDD forward | BEAR-VETO circuit breaker |
+| **Detectores de techo** | Degradar SIA Sales y EMXC P/E a informativos (0 peso) | Coincidentes, no leading |
+| **Oro** | Sensor de compras de bancos centrales (`goldCbPurchases`, 500→800→1200 t/año, máx +0.20) | Cierra el gap de de-dolarización (2022: oro sube pese a tipos reales positivos) |
+| **WLG** | Forward P/E (media 16) + EPS Growth como modulador + Credit Spread amplificador | Evita vender demasiado pronto y refleja crecimiento de beneficios |
+| **Rebalanceo** | Recorte institucional de sobrepeso (ya no HOLD eterno) | Límite de concentración |
+| **Persistencia** | Inputs manuales de ciclo guardados en localStorage | No se pierden al recargar |
+| **Reporting** | G/P latente total + **Retorno total del patrimonio** (editable "Aportado") | Trazabilidad de performance real |
+| **Fixes forense** | H-2 (Sortino MAR=rf), H-5 (convención drift), H-6 (look-ahead pesos fijos), benchmark window, REGIME-50K display | Eliminar métricas imposibles / look-ahead |
+
+---
+
+## 6. Validación (estado actual)
+
+| Fase | Estado |
+|---|---|
+| Congelar versión | ✅ Hecho |
+| Paper trading (4–8 semanas) | 🔄 En curso (semanal, viernes) |
+| Backtest fuera de muestra | ⚠️ Re-baselining tras fixes H-2/H-5/H-6 |
+| Matriz de confusión / Ablación / Sensibilidad | 🔜 Pendiente |
+| NUPL / Market Breadth | ⛔ Congelado hasta validar la versión actual |
+
+**Regla del comité**: una mejora solo se aprueba si demuestra **impacto marginal cuantificado** (ablación),
+no por "añadir más indicadores". Un motor con 15 indicadores justificados es más robusto que uno con 30 redundantes.
 
 ---
 
 ## 7. Veredicto para el Comité
 
 ### ✅ Fortalezas
-- Arquitectura de riesgo **institucional-grade** (Kill Switch real, circuit breakers, hysteresis)
-- **356 tests** + TypeScript estricto + auditoría forense
-- **BEAR-VETO**: reduce MaxDD OOS 35% sin sacrificar backtest
-- Pipeline datos reales (Yahoo + FRED)
+- Arquitectura TOP/BOTTOM/DCA con sizing por convicción y límites de concentración: **institucional-grade**.
+- Separación *leading* / *coincident* / *proxy* con regla de que solo lo leading puntúa.
+- Fusibles de riesgo reales (Kill Switch por drawdown, cap de drift, recorte de sobrepeso).
+- 415 tests + TypeScript estricto.
 
-### ⚠️ Riesgos mitigados
-- **PBO 17.6% (MODERADO)**: cierto sobreajuste residual → mitigado por BEAR-VETO + walk-forward
-- **Datos macro manuales**: FRED y on-chain requieren actualización semanal
-- **MaxDD histórico -55.7%**: Kill Switch + BEAR-VETO limitan drawdowns reales
+### ⚠️ Riesgos / pendientes
+- **1 fallo flaky** (`allocationLogger` timeout) — cosmético, no afecta señales.
+- **P1 regime-conditional valuation shift**: diseñado, pendiente de backtest de sensibilidad (±1/±1.5/±2) antes de producción.
+- **Indicadores manuales** (MVRV Z, spot/LT uranio, compras BC, etc.) requieren actualización periódica — riesgo operativo silencioso si se olvidan.
+- **Dependencia de indicador único** en algunos detectores (uranio: spot/LT; oro: tipo real) — mitigado parcialmente (BC sensor en oro), pendiente corroboración en uranio.
 
 ### 🔜 Próximos pasos
-1. **Paper trading semanal** (iniciar inmediatamente)
-2. **Panel de trazabilidad** en dashboard (datos ya listos)
-3. **Automatizar FRED** vía API
+1. **Continuar paper trading** (protocolo de viernes, sin mirar a diario).
+2. **Cerrar el ciclo de validación**: backtest OOS → matriz de confusión → ablación → sensibilidad.
+3. **Solo después** evaluar NUPL (BTC) y Market Breadth (WLG) como mejoras medibles.
+4. **Automatizar/verificar frecuencia** de los inputs manuales (timestamp de última actualización con guard de staleness).
 
 ---
 
 ## 8. Firma Técnica
 
 ```
-Arquitectura congelada: 25 Julio 2026
-Motor: Olympus V5.2.3
-Tests: 356/356 pasando
-TypeScript: estricto, sin errores
-Último commit: 0dbb6ab (BEAR-VETO)
-Auditor: externo independiente (forense completo)
+Fecha del informe: 17 Agosto 2026
+Motor: Olympus V5 (arquitectura congelada funcional)
+Tests: 415 passing / 416 (1 flaky conocido)
+TypeScript: estricto, sin errores (tsc --noEmit limpio)
+Último commit: c562ad8 (campo editable 'Total aportado')
+Fase: paper trading supervisado
 ```
 
-**Dictamen**: APROBADO CONDICIONAL — Listo para paper trading supervisado. Para capital de terceros se requiere: 3-6 meses de track record, automatización FRED API, y panel de trazabilidad completo.
+**Dictamen**: APROBADO CONDICIONAL — la arquitectura está lista para paper trading supervisado.
+Para capital de terceros se requiere: track record de 3–6 meses, validación estadística completa
+(OOS + ablación + sensibilidad), y guard de staleness sobre los inputs manuales.
 
 ---
 
-*Documento generado por el sistema de auditoría Olympus V5. Todos los datos proceden de backtests ejecutados sobre datos reales de mercado (2015-2026).*
+*Documento del comité de inversiones Olympus V5. Los números de performance se re-baselinan tras la
+auditoría forense de Agosto 2026; el backtest final fuera de muestra se ejecutará al cierre de la fase de validación.*
