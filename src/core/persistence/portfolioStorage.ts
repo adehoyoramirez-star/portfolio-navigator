@@ -44,6 +44,7 @@ export interface PersistedPortfolio {
   cashReserve: number;
   defensiveLiquidity?: number;  // CASH-UNIFICADO (Ago-2026): añadido para persistir junto con cashReserve
   monthlyInjection: number;
+  totalNetContributions?: number;  // FEAT-TOTAL-RETURN (Ago-2026): aportaciones netas acumuladas (depósitos − retiradas)
   savedAt: string;
 }
 

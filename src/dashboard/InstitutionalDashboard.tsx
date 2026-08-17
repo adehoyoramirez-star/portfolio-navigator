@@ -312,6 +312,9 @@ const formatCurrency = (value: number): string => {
   const [depositAmount, setDepositAmount] = useState<number>(0);
   // withdrawAmount: efectivo que sale del sistema (reduce NAV total)
   const [withdrawAmount, setWithdrawAmount] = useState<number>(0);
+  // FEAT-TOTAL-RETURN (Ago-2026): aportaciones netas acumuladas (depósitos − retiradas).
+  // null = aún no inicializado (se backfilla al cargar el portfolio guardado).
+  const [totalNetContributions, setTotalNetContributions] = useState<number | null>(null);
 
 
   // MEJORA-9: Log de operaciones ejecutadas — persiste en localStorage
@@ -627,6 +630,18 @@ const formatCurrency = (value: number): string => {
         setDefensiveLiquidity(savedPortfolio.defensiveLiquidity);
       }
 
+      // FEAT-TOTAL-RETURN (Ago-2026): backfill de aportaciones netas.
+      // Si no hay registro previo, asumimos baseline = coste + cash + defensiva
+      // (break-even: todo lo actual se considera aportado). A partir de aquí,
+      // depósitos/retiradas se trackean explícitamente.
+      if (savedPortfolio.totalNetContributions !== undefined && savedPortfolio.totalNetContributions > 0) {
+        setTotalNetContributions(savedPortfolio.totalNetContributions);
+      } else {
+        const baselineCost = savedPortfolio.positions.reduce((s, p) => s + p.avgPrice * p.shares, 0);
+        const baseline = baselineCost + savedPortfolio.cashReserve + (savedPortfolio.defensiveLiquidity ?? 0);
+        if (baseline > 0) setTotalNetContributions(baseline);
+      }
+
       if (savedPortfolio.cashReserve !== initialPortfolio.cashReserve)
         changes.push(`Cash: ${savedPortfolio.cashReserve}€`);
       if (savedPortfolio.monthlyInjection !== initialPortfolio.monthlyInjection)
@@ -700,6 +715,7 @@ const formatCurrency = (value: number): string => {
       cashReserve,
       defensiveLiquidity,  // CASH-UNIFICADO: persistir junto con cashReserve
       monthlyInjection,
+      totalNetContributions: totalNetContributions ?? undefined,  // FEAT-TOTAL-RETURN
       savedAt: now,
     });
     // PERSIST-03: actualizar el timestamp visible cada vez que se guarda
@@ -709,7 +725,7 @@ const formatCurrency = (value: number): string => {
         hour: '2-digit', minute: '2-digit',
       })
     );
-  }, [portfolio.assets, cashReserve, defensiveLiquidity, monthlyInjection]);
+  }, [portfolio.assets, cashReserve, defensiveLiquidity, monthlyInjection, totalNetContributions]);
 
   useEffect(() => {
     saveMacro({
@@ -735,6 +751,25 @@ const formatCurrency = (value: number): string => {
     (sum, asset) => sum + asset.price * asset.shares,
     0
   );
+
+  // FEAT-TOTAL-PNL (Ago-2026): ganancia/pérdida latente total de la cartera.
+  // costeTotal = Σ (precio medio × acciones); ganancia = valor actual − coste.
+  const totalCostBasis = portfolio.assets.reduce(
+    (sum, asset) => sum + asset.avgPrice * asset.shares,
+    0
+  );
+  const totalUnrealizedGain = totalPortfolioValue - totalCostBasis;
+  const totalUnrealizedPct = totalCostBasis > 0 ? (totalUnrealizedGain / totalCostBasis) * 100 : 0;
+
+  // FEAT-TOTAL-RETURN (Ago-2026): retorno total del patrimonio (incluye cash broker + defensiva).
+  // = (valor total patrimonio) − (aportaciones netas). Fallback a ganancia latente si aún no hay backfill.
+  const totalPatrimonio = totalPortfolioValue + cashReserve + defensiveLiquidity;
+  const totalReturnAmount = totalNetContributions != null && totalNetContributions > 0
+    ? totalPatrimonio - totalNetContributions
+    : totalUnrealizedGain;
+  const totalReturnPct = totalNetContributions != null && totalNetContributions > 0
+    ? (totalReturnAmount / totalNetContributions) * 100
+    : totalUnrealizedPct;
 
   const availableCash = cashReserve;
 
@@ -3483,7 +3518,7 @@ soxRsiWeekly,
                 onChange={(e) => setDepositAmount(Math.max(0, Number(e.target.value) || 0))}
                 style={{ width: "75px", background: "#0f172a", border: "1px solid #10b981", color: "#10b981", borderRadius: "4px", padding: "2px 4px", fontSize: "0.7rem" }} />
               <button
-                onClick={() => { if (depositAmount > 0) { setCashReserve(prev => prev + depositAmount); setDepositAmount(0); } }}
+                onClick={() => { if (depositAmount > 0) { setCashReserve(prev => prev + depositAmount); setTotalNetContributions(prev => (prev ?? 0) + depositAmount); setDepositAmount(0); } }}
                 disabled={depositAmount <= 0}
                 title="Añadir efectivo externo — aumenta el NAV total"
                 style={{ background: depositAmount > 0 ? "#052e16" : "#1f2937", color: depositAmount > 0 ? "#10b981" : "#4b5563", border: "1px solid #10b981", borderRadius: "4px", padding: "2px 6px", cursor: depositAmount > 0 ? "pointer" : "not-allowed", fontSize: "0.6rem", fontWeight: "bold", whiteSpace: "nowrap" }}
@@ -3492,7 +3527,7 @@ soxRsiWeekly,
                 onChange={(e) => setWithdrawAmount(Math.max(0, Number(e.target.value) || 0))}
                 style={{ width: "75px", background: "#0f172a", border: "1px solid #ef4444", color: "#ef4444", borderRadius: "4px", padding: "2px 4px", fontSize: "0.7rem" }} />
               <button
-                onClick={() => { if (withdrawAmount > 0) { setCashReserve(prev => Math.max(0, prev - Math.min(withdrawAmount, prev))); setWithdrawAmount(0); } }}
+                onClick={() => { if (withdrawAmount > 0) { const effective = Math.min(withdrawAmount, cashReserve); setCashReserve(prev => Math.max(0, prev - effective)); setTotalNetContributions(prev => Math.max(0, (prev ?? 0) - effective)); setWithdrawAmount(0); } }}
                 disabled={withdrawAmount <= 0}
                 title="Retirar efectivo — reduce el NAV total"
                 style={{ background: withdrawAmount > 0 ? "#450a0a" : "#1f2937", color: withdrawAmount > 0 ? "#ef4444" : "#4b5563", border: "1px solid #ef4444", borderRadius: "4px", padding: "2px 6px", cursor: withdrawAmount > 0 ? "pointer" : "not-allowed", fontSize: "0.6rem", fontWeight: "bold", whiteSpace: "nowrap" }}
@@ -4502,6 +4537,29 @@ soxRsiWeekly,
           <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginBottom: "10px" }}>
             Los pesos objetivo son tus metas de asignación. El motor sugiere compras para acercarte a ellos.
           </p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", border: "1px solid #334155", minWidth: 130 }}>
+              <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Valor actual</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{formatCurrency(totalPortfolioValue)}</div>
+            </div>
+            <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", border: "1px solid #334155", minWidth: 130 }}>
+              <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Coste (invertido)</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{formatCurrency(totalCostBasis)}</div>
+            </div>
+            <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", border: "1px solid #334155", minWidth: 170 }}>
+              <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Ganancia/pérdida (latente)</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: totalUnrealizedGain >= 0 ? "#10b981" : "#ef4444" }}>
+                {totalUnrealizedGain >= 0 ? "+" : ""}{formatCurrency(totalUnrealizedGain)} ({totalUnrealizedPct.toFixed(1)}%)
+              </div>
+            </div>
+            <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", border: "1px solid #334155", minWidth: 200 }}>
+              <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Retorno total del patrimonio</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: totalReturnAmount >= 0 ? "#10b981" : "#ef4444" }}>
+                {totalReturnAmount >= 0 ? "+" : ""}{formatCurrency(totalReturnAmount)} ({totalReturnPct.toFixed(1)}%)
+              </div>
+              <div style={{ fontSize: "0.6rem", color: "#64748b" }}>Valor + cash − aportado</div>
+            </div>
+          </div>
           <table style={styles.table}>
             <thead>
               <tr>
