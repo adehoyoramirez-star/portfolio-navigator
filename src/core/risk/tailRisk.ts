@@ -106,7 +106,7 @@ export function computeTailRiskOverlay(input: TailRiskInput): TailRiskOutput {
   // El Vol Target (CAPA 7) ya gestiona la exposición basada en volatilidad.
   // Aplicar una segunda penalización aquí era doble-contar el mismo riesgo.
   // Se mantiene la estructura por si se quiere reactivar en el futuro.
-  let volatilityReduction = 0;
+  const volatilityReduction = 0;
 
   // ── 3. CRISIS SISTÉMICA (VIX + Credit Spread simultáneos) ─────────────
   // FIX-AUDIT-C6: thresholds centralizados en CEWS_CONFIG.SYSTEMIC_CRISIS.

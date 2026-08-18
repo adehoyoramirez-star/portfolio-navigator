@@ -534,7 +534,7 @@ export function analyzeElliottWaves(
 
   // Asignar labels basándose en la secuencia de pivotes
   // Si tenemos 5+ pivotes y el primer es mínimo: 0→W1 start, 1→W1 end(=W2 start), etc.
-  let labels: ElliottWaveLabel[] = [];
+  const labels: ElliottWaveLabel[] = [];
   const waveSequence: ElliottWaveLabel[] = ["1", "2", "3", "4", "5", "A", "B", "C"];
 
   // Determinar si el ciclo empieza alcista (primer pivote es un mínimo local)

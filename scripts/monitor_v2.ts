@@ -95,7 +95,7 @@ const years = returns.length / 252;
 const cagr = totalReturn ** (1 / Math.max(0.01, years)) - 1;
 
 // MaxDD
-let peak = values[0];
+const peak = values[0];
 let maxDD = 0;
 let peakIdx = 0;
 let troughIdx = 0;

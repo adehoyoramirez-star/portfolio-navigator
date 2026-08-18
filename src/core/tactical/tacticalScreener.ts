@@ -482,7 +482,7 @@ export async function scanTacticalUniverse(
   const allSymbols = [...new Set([...primarySymbols, ...fallbackSymbols, '^VIX', 'SPY', ...sectorEtfTickers])];
 
   // Paso 2: fetch batch de todos los símbolos
-  let batchData = await fetchBatch(allSymbols);
+  const batchData = await fetchBatch(allSymbols);
   const missingSymbols = allSymbols.filter(
     s => !(batchData[s]?.closes?.length >= 21),
   );

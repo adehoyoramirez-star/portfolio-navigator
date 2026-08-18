@@ -550,7 +550,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     if (fedNow !== undefined && ecbNow !== undefined) {
       try {
         // Limpiar key antigua (v1 single-value) si existe
-        try { localStorage.removeItem('olympus_cb_liquidity_prev'); } catch {}
+        try { localStorage.removeItem('olympus_cb_liquidity_prev'); } catch { /* localStorage no disponible → memoria */ }
         // ── Cargar historial de snapshots ──
         const raw = localStorage.getItem(LIQ_HISTORY_KEY);
         const history: { fed: number; ecb: number; ts: number }[] = raw

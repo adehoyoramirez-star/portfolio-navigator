@@ -58,13 +58,13 @@ export function loadPositionHistory(): PositionSnapshot[] {
 export function resetPositionHistory(): void {
   try {
     localStorage.removeItem(STORE_KEY);
-  } catch {}
+  } catch { /* localStorage no disponible → memoria */ }
 }
 
 function persist(snapshots: PositionSnapshot[]): void {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(snapshots.slice(-MAX_SNAPSHOTS)));
-  } catch {}
+  } catch { /* localStorage no disponible → memoria */ }
 }
 
 /**

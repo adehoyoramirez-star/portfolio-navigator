@@ -129,11 +129,11 @@ const LOG_EPSILON = -1e10; // log(0) safe value
 //   Fallback Map en memoria para que el HMM funcione en cualquier runtime.
 const _hmmMemory = new Map<string, string>();
 function _storageGet(key: string): string | null {
-  try { return localStorage.getItem(key); } catch {}
+  try { return localStorage.getItem(key); } catch { /* localStorage no disponible → memoria */ }
   return _hmmMemory.get(key) ?? null;
 }
 function _storageSet(key: string, value: string): void {
-  try { localStorage.setItem(key, value); return; } catch {}
+  try { localStorage.setItem(key, value); return; } catch { /* localStorage no disponible → memoria */ }
   _hmmMemory.set(key, value);
 }
 

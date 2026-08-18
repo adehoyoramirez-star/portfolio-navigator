@@ -110,17 +110,17 @@ const HYSTERESIS_MAX_HOURS = 72;        // reset completo después de 3 días
 const _memoryStore = new Map<string, string>();
 
 function _storageGet(key: string): string | null {
-  try { return localStorage.getItem(key); } catch {}
+  try { return localStorage.getItem(key); } catch { /* localStorage no disponible → memoria */ }
   return _memoryStore.get(key) ?? null;
 }
 
 function _storageSet(key: string, value: string): void {
-  try { localStorage.setItem(key, value); return; } catch {}
+  try { localStorage.setItem(key, value); return; } catch { /* localStorage no disponible → memoria */ }
   _memoryStore.set(key, value);
 }
 
 function _storageRemove(key: string): void {
-  try { localStorage.removeItem(key); return; } catch {}
+  try { localStorage.removeItem(key); return; } catch { /* localStorage no disponible → memoria */ }
   _memoryStore.delete(key);
 }
 
@@ -181,7 +181,7 @@ function isManualRefreshActive(): boolean {
 }
 
 export function signalManualRefresh(): void {
-  try { _storageSet(HYSTERESIS_BYPASS_KEY, Date.now().toString()); } catch {}
+  try { _storageSet(HYSTERESIS_BYPASS_KEY, Date.now().toString()); } catch { /* localStorage no disponible → memoria */ }
 }
 
 interface HysteresisState {

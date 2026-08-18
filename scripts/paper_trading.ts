@@ -212,7 +212,7 @@ const frozenShares: Record<string, number> = {};
 for (const ticker of ASSETS) {
   frozenShares[ticker] = positions[ticker]?.shares ?? 0;
 }
-let frozenCash = initialCash;
+const frozenCash = initialCash;
 
 // Pre-compute frozen path
 const frozenValues: number[] = [];

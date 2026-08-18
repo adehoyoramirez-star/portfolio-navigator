@@ -204,7 +204,7 @@ for (let b = 0; b < M; b++) {
   
   // Count configs with better OOS Sharpe
   let oosBetter = 0;
-  let rankSum = 0.0;
+  const rankSum = 0.0;
   for (let c = 0; c < configs.length; c++) {
     if (c === bestIsConfig) continue;
     const oosRets = configs[c].dailyReturns.filter((_, i) => !isIdx.has(i));

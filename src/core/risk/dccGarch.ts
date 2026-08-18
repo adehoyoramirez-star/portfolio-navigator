@@ -123,11 +123,11 @@ const ANNUALIZATION = 252;  // días de trading por año
 //   Fallback Map en memoria para que DCC-GARCH funcione en cualquier runtime.
 const _dccMemory = new Map<string, string>();
 function _storageGet(key: string): string | null {
-  try { return localStorage.getItem(key); } catch {}
+  try { return localStorage.getItem(key); } catch { /* localStorage no disponible → memoria */ }
   return _dccMemory.get(key) ?? null;
 }
 function _storageSet(key: string, value: string): void {
-  try { localStorage.setItem(key, value); return; } catch {}
+  try { localStorage.setItem(key, value); return; } catch { /* localStorage no disponible → memoria */ }
   _dccMemory.set(key, value);
 }
 

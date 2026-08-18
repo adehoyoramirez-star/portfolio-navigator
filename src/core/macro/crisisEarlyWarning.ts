@@ -263,7 +263,7 @@ function computeWeeksInWarning(history: CEWSDataPoint[]): number {
   // como SEMANAS — con pocos datos, reportaba 1-2 semanas inexistentes.
   // Ahora: contamos DÍAS consecutivos y convertimos a semanas de trading (÷5).
   // Ampliamos ventana a 60 días para cubrir ~12 semanas de datos.
-  let consecutiveDays = 0;
+  const consecutiveDays = 0;
   const maxPoints = Math.min(history.length, 60);
   // FIX A6: rolling window en vez de break estricto.
   // ANTES: un solo día limpio reseteaba consecutiveDays a 0 (break).
@@ -352,15 +352,15 @@ const CEWS_SUPABASE_TABLE = "cews_history";
 //   Fallback Map en memoria para que el CEWS funcione en cualquier runtime.
 const _cewsMemory = new Map<string, string>();
 function _storageGet(key: string): string | null {
-  try { return localStorage.getItem(key); } catch {}
+  try { return localStorage.getItem(key); } catch { /* localStorage no disponible → memoria */ }
   return _cewsMemory.get(key) ?? null;
 }
 function _storageSet(key: string, value: string): void {
-  try { localStorage.setItem(key, value); return; } catch {}
+  try { localStorage.setItem(key, value); return; } catch { /* localStorage no disponible → memoria */ }
   _cewsMemory.set(key, value);
 }
 function _storageRemove(key: string): void {
-  try { localStorage.removeItem(key); return; } catch {}
+  try { localStorage.removeItem(key); return; } catch { /* localStorage no disponible → memoria */ }
   _cewsMemory.delete(key);
 }
 

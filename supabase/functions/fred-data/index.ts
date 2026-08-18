@@ -65,7 +65,7 @@ function getLatestValue(observations: FredDataPoint[]): number | null {
 async function fetchAllFred(): Promise<FredOutput> {
   const errors: string[] = [];
   let m2GrowthYoY = 5.2;
-  let cape = 29.5;
+  const cape = 29.5;
   let creditSpread = 3.0;
   let inflationBreakeven5y = 2.35;
 
