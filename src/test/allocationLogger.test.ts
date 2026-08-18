@@ -10,6 +10,8 @@ import {
   getAllocationHistory,
   clearAllocationHistory,
   getAllocationCount,
+  trimRecords,
+  MAX_RECORDS,
 } from "../core/persistence/allocationLogger";
 
 // Sample allocation data for testing
@@ -140,13 +142,38 @@ describe("AllocationLogger", () => {
     expect(getAllocationCount()).toBe(0);
   });
 
-  it("should limit to MAX_RECORDS", () => {
-    // FIX-AUDIT-R8 3.6: reduced from 600 to 505 to avoid localStorage timing flakiness.
-    // 505 records ensures at least one gets trimmed (MAX_RECORDS=500).
-    for (let i = 0; i < 505; i++) {
-      recordAllocation(MOCK_ENGINE_RESULT);
+  // --- trimRecords (función pura, determinista, sin localStorage) ---
+  it("trimRecords: recorta más allá de max", () => {
+    expect(trimRecords([1, 2, 3, 4, 5], 3)).toEqual([1, 2, 3]);
+  });
+
+  it("trimRecords: conserva todo si hay menos de max", () => {
+    expect(trimRecords([1, 2], MAX_RECORDS)).toEqual([1, 2]);
+  });
+
+  it("trimRecords: devuelve vacío para entrada vacía", () => {
+    expect(trimRecords([], MAX_RECORDS)).toEqual([]);
+  });
+
+  it("trimRecords: cap en MAX_RECORDS (determinista, sin localStorage)", () => {
+    const arr = Array.from({ length: MAX_RECORDS + 5 }, (_, i) => i);
+    const trimmed = trimRecords(arr, MAX_RECORDS);
+    expect(trimmed).toHaveLength(MAX_RECORDS);
+    expect(trimmed[0]).toBe(0);
+    expect(trimmed[MAX_RECORDS - 1]).toBe(MAX_RECORDS - 1);
+  });
+
+  // --- integración pequeña: persistencia + orden + cap (no flaky) ---
+  it("integration: persiste, ordena newest-first y respeta MAX_RECORDS", () => {
+    for (let i = 0; i < 3; i++) {
+      recordAllocation({ ...MOCK_ENGINE_RESULT, regime: i === 0 ? "CRISIS" : "EXPANSION", totalInvested: 0.5 + i * 0.1 });
     }
-    expect(getAllocationCount()).toBeLessThanOrEqual(500);
+    expect(getAllocationCount()).toBe(3);
+    expect(getAllocationCount()).toBeLessThanOrEqual(MAX_RECORDS);
+    const history = getAllocationHistory();
+    expect(history).toHaveLength(3);
+    expect(history[0].totalInvested).toBeCloseTo(0.7, 5); // más reciente primero
+    expect(history[2].totalInvested).toBeCloseTo(0.5, 5);
   });
 
   it("should preserve factor weights in records", () => {

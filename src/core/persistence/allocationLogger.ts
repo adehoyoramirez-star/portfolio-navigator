@@ -4,7 +4,16 @@
 // ===============================================
 
 const STORAGE_KEY = "olympus_allocation_history";
-const MAX_RECORDS = 500;
+export const MAX_RECORDS = 500;
+
+/**
+ * Función pura: recorta un array a `max` elementos (los más recientes primero).
+ * Extraída de saveRecords para testear el cap MAX_RECORDS de forma determinista
+ * sin tocar localStorage (elimina la flakiness O(n²) del test de integración).
+ */
+export function trimRecords<T>(records: T[], max: number): T[] {
+  return records.slice(0, max);
+}
 
 export interface AllocationDetail {
   name: string;
@@ -71,9 +80,8 @@ function loadRecords(): AllocationRecord[] {
 
 function saveRecords(records: AllocationRecord[]): void {
   try {
-    const trimmed = records.slice(0, MAX_RECORDS);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-  } catch {}
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimRecords(records, MAX_RECORDS)));
+  } catch { /* localStorage no disponible → memoria */ }
 }
 
 function computeAttribution(input: {
@@ -97,7 +105,7 @@ function computeAttribution(input: {
   if (volPenalty < 0.8) parts.push("vol target reduciendo (x" + volPenalty.toFixed(2) + ")");
   if (tailPenalty < 0.9) parts.push("tail risk activo (x" + tailPenalty.toFixed(2) + ")");
   const factorAvg = (fw.momentum + fw.value + fw.quality + fw.lowVol) / 4;
-  var factorDesc = "debiles";
+  let factorDesc = "debiles";
   if (factorAvg > 0.6) factorDesc = "fuertes";
   else if (factorAvg > 0.4) factorDesc = "moderados";
   parts.push("factores " + factorDesc + " (media=" + (factorAvg * 100).toFixed(0) + "%)");
@@ -158,7 +166,7 @@ export function recordAllocation(input: {
     factorWeights: fw,
     attribution: attribution,
   };
-  saveRecords([record].concat(records).slice(0, MAX_RECORDS));
+  saveRecords(trimRecords([record].concat(records), MAX_RECORDS));
   return record;
 }
 
@@ -171,11 +179,11 @@ export function getHistoricalPerformance(limit?: number): HistoricalPerformance 
   const totalRecords = records.length;
   const firstDate = records[records.length - 1].timestamp || null;
   const lastDate = records[0].timestamp || null;
-  var sumInv = 0, sumVol = 0, sumTail = 0;
-  var sumMom = 0, sumVal = 0, sumQual = 0, sumLow = 0;
-  var regimeDist: Record<string, number> = {};
-  for (var i = 0; i < records.length; i++) {
-    var r = records[i];
+  let sumInv = 0, sumVol = 0, sumTail = 0;
+  let sumMom = 0, sumVal = 0, sumQual = 0, sumLow = 0;
+  const regimeDist: Record<string, number> = {};
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
     sumInv += r.totalInvested;
     sumVol += r.volTargetMultiplier;
     sumTail += r.tailRiskOverlay;
@@ -201,10 +209,10 @@ export function getHistoricalPerformance(limit?: number): HistoricalPerformance 
 
 function buildAllocationTrends(records: AllocationRecord[]): { name: string; currentAllocation: number; avgAllocation30d: number; trend: "up" | "down" | "stable"; }[] {
   if (records.length < 2) return [];
-  var latest = records[0];
-  var window = Math.min(30, records.length);
-  var sums: Record<string, { total: number; count: number }> = {};
-  for (var i = 0; i < window; i++) {
+  const latest = records[0];
+  const window = Math.min(30, records.length);
+  const sums: Record<string, { total: number; count: number }> = {};
+  for (let i = 0; i < window; i++) {
     for (var j = 0; j < records[i].allocations.length; j++) {
       var alloc = records[i].allocations[j];
       if (!sums[alloc.name]) sums[alloc.name] = { total: 0, count: 0 };
@@ -212,13 +220,13 @@ function buildAllocationTrends(records: AllocationRecord[]): { name: string; cur
       sums[alloc.name].count += 1;
     }
   }
-  var result: { name: string; currentAllocation: number; avgAllocation30d: number; trend: "up" | "down" | "stable"; }[] = [];
+  const result: { name: string; currentAllocation: number; avgAllocation30d: number; trend: "up" | "down" | "stable"; }[] = [];
   for (var j = 0; j < latest.allocations.length; j++) {
     var alloc = latest.allocations[j];
-    var s = sums[alloc.name];
-    var avg = s ? s.total / s.count : 0;
-    var diff = alloc.finalAllocation - avg;
-    var trend: "up" | "down" | "stable" = "stable";
+    const s = sums[alloc.name];
+    const avg = s ? s.total / s.count : 0;
+    const diff = alloc.finalAllocation - avg;
+    let trend: "up" | "down" | "stable" = "stable";
     if (diff > 0.02) trend = "up";
     else if (diff < -0.02) trend = "down";
     result.push({ name: alloc.name, currentAllocation: alloc.finalAllocation, avgAllocation30d: avg, trend: trend });
@@ -227,12 +235,12 @@ function buildAllocationTrends(records: AllocationRecord[]): { name: string; cur
 }
 
 export function getAllocationHistory(limit?: number): AllocationRecord[] {
-  var records = loadRecords();
+  const records = loadRecords();
   return limit ? records.slice(0, limit) : records;
 }
 
 export function clearAllocationHistory(): void {
-  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* localStorage no disponible → memoria */ }
 }
 
 export function getAllocationCount(): number {
