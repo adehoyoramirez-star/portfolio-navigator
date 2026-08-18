@@ -86,6 +86,7 @@ import {
   RebalanceSuggestion,
 } from "@/core/portfolio/rebalancer";
 import { loadCycleManual, saveCycleManual } from "@/lib/cycleManualInputs";
+import { applyCycleDataQuality } from "@/lib/dataQuality";
 import {
   detectCycleTops,
   detectCycleBottoms,
@@ -358,6 +359,23 @@ const formatCurrency = (value: number): string => {
   const [vvsmPERatio, setVvsmPERatio] = useState<number | undefined>(() => loadCycleManual().vvsmPERatio);
   const [goldCbPurchases, setGoldCbPurchases] = useState<number | undefined>(() => loadCycleManual().goldCbPurchases);
 
+  // FIX-DATAQUALITY (Ago-2026): timestamps de edición en estado React.
+  //   `cycleAsOf` alimenta applyCycleDataQuality en la FRONTERA del detector.
+  //   Se actualiza sincrónicamente al editar (touchCycleField) para que un
+  //   valor recién editado NO se degrade: la carrera save-effect (que sellaba
+  //   el timestamp DESPUÉS del render) queda eliminada para los campos en scope.
+  const [cycleAsOf, setCycleAsOf] = useState<Record<string, number>>(() => loadCycleManual()._asOf ?? {});
+  const touchCycleField = useCallback((field: string, value: number | undefined) => {
+    setCycleAsOf(prev => {
+      if (value === undefined) {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      }
+      return { ...prev, [field]: Date.now() };
+    });
+  }, []);
+
   // FIX-CYCLE-PERSIST (Ago-2026): guardar inputs manuales del detector
   // de techo/suelo para que no se pierdan al recargar. Antes volvían a
   // undefined y los detectores se quedaban ciegos (ej: Uranio EXTREME
@@ -368,6 +386,10 @@ const formatCurrency = (value: number): string => {
       wlgRsiWeekly, wlgPERatio, wlgEpsGrowth,
       emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio, goldCbPurchases,
     });
+    // FIX-DATAQUALITY (Ago-2026): reflejar en cycleAsOf los timestamps que
+    //   saveCycleManual acaba de sellar (cubre persistencia y restauración
+    //   desde savedMacro, que no pasan por touchCycleField).
+    setCycleAsOf(loadCycleManual()._asOf ?? {});
   }, [uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, emxcRsiWeekly, emxcPERatio, urnuPERatio, vvsmPERatio, goldCbPurchases]);
 
   const [erpValue, setErpValue] = useState(0.025);
@@ -926,6 +948,21 @@ const formatCurrency = (value: number): string => {
   const [smoothedShiftPE, setSmoothedShiftPE] = useState<number>(0);
   const [smoothedShiftBTC, setSmoothedShiftBTC] = useState<number>(0);
 
+  // FIX-DATAQUALITY (Ago-2026): degradación en la FRONTERA del detector.
+  //   applyCycleDataQuality decide qué valores llegan (stale → undefined /
+  //   bloqueo WLG). No toca la matemática interna de los detectores.
+  const cycleDQ = useMemo(() => applyCycleDataQuality(
+    {
+      uraniumSpot,
+      uraniumLT,
+      wlgRsiWeekly,
+      wlgPERatio,
+      wlgEpsGrowth,
+      wlgCAPE: marketData?.per,
+    },
+    cycleAsOf,
+  ), [cycleAsOf, uraniumSpot, uraniumLT, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, marketData?.per]);
+
   const cycleTopResult = useMemo(() => {
     const cycleInputs: CycleTopInputs = {
       mvrvRatio,
@@ -933,17 +970,18 @@ const formatCurrency = (value: number): string => {
       btcRsiWeekly,
       puellMultiple,
       mvrvZScore: mvrvZScoreEffective,
-      uraniumSpotPrice: uraniumSpot,
-      uraniumLTPrice: uraniumLT,
+      uraniumSpotPrice: cycleDQ.uraniumSpot,
+      uraniumLTPrice: cycleDQ.uraniumLT,
       siaSalesYoY,
 soxRsiWeekly,
       soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
-      wlgRsiWeekly,
-      wlgPERatio,
-      wlgCAPE: marketData?.per,
+      wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
+      wlgPERatio: cycleDQ.wlgPERatio,
+      wlgEpsGrowth: cycleDQ.wlgEpsGrowth,
+      wlgCAPE: cycleDQ.wlgCAPE,
       emxcRsiWeekly,
       emxcPERatio,
       dxy,
@@ -1022,17 +1060,18 @@ soxRsiWeekly,
       btcRsiWeekly,
       puellMultiple,
       mvrvZScore: mvrvZScoreEffective,
-      uraniumSpotPrice: uraniumSpot,
-      uraniumLTPrice: uraniumLT,
+      uraniumSpotPrice: cycleDQ.uraniumSpot,
+      uraniumLTPrice: cycleDQ.uraniumLT,
       siaSalesYoY,
       soxRsiWeekly,
       soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
-      wlgRsiWeekly,
-      wlgPERatio,
-      wlgCAPE: marketData?.per,
+      wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
+      wlgPERatio: cycleDQ.wlgPERatio,
+      wlgEpsGrowth: cycleDQ.wlgEpsGrowth,
+      wlgCAPE: cycleDQ.wlgCAPE,
       emxcRsiWeekly,
       emxcPERatio,
       dxy,
@@ -2759,14 +2798,33 @@ soxRsiWeekly,
           <p style={{ color: "#f59e0b", fontSize: "0.78rem", fontWeight: "bold", marginBottom: "0.5rem" }}>
             ⚠️ Señales de Techo de Ciclo — activar ventas parciales automáticas
           </p>
+          {(cycleDQ.stale.includes("wlgPERatio") || cycleDQ.stale.includes("wlgEpsGrowth") || cycleDQ.stale.includes("uraniumSpot") || cycleDQ.stale.includes("uraniumLT")) && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.75rem" }}>
+              {cycleDQ.stale.includes("wlgPERatio") && (
+                <span style={{ background: "#450a0a", color: "#fca5a5", border: "1px solid #ef4444", padding: "0.15rem 0.5rem", borderRadius: 4, fontSize: "0.7rem", fontWeight: "bold" }}>
+                  🔴 WLG P/E primario stale — valoración desactivada (sin fallback RSI-W/CAPE)
+                </span>
+              )}
+              {cycleDQ.stale.includes("wlgEpsGrowth") && (
+                <span style={{ background: "#451a03", color: "#fcd34d", border: "1px solid #f59e0b", padding: "0.15rem 0.5rem", borderRadius: 4, fontSize: "0.7rem", fontWeight: "bold" }}>
+                  🟠 WLG EPS Growth stale — sin ajuste PEG
+                </span>
+              )}
+              {(cycleDQ.stale.includes("uraniumSpot") || cycleDQ.stale.includes("uraniumLT")) && (
+                <span style={{ background: "#1f2937", color: "#d1d5db", border: "1px solid #6b7280", padding: "0.15rem 0.5rem", borderRadius: 4, fontSize: "0.7rem", fontWeight: "bold" }}>
+                  ⚪ Uranio spot/LT stale — sin señal de uranio
+                </span>
+              )}
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0.75rem" }}>
             <div>
               <label style={styles.label}>Uranio Spot $/lb {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>uxc.com</span></label>
-              <input type="number" placeholder="—" value={uraniumSpot ?? ""} onChange={e => setUraniumSpot(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" />
+              <input type="number" placeholder="—" value={uraniumSpot ?? ""} onChange={e => { const v = e.target.value === "" ? undefined : Number(e.target.value); setUraniumSpot(v); touchCycleField("uraniumSpot", v); }} style={styles.smallInput} step="1" min="0" />
             </div>
             <div>
               <label style={styles.label}>Uranio LT $/lb {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>precio largo plazo</span></label>
-              <input type="number" placeholder="—" value={uraniumLT ?? ""} onChange={e => setUraniumLT(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="1" min="0" />
+              <input type="number" placeholder="—" value={uraniumLT ?? ""} onChange={e => { const v = e.target.value === "" ? undefined : Number(e.target.value); setUraniumLT(v); touchCycleField("uraniumLT", v); }} style={styles.smallInput} step="1" min="0" />
             </div>
             <div>
             <div>              <label style={styles.label}>Semis SIA Sales YoY% {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>SIA/WSTS mensual — solo para suelos</span></label>
@@ -2797,11 +2855,11 @@ soxRsiWeekly,
             </div>
             <div>
               <label style={styles.label}>WLG P/E Forward {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: URTH · P/E (Forward)</span></label>
-              <input type="number" placeholder="—" value={wlgPERatio ?? ""} onChange={e => setWlgPERatio(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" min="0" />
+              <input type="number" placeholder="—" value={wlgPERatio ?? ""} onChange={e => { const v = e.target.value === "" ? undefined : Number(e.target.value); setWlgPERatio(v); touchCycleField("wlgPERatio", v); }} style={styles.smallInput} step="0.1" min="0" />
             </div>
             <div>
               <label style={styles.label}>WLG EPS Growth % {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>Forward 12m — FactSet / Yardeni</span></label>
-              <input type="number" placeholder="—" value={wlgEpsGrowth ?? ""} onChange={e => setWlgEpsGrowth(e.target.value === "" ? undefined : Number(e.target.value))} style={styles.smallInput} step="0.1" />
+              <input type="number" placeholder="—" value={wlgEpsGrowth ?? ""} onChange={e => { const v = e.target.value === "" ? undefined : Number(e.target.value); setWlgEpsGrowth(v); touchCycleField("wlgEpsGrowth", v); }} style={styles.smallInput} step="0.1" />
             </div>
             <div>
               <label style={styles.label}>EMXC RSI Semanal {" "}<span style={{ fontSize: "0.6rem", color: "#6b7280" }}>TradingView: EMXC.DE · W · RSI(14)</span></label>
