@@ -35,7 +35,23 @@ const isValidReading = (
   const valid = v !== undefined && Number.isFinite(v);
   if (!valid) return false;
   if (v === 0 && min > 0) return false; // dato claramente invalido
-  return v > min && v < max;
+  // FIX-RSI-BOUNDARY (Ago-2026): límites inclusivos. Antes `v < max` invalidaba
+  //   RSI=100 (legítimo: 14 semanas todas alcistas) → la lectura se caía del
+  //   detector y el trimPct colapsaba (ej. 55%→0%). Un RSI en [0,100] es válido
+  //   en ambos extremos. Por eso `>= min && <= max`, no `> min && < max`.
+  return v >= min && v <= max;
+}
+
+// ── Clamp de RSI a [0,100] ──────────────────────────────────────
+// FIX-RSI-CLAMP (Ago-2026, Comité): un RSI > 100 es un dato imposible
+//   (RSI ∈ [0,100] por definición). ANTES isValidReading(...,0,100) lo
+//   invalidaba → el indicador caía del detector → topSignals colapsaba
+//   (ej. 55%→0%) y el panel mostraba SAFE con un dato basura. clampRSI lo
+//   lleva al límite [0,100] y preserva la señal extrema. No añade
+//   parámetros ni cambia thresholds.
+const clampRSI = (v?: number): number | undefined => {
+  if (v === undefined || !Number.isFinite(v)) return undefined;
+  return Math.min(100, Math.max(0, v));
 }
 
 // ── Interpolación lineal entre umbrales ──────────────────────────
@@ -266,8 +282,10 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
 
   if (btcDominanceFalling)     { topSignals += 1; reasons.push("BTC.D cayendo desde >58% — rotación a altcoins (fin de ciclo)"); }
 
-  if (isValidReading(btcRsiWeekly, 0, 100) && btcRsiWeekly > 80) {
-    topSignals += 2; reasons.push(`RSI semanal ${btcRsiWeekly.toFixed(0)} — sobrecompra extrema en timeframe semanal`);
+  // FIX-RSI-CLAMP (Ago-2026): clamp [0,100] en vez de invalidar (fallo silencioso).
+  const btcRsi = clampRSI(btcRsiWeekly);
+  if (btcRsi !== undefined && btcRsi > 80) {
+    topSignals += 2; reasons.push(`RSI semanal ${btcRsi.toFixed(0)} — sobrecompra extrema en timeframe semanal`);
   }
 
   // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
@@ -399,9 +417,10 @@ function detectUraniumTop(inputs: CycleTopInputs): CycleTopSignal {
 // ── SEMICONDUCTORES ──────────────────────────────────────────────
 function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
   const { siaSalesYoY, soxRsiWeekly, soxSpyRelativeStrength } = inputs;
+  const soxRsi = clampRSI(soxRsiWeekly); // FIX-RSI-CLAMP: [0,100]
 
   // Si no hay datos de ningún indicador, señal neutra
-  if (!isValidReading(siaSalesYoY, -100) && !isValidReading(soxRsiWeekly, 0, 100) && !isValidReading(soxSpyRelativeStrength, -10, 10)) {
+  if (!isValidReading(siaSalesYoY, -100) && soxRsi === undefined && !isValidReading(soxSpyRelativeStrength, -10, 10)) {
     return {
       asset: "Semiconductors",
       ticker: "VVSM.DE",
@@ -439,14 +458,14 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
   //   SIA sigue puntuando en detectSemisBottom (suelos) donde la contracción
   //   de ventas (<0% YoY) sí es señal de recession pricing. Permanece en indicatorValue.
 
-  // Evaluar RSI semanal del SOX
-  if (isValidReading(soxRsiWeekly, 0, 100)) {
-    if (soxRsiWeekly > 85) {
+  // Evaluar RSI semanal del SOX (clamp [0,100])
+  if (soxRsi !== undefined) {
+    if (soxRsi > 85) {
       topSignals += 2;
-      reasons.push(`RSI semanal SOX ${soxRsiWeekly.toFixed(0)} — sobrecompra extrema`);
-    } else if (soxRsiWeekly > 80) {
+      reasons.push(`RSI semanal SOX ${soxRsi.toFixed(0)} — sobrecompra extrema`);
+    } else if (soxRsi > 80) {
       topSignals += 1;
-      reasons.push(`RSI semanal SOX ${soxRsiWeekly.toFixed(0)} — sobrecompra`);
+      reasons.push(`RSI semanal SOX ${soxRsi.toFixed(0)} — sobrecompra`);
     }
   }
 
@@ -460,7 +479,7 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
   const parts: string[] = [];
   if (isValidReading(soxSpyRelativeStrength, -10, 10)) parts.push(`SOX/SPX Z ${soxSpyRelativeStrength.toFixed(2)}`);
   if (isValidReading(siaSalesYoY, -100)) parts.push(`SIA sales +${siaSalesYoY.toFixed(1)}% YoY`);
-  if (isValidReading(soxRsiWeekly, 0, 100)) parts.push(`SOX RSI-W ${soxRsiWeekly.toFixed(0)}`);
+  if (soxRsi !== undefined) parts.push(`SOX RSI-W ${soxRsi.toFixed(0)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
   return {
@@ -790,8 +809,9 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 // El DXY tiene peso 1.5× sobre P/E porque es más predictivo en ciclos EM.
 function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
+  const emxcRsi = clampRSI(emxcRsiWeekly); // FIX-RSI-CLAMP: [0,100]
 
-  if (!isValidReading(emxcRsiWeekly, 0, 100) && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
+  if (emxcRsi === undefined && !isValidReading(emxcPERatio) && !isValidReading(dxy, 50)) {
     return {
       asset: "Emerging Markets",
       ticker: "EMXC.DE",
@@ -835,17 +855,17 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
     }
   }
 
-  // Evaluar RSI semanal (umbrales más altos porque EM es más volátil)
-  if (isValidReading(emxcRsiWeekly, 0, 100)) {
-    if (emxcRsiWeekly > 85) {
+  // Evaluar RSI semanal (umbrales más altos porque EM es más volátil) — clamp [0,100]
+  if (emxcRsi !== undefined) {
+    if (emxcRsi > 85) {
       topSignals += 2;
-      reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — sobrecompra extrema en emergentes`);
-    } else if (emxcRsiWeekly > 80) {
+      reasons.push(`RSI semanal EEM ${emxcRsi.toFixed(0)} — sobrecompra extrema en emergentes`);
+    } else if (emxcRsi > 80) {
       topSignals += 1;
-      reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — sobrecompra en emergentes`);
-    } else if (emxcRsiWeekly > 75) {
+      reasons.push(`RSI semanal EEM ${emxcRsi.toFixed(0)} — sobrecompra en emergentes`);
+    } else if (emxcRsi > 75) {
       topSignals += 0.5;
-      reasons.push(`RSI semanal EEM ${emxcRsiWeekly.toFixed(0)} — zona de vigilancia`);
+      reasons.push(`RSI semanal EEM ${emxcRsi.toFixed(0)} — zona de vigilancia`);
     }
   }
 
@@ -862,7 +882,7 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
 
   const parts: string[] = [];
   if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);
-  if (isValidReading(emxcRsiWeekly, 0, 100)) parts.push(`RSI-W ${emxcRsiWeekly.toFixed(0)}`);
+  if (emxcRsi !== undefined) parts.push(`RSI-W ${emxcRsi.toFixed(0)}`);
   if (isValidReading(emxcPERatio)) parts.push(`P/E ${emxcPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
