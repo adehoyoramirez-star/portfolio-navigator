@@ -39,3 +39,36 @@ describe("computeMetrics — sortino con MAR = rf (FIX-FORENSIC-H2)", () => {
     expect(metrics.sortino).toBeLessThan(0);
   });
 });
+
+describe("computeMetrics — Profit Factor y rachas (FIX-METRICS-INST)", () => {
+  test("todo positivo → PF=999, racha ganadora = 12 periodos", () => {
+    const dailyRets = Array(252).fill(0.001);
+    const initialCapital = 10000;
+    let finalValue = initialCapital;
+    for (const r of dailyRets) finalValue *= (1 + r);
+
+    const m = computeMetrics(dailyRets, initialCapital, finalValue);
+    expect(m.periods).toBe(12);          // 252/21 = 12 buckets mensuales
+    expect(m.profitFactor).toBe(999);     // sin meses en pérdida
+    expect(m.maxWinStreak).toBe(12);
+    expect(m.maxLossStreak).toBe(0);
+  });
+
+  test("6 meses up + 6 meses down → PF≈1, rachas 6/6", () => {
+    const up = Array(126).fill(0.001);    // 6 meses positivos
+    const down = Array(126).fill(-0.001); // 6 meses negativos
+    const dailyRets = [...up, ...down];
+    const initialCapital = 10000;
+    let finalValue = initialCapital;
+    for (const r of dailyRets) finalValue *= (1 + r);
+
+    const m = computeMetrics(dailyRets, initialCapital, finalValue);
+    expect(m.periods).toBe(12);
+    expect(m.maxWinStreak).toBe(6);
+    expect(m.maxLossStreak).toBe(6);
+    expect(m.winRate).toBeCloseTo(0.5, 6);
+    // PF ≈ 1 (ganancias ≈ pérdidas). Rango amplio para absorber float.
+    expect(m.profitFactor).toBeGreaterThan(0.9);
+    expect(m.profitFactor).toBeLessThan(1.2);
+  });
+});

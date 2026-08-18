@@ -104,6 +104,12 @@ export interface BacktestMetrics {
   calmar: number;
   totalReturn: number;
   winRate: number;
+  // FIX-METRICS-INST (Ago-2026): Profit Factor + rachas (métricas de filtrado
+  //   que exige la metodología de robustez, no objetivos de optimización).
+  profitFactor: number;   // Σ ganancia mensual / Σ |pérdida mensual|. 999 si no hay meses en pérdida.
+  maxWinStreak: number;   // máxima racha de meses positivos consecutivos
+  maxLossStreak: number;  // máxima racha de meses negativos consecutivos
+  periods: number;        // número de periodos mensuales (~21 días) utilizados
   volatility: number;
   finalValue: number;
   betaVsBenchmark: number;
@@ -182,7 +188,7 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
 }
 
 function emptyMetrics(initialCapital: number): BacktestMetrics {
-  return { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, volatility: 0, finalValue: initialCapital, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 };
+  return { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, profitFactor: 0, maxWinStreak: 0, maxLossStreak: 0, periods: 0, volatility: 0, finalValue: initialCapital, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 };
 }
 
 // ── Cálculo de covarianza y correlación en una ventana ─────────────────
@@ -954,8 +960,21 @@ export function computeMetrics(dailyRets: number[], initialCapital: number, fina
   }
   const calmar = maxDD < 0 ? cagr / Math.abs(maxDD) : 0;
   let wins = 0, months = 0;
+  let grossProfit = 0, grossLoss = 0;
+  let maxWinStreak = 0, maxLossStreak = 0;
+  let curWinStreak = 0, curLossStreak = 0;
   for (let i = 0; i + 21 <= clean.length; i += 21) {
-    if (clean.slice(i, i + 21).reduce((a, r) => a * (1 + r), 1) > 1) wins++;
+    const monthRet = clean.slice(i, i + 21).reduce((a, r) => a * (1 + r), 1) - 1;
+    if (monthRet > 0) {
+      wins++;
+      grossProfit += monthRet;
+      curWinStreak++; curLossStreak = 0;
+      if (curWinStreak > maxWinStreak) maxWinStreak = curWinStreak;
+    } else if (monthRet < 0) {
+      grossLoss += -monthRet;
+      curLossStreak++; curWinStreak = 0;
+      if (curLossStreak > maxLossStreak) maxLossStreak = curLossStreak;
+    }
     months++;
   }
   // FIX-AUDIT-R10: métricas institucionales adicionales
@@ -974,6 +993,10 @@ export function computeMetrics(dailyRets: number[], initialCapital: number, fina
     calmar: isFinite(calmar) ? calmar : 0,
     totalReturn: isFinite(totalReturn) ? totalReturn : 0,
     winRate: months > 0 ? wins / months : 0,
+    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 999 : 0),
+    maxWinStreak,
+    maxLossStreak,
+    periods: months,
     volatility: isFinite(vol) ? vol : 0,
     finalValue: isFinite(finalValue) ? finalValue : initialCapital,
     betaVsBenchmark: isFinite(betaValue) ? betaValue : 1,

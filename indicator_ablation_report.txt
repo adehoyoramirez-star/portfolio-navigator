@@ -1,0 +1,32 @@
+====================================================================================================
+  ABLACIÓN POR INDICADOR (nivel señal) — contribución marginal
+====================================================================================================
+  ΔtrimPct = trimPct(sin indicador) − trimPct(baseline). Negativo = el indicador suma trim.
+  SAT = baseline saturado (ceiling effect: quitar uno no mueve el veredicto EXTREME).
+
+  Detector    Indicador         base trim sin trim  Δtrim     Δmult     zona      SAT       
+  BTC         MVRV Z-Score      90%       90%       +0pp      +0.00     EXTREME   ⚠         
+  BTC         Puell Multiple    90%       90%       +0pp      +0.00     EXTREME   ⚠         
+  BTC         RSI-W BTC         90%       90%       +0pp      +0.00     EXTREME   ⚠         
+  BTC         BTC.D cayendo     90%       90%       +0pp      +0.00     EXTREME   ⚠         
+  Uranium     Spot (ratio Spot/LT)85%       0%        -85pp     +0.85     EXTREME→SAFE⚠         
+  Uranium     LT price (ratio Spot/LT)85%       0%        -85pp     +0.85     EXTREME→SAFE⚠         
+  Semis       SOX/SPX RS Z      83%       55%       -28pp     +0.28     EXTREME→CAUTION          
+  Semis       SOX RSI-W         83%       55%       -28pp     +0.28     EXTREME→CAUTION          
+  EMXC        DXY               90%       55%       -35pp     +0.35     EXTREME→CAUTION⚠         
+  EMXC        RSI-W EM          90%       73%       -17pp     +0.18     EXTREME→DANGER⚠         
+  Gold        Breakeven 5y      58%       0%        -58pp     +0.58     CAUTION→SAFE          
+  Gold        Brent             58%       80%       +22pp     -0.22     CAUTION→DANGER          
+  Gold        BC compras oro    58%       58%       +0pp      +0.00     CAUTION             
+  WLG         RSI-W WLG         90%       80%       -10pp     +0.10     EXTREME   ⚠         
+  WLG         P/E Forward       90%       55%       -35pp     +0.35     EXTREME→CAUTION⚠         
+  WLG         EPS Growth        90%       89%       -1pp      +0.01     EXTREME   ⚠         
+  WLG         Credit Spread     90%       89%       -1pp      +0.01     EXTREME   ⚠         
+
+  LECTURA (0pp):
+    - BTC · MVRV Z-Score: 0pp por SATURACIÓN (techo sobre-determinado, no redundante)
+    - BTC · Puell Multiple: 0pp por SATURACIÓN (techo sobre-determinado, no redundante)
+    - BTC · RSI-W BTC: 0pp por SATURACIÓN (techo sobre-determinado, no redundante)
+    - BTC · BTC.D cayendo: 0pp por SATURACIÓN (techo sobre-determinado, no redundante)
+    - Gold · BC compras oro: 0pp por debajo del umbral de activación en este escenario
+====================================================================================================
