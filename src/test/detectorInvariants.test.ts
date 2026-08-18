@@ -136,6 +136,23 @@ describe("G2 — Invariantes Cycle Top", () => {
       .signals.find(s => s.ticker === "BTC-EUR")!;
     expect(btcNaN.trimPct).toBe(0);
   });
+
+  test("FIX-RSI-RAMP: RSI-W BTC rampa suave [80→0, 85→2] sin cliff", () => {
+    const mk = (rsi: number) => detectCycleTops({ bondYield10y: 4.0, btcRsiWeekly: rsi })
+      .signals.find(s => s.ticker === "BTC-EUR")!;
+
+    // Sin señal por debajo de 80 (no se recorta prematuramente).
+    expect(mk(70).trimPct).toBe(0);
+    expect(mk(80).trimPct).toBe(0);
+
+    // Rampa intermedia 80→85: trim gradual, sin el salto 0→55pp.
+    expect(mk(82).trimPct).toBe(31);
+    expect(mk(84).trimPct).toBe(47);
+
+    // Cap +2 en 85 y más allá (idéntico al comportamiento anterior).
+    expect(mk(85).trimPct).toBe(55);
+    expect(mk(90).trimPct).toBe(55);
+  });
 });
 
 describe("G2 — Invariantes Cycle Bottom", () => {

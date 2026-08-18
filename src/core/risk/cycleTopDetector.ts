@@ -283,9 +283,18 @@ function detectBTCTop(inputs: CycleTopInputs): CycleTopSignal {
   if (btcDominanceFalling)     { topSignals += 1; reasons.push("BTC.D cayendo desde >58% — rotación a altcoins (fin de ciclo)"); }
 
   // FIX-RSI-CLAMP (Ago-2026): clamp [0,100] en vez de invalidar (fallo silencioso).
+  // FIX-RSI-RAMP (Ago-2026, Comité): rampa suave [80→0, 85→2] sustituye al salto
+  //   único +2 en 80. Preserva el cap +2 en sobrecompra extrema (≥85) y no
+  //   recorta por debajo de 80. Elimina el cliff de 55pp (el mayor del sistema).
   const btcRsi = clampRSI(btcRsiWeekly);
-  if (btcRsi !== undefined && btcRsi > 80) {
-    topSignals += 2; reasons.push(`RSI semanal ${btcRsi.toFixed(0)} — sobrecompra extrema en timeframe semanal`);
+  if (btcRsi !== undefined) {
+    const btcRsiScore = smoothScore(btcRsi, [
+      [80, 0],
+      [85, 2],
+    ]);
+    topSignals += btcRsiScore;
+    if (btcRsiScore >= 2) reasons.push(`RSI semanal ${btcRsi.toFixed(0)} — sobrecompra extrema en timeframe semanal`);
+    else if (btcRsiScore > 0) reasons.push(`RSI semanal ${btcRsi.toFixed(0)} — zona de sobrecompra en timeframe semanal`);
   }
 
   // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
