@@ -1,0 +1,95 @@
+# ============================================================
+# Olympus — Production Gate G1 (STATIC)
+# Typecheck + lint + suite completa de tests.
+# Bloquea merge a main si falla cualquiera (requiere branch protection
+# activada en GitHub: Settings → Branches → Require status checks → "gates").
+# ============================================================
+name: gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  gates:
+    name: G1 — typecheck + lint + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+
+      # G5 Layer 1: build de producción. Un fallo de build = el preview no arranca.
+      # El smoke test determinista de finitud de outputs vive en npm test
+      # (src/test/smoke.engine.test.ts) y ya corre aquí abajo.
+      - name: Build (vite build)
+        run: npm run build
+
+      # FIX-LINT-DEBT: 295 errores pre-existentes (no-explicit-any en Supabase
+      #   y configs, 93 en src/). Lint queda report-only (no bloqueante) hasta
+      #   limpiar esa deuda. Typecheck + tests SÍ son bloqueantes.
+      - name: Lint (eslint — report-only, deuda pre-existente)
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Tests (vitest run — incluye smoke.engine.test.ts G5)
+        run: npm test
+
+  # ============================================================
+  # G5 Layer 2 — smoke test contra el preview de Vercel.
+  # Espera a que el deploy automático del PR (Vercel GitHub integration)
+  # esté READY y comprueba que responde HTTP 200 con el root de React.
+  # Requiere secrets: VERCEL_TOKEN + VERCEL_PROJECT_ID (+ VERCEL_TEAM_ID
+  # si el proyecto está en un team).
+  # ============================================================
+  smoke-preview:
+    name: G5 — preview Vercel responde
+    needs: gates
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Vercel preview deployment
+        id: vercel-wait
+        uses: tj-actions/vercel-wait@v1
+        with:
+          project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          token: ${{ secrets.VERCEL_TOKEN }}
+          team-id: ${{ secrets.VERCEL_TEAM_ID }}
+          sha: ${{ github.event.pull_request.head.sha }}
+          timeout: '600'
+
+      - name: Smoke test — HTTP 200 + React root
+        run: |
+          URL="${{ steps.vercel-wait.outputs.deployment-url }}"
+          if [ -z "$URL" ]; then
+            echo "::error::No se obtuvo deployment-url del preview de Vercel"
+            exit 1
+          fi
+          echo "Preview URL: $URL"
+          # Reintentos: el preview puede tardar unos segundos tras marcar READY.
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /tmp/preview.html -w "%{http_code}" "$URL")
+            if [ "$CODE" = "200" ] && grep -q 'id="root"' /tmp/preview.html; then
+              echo "OK: HTTP 200 y React root presente."
+              exit 0
+            fi
+            echo "Intento $i: HTTP $CODE — reintentando en 5s..."
+            sleep 5
+          done
+          echo "::error::El preview no respondió correctamente tras 5 intentos."
+          exit 1
