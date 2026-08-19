@@ -1,22 +1,22 @@
 {
-  "createdAt": "2026-08-18T15:37:04.035Z",
-  "label": "baseline v5.x (post-auditoría forense)",
+  "createdAt": "2026-08-19T12:25:08.894Z",
+  "label": "baseline v5.x (fix btc-12m 365/252 por activo)",
   "metrics": {
-    "cagr": 0.07739971270358947,
-    "sharpe": 0.34764616699814493,
-    "sortino": 0.3956111654026043,
-    "maxDrawdown": -0.5600218765869418,
-    "calmar": 0.13820837352873194,
-    "totalReturn": 2.1430006675713753,
-    "winRate": 0.625,
-    "profitFactor": 2.413692850464476,
+    "cagr": 0.07975413972646161,
+    "sharpe": 0.35853095104346855,
+    "sortino": 0.4084543884191277,
+    "maxDrawdown": -0.5600218765869415,
+    "calmar": 0.14241254326085254,
+    "totalReturn": 2.2501780310773034,
+    "winRate": 0.6195652173913043,
+    "profitFactor": 2.4200258953247693,
     "maxWinStreak": 15,
     "maxLossStreak": 4,
     "periods": 184,
-    "volatility": 0.17461686967727785,
-    "finalValue": 31430.006675713754,
-    "betaVsBenchmark": 0.6986529034527144,
-    "alphaVsBenchmark": -0.022367409046069583,
+    "volatility": 0.1749075179098419,
+    "finalValue": 32501.780310773036,
+    "betaVsBenchmark": 0.7005669244708425,
+    "alphaVsBenchmark": -0.020590119591839595,
     "hhi": 0.2038960911165239
   },
   "benchmarkMetrics": {
@@ -62,6 +62,6 @@
   },
   "rebalanceCount": 185,
   "transactionCostBps": 4,
-  "totalTransactionCosts": 2361.6445175011777,
-  "returnsSignature": "81c06c7e13696e02"
+  "totalTransactionCosts": 2371.7912792971524,
+  "returnsSignature": "bdc9134f609561eb"
 }

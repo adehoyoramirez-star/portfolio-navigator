@@ -2,7 +2,7 @@ import { fetchYahooBatch, type YahooBatchResponse } from '@/lib/yahooFinance';
 import { loadFredManual, isFredDataFresh, fetchFredFromServer } from '@/lib/fredManualInputs';
 import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/lib/assetRegistry';
 import { ASSETS } from '@/lib/constants';
-import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate } from '@/lib/stats';
+import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate, priceAtCalendarDaysAgo } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { fromManualInputs } from '@/core/macro/liquidityCycle';
 import { liquidityScore } from '@/core/macro/liquidity';
@@ -802,14 +802,25 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const sp500Rsi = calculateRSI14(sp500Closes);
 
   // S&P 500 momentum: retorno 12m (excluyendo último mes = Jegadeesh-Titman)
+  // FIX-BTC-12M (mismo patrón): anclas por FECHA, no por índice de array.
   const sp500Last = sp500Closes[sp500Closes.length - 1];
-  const sp500_12m_start = sp500Closes[sp500Closes.length - 252 - 1];
-  const sp500_1m_start  = sp500Closes[sp500Closes.length - 21 - 1];
-  const sp500_3m_start  = sp500Closes[sp500Closes.length - 63 - 1];
+  const sp500Timestamps = yfData['^GSPC']?.timestamps ?? [];
+  const sp500Anchor = (calendarDays: number, tradingDays: number): number => {
+    const byDate = priceAtCalendarDaysAgo(sp500Closes, sp500Timestamps, calendarDays);
+    if (byDate !== null) return byDate;
+    if (sp500Closes.length >= tradingDays + 1) {
+      const p = sp500Closes[sp500Closes.length - tradingDays - 1];
+      if (isFinite(p) && p > 0) return p;
+    }
+    return 0;
+  };
+  const sp500_12m_start = sp500Anchor(365, 252);
+  const sp500_1m_start  = sp500Anchor(30, 21);
+  const sp500_3m_start  = sp500Anchor(91, 63);
   const sp500Momentum12m = sp500_12m_start > 0 && sp500_1m_start > 0
     ? (sp500_1m_start / sp500_12m_start) - 1
     : 0.15;
-  const sp500Momentum3m = sp500_3m_start > 0
+  const sp500Momentum3m = sp500_3m_start > 0 && sp500Last > 0
     ? (sp500Last / sp500_3m_start) - 1
     : 0.05;
 

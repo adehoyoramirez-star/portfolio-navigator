@@ -3,7 +3,7 @@
 // Tests de regresión para periodReturnByDate (FIX-BTC-12M).
 // ============================================================
 import { describe, test, expect } from "vitest";
-import { periodReturnByDate } from "../lib/stats";
+import { periodReturnByDate, priceAtCalendarDaysAgo } from "../lib/stats";
 
 const DAY = 86400; // 1 día en segundos
 
@@ -85,5 +85,13 @@ describe("periodReturnByDate — retorno por fecha (FIX-BTC-12M)", () => {
   test("null si el ancla o el final es no positivo", () => {
     const s = makeSeries(400, (i) => (i < 35 ? 0 : 100 + i), 1_700_000_000);
     expect(periodReturnByDate(s.closes, s.timestamps, 365)).toBeNull();
+  });
+
+  test("priceAtCalendarDaysAgo devuelve el precio ancla correcto", () => {
+    const startTs = 1_700_000_000;
+    const s = makeSeries(500, (i) => 100 + i * 0.5, startTs);
+    const p = priceAtCalendarDaysAgo(s.closes, s.timestamps, 365);
+    expect(p).not.toBeNull();
+    expect(p!).toBeCloseTo(s.closes[134], 10); // 499 - 365 = 134
   });
 });

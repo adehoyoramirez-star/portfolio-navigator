@@ -88,7 +88,7 @@ export function isPositiveFinite(v: number): boolean {
 // @param closes       serie de cierres (forward-filled por cleanCloses)
 // @param timestamps   timestamps UNIX en segundos, alineados con closes
 // @param calendarDays lookback en días calendario
-export function periodReturnByDate(
+export function priceAtCalendarDaysAgo(
   closes: number[],
   timestamps: number[],
   calendarDays: number
@@ -105,8 +105,19 @@ export function periodReturnByDate(
     if (timestamps[i] <= targetTs) { idx = i; break; }
   }
   if (idx < 0) return null; // sin historia suficiente
-  const start = closes[idx];
+  const p = closes[idx];
+  if (!isFinite(p) || p <= 0) return null;
+  return p;
+}
+
+export function periodReturnByDate(
+  closes: number[],
+  timestamps: number[],
+  calendarDays: number
+): number | null {
+  const start = priceAtCalendarDaysAgo(closes, timestamps, calendarDays);
+  if (start === null) return null;
   const end = closes[closes.length - 1];
-  if (!isFinite(start) || start <= 0 || !isFinite(end) || end <= 0) return null;
+  if (!isFinite(end) || end <= 0) return null;
   return end / start - 1;
 }
