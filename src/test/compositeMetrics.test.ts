@@ -45,4 +45,28 @@ describe("computeCompositeMetrics — alineación BTC (FIX-FORENSIC-COMPOSITE)",
     expect(m.finalValue).toBeCloseTo(10000, 6);
     expect(m.maxDrawdown).toBeCloseTo(0, 6);
   });
+
+  test("blend 80/20 (satélite 20%, default auditado): composite = 0.8 × engine + 0.2 × BTC exacto", () => {
+    // engine crece 1%/día compuesto; BTC plano → retorno composite diario = 0.8 × 1% = 0.8%
+    const olympusDaily: number[] = [];
+    for (let i = 0; i < 365; i++) olympusDaily.push(10000 * Math.pow(1.01, i + 1));
+    // 252 días de pre-ventana (crash irreal) + 365 planos: la alineación usa los últimos 365
+    const btcPrices = Array(365 + 252).fill(100);
+    const m = computeCompositeMetrics({ olympusDailyValues: olympusDaily, btcPrices, olympusPct: 80, initialCapital: 10000 });
+    expect(m.finalValue).toBeCloseTo(10000 * Math.pow(1.008, 365), 0);
+    expect(m.maxDrawdown).toBeCloseTo(0, 3);
+  });
+
+  test("blend 80/20 con BTC moviéndose: el satélite aporta exactamente el 20% del retorno BTC", () => {
+    // engine plano (ret 0); BTC sube +10% en un solo día dentro de la ventana alineada
+    const olympusDaily = Array(100).fill(10000);
+    const btcPrices: number[] = [];
+    for (let i = 0; i < 50; i++) btcPrices.push(100);
+    btcPrices.push(110); // +10%
+    for (let i = 0; i < 50; i++) btcPrices.push(110);
+    const m = computeCompositeMetrics({ olympusDailyValues: olympusDaily, btcPrices, olympusPct: 80, initialCapital: 10000 });
+    // retorno composite = 0.2 × 10% = 2% → 10000 × 1.02
+    expect(m.finalValue).toBeCloseTo(10200, 0);
+    expect(m.maxDrawdown).toBeCloseTo(0, 6);
+  });
 });

@@ -2,7 +2,10 @@
 // ARCHIVO: src/core/backtest/compositeMetrics.ts
 // Cálculo puro del Composite Strategy (Olympus Core + BTC Satellite).
 // Extraído de BacktestPanel.tsx para poder testear la alineación de BTC.
+// La fórmula composite vive centralizada en ./composite.ts (auditoría R9).
 // ================================================
+
+import { btcSatPct, olyPct as olyPctFraction } from "./composite";
 
 export interface CompositeMetrics {
   cagr: number;
@@ -22,12 +25,13 @@ export interface CompositeInput {
 }
 
 const RISK_FREE_RATE = 0.04;
-const TRADING_DAYS = 252;
+// FIX-ANNUALIZATION-365: datos de calendario → 365 días/año (ver constants.ts).
+const TRADING_DAYS = 365;
 
 export function computeCompositeMetrics(input: CompositeInput): CompositeMetrics {
   const { olympusDailyValues, btcPrices, olympusPct, initialCapital } = input;
-  const btcPct = (100 - olympusPct) / 100;
-  const olyPct = olympusPct / 100;
+  const btcPct = btcSatPct(olympusPct);
+  const olyPct = olyPctFraction(olympusPct);
 
   const olympusRets = olympusDailyValues.map((v, i) => {
     const prev = i === 0 ? initialCapital : olympusDailyValues[i - 1];

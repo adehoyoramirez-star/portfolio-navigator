@@ -38,6 +38,7 @@ import {
 
 // ── Core engine & types ──────────────────────────────────────────────────
 import { liquidityScore } from "@/core/macro/liquidity";
+import { compositeTarget } from "@/core/backtest/composite";
 import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/portfolio";
 import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
 import { computeRealizedReturns, recordCurrentPositions, loadPositionHistory } from "@/core/data/positionHistory";
@@ -401,10 +402,12 @@ const formatCurrency = (value: number): string => {
   // ── COMPOSITE STRATEGY: Olympus Core + BTC Satellite ──────────────────
   // Controla qué % del capital gestiona Olympus (resto = BTC buy & hold).
   // 100% = todo Olympus. 80% = 80% Olympus + 20% BTC directo.
+  // DEFAULT 80 (satélite 20%): alineado con la auditoría BTC total ≈ 30%
+  // (Rounds 8-9, dataset EUR real). El localStorage del usuario prevalece.
   // Este slider controla la EJECUCIÓN REAL: afecta rebalanceo, Monte Carlo y
   // sugerencias de trading. NO es solo visualización histórica.
   const [olympusPct, setOlympusPctRaw] = useState(() => {
-    try { const v = Number(localStorage.getItem('olympus_composite_pct')); return (v >= 0 && v <= 100) ? v : 100; } catch { return 100; }
+    try { const v = Number(localStorage.getItem('olympus_composite_pct')); return (v >= 0 && v <= 100) ? v : 80; } catch { return 80; }
   });
 
   // GUARD: evitar liquidación accidental al bajar olympusPct de 10%
@@ -1565,15 +1568,11 @@ soxRsiWeekly,
       motorAllocations: engineResult.allocations.map(a => {
         const asset = portfolio.assets.find(pa => pa.name === a.name);
         const isBtc = asset?.ticker === 'BTC-EUR';
-        const olyPctVal = olympusPct / 100;
-        const btcSatVal = (100 - olympusPct) / 100;
         // FIX-COMPOSITE-DCA (Jul 2026): aplicar fórmula composite a las
         // finalAllocation para que el DCA use los mismos targets que el rebalanceo.
         // ANTES: BTC target = 2% (motor) → drift -23pp → BLOQUEADO.
-        // AHORA: BTC target = 31.4% (composite 70/30) → drift +6pp → COMPRA.
-        const compositeAlloc = isBtc
-          ? (a.finalAllocation * olyPctVal) + btcSatVal
-          : a.finalAllocation * olyPctVal;
+        // AHORA: BTC target ≈ 30% (composite, satélite 20-22%) → drift +pp → COMPRA.
+        const compositeAlloc = compositeTarget(a.finalAllocation, olympusPct, isBtc);
         return {
           name: a.name,
           ticker: asset?.ticker ?? a.name,
@@ -1704,15 +1703,11 @@ soxRsiWeekly,
     // a 100% (liquidation total), priority HIGH, descartando BUY suggestions del base output.
     if (!engineResult) return null;
     // COMPOSITE STRATEGY: calcular composite allocations inline
-    const olyPct = olympusPct / 100;
-    const btcSat = (100 - olympusPct) / 100;
     const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
       const alloc = engineResult.allocations.find(a => a.name === asset.name);
       const engineAlloc = alloc?.finalAllocation ?? 0;
       const isBtc = asset.ticker === 'BTC-EUR';
-      const compositeAlloc = isBtc
-        ? (engineAlloc * olyPct) + btcSat
-        : engineAlloc * olyPct;
+      const compositeAlloc = compositeTarget(engineAlloc, olympusPct, isBtc);
       return {
         ticker: asset.ticker,
         name: asset.name,
@@ -1961,13 +1956,11 @@ soxRsiWeekly,
 
     if (hasCovMatrix && hasEngineAllocs && ASSETS.length > 1) {
       // COMPOSITE STRATEGY: pesos compuestos con BTC satellite para Monte Carlo
-      const olyPct = olympusPct / 100;
-      const btcSat = (100 - olympusPct) / 100;
       const btcIdx = ASSETS.indexOf('BTC-EUR' as any);
       const weights = ASSETS.map((ticker, i) => {
         const alloc = engineResult!.allocations.find(a => a.name === portfolio.assets.find(p => p.ticker === ticker)?.name);
         const engineW = alloc?.finalAllocation ?? (1 / ASSETS.length);
-        return i === btcIdx ? (engineW * olyPct) + btcSat : engineW * olyPct;
+        return compositeTarget(engineW, olympusPct, i === btcIdx);
       });
       const mus = ASSETS.map((_, i) => {
         // FIX-MC-MLE: ruta multivariante también usa mleReturns (sin shrinkage)
@@ -4276,8 +4269,6 @@ soxRsiWeekly,
                     no solo los que tienen BUY/SELL. Los activos sin sugerencia se muestran
                     como HOLD con su drift, actual y objetivo. Así BTC siempre es visible. */}
                 {(() => {
-                  const olyPct = olympusPct / 100;
-                  const btcSat = (100 - olympusPct) / 100;
                   const allRows = portfolio.assets.map(asset => {
                     const suggestion = taxAwareRebalance!.suggestions.find(s => s.ticker === asset.ticker);
                     if (suggestion) return { ...suggestion, _hasSuggestion: true as const };
@@ -4285,7 +4276,7 @@ soxRsiWeekly,
                     const alloc = engineResult?.allocations.find(a => a.name === asset.name);
                     const engineAlloc = alloc?.finalAllocation ?? 0;
                     const isBtc = asset.ticker === 'BTC-EUR';
-                    const compositeAlloc = isBtc ? (engineAlloc * olyPct) + btcSat : engineAlloc * olyPct;
+                    const compositeAlloc = compositeTarget(engineAlloc, olympusPct, isBtc);
                     const currentValue = asset.shares * asset.price;
                     const currentPct = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
                     const drift = currentPct - compositeAlloc;
