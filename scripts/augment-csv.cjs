@@ -45,15 +45,18 @@ function computeBTCRollingVol(prices) {
       }
     }
     if (count < 20) { vol90.push(null); continue; }
-    const variance = sumLogRetSq / count - (sumLogRet / count) ** 2;
-    vol90.push(Math.sqrt(Math.max(0, variance)) * Math.sqrt(252));
+    const    variance = sumLogRetSq / count - (sumLogRet / count) ** 2;
+    // FIX-365: datos de calendario → anualizar con sqrt(365) (convención Ronda 1)
+    vol90.push(Math.sqrt(Math.max(0, variance)) * Math.sqrt(365));
   }
   return vol90;
 }
 
 async function main() {
   console.log('Reading CSV...');
-  const csvContent = fs.readFileSync(CSV_PATH, 'utf8');
+  // FIX-CR: el CSV base puede venir con CRLF; quitar \r para no incrustarlo
+  // en medio de la línea al añadir ^MOVE/DX-Y.NYB/BTC_VOL (bug Ronda 8).
+  const csvContent = fs.readFileSync(CSV_PATH, 'utf8').replace(/\r/g, '');
   const lines = csvContent.split('\n').filter(l => l.trim());
   const headers = lines[0].split(',');
   const dataRows = lines.slice(1).map(l => l.split(','));
@@ -88,7 +91,8 @@ async function main() {
     const row = [...dataRows[i],
       lastMove.toFixed(2),
       lastDxy.toFixed(2),
-      btcVols[i] !== null ? (btcVols[i]*100).toFixed(2) : (btcVols[i-1] !== null ? (btcVols[i-1]*100).toFixed(2) : '30.00')
+      // FIX-UNIDAD: el motor espera BTC_VOL en decimal (0.50 = 50%), no en % (49.87).
+      btcVols[i] !== null ? btcVols[i].toFixed(6) : (btcVols[i-1] !== null ? btcVols[i-1].toFixed(6) : '0.30')
     ];
     if (btcVols[i] !== null) m3++;
     outLines.push(row.join(','));

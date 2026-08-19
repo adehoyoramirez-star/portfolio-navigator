@@ -53,7 +53,7 @@ async function fetchYahooClose(ticker: string): Promise<number | null> {
 // Compute BTC_VOL from recent BTC closes in CSV
 function computeBtcVol(): number {
   try {
-    const content = fs.readFileSync(CSV_PATH, 'utf8');
+    const content = fs.readFileSync(CSV_PATH, 'utf8').replace(/\r/g, ''); // FIX-CR: no incrustar \r
     const lines = content.trim().split('\n');
     const header = lines[0].split(',');
     const btcIdx = header.indexOf('BTC-EUR');
@@ -76,7 +76,8 @@ function computeBtcVol(): number {
     }
     const mean = rets.reduce((a,b)=>a+b,0)/rets.length;
     const variance = rets.reduce((s,r)=>s+(r-mean)**2,0)/(rets.length - 1);  // sample variance (n-1)
-    return Math.sqrt(variance * 365) * 100; // annualized, in %
+    // FIX-UNIDAD: decimal (0.50 = 50%), el motor compara con umbral 0.80 en globalStress
+    return Math.sqrt(variance * 365); // annualized, en tanto por uno
   } catch {
     return 50;
   }
@@ -106,7 +107,7 @@ async function main() {
   }
 
   // Read last row for fallback prices and date check
-  const content = fs.readFileSync(CSV_PATH, 'utf8');
+  const content = fs.readFileSync(CSV_PATH, 'utf8').replace(/\r/g, ''); // FIX-CR
   const lines = content.trim().split('\n');
   const lastLine = lines[lines.length-1];
   const lastDate = lastLine.split(',')[0];

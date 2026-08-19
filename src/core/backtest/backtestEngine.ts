@@ -937,23 +937,23 @@ function computeRollingSharpe(window: number[]): number {
   const excess = window.map(r => r - rfDaily);
   const m = mean(excess);
   const s = Math.sqrt(variance(excess.map(r => r - m)));
-  const sharpe = s > 0 ? (m / s) * Math.sqrt(252) : 0;
+  const sharpe = s > 0 ? (m / s) * Math.sqrt(365) : 0;
   return isFinite(sharpe) ? sharpe : 0;
 }
 
 export function computeMetrics(dailyRets: number[], initialCapital: number, finalValue: number, benchmarkRets?: number[]): BacktestMetrics {
   const clean = dailyRets.filter(r => isFinite(r));
   if (clean.length === 0) return emptyMetrics(initialCapital);
-  const years = clean.length / 252;
+  const years = clean.length / 365;
   const totalReturn = isFinite(finalValue) && finalValue > 0 ? finalValue / initialCapital - 1 : 0;
   const cagr = years > 0 ? ((1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
-  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
+  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 365);
   const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = clean.map(r => r - rfDaily);
   const excessMean = mean(excess);
-  const excessStd = Math.sqrt(variance(excess.map(r => r - excessMean)) * 252);
-  const sharpe = excessStd > 0 ? (excessMean * 252) / excessStd : 0;
+  const excessStd = Math.sqrt(variance(excess.map(r => r - excessMean)) * 365);
+  const sharpe = excessStd > 0 ? (excessMean * 365) / excessStd : 0;
   let peak = initialCapital, value = initialCapital, maxDD = 0;
   for (const r of clean) {
     value *= (1 + r);
@@ -1013,17 +1013,17 @@ function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
   if (clean.length < 10) {
     return { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 };
   }
-  const years = clean.length / 252;
+  const years = clean.length / 365;
   const totalRet = clean.reduce((acc, r) => acc * (1 + r), 1) - 1;
   const cagr = years > 0 ? ((1 + totalRet) > 0 ? Math.pow(1 + totalRet, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
-  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 252);
+  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 365);
   // FIX-AUDIT-R3 R3-03: rfDaily centralizado desde src/lib/constants (R2 users may forget to update here)
   const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = clean.map(r => r - rfDaily);
   const exMean = mean(excess);
-  const exStd = Math.sqrt(variance(excess.map(r => r - exMean)) * 252);
-  const sharpe = exStd > 0 ? (exMean * 252) / exStd : 0;
+  const exStd = Math.sqrt(variance(excess.map(r => r - exMean)) * 365);
+  const sharpe = exStd > 0 ? (exMean * 365) / exStd : 0;
   let peak = 1, val = 1, maxDD = 0;
   for (const r of clean) {
     val *= (1 + r);
@@ -1035,7 +1035,7 @@ function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
     cagr: isFinite(cagr) ? cagr : 0,
     sharpe: isFinite(sharpe) ? sharpe : 0,
     maxDrawdown: isFinite(maxDD) ? maxDD : 0,
-    annualizedReturn: isFinite(dailyMean * 252) ? dailyMean * 252 : 0,
+    annualizedReturn: isFinite(dailyMean * 365) ? dailyMean * 365 : 0,
     volatility: isFinite(vol) ? vol : 0,
     totalDays: clean.length,
   };

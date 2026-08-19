@@ -21,8 +21,11 @@ export type Asset = typeof ASSETS[number];
 // mueven el tipo rector, una única edición cambia la baseline en todo el sistema.
 // Antes del 2022 era ~0%, en JUN-2025 está en ~4.25%, expectativa para QT-end ~3.5-3.75%.
 export const RISK_FREE_RATE_ANNUAL = 0.04; // = BTP 10y expected/var proxy
-export const RISK_FREE_RATE_DAILY = RISK_FREE_RATE_ANNUAL / 252;
-const TRADING_DAYS_PER_YEAR = 252;
+// FIX-ANNUALIZATION-365: los datos del pipeline son de calendario (365 días/año),
+// no bursátiles (252). BTC cotiza 365 días y el CSV marca todos los días naturales.
+// Anualizar con 252 subestimaba CAGR ~34% y vol ~17% (CRITICAL Ronda 1).
+export const RISK_FREE_RATE_DAILY = RISK_FREE_RATE_ANNUAL / 365;
+const TRADING_DAYS_PER_YEAR = 365;
 export { TRADING_DAYS_PER_YEAR };
 export const SECTOR_MAP: Record<Asset, string> = {
   "BTC-EUR":  "crypto",

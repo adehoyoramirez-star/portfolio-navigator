@@ -44,7 +44,10 @@ export default function BacktestPanel({
   setOlympusPct: setOlympusPctProp,
 }: BacktestPanelProps) {
 
-  const [rebalanceDays, setRebalanceDays] = useState(126);
+  // FIX-REBALANCE-CANON: 21 días es el valor canónico del motor (default de
+  // runBacktest, export_engine_returns, freeze-baseline y walk-forward). 126 era
+  // un leftover que producía un motor distinto al auditado.
+  const [rebalanceDays, setRebalanceDays] = useState(21);
   const [lookbackDays, setLookbackDays]   = useState(252);
   const [activeTab, setActiveTab]         = useState<"equity" | "regime" | "rolling">("equity");
   const [dataSource, setDataSource]       = useState<"yahoo" | "csv">("csv");
@@ -262,7 +265,7 @@ export default function BacktestPanel({
 
   const { metrics: m, benchmarkMetrics: b, institutionalBenchmarkMetrics: im, regimeConditional: rc, regimeDays } = result;
   const totalDays = result.dailyRecords.length;
-  const years = (totalDays / 252).toFixed(1);
+  const years = (totalDays / 365).toFixed(1);
 
   const fmt = (v: number) => `${(v * 100).toFixed(1)}%`;
 
