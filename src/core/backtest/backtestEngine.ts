@@ -345,9 +345,12 @@ function computeAssetFactors(
 ) {
   const bticker = backtestTickers[ticker];
   const closes = closesHistory[bticker] ?? [];
-  const r12m = periodReturn(closes, t, 252);
-  const r3m  = periodReturn(closes, t, 63);
-  const r1m  = periodReturn(closes, t, 21);
+  // FIX-BTC-12M: BTC cotiza 365 días/año, no 252. 252 elementos ≈ 8.3 meses.
+  // Usar lookback en días calendario para BTC (365/91/30) y trading (252/63/21) para el resto.
+  const isBtc = ticker === 'BTC-EUR';
+  const r12m = periodReturn(closes, t, isBtc ? 365 : 252);
+  const r3m  = periodReturn(closes, t, isBtc ? 91 : 63);
+  const r1m  = periodReturn(closes, t, isBtc ? 30 : 21);
   const window = closes.slice(Math.max(0, t - lookbackDays), t);
   // FIX-AUDIT-R8 3.2: filter weekends when timestamps available
   const timestamps = timestampsHistory?.[bticker];

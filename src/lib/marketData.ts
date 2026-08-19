@@ -2,7 +2,7 @@ import { fetchYahooBatch, type YahooBatchResponse } from '@/lib/yahooFinance';
 import { loadFredManual, isFredDataFresh, fetchFredFromServer } from '@/lib/fredManualInputs';
 import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/lib/assetRegistry';
 import { ASSETS } from '@/lib/constants';
-import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile } from '@/lib/stats';
+import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { fromManualInputs } from '@/core/macro/liquidityCycle';
 import { liquidityScore } from '@/core/macro/liquidity';
@@ -133,9 +133,21 @@ export interface MarketData {
 // Nota: cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile importados desde @/lib/stats.ts
 
 // ── Constantes de configuración (module-level) ───────────────────────────────
-const DAYS_12M = 252;
-const DAYS_3M  = 63;
-const DAYS_1M  = 21;
+// ── FIX-BTC-12M (Oct-2026) ───────────────────────────────────────────────
+// El retorno 12m/3m/1m se calculaba por ÍNDICE de array:
+//   closes[closes.length - 253]
+// Dos bugs (confirmados con datos reales 18/08→19/08):
+//   1. FRÁGIL: si el tamaño de la serie cacheada cambia (lookback 1→2 años),
+//      el índice cae en OTRA fecha → el "precio de hace 12m" salta de golpe
+//      (BTC saltó +21.8% de un día a otro sin que el spot se moviera).
+//   2. BTC cotiza 365 días/año: 252 elementos ≈ 8.3 meses, NO 12 meses.
+// Fix: buscar el precio por FECHA (timestamps), con lookback en días
+//   calendario. 365 cal ≈ 252 trading · 91 cal ≈ 63 trading · 30 cal ≈ 21 trading.
+const PERIOD_LOOKBACKS = {
+  '12m': { calendarDays: 365, tradingDays: 252 },
+  '3m':  { calendarDays: 91,  tradingDays: 63 },
+  '1m':  { calendarDays: 30,  tradingDays: 21 },
+} as const;
 
 const SHRINKAGE_FACTOR = 0.65; // φ — James-Stein estándar para T ≈ 500 días
 
@@ -858,45 +870,49 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const liquidityOutput = fromManualInputs({ liquidityGrowth: m2Growth, dxy });
 
   // ====== RETORNOS POR PERÍODO (12m, 3m, 1m) ======
+  // FIX-BTC-12M: por FECHA (timestamps), no por índice. Ver periodReturnByDate.
 
-  const getCloses = (ticker: string, minLen: number): number[] => {
+  const computePeriodReturnForTicker = (
+    ticker: string,
+    period: { calendarDays: number; tradingDays: number }
+  ): number => {
+    // 1. Serie directa
     const direct = closesHistory[ticker] ?? [];
-    if (direct.length >= minLen) return direct;
-    // Fallback al proxy americano si hay datos insuficientes
+    const directTs = yfData[ticker]?.timestamps ?? [];
+    const directByDate = periodReturnByDate(direct, directTs, period.calendarDays);
+    if (directByDate !== null) return directByDate;
+
+    // 2. Fallback al proxy americano (si la directa no alcanza)
     const proxyTicker = PROXY_FALLBACK[ticker];
     if (proxyTicker) {
       const proxyData = yfData[proxyTicker];
       if (proxyData) {
         const proxyCloses = cleanCloses(proxyData.closes);
-        if (proxyCloses.length >= minLen) return proxyCloses;
+        const proxyByDate = periodReturnByDate(proxyCloses, proxyData.timestamps ?? [], period.calendarDays);
+        if (proxyByDate !== null) return proxyByDate;
+        const days = ticker === 'BTC-EUR' ? period.calendarDays : period.tradingDays;
+        if (proxyCloses.length >= days + 1) {
+          const s = proxyCloses[proxyCloses.length - days - 1];
+          const e = proxyCloses[proxyCloses.length - 1];
+          if (s > 0 && e > 0) return e / s - 1;
+        }
       }
     }
-    return direct; // devolver lo que hay aunque sea corto
+
+    // 3. Fallback legacy por índice (sin timestamps alineados)
+    //    BTC usa días calendario (365/91/30); el resto, días de trading (252/63/21).
+    const days = ticker === 'BTC-EUR' ? period.calendarDays : period.tradingDays;
+    if (direct.length >= days + 1) {
+      const s = direct[direct.length - days - 1];
+      const e = direct[direct.length - 1];
+      if (s > 0 && e > 0) return e / s - 1;
+    }
+    return 0;
   };
 
-  const returns12m = ASSETS.map(ticker => {
-    const closes = getCloses(ticker, DAYS_12M + 1);
-    if (closes.length < DAYS_12M + 1) return 0;
-    const start = closes[closes.length - DAYS_12M - 1];
-    const end   = closes[closes.length - 1];
-    return start > 0 ? (end / start) - 1 : 0;
-  });
-
-  const returns3m = ASSETS.map(ticker => {
-    const closes = getCloses(ticker, DAYS_3M + 1);
-    if (closes.length < DAYS_3M + 1) return 0;
-    const start = closes[closes.length - DAYS_3M - 1];
-    const end   = closes[closes.length - 1];
-    return start > 0 ? (end / start) - 1 : 0;
-  });
-
-  const returns1m = ASSETS.map(ticker => {
-    const closes = getCloses(ticker, DAYS_1M + 1);
-    if (closes.length < DAYS_1M + 1) return 0;
-    const start = closes[closes.length - DAYS_1M - 1];
-    const end   = closes[closes.length - 1];
-    return start > 0 ? (end / start) - 1 : 0;
-  });
+  const returns12m = ASSETS.map(ticker => computePeriodReturnForTicker(ticker, PERIOD_LOOKBACKS['12m']));
+  const returns3m  = ASSETS.map(ticker => computePeriodReturnForTicker(ticker, PERIOD_LOOKBACKS['3m']));
+  const returns1m  = ASSETS.map(ticker => computePeriodReturnForTicker(ticker, PERIOD_LOOKBACKS['1m']));
 
   // ====== EXPECTED RETURNS — James-Stein shrinkage hacia priors de LP ======
   // FIX-AUDIT-R7 MD-1: BTC anualiza ×365, resto ×252.

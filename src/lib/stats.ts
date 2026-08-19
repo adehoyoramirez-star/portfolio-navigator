@@ -74,3 +74,39 @@ export function percentile(arr: number[], p: number): number {
 export function isPositiveFinite(v: number): boolean {
   return typeof v === 'number' && isFinite(v);
 }
+
+// ── FIX-BTC-12M (Oct-2026) ───────────────────────────────────────────────
+// Retorno de periodo calculado por FECHA (no por índice de array).
+// El enfoque antiguo (closes[closes.length - 253]) era frágil: si el tamaño
+// de la serie cacheada cambiaba (lookback 1→2 años), el índice caía en OTRA
+// fecha y el "precio de hace 12m" saltaba de golpe (BTC +21.8% en un día).
+// Además BTC cotiza 365 días/año: 252 elementos ≈ 8.3 meses, no 12.
+//
+// Devuelve null si no hay timestamps alineados o historia insuficiente,
+// para que el caller use un fallback legacy por índice.
+//
+// @param closes       serie de cierres (forward-filled por cleanCloses)
+// @param timestamps   timestamps UNIX en segundos, alineados con closes
+// @param calendarDays lookback en días calendario
+export function periodReturnByDate(
+  closes: number[],
+  timestamps: number[],
+  calendarDays: number
+): number | null {
+  if (closes.length < 2) return null;
+  const aligned = timestamps.length === closes.length && timestamps.length > 0;
+  if (!aligned) return null;
+  const endTs = timestamps[timestamps.length - 1];
+  if (!isFinite(endTs) || endTs <= 0) return null;
+  const targetTs = endTs - calendarDays * 86400; // 86400s = 1 día
+  // última observación con timestamp <= targetTs (asumiendo serie ascendente)
+  let idx = -1;
+  for (let i = closes.length - 1; i >= 0; i--) {
+    if (timestamps[i] <= targetTs) { idx = i; break; }
+  }
+  if (idx < 0) return null; // sin historia suficiente
+  const start = closes[idx];
+  const end = closes[closes.length - 1];
+  if (!isFinite(start) || start <= 0 || !isFinite(end) || end <= 0) return null;
+  return end / start - 1;
+}
