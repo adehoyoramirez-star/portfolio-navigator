@@ -43,7 +43,11 @@ export function computeCompositeMetrics(input: CompositeInput): CompositeMetrics
   // FIX-FORENSIC-COMPOSITE: alinear el FINAL de BTC con el FINAL de la ventana del backtest.
   // Antes `btcLen - recLen - 252` evaluaba a 0 (doble resta del lookback), desalineando BTC
   // ~1 año respecto a Olympus → MaxDD -34% en vez de -45%.
-  const btcStart = Math.max(0, btcLen - recLen);
+  // FIX-ALIGN-1D (R9 re-run): el remanente de esa corrección dejaba BTC UN día por delante del
+  // motor (btcRets[i] = día 253+i vs olympusRets[i] = día 252+i) → la correlación real
+  // corr(E_k,B_k)=0.57 se anulaba (corr con B_{k+1}≈0) → Sharpe del blend inflado (~1.61 vs
+  // ~1.31 real) y vol subestimada (13.6% vs 17.2%). btcStart−1 alinea mismo día.
+  const btcStart = Math.max(0, btcLen - recLen - 1);
   const btcRets: number[] = [];
   for (let i = 0; i < recLen; i++) {
     const idx = btcStart + i;

@@ -8,10 +8,12 @@ import { computeCompositeMetrics } from "../core/backtest/compositeMetrics";
 
 describe("computeCompositeMetrics — alineación BTC (FIX-FORENSIC-COMPOSITE)", () => {
   test("regresión: BTC crash en la pre-ventana (primeros 252 días) NO contamina el composite", () => {
-    // 252 días de crash 100→50 (deben quedar FUERA de la ventana alineada) + 1000 días planos en 50
+    // 252 días de crash 100→50 (deben quedar FUERA de la ventana alineada) + 1001 días planos en 50.
+    // (FIX-ALIGN-1D: con btcStart = btcLen − recLen − 1 hace falta un día plano extra para que el
+    // primer retorno de la ventana no sea el último día del crash.)
     const btcPrices: number[] = [];
     for (let i = 0; i < 252; i++) btcPrices.push(100 - (50 * i) / 251); // 100 → 50
-    for (let i = 0; i < 1000; i++) btcPrices.push(50); // plano
+    for (let i = 0; i < 1001; i++) btcPrices.push(50); // plano
 
     // Olympus plano: 1000 días (recLen = 1000)
     const olympusDaily = Array(1000).fill(10000);
