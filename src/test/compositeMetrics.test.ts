@@ -4,7 +4,8 @@
 // (FIX-FORENSIC-COMPOSITE).
 // ============================================================
 import { describe, test, expect } from "vitest";
-import { computeCompositeMetrics } from "../core/backtest/compositeMetrics";
+import { computeCompositeMetrics, runBacktestCoupled } from "../core/backtest/compositeMetrics";
+import { runBacktest } from "../core/backtest/backtestEngine";
 
 describe("computeCompositeMetrics — alineación BTC (FIX-FORENSIC-COMPOSITE)", () => {
   test("regresión: BTC crash en la pre-ventana (primeros 252 días) NO contamina el composite", () => {
@@ -96,5 +97,101 @@ describe("computeCompositeMetrics — alineación BTC (FIX-FORENSIC-COMPOSITE)",
     // retorno composite = 0.2 × 10% = 2% → 10000 × 1.02
     expect(m.finalValue).toBeCloseTo(10200, 0);
     expect(m.maxDrawdown).toBeCloseTo(0, 6);
+  });
+});
+
+describe("runBacktestCoupled — kill switch por DD total (FIX-ACOPLAMIENTO-SATELITE)", () => {
+  // Serie sintética: 6 activos, 6 años. Rally suave años 1-3, crash de BTC
+  // (satélite) en el año 4 que arrastra el composite por debajo de -12%
+  // (threshold del kill switch), rally después. El motor ve el DD total.
+  function syntheticInput() {
+    const days = 6 * 365;
+    const closes: Record<string, number[]> = {};
+    const tickers = ["BTC-EUR", "EMXC.DE", "PPFB.DE", "URNU.DE", "VVSM.DE", "0P00000WLG.F"];
+    for (const t of tickers) {
+      const arr: number[] = [];
+      let p = 100;
+      for (let i = 0; i < days; i++) {
+        const isBtc = t === "BTC-EUR";
+        const inCrash = isBtc && i >= 3 * 365 && i < 4 * 365; // BTC cae -60% en el año 4
+        const drift = inCrash ? -0.0025 : 0.0008;
+        const noise = Math.sin(i * 1.7 + (isBtc ? 0 : 1)) * 0.002 + Math.cos(i * 0.9) * 0.0015;
+        p *= 1 + drift + noise;
+        arr.push(p);
+      }
+      closes[t] = arr;
+    }
+    const macroSeries = (v: number) => Array(days).fill(v);
+    return {
+      closesHistory: closes,
+      btcPrices: closes["BTC-EUR"],
+      macroHistory: {
+        vix: macroSeries(16),
+        yieldSpread: macroSeries(0.8),
+        creditSpread: macroSeries(2.5),
+        erpValue: macroSeries(0.03),
+        avgCorrelation: macroSeries(0.35),
+      },
+      initialCapital: 10_000,
+      transactionCostBps: 15,
+      useDynamicCovariance: false,
+    };
+  }
+
+  test("el acoplamiento NO empeora el MaxDD del composite frente al canónico", () => {
+    const input = syntheticInput();
+    const { composite: coupled } = runBacktestCoupled({ ...input, olympusPct: 80 });
+    const base = runBacktest({
+      closesHistory: input.closesHistory,
+      macroHistory: input.macroHistory,
+      lookbackDays: 252,
+      rebalanceDays: 21,
+      initialCapital: input.initialCapital,
+      transactionCostBps: input.transactionCostBps,
+      useDynamicCovariance: false,
+    });
+    const plain = computeCompositeMetrics({
+      olympusDailyValues: base.dailyRecords.map((r) => r.portfolioValue),
+      btcPrices: input.btcPrices,
+      olympusPct: 80,
+      initialCapital: input.initialCapital,
+    });
+    // Con un crash de BTC profundo el kill switch del motor frena MÁS al ver
+    // el DD total → el MaxDD acoplado debe ser <= (mejor o igual) al canónico.
+    expect(coupled.maxDrawdown).toBeLessThanOrEqual(plain.maxDrawdown + 1e-9);
+    // Y el CAGR no debe colapsar (dentro de un rango razonable)
+    expect(coupled.cagr).toBeGreaterThan(-0.5);
+    expect(coupled.cagr).toBeLessThan(1.0);
+  });
+
+  test("con BTC sin crash (bull plano), el acoplamiento apenas cambia las métricas", () => {
+    const input = syntheticInput();
+    // Quitar el crash: BTC sube suavemente todo el periodo
+    const noCrash = {
+      ...input,
+      btcPrices: input.btcPrices.map((_, i) => 100 * Math.pow(1.001, i)),
+      closesHistory: {
+        ...input.closesHistory,
+        "BTC-EUR": input.btcPrices.map((_, i) => 100 * Math.pow(1.001, i)),
+      },
+    };
+    const { composite: coupled } = runBacktestCoupled({ ...noCrash, olympusPct: 80 });
+    const base = runBacktest({
+      closesHistory: noCrash.closesHistory,
+      macroHistory: noCrash.macroHistory,
+      lookbackDays: 252,
+      rebalanceDays: 21,
+      initialCapital: noCrash.initialCapital,
+      transactionCostBps: noCrash.transactionCostBps,
+      useDynamicCovariance: false,
+    });
+    const plain = computeCompositeMetrics({
+      olympusDailyValues: base.dailyRecords.map((r) => r.portfolioValue),
+      btcPrices: noCrash.btcPrices,
+      olympusPct: 80,
+      initialCapital: noCrash.initialCapital,
+    });
+    // Sin crisis el kill switch no se activa por DD total → métricas casi idénticas
+    expect(Math.abs(coupled.cagr - plain.cagr)).toBeLessThan(0.01);
   });
 });

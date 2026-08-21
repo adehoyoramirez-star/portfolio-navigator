@@ -82,6 +82,13 @@ export interface BacktestInput {
   // FIX-AUDIT-INST-03: engineOverrides permite al sensitivity analysis
   // variar parametros del motor (kellyCap, volTarget, etc.) sin modificar engineConfig.ts.
   engineOverrides?: Record<string, number>;
+  // FIX-ACOPLAMIENTO-SATELITE (Ago-2026): override del drawdown que alimenta
+  // el kill switch del motor (tail risk). Por defecto el backtest usa el DD del
+  // sleeve motor (portfolioValue vs peak), pero PRODUCCIÓN usa el DD del
+  // portfolio TOTAL (incluye el BTC satélite). Cuando se provee, la función
+  // recibe (portfolioValue, peakValue, dayIndex) y devuelve el DD a usar.
+  // Si se omite, el comportamiento es EXACTAMENTE el actual (cero cambios).
+  portfolioDrawdownOverride?: (portfolioValue: number, peakValue: number, dayIndex: number) => number;
 }
 
 export type BacktestRegime = "EXPANSION" | "CONTRACTION" | "CRISIS";
@@ -629,7 +636,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const vix = vixArray[t];
       const yieldSpread = yieldSpreadArray[t];
       const creditSpread = creditSpreadArray[t];
-      const drawdown = portfolioValue < peakValue ? (portfolioValue - peakValue) / peakValue : 0;
+      // FIX-ACOPLAMIENTO-SATELITE: si se provee override (DD total con satélite,
+      // como hace producción), úsalo; si no, el DD del sleeve motor (comportamiento actual).
+      const drawdown = input.portfolioDrawdownOverride
+        ? input.portfolioDrawdownOverride(portfolioValue, peakValue, dayIndex)
+        : (portfolioValue < peakValue ? (portfolioValue - peakValue) / peakValue : 0);
 
       const erpAtT = input.macroHistory.erpValue?.[t];
       const avgCorrAtT = input.macroHistory.avgCorrelation?.[t];
