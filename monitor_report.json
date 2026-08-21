@@ -1,24 +1,24 @@
 {
-  "date": "2026-07-17",
+  "date": "2026-08-21",
   "mode": "weekly",
   "period": {
-    "start": "2025-01-01",
-    "end": "2026-07-14",
-    "days": 465
+    "start": "2026-07-24",
+    "end": "2026-08-17",
+    "days": 25
   },
   "marketContext": {
-    "bias": "BEAR",
+    "bias": "NEUTRAL",
     "inCrisis": false
   },
   "metrics": {
-    "sharpe": -0.39183356634834865,
-    "cagr": -0.21614093828918968,
-    "maxDD": -0.5436069743957613,
-    "annVol": 0.4088857477479026,
-    "rollingSharpe": -0.7220872919748608,
-    "expansionRatio": 0.946236559139785,
-    "crisisDays": 1,
-    "contractionDays": 24
+    "sharpe": 2.4077518280981884,
+    "cagr": 0.2704183216784828,
+    "maxDD": -0.023590068172527952,
+    "annVol": 0.08431401749378885,
+    "rollingSharpe": 0,
+    "expansionRatio": 1,
+    "crisisDays": 0,
+    "contractionDays": 0
   },
   "backtest": {
     "sharpe": 0.74,
@@ -35,10 +35,6 @@
     "avgTurnover": 0.15,
     "maxConsecutiveLoss": 12
   },
-  "alerts": [
-    "CRITICO: MaxDD > 40% (-54.4%). PAUSAR operaciones.",
-    "CRITICO: Sharpe rolling 12m < 0.30 (-0.72). PAUSAR.",
-    "CRITICO: Volatilidad > 25% (40.9%)."
-  ],
-  "verdict": "PAUSAR"
+  "alerts": [],
+  "verdict": "NORMAL"
 }

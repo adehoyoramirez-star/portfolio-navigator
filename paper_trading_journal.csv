@@ -1,2 +1,2 @@
-date,action,ticker,shares,price,value,cash_reserve,total_value,regime,notes
-2026-07-07,SNAPSHOT,,,,6131.85,6700.00,12831.85,,
+semana,fecha,sharpe_rolling,cagr,maxdd,vol,expansion_ratio,veredicto,vix,btc_dominance,activo_2sigma,rebalanceo,costes,accion,notas,firmas
+1,2026-08-21,n/a (<252 dias; periodo 2.41),27.04%,-2.36%,8.43%,100%,🟢 NORMAL,15.39,59.2% (CoinGecko),SÍ (BTC-EUR +18.2% semanal),SÍ (14-ago: dia 21),<0.10% AUM (1 rebalanceo x 15bps),Continuar operando normalmente. Sin alertas Tier 1.,Primer monitor semanal valido: 25 dias forward (24-jul a 17-ago). Alpha vs frozen -17% anualizado (t=-1.0; NO significativo) - esperado en bull fuerte. Regimen 25/25 EXPANSION. BTC.D 59.2%: sin alerta (<60%) pero en zona de acumulacion (>52%).,Trader: ___ | Cuant: ___

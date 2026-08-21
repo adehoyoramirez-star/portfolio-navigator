@@ -1,7 +1,7 @@
 {
   "paper_trading_start": "2026-07-24",
-  "last_date": "2026-08-07",
-  "days_forward": 4,
+  "last_date": "2026-08-17",
+  "days_forward": 25,
   "day0": {
     "equity_mtm": 7022.1367982,
     "cash": 2062,
@@ -9,25 +9,25 @@
     "legacy_pnl": -1130.8435977000001
   },
   "motor": {
-    "sharpe": 1.6966716883145754,
-    "cagr": 0.6743840306158382,
-    "maxDD": -0.020780912476189007,
-    "final_value": 9140.050746644116
+    "sharpe": 2.4077754937632148,
+    "cagr": 0.27042118514477265,
+    "maxDD": -0.023589562871774404,
+    "final_value": 9293.588719358968
   },
   "frozen": {
-    "sharpe": 4.002862332500842,
-    "cagr": 6.678203317981502,
-    "maxDD": -0.028909401529292732,
-    "final_value": 9336.75572365
+    "sharpe": 3.4780986077945557,
+    "cagr": 0.5063908830822155,
+    "maxDD": -0.02443082659619699,
+    "final_value": 9405.866668180166
   },
   "alpha": {
-    "daily_cagr": -1.6243773556015406,
-    "t_statistic": -0.7213516355888406,
+    "daily_cagr": -0.1728609453619241,
+    "t_statistic": -1.015355438247485,
     "significant_95pct": false,
-    "sharpe_diff": -2.306190644186267
+    "sharpe_diff": -1.070323114031341
   },
   "regime_distribution": {
-    "EXPANSION": 4,
+    "EXPANSION": 25,
     "CONTRACTION": 0,
     "CRISIS": 0
   },
