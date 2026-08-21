@@ -160,7 +160,7 @@ function analyzeVolClustering(history: CEWSDataPoint[]): CEWSSignal {
     description: weeksPanic >= 3
       ? `VIX ${current.toFixed(0)} — régimen de pánico instalado (${weeksPanic} semanas > 35)`
       : weeksElevated >= 4
-      ? `VIX ${current.toFixed(0)} — volatilidad elevada persistente (${weeksElevated} semanas > 25)`
+      ? `VIX ${current.toFixed(0)} — volatilidad elevada persistente (${weeksElevated} semanas > 22)`
       : `VIX ${current.toFixed(0)} — volatilidad normalizada`,
   };
 }

@@ -2528,10 +2528,10 @@ soxRsiWeekly,
             <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>VIX <span style={{ color: "#f59e0b" }}>● auto</span></div>
             <div style={{
               fontSize: "1.1rem", fontWeight: "bold",
-              color: vix > 30 ? "#ef4444" : vix > 20 ? "#f59e0b" : "#10b981"
+              color: vix > 35 ? "#ef4444" : vix > 22 ? "#f59e0b" : "#10b981"
             }}>{vix.toFixed(1)}</div>
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>
-              {vix > 30 ? "Pánico" : vix > 20 ? "Tensión" : "Normalidad"}
+              {vix > 35 ? "Pánico" : vix > 22 ? "Tensión" : "Normalidad"}
             </div>
           </div>
 
