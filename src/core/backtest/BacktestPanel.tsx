@@ -1,7 +1,7 @@
 // ===============================================
 // ARCHIVO: src/core/backtest/BacktestPanel.tsx
 // CORREGIDO: IIFE para forzar recálculo del backtest
-// + Soporte CSV local (11 años de datos)
+// + Soporte CSV local (datos históricos EUR reales, ventana dinámica)
 // ===============================================
 
 import React, { useState, useMemo, useEffect } from "react";
@@ -84,13 +84,17 @@ export default function BacktestPanel({
     return Math.max(...lengths);
   }, [marketData, csvData, dataSource]);
 
+  // Etiqueta dinámica del dataset CSV (antes hardcodeada a "11 años"; el CSV real
+  // son ~4,3 años de datos EUR desde 2022-04-22).
+  const csvYearsLabel = csvData ? `${(csvData.totalDays / 365).toFixed(1)} años` : "";
+
   // Cálculo del backtest en useMemo — solo recalcula cuando cambian los inputs relevantes.
   // CORRECCIÓN: antes era una IIFE que corría en cada render, causando
   // "metrics undefined" en los primeros renders antes de que marketData estuviera listo
   // y generando carga computacional innecesaria.
-  // FIX-CSV: soporta dataSource="csv" para backtest con 11 años de datos locales.
+  // FIX-CSV: soporta dataSource="csv" para backtest con datos históricos locales (EUR reales).
   const result: BacktestOutput | null = useMemo(() => {
-    // CSV mode: usar datos locales con 11 years de historico
+    // CSV mode: usar datos locales (histórico EUR real, ventana dinámica)
     if (dataSource === "csv" && csvData) {
       const length = csvData.totalDays;
       const macroHistory = buildMacroHistoryFromCSV(csvData, length);
@@ -244,7 +248,7 @@ export default function BacktestPanel({
         <p style={{ color: "#9ca3af" }}>Pulsa "Actualizar datos" para cargar el histórico desde Supabase.</p>
         <div style={{ marginTop: "0.75rem" }}>
           <button onClick={() => setDataSource('csv')} style={{ ...styles.tab, backgroundColor: "#4f46e5", color: "#fff" }}>
-            📂 Usar datos CSV locales (11 años)
+            {'📂 Usar datos CSV locales' + (csvYearsLabel ? ` (${csvYearsLabel})` : '')}
           </button>
         </div>
       </div>
@@ -275,7 +279,7 @@ export default function BacktestPanel({
     .map(r => ({
       day:              r.day,
       strategy:         +r.portfolioValue.toFixed(2),
-      benchmark:        +(portfolioInitialValue * Math.pow(1 + b.cagr, r.day / 252)).toFixed(2),
+      benchmark:        +(portfolioInitialValue * Math.pow(1 + b.cagr, r.day / 365)).toFixed(2),
       drawdown:         +(r.drawdown * 100).toFixed(2),
       rollingSharp:     r.rolling252Sharpe != null ? +r.rolling252Sharpe.toFixed(2) : null,
       regimeColor:      r.regime === "CRISIS" ? "#ef4444" : r.regime === "CONTRACTION" ? "#f59e0b" : "#10b981",
@@ -285,7 +289,7 @@ export default function BacktestPanel({
     const header = "Día,Valor,Benchmark,Drawdown,Sharpe252d,Régimen\n";
     const rows = result.dailyRecords
       .filter((_, i) => i % step === 0)
-      .map(r => `${r.day},${r.portfolioValue.toFixed(2)},${(portfolioInitialValue * Math.pow(1 + b.cagr, r.day / 252)).toFixed(2)},${(r.drawdown * 100).toFixed(2)},${r.rolling252Sharpe?.toFixed(2) ?? ""},${r.regime}`)
+      .map(r => `${r.day},${r.portfolioValue.toFixed(2)},${(portfolioInitialValue * Math.pow(1 + b.cagr, r.day / 365)).toFixed(2)},${(r.drawdown * 100).toFixed(2)},${r.rolling252Sharpe?.toFixed(2) ?? ""},${r.regime}`)
       .join("\n");
     const blob = new Blob([header + rows], { type: "text/csv" });
     const url  = URL.createObjectURL(blob);
@@ -304,9 +308,15 @@ export default function BacktestPanel({
       </div>
 
       <div style={styles.proxyBar}>
-        <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>
-          🔄 Proxies: EEM (EMXC) · URTH (WLG) · GLD (PPFB) · URA (URNU) · SMH (VVSM) · BTC-EUR directo
-        </span>
+        {result.daysWithProxies > 0 ? (
+          <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>
+            🔄 Proxies: EEM (EMXC) · URTH (WLG) · GLD (PPFB) · URA (URNU) · SMH (VVSM) · BTC-EUR directo
+          </span>
+        ) : (
+          <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>
+            ✅ Tickers EUR reales en el CSV — sin proxies americanos
+          </span>
+        )}
         <span style={{ color: "#6b7280", fontSize: "0.75rem", marginLeft: "1rem" }}>
           {result.daysWithProxies}d proxies · {result.daysWithRealData}d ETFs reales
         </span>
@@ -364,7 +374,7 @@ export default function BacktestPanel({
             onClick={() => setDataSource('csv')}
             style={{ ...styles.tab, backgroundColor: dataSource === 'csv' ? '#4f46e5' : '#1f2937', color: dataSource === 'csv' ? '#fff' : '#9ca3af' }}
           >
-            {csvLoading ? '⏳ Cargando...' : '📂 CSV Local (11 años)'}
+            {csvLoading ? '⏳ Cargando...' : ('📂 CSV Local' + (csvYearsLabel ? ` (${csvYearsLabel})` : ''))}
           </button>
         </div>
       </div>
@@ -549,7 +559,10 @@ export default function BacktestPanel({
       )}
 
       <p style={{ color: "#6b7280", fontSize: "0.75rem", marginTop: "1rem" }}>
-        Proxies americanos para ETFs europeos. Backtest incluye costes de transacción. Resultados pasados no garantizan rendimiento futuro.
+        {result.daysWithProxies > 0
+          ? "Proxies americanos para ETFs europeos. "
+          : "Datos EUR reales (sin proxies americanos). "}
+        Backtest incluye costes de transacción. Resultados pasados no garantizan rendimiento futuro.
       </p>
     </div>
   );
