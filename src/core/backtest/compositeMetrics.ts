@@ -54,7 +54,32 @@ export function computeCompositeMetrics(input: CompositeInput): CompositeMetrics
     }
   }
 
-  const compositeRets = olympusRets.map((or, i) => olyPct * or + btcPct * (btcRets[i] ?? 0));
+  // FIX-COMPOSITE-REB21 (R11): el composite rebalancea el split Olympus/BTC cada
+  // 21 días (tesis auditada R10); entre rebalances los pesos derivan con los
+  // retornos realizados. Antes rebalanceaba DIARIO (pesos siempre al target),
+  // inflando el Sharpe del blend (~1.64 vs ~1.61 en 20%). No cambia el ranking
+  // de satélites (R10). Mismo ritmo que el rebalanceo interno del motor.
+  const REBALANCE_DAYS = 21;
+  const compositeRets: number[] = [];
+  let wOly = olyPct;
+  let wBtc = btcPct;
+  for (let i = 0; i < olympusRets.length; i++) {
+    if (i > 0 && i % REBALANCE_DAYS === 0) {
+      // Rebalanceo: volver al target del split
+      wOly = olyPct;
+      wBtc = btcPct;
+    }
+    const or = olympusRets[i] ?? 0;
+    const br = btcRets[i] ?? 0;
+    const r = wOly * or + wBtc * br;
+    compositeRets.push(r);
+    // Drift de pesos con los retornos realizados (entre rebalanceos)
+    const g = 1 + r;
+    if (g > 0) {
+      wOly = (wOly * (1 + or)) / g;
+      wBtc = (wBtc * (1 + br)) / g;
+    }
+  }
 
   let value = initialCapital;
   let peak = initialCapital;

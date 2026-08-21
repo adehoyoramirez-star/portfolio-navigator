@@ -46,15 +46,41 @@ describe("computeCompositeMetrics — alineación BTC (FIX-FORENSIC-COMPOSITE)",
     expect(m.maxDrawdown).toBeCloseTo(0, 6);
   });
 
-  test("blend 80/20 (satélite 20%, default auditado): composite = 0.8 × engine + 0.2 × BTC exacto", () => {
-    // engine crece 1%/día compuesto; BTC plano → retorno composite diario = 0.8 × 1% = 0.8%
+  test("blend 80/20 (satélite 20%, default auditado): composite = 0.8 × engine + 0.2 × BTC con rebalanceo 21d", () => {
+    // engine crece 1%/día compuesto; BTC plano. Con rebalanceo DIARIO sería
+    // exactamente 1.008^365; con 21d el peso del motor deriva al alza entre
+    // rebalances → el valor final queda entre 1.008^365 y 1.01^365.
     const olympusDaily: number[] = [];
     for (let i = 0; i < 365; i++) olympusDaily.push(10000 * Math.pow(1.01, i + 1));
     // 252 días de pre-ventana (crash irreal) + 365 planos: la alineación usa los últimos 365
     const btcPrices = Array(365 + 252).fill(100);
     const m = computeCompositeMetrics({ olympusDailyValues: olympusDaily, btcPrices, olympusPct: 80, initialCapital: 10000 });
-    expect(m.finalValue).toBeCloseTo(10000 * Math.pow(1.008, 365), 0);
+    expect(m.finalValue).toBeGreaterThan(10000 * Math.pow(1.008, 365));
+    expect(m.finalValue).toBeLessThan(10000 * Math.pow(1.01, 365));
     expect(m.maxDrawdown).toBeCloseTo(0, 3);
+  });
+
+  test("rebalanceo 21d: los pesos derivan entre rebalances y se resetean al target cada 21 días", () => {
+    // engine +1%/día compuesto durante 25 días (incluye un reset en el día 21); BTC plano
+    const n = 25;
+    const olympusDaily: number[] = [];
+    for (let i = 0; i < n; i++) olympusDaily.push(10000 * Math.pow(1.01, i + 1));
+    const btcPrices = Array(n + 252).fill(100);
+    const m = computeCompositeMetrics({ olympusDailyValues: olympusDaily, btcPrices, olympusPct: 80, initialCapital: 10000 });
+
+    // Referencia explícita de la convención: wOly deriva con el retorno del motor
+    // y se resetea a 0.8 cada 21 días (día 0 = target inicial, sin ejecución en t+1)
+    let w = 0.8;
+    let v = 10000;
+    for (let d = 0; d < n; d++) {
+      if (d > 0 && d % 21 === 0) w = 0.8;
+      const r = w * 0.01;
+      v *= 1 + r;
+      w = (w * 1.01) / (1 + r);
+    }
+    expect(m.finalValue).toBeCloseTo(v, 0);
+    // El drift (sin rebalancear a diario) aporta valor frente al blend diario
+    expect(m.finalValue).toBeGreaterThan(10000 * Math.pow(1.008, n));
   });
 
   test("blend 80/20 con BTC moviéndose: el satélite aporta exactamente el 20% del retorno BTC", () => {

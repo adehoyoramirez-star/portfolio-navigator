@@ -1,23 +1,23 @@
 {
-  "createdAt": "2026-08-19T17:59:55.087Z",
-  "label": "baseline VIA1 EUR real (2022-04-22→2026-08-17, 365d)",
+  "createdAt": "2026-08-21T11:38:19.938Z",
+  "label": "baseline v6.x (motor canónico de producción, R11)",
   "metrics": {
-    "cagr": 0.2234701581664753,
-    "sharpe": 1.2987250403900221,
-    "sortino": 1.3919078430522969,
-    "maxDrawdown": -0.15197357572622278,
-    "calmar": 1.4704540384642402,
-    "totalReturn": 1.0807310763952964,
-    "winRate": 0.6507936507936508,
-    "profitFactor": 2.5689375212924346,
+    "cagr": 0.2295422304050596,
+    "sharpe": 1.457611687763304,
+    "sortino": 1.5984404667766383,
+    "maxDrawdown": -0.1336350622995305,
+    "calmar": 1.7176796751930428,
+    "totalReturn": 1.118492295341511,
+    "winRate": 0.6825396825396826,
+    "profitFactor": 2.8295606687137265,
     "maxWinStreak": 11,
     "maxLossStreak": 4,
     "periods": 63,
-    "volatility": 0.14085914481645334,
-    "finalValue": 20807.310763952966,
-    "betaVsBenchmark": 0.7516110717890275,
-    "alphaVsBenchmark": -0.020227847946238678,
-    "hhi": 0.2013389070517342
+    "volatility": 0.12809114780730968,
+    "finalValue": 21184.922953415113,
+    "betaVsBenchmark": 0.6737047726146432,
+    "alphaVsBenchmark": -0.003720521158948789,
+    "hhi": 0.18328109932404008
   },
   "benchmarkMetrics": {
     "cagr": 0.3484426994230967,
@@ -56,12 +56,12 @@
     "hhi": 0
   },
   "regimeDays": {
-    "EXPANSION": 1315,
-    "CONTRACTION": 11,
+    "EXPANSION": 1310,
+    "CONTRACTION": 16,
     "CRISIS": 0
   },
   "rebalanceCount": 64,
-  "transactionCostBps": 4,
-  "totalTransactionCosts": 590.6824294900676,
-  "returnsSignature": "389cc89492038b72"
+  "transactionCostBps": 5,
+  "totalTransactionCosts": 628.148289895647,
+  "returnsSignature": "cc0209e71db4c96a"
 }

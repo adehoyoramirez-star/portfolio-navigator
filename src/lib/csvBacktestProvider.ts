@@ -1,7 +1,8 @@
 // ===============================================
 // ARCHIVO: src/lib/csvBacktestProvider.ts
-// Carga el CSV local con 11 anos de datos (2015-2026)
-// para backtesting con horizonte extendido.
+// Carga el CSV local con datos EUR reales (2022-04-22 → presente, ~4.3 años)
+// para backtesting. Ruta de macro CANÓNICA compartida por el panel,
+// freeze-baseline y export_engine_returns (unificación R11).
 // ===============================================
 
 import { ASSETS } from './constants';
@@ -29,6 +30,7 @@ const COLUMN_MAP: Record<string, number> = {
 
 export interface CSVBacktestData {
   closesHistory: Record<string, number[]>;
+  dates: string[];              // columna 0 — fechas (para export forense)
   vixHistory: number[];
   tnxHistory: number[];
   irxHistory: number[];
@@ -40,7 +42,7 @@ export interface CSVBacktestData {
   totalDays: number;
 }
 
-function parseCSV(text: string): CSVBacktestData {
+export function parseCSVFromText(text: string): CSVBacktestData {
   const lines = text.trim().split('\n');
   const dataLines = lines.slice(1).filter(l => l.trim().length > 0);
 
@@ -49,10 +51,12 @@ function parseCSV(text: string): CSVBacktestData {
   for (const ticker of allTickers) {
     closesHistory[ticker] = [];
   }
+  const dates: string[] = [];
 
   for (const line of dataLines) {
     const parts = line.split(',');
     if (parts.length < 16) continue;
+    dates.push(parts[0]);
     for (const ticker of allTickers) {
       const colIdx = COLUMN_MAP[ticker];
       if (colIdx !== undefined) {
@@ -63,6 +67,7 @@ function parseCSV(text: string): CSVBacktestData {
   }
   return {
     closesHistory,
+    dates,
     vixHistory: closesHistory['^VIX'],
     tnxHistory: closesHistory['^TNX'],
     irxHistory: closesHistory['^IRX'],
@@ -82,7 +87,7 @@ export async function loadCSVBacktestData(): Promise<CSVBacktestData> {
   const response = await fetch(CSV_PATH);
   if (!response.ok) throw new Error('Failed to load CSV: ' + response.status);
   const text = await response.text();
-  cachedData = parseCSV(text);
+  cachedData = parseCSVFromText(text);
   console.log('[CSV] Loaded ' + cachedData.totalDays + ' days of historical data');
   return cachedData;
 }
