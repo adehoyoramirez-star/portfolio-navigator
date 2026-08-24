@@ -159,7 +159,7 @@ async function main() {
 
   // Compute BTC_VOL
   const btcVol = computeBtcVol();
-  console.log(`  BTC_VOL (computed): ${btcVol.toFixed(1)}%`);
+  console.log(`  BTC_VOL (computed): ${(btcVol * 100).toFixed(1)}% (${btcVol.toFixed(2)} decimal)`);
 
   // Check if any prices failed — carry forward last known price instead of 0.00
   const failed = TICKERS.filter((_, i) => prices[i] === null);
