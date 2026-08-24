@@ -1,5 +1,6 @@
 import { fetchYahooBatch, type YahooBatchResponse } from '@/lib/yahooFinance';
 import { loadFredManual, isFredDataFresh, fetchFredFromServer } from '@/lib/fredManualInputs';
+import { getManualPrice, loadManualPrices } from '@/lib/manualPrices';
 import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/lib/assetRegistry';
 import { ASSETS } from '@/lib/constants';
 import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate, priceAtCalendarDaysAgo } from '@/lib/stats';
@@ -636,6 +637,15 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   for (const ticker of Object.keys(yfData)) {
     if (!(ticker in prices) && yfData[ticker]?.currentPrice) {
       prices[ticker] = yfData[ticker].currentPrice;
+    }
+  }
+  // Tercero: OVERRIDE MANUAL — si el usuario fijó un precio a mano
+  // (ej. URNU.DE cuando Yahoo falla), tiene prioridad sobre Yahoo.
+  const manualPrices = loadManualPrices();
+  for (const ticker of Object.keys(manualPrices)) {
+    const manualPrice = getManualPrice(ticker);
+    if (manualPrice !== undefined && manualPrice > 0) {
+      prices[ticker] = manualPrice;
     }
   }
 

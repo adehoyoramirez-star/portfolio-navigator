@@ -122,6 +122,7 @@ import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
 import walkforwardResults from "@/data/walkforward-results";
 import WalkForwardSection from "@/dashboard/WalkForwardSection";
 import FredManualPanel from "@/dashboard/FredManualPanel";
+import ManualPricePanel from "@/dashboard/ManualPricePanel";
 import { generateAuditCSV, downloadCSV } from "@/lib/marketDataExport";
 import {
   analyzeBitcoinCycle,
@@ -3952,6 +3953,9 @@ soxRsiWeekly,
 
       {/* FIX-AUDIT-R9 UI: FRED Manual Inputs Panel — editar M2, CAPE, credit spread, breakeven */}
       <FredManualPanel onSaved={refreshMarketData} />
+
+      {/* OVERRIDE MANUAL DE PRECIOS — fijar precio a mano cuando Yahoo falla (ej. URNU.DE) */}
+      <ManualPricePanel onSaved={refreshMarketData} currentPrices={marketData?.prices} />
 
       
       {/* FEAT: Manual Forward-Looking Volatility Panel */}
