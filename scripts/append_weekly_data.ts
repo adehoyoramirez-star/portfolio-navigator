@@ -16,38 +16,53 @@ const TICKERS = [
   '^VIX', '^TNX', '^IRX', 'HYG', 'LQD', '^MOVE', 'DX-Y.NYB',
 ];
 
-// Yahoo Finance v8 chart API
+// Yahoo Finance v8 chart API — with retry + exponential backoff
+// Yahoo rate-limits aggressive callers; 3 retries with 1s/2s/4s backoff + jitter
 async function fetchYahooClose(ticker: string): Promise<number | null> {
-  const encoded = encodeURIComponent(ticker);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?range=5d&interval=1d`;
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (PaperTrading/1.0)' },
-    });
-    if (!res.ok) {
-      console.warn(`  ${ticker}: HTTP ${res.status}`);
-      return null;
+  const MAX_RETRIES = 3;
+  let lastError: string | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const encoded = encodeURIComponent(ticker);
+    // Alternate between query1/query2 on retries to avoid single-host throttling
+    const host = attempt % 2 === 0 ? 'query1.finance.yahoo.com' : 'query2.finance.yahoo.com';
+    const url = `https://${host}/v8/finance/chart/${encoded}?range=5d&interval=1d`;
+
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (PaperTrading/2.0)' },
+      });
+      if (!res.ok) {
+        // 429 (Too Many Requests) is transient — retry; 404 is permanent
+        if (res.status === 429 && attempt < MAX_RETRIES) {
+          lastError = `HTTP ${res.status}`;
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1) + Math.random() * 500));
+          continue;
+        }
+        lastError = `HTTP ${res.status}`;
+        break;
+      }
+      const json: any = await res.json();
+      const result = json?.chart?.result?.[0];
+      if (!result) { lastError = 'no chart data'; break; }
+      const closes = result.indicators?.quote?.[0]?.close;
+      if (!closes || closes.length === 0) { lastError = 'no close prices'; break; }
+      // Get last non-null close
+      for (let i = closes.length - 1; i >= 0; i--) {
+        if (closes[i] !== null && closes[i] !== undefined) return closes[i];
+      }
+      lastError = 'all closes null';
+      break;
+    } catch (e: any) {
+      lastError = e.message;
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1) + Math.random() * 500));
+        continue;
+      }
     }
-    const json: any = await res.json();
-    const result = json?.chart?.result?.[0];
-    if (!result) {
-      console.warn(`  ${ticker}: no chart data`);
-      return null;
-    }
-    const closes = result.indicators?.quote?.[0]?.close;
-    if (!closes || closes.length === 0) {
-      console.warn(`  ${ticker}: no close prices`);
-      return null;
-    }
-    // Get last non-null close
-    for (let i = closes.length - 1; i >= 0; i--) {
-      if (closes[i] !== null && closes[i] !== undefined) return closes[i];
-    }
-    return null;
-  } catch (e: any) {
-    console.warn(`  ${ticker}: ${e.message}`);
-    return null;
   }
+  console.warn(`  ${ticker}: FAILED after ${MAX_RETRIES + 1} attempts (${lastError})`);
+  return null;
 }
 
 // Compute BTC_VOL from recent BTC closes in CSV
@@ -165,9 +180,11 @@ async function main() {
   });
   const newRow = [today, ...priceValues, btcVol.toFixed(2)];
 
-  // Append to CSV
+  // Append to CSV — strip trailing newlines first to avoid blank-line corruption
   const newLine = newRow.join(',');
-  fs.appendFileSync(CSV_PATH, '\n' + newLine);
+  const raw = fs.readFileSync(CSV_PATH, 'utf8');
+  const trimmed = raw.replace(/[\r\n]+$/, '');
+  fs.writeFileSync(CSV_PATH, trimmed + '\n' + newLine + '\n');
 
   console.log('\n✅ Row appended to CSV:');
   console.log(newLine);
