@@ -177,7 +177,12 @@ export function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   // Z<1 = zona de acumulación (misma recalibración que scoreMvrv en btcCycleOverlay.ts).
   // Con Z=0.5 y ratio=1.23: antes decía "no infravalorado", ahora dice "infravalorado".
   const mvrvUndervalued = mvrvForSignal !== undefined && mvrvForSignal < (mvrvZScore !== undefined ? 1.0 : S.MVRV_UNDERVALUED);
-  const volNormalizing = cewsOutput !== undefined && cewsOutput.signals.volClustering.trend === "IMPROVING" && cewsOutput.signals.volClustering.level !== "ALERT";
+  // FIX-VIX-STABILITY: solo considerar normalización tras mejora persistente
+  // y cuando el nivel ya salió de WATCH/WARNING. La tendencia se estabiliza
+  // en CEWS y CLEAR evita convertir una simple caída del VIX en señal de compra.
+  const volNormalizing = cewsOutput !== undefined &&
+    cewsOutput.signals.volClustering.trend === "IMPROVING" &&
+    cewsOutput.signals.volClustering.level === "CLEAR";
 
   // ── Señal #8: Cycle Bottom per-asset (≥OPPORTUNITY en cualquier activo) ──
   // Si algún activo del universo está en OPPORTUNITY (≥60) o EXTREME (≥80),

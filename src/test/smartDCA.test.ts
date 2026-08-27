@@ -61,9 +61,9 @@ function cewsRecovering(): CEWSOutput {
         description: "M2 crecimiento mínimo",
       },
       volClustering: {
-        name: "Volatility Clustering (VIX)", level: "WATCH", score: 2,
-        trend: "IMPROVING", value: 22, threshold: 25,
-        description: "VIX normalizándose",
+        name: "Volatility Clustering (VIX)", level: "CLEAR", score: 0,
+        trend: "IMPROVING", value: 18, threshold: 22,
+        description: "VIX normalizándose de forma confirmada",
       },
     },
     earlyWarningActive: false,
@@ -309,7 +309,7 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
   test("4 señales (2 macro + 2 on-chain) → ATTACK_ENTRY, cartera completa", () => {
     // Necesitamos exactamente 4 señales con ≥2 macro.
     // Usamos: Regimen (macro) + VIX (macro) + BTC.D + MVRV = 4
-    // VIX requiere cews con volClustering.trend=IMPROVING, level≠ALERT
+    // VIX requiere cews con volClustering.trend=IMPROVING y level=CLEAR
     // CEWS no debe activarse (necesita previous ALERT/WARNING + current WATCH/CLEAR)
     // Con cewsPreviousLevel=CLEAR y cewsOutput.level=CLEAR → NO activa
     const result = computeSmartDCA(baseInput({
@@ -322,7 +322,7 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
     }));
     // cewsRecovering().level = "CLEAR", cewsPreviousLevel = "CLEAR"
     // CEWS requiere previous ALERT/WARNING → NO activa
-    // VIX requiere trend=IMPROVING y level≠ALERT → nivel WATCH ✅
+    // VIX requiere trend=IMPROVING y nivel CLEAR ✅
     // Activas: BTC.D (1) + MVRV (2) + Regimen (3 macro) + VIX (4 macro) = 4 total, 2 macro
 
     expect(result.attackConfluence).toBe(4);

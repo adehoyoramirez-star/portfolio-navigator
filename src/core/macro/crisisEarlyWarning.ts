@@ -133,20 +133,33 @@ function analyzeLiquidityImpulse(history: CEWSDataPoint[]): CEWSSignal {
 }
 
 function analyzeVolClustering(history: CEWSDataPoint[]): CEWSSignal {
-  const recent = history.slice(-8);
+  // FIX-VIX-STABILITY: usar 12 observaciones y persistencia de 2 periodos.
+  // Evita que una sola lectura que entra/sale de la ventana haga parpadear la señal.
+  const recent = history.slice(-12);
   const current = recent[recent.length - 1]?.vix ?? 0;
   const weeksElevated = recent.filter(d => d.vix > THRESHOLDS.vixCluster.warning).length;
-  const weeksPanic    = recent.filter(d => d.vix > THRESHOLDS.vixCluster.danger).length;
+  const weeksPanic = recent.filter(d => d.vix > THRESHOLDS.vixCluster.danger).length;
 
-  // Clustering: picos de VIX cada vez más frecuentes = régimen de miedo instalado
   const vixValues = recent.map(d => d.vix);
-  const vixAcceleration = vixValues.length >= 4
-    ? (vixValues.slice(-4).reduce((a, b) => a + b, 0) / 4) -
-      (vixValues.slice(0, 4).reduce((a, b) => a + b, 0) / 4)
+  const vixAcceleration = vixValues.length >= 6
+    ? (vixValues.slice(-6).reduce((a, b) => a + b, 0) / 6) -
+      (vixValues.slice(0, 6).reduce((a, b) => a + b, 0) / 6)
     : 0;
 
-  const trend = computeTrend(vixValues, true);
-  const clusteringBonus = vixAcceleration > 5 ? 1 : 0; // aceleración de VIX = señal extra
+  const rawTrend = computeTrend(vixValues, true);
+  const previousValues = vixValues.slice(0, -1);
+  const previousTrend = previousValues.length >= 4
+    ? computeTrend(previousValues.slice(-12), true)
+    : "STABLE";
+  const improvingPersistently = rawTrend === "IMPROVING" && previousTrend === "IMPROVING";
+  const deterioratingPersistently = rawTrend === "DETERIORATING" && previousTrend === "DETERIORATING";
+  const trend = improvingPersistently
+    ? "IMPROVING"
+    : deterioratingPersistently
+    ? "DETERIORATING"
+    : "STABLE";
+
+  const clusteringBonus = vixAcceleration > 5 ? 1 : 0;
   const score = weeksPanic * 2 + Math.max(0, weeksElevated - weeksPanic) + clusteringBonus;
   const level = weeksPanic >= 3 ? "ALERT" : weeksElevated >= 5 ? "WARNING" : weeksElevated >= 2 ? "WATCH" : "CLEAR";
 

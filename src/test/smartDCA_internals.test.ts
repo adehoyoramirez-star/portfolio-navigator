@@ -125,7 +125,7 @@ describe("detectBottomConfluence", () => {
           yieldCurve: { name: "Yield Curve", level: "CLEAR", score: 0, trend: "STABLE", value: 1.2, threshold: 0.5, description: "" },
           creditSpreads: { name: "Credit Spreads", level: "WATCH", score: 2, trend: "STABLE", value: 2.5, threshold: 2.0, description: "" },
           liquidityImpulse: { name: "Liquidity", level: "WATCH", score: 2, trend: "IMPROVING", value: 2.0, threshold: 3.0, description: "" },
-          volClustering: { name: "VIX", level: "WATCH", score: 2, trend: "IMPROVING", value: 22, threshold: 25, description: "" },
+          volClustering: { name: "VIX", level: "CLEAR", score: 0, trend: "IMPROVING", value: 18, threshold: 22, description: "" },
         },
         earlyWarningActive: false, earlyWarningReason: "", regimePenaltyAdjustment: -0.05, recommendation: "",
       } as any,
