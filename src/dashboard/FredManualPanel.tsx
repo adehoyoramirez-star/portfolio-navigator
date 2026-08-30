@@ -17,6 +17,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
   const [cape, setCAPE] = useState(initial.cape);
   const [credit, setCredit] = useState(initial.creditSpread);
   const [be, setBE] = useState(initial.inflationBreakeven5y);
+  const [realYield10y, setRealYield10y] = useState<number | undefined>(initial.realYield10y);
   // LIQ-AUTO (Ago-2026): WALCL + ECBASSETSW para Liquidez Global automática
   const [fedBS, setFedBS] = useState<number | undefined>(initial.fedBalanceSheet);
   const [ecbBS, setEcbBS] = useState<number | undefined>(initial.ecbBalanceSheet);
@@ -31,6 +32,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
   const handleSave = () => {
     const updated = saveFredManual({
       m2GrowthYoY: m2, cape, creditSpread: credit, inflationBreakeven5y: be,
+      realYield10y,
       fedBalanceSheet: fedBS, ecbBalanceSheet: ecbBS,
     });
     setLastUpdated(updated.lastUpdated);
@@ -45,6 +47,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
     setCAPE(defaults.cape);
     setCredit(defaults.creditSpread);
     setBE(defaults.inflationBreakeven5y);
+    setRealYield10y(defaults.realYield10y);
     setFedBS(undefined);
     setEcbBS(undefined);
     saveFredManual(defaults);
@@ -60,6 +63,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
       setCAPE(synced.cape);
       setCredit(synced.creditSpread);
       setBE(synced.inflationBreakeven5y);
+      setRealYield10y(synced.realYield10y);
       setFedBS(synced.fedBalanceSheet);
       setEcbBS(synced.ecbBalanceSheet);
       setLastUpdated(synced.lastUpdated);
@@ -104,18 +108,19 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
           <button onClick={handleSave} style={{ background: "#2563eb", color: "white", border: "none", borderRadius: "5px", padding: "4px 14px", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600 }}>Guardar</button>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.75rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "0.75rem" }}>
         <div><label style={lbl}>M2 Growth YoY% <span style={{fontSize:"0.6rem",color:"#64748b"}}>M2SL</span></label><input type="number" value={m2} onChange={e => setM2(Number(e.target.value))} style={inp} step="0.1" /></div>
         <div><label style={lbl}>Shiller CAPE <span style={{fontSize:"0.6rem",color:"#64748b"}}>multpl.com</span></label><input type="number" value={cape} onChange={e => setCAPE(Number(e.target.value))} style={inp} step="0.1" /></div>
         <div><label style={lbl}>Credit Spread HY% <span style={{fontSize:"0.6rem",color:"#64748b"}}>BAMLH0A0HYM2</span></label><input type="number" value={credit} onChange={e => setCredit(Number(e.target.value))} style={inp} step="0.1" /></div>
-        <div><label style={lbl}>Breakeven 5y% <span style={{fontSize:"0.6rem",color:"#64748b"}}>T5YIFR</span></label><input type="number" value={be} onChange={e => setBE(Number(e.target.value))} style={inp} step="0.01" /></div>
+        <div><label style={lbl}>Breakeven 5y% <span style={{fontSize:"0.6rem",color:"#64748b"}}>fallback</span></label><input type="number" value={be} onChange={e => setBE(Number(e.target.value))} style={inp} step="0.01" /></div>
+        <div><label style={lbl}>Tipo real 10y% <span style={{fontSize:"0.6rem",color:"#10b981"}}>DFII10 · preferido</span></label><input type="number" value={realYield10y ?? ''} onChange={e => { const v = e.target.value; setRealYield10y(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 1.80" /></div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.75rem", marginTop: "0.75rem" }}>
         <div><label style={lbl}>Fed Balance Sheet (bill. $) <span style={{fontSize:"0.6rem",color:"#64748b"}}>WALCL</span></label><input type="number" value={fedBS ?? ''} onChange={e => { const v = e.target.value; setFedBS(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 6.80" /></div>
         <div><label style={lbl}>ECB Balance Sheet (bill. €) <span style={{fontSize:"0.6rem",color:"#64748b"}}>ECBASSETSW</span></label><input type="number" value={ecbBS ?? ''} onChange={e => { const v = e.target.value; setEcbBS(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 4.00" /></div>
       </div>
       <div style={{ marginTop: "8px", fontSize: "0.62rem", color: "#4b5563", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span>Fuentes: M2SL · Shiller CAPE · BAMLH0A0HYM2 · T5YIFR · WALCL · ECBASSETSW · Actualizado: {new Date(lastUpdated).toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
+        <span>Fuentes: M2SL · CAPE · BAMLH0A0HYM2 · DFII10 (preferido) · T5YIFR (fallback) · WALCL · ECBASSETSW · Actualizado: {new Date(lastUpdated).toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
         <span style={{ color: isOverride ? "#fbbf24" : "#10b981", fontWeight: 600 }}>
           {isOverride ? "Usando: MANUAL (override)" : "Usando: FRED Server"}
         </span>

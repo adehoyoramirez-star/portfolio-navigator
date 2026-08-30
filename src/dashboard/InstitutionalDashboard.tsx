@@ -122,6 +122,7 @@ import { runWalkForward } from "@/core/backtest/walkForwardOptimizer";
 import walkforwardResults from "@/data/walkforward-results";
 import WalkForwardSection from "@/dashboard/WalkForwardSection";
 import FredManualPanel from "@/dashboard/FredManualPanel";
+import { loadFredManual } from "@/lib/fredManualInputs";
 import ManualPricePanel from "@/dashboard/ManualPricePanel";
 import { generateAuditCSV, downloadCSV } from "@/lib/marketDataExport";
 import {
@@ -981,6 +982,7 @@ soxRsiWeekly,
       soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
+      realYield10y: loadFredManual().realYield10y,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
       wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
       wlgPERatio: cycleDQ.wlgPERatio,
@@ -1071,6 +1073,7 @@ soxRsiWeekly,
       soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
+      realYield10y: loadFredManual().realYield10y,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
       wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
       wlgPERatio: cycleDQ.wlgPERatio,

@@ -134,8 +134,10 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
                                   //   Documentado como leading indicator del ciclo de semiconductores.
 
   // Oro
-  bondYield10y: number;        // ya disponible en dashboard
-  inflationBreakeven?: number; // TradingView: T5YIE — breakeven inflación 5 años EEUU
+  bondYield10y: number;        // US10Y nominal, porcentaje; fallback del tipo real
+  inflationBreakeven?: number; // Breakeven 5Y, porcentaje; fallback explícito
+  realYield10y?: number;       // DFII10: rendimiento real 10Y TIPS, porcentaje; fuente preferida
+  realYieldSource?: "DFII10" | "NOMINAL_MINUS_BREAKEVEN_5Y";
   brentOil?: number;           // $/barril — si >$95 la guerra/inflación protege al oro → override HOLD
   goldCbPurchases?: number;   // GOLD-CB-SENSOR (Ago-2026, Comité): compras netas de oro de
                               //   bancos centrales (toneladas/año, World Gold Council trimestral).
@@ -506,16 +508,18 @@ function detectSemisTop(inputs: CycleTopInputs): CycleTopSignal {
 
 // ── ORO ──────────────────────────────────────────────────────────
 function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
-  const { bondYield10y, inflationBreakeven, brentOil, dxy, goldCbPurchases } = inputs;
+  const { bondYield10y, inflationBreakeven, realYield10y, brentOil, dxy, goldCbPurchases } = inputs;
+  const hasDirectRealYield = isValidReading(realYield10y, -10, 50);
+  const hasFallbackInputs = isValidReading(inflationBreakeven, -10, 50) && isValidReading(bondYield10y, -5, 50);
 
-  if (!isValidReading(inflationBreakeven, -10, 50) || !isValidReading(bondYield10y, -5, 50)) {
+  if (!hasDirectRealYield && !hasFallbackInputs) {
     return {
       asset: "Gold (ETC)",
       ticker: "PPFB.DE",
       allocationMultiplier: 1.0,
       zone: "SAFE",
-      reason: "Sin datos de inflación implícita o bono 10y — introduce T5YIE y US10Y (TradingView) para activar esta señal",
-      indicator: "Tipo Real (bono 10y − breakeven 5y)",
+      reason: "Sin DFII10 ni datos de fallback nominal/breakeven — introduce tipo real 10Y TIPS (DFII10) para activar esta señal",
+      indicator: "Tipo Real 10Y TIPS (DFII10) · fallback nominal − BE5Y",
       indicatorValue: "Sin datos tipo real",
       shouldTrim: false,
       trimPct: 0,
@@ -531,7 +535,7 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
   //     baseMultiplier = smoothScore(2.37, [[0,1],[0.5,0.7],[1.5,0.45],[2.5,0.2]]) ≈ 0.23
   //     relief = smoothScore(94, [[75,0],[95,0.55]]) ≈ 0.52
   //     multiplier = min(1.0, 0.23+0.52) ≈ 0.75 → CAUTION, trim ~25%
-  const realRate = bondYield10y - inflationBreakeven;
+  const realRate = hasDirectRealYield ? realYield10y! : bondYield10y - inflationBreakeven!;
 
   // Paso 1: base multiplier desde real rate (rampa suave).
   //   Guard: realRate ≤ 0 → 1.0 (tipos reales negativos = favorable para el oro).
@@ -608,8 +612,10 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
     allocationMultiplier: multiplier,
     zone,
     reason,
-    indicator: "Tipo Real + Brent Crude Oil + DXY + Bancos Centrales",
-    indicatorValue: `${bondYield10y.toFixed(2)}% − ${inflationBreakeven.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"} · BC ${goldCbPurchases !== undefined ? goldCbPurchases.toFixed(0) + " t/año" : "—"}`,
+    indicator: "Tipo Real 10Y TIPS (DFII10) + Brent + DXY + Bancos Centrales",
+    indicatorValue: hasDirectRealYield
+      ? `DFII10 ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"} · BC ${goldCbPurchases !== undefined ? goldCbPurchases.toFixed(0) + " t/año" : "—"}`
+      : `${bondYield10y.toFixed(2)}% − ${inflationBreakeven!.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real proxy (BE5Y) · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"} · BC ${goldCbPurchases !== undefined ? goldCbPurchases.toFixed(0) + " t/año" : "—"}`,
     shouldTrim: trimPct > 0,
     trimPct,
   };

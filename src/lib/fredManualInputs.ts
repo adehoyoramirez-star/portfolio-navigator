@@ -16,6 +16,8 @@ export interface FredManualData {
   cape: number;
   creditSpread: number;
   inflationBreakeven5y: number;
+  /** 10Y TIPS real yield (DFII10), percentage points. Preferred gold Cycle Top input. */
+  realYield10y?: number;
   /** Fed Balance Sheet (WALCL) — total assets, billions USD */
   fedBalanceSheet?: number;
   /** ECB Balance Sheet (ECBASSETSW) — total assets, billions EUR */
@@ -38,6 +40,7 @@ const DEFAULTS: FredManualData = {
   cape: 29.5,
   creditSpread: 3.0,
   inflationBreakeven5y: 2.35,
+  realYield10y: undefined,
   lastUpdated: new Date().toISOString(),
   manuallyOverridden: false,
 };
@@ -51,7 +54,8 @@ export function loadFredManual(): FredManualData {
       typeof parsed.m2GrowthYoY === "number" &&
       typeof parsed.cape === "number" &&
       typeof parsed.creditSpread === "number" &&
-      typeof parsed.inflationBreakeven5y === "number"
+      typeof parsed.inflationBreakeven5y === "number" &&
+      (parsed.realYield10y === undefined || typeof parsed.realYield10y === "number")
     ) {
       return {
         ...parsed,
@@ -71,6 +75,7 @@ export function saveFredManual(data: Partial<FredManualData> & { updatedBy?: str
     cape: data.cape ?? current.cape,
     creditSpread: data.creditSpread ?? current.creditSpread,
     inflationBreakeven5y: data.inflationBreakeven5y ?? current.inflationBreakeven5y,
+    realYield10y: data.realYield10y ?? current.realYield10y,
     // LIQ-AUTO (Ago-2026): propagar WALCL + ECBASSETSW al persistir
     fedBalanceSheet: data.fedBalanceSheet ?? current.fedBalanceSheet,
     ecbBalanceSheet: data.ecbBalanceSheet ?? current.ecbBalanceSheet,
@@ -120,7 +125,8 @@ export function clearManualOverride(): FredManualData | null {
       typeof serverData.m2GrowthYoY === "number" &&
       typeof serverData.cape === "number" &&
       typeof serverData.creditSpread === "number" &&
-      typeof serverData.inflationBreakeven5y === "number"
+      typeof serverData.inflationBreakeven5y === "number" &&
+      (serverData.realYield10y === undefined || typeof serverData.realYield10y === "number")
     ) {
       serverData.manuallyOverridden = false;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData));
@@ -180,6 +186,7 @@ export async function fetchFredFromServer(): Promise<FredManualData | null> {
         cape: json.cape,
         creditSpread: json.creditSpread,
         inflationBreakeven5y: json.inflationBreakeven5y,
+        realYield10y: typeof json.realYield10y === "number" ? json.realYield10y : undefined,
         lastUpdated: json.fetchedAt ?? new Date().toISOString(),
         updatedBy: `server:${json.source ?? "FRED"}`,
         manuallyOverridden: false, // servidor nunca marca override
