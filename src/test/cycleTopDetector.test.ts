@@ -152,7 +152,40 @@ describe("applyTacticalDaily - currentPrice injection", () => {
 });
 
 
-describe("detectCycleBottoms - Gold contradiction", () => {
+describe("detectCycleBottoms - structural signals", () => {
+  test("URNU no sube a oportunidad por RSI diario o precio intradía", () => {
+    const history = Array.from({ length: 100 }, (_, i) => i < 99 ? 100 : 60);
+    const withTacticalInputs = detectCycleBottoms({
+      bondYield10y: 4,
+      uraniumSpotPrice: 50,
+      uraniumLTPrice: 100,
+      priceHistories: { "URNU.DE": history },
+      currentPrices: { "URNU.DE": 50 },
+      regime: "EXPANSION",
+    });
+    const withoutPriceHistory = detectCycleBottoms({
+      bondYield10y: 4,
+      uraniumSpotPrice: 50,
+      uraniumLTPrice: 100,
+    });
+    const withHistory = withTacticalInputs.signals.find(s => s.ticker === "URNU.DE")!;
+    const baseline = withoutPriceHistory.signals.find(s => s.ticker === "URNU.DE")!;
+    expect(withHistory.opportunityScore).toBe(baseline.opportunityScore);
+    expect(withHistory.zone).toBe(baseline.zone);
+    expect(withHistory.reason).not.toContain("RSI diario");
+  });
+
+  test("Gold Bottom prioriza DFII10 sobre el proxy nominal-BE5Y", () => {
+    const direct = detectCycleBottoms({
+      bondYield10y: 4.72,
+      inflationBreakeven: 2.31,
+      realYield10y: 2.34,
+    }).signals.find(s => s.ticker === "PPFB.DE")!;
+    expect(direct.indicatorValue).toContain("DFII10 2.34%");
+    expect(direct.indicatorValue).not.toContain("proxy (BE5Y)");
+  });
+
+
   function g(zone: string, trimPct: number): any {
     return { asset: "Gold (ETC)", ticker: "PPFB.DE", allocationMultiplier: 1 - trimPct / 100, zone, reason: "t", indicator: "i", indicatorValue: "v", shouldTrim: trimPct > 0, trimPct };
   }
@@ -181,6 +214,14 @@ describe("detectCycleTops - central clamp", () => {
 });
 
 describe("detectGoldTop - GOLD-CB-SENSOR (Ago 2026)", () => {
+  test("DFII10 directo tiene prioridad sobre el fallback nominal-BE5Y", () => {
+    const direct = gold(detectCycleTops({ bondYield10y: 4.72, inflationBreakeven: 2.31, realYield10y: 2.34 }));
+    const fallback = gold(detectCycleTops({ bondYield10y: 4.72, inflationBreakeven: 2.31 }));
+    expect(direct.indicatorValue).toContain("DFII10 2.34%");
+    expect(direct.indicatorValue).not.toContain("proxy (BE5Y)");
+    expect(fallback.indicatorValue).toContain("proxy (BE5Y)");
+  });
+
   // realRate = 4.7 − 2.3 = 2.4 → baseMultiplier 0.225 → DANGER sin CB
   const base = { bondYield10y: 4.7, inflationBreakeven: 2.3 };
   const gold = (r: ReturnType<typeof detectCycleTops>) => r.signals.find(s => s.ticker === "PPFB.DE")!;
