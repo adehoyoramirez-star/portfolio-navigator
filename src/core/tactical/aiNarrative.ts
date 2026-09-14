@@ -48,7 +48,12 @@ let _narrativeCache: {
 
 const NARRATIVE_CACHE_TTL = 15 * 60 * 1000;
 
-function parseNarrativesToBiases(narratives: string[]): {
+// Auditoría forense: una narrativa puede contener varios sinónimos del mismo
+// fenómeno ("crash", "bear market", "risk-off"). No deben convertirse en
+// penalizaciones independientes capaces de bloquear señales por sí solas.
+const MAX_NARRATIVE_BIAS = 6;
+
+export function parseNarrativesToBiases(narratives: string[]): {
   sectorBiases: Record<string, number>;
   marketWideBias: number;
 } {
@@ -57,22 +62,34 @@ function parseNarrativesToBiases(narratives: string[]): {
 
   for (const narrative of narratives) {
     const lower = narrative.toLowerCase();
+    const matchedBySector = new Map<string, { direction: 1 | -1; weight: number }>();
+
     for (const rule of NARRATIVE_KEYWORDS) {
-      const found = rule.keywords.some(kw => lower.includes(kw));
+      const found = rule.keywords.some(kw => lower.includes(kw.toLowerCase()));
       if (!found) continue;
-      const biasDelta = rule.direction * rule.weight * 5;
-      if (rule.sector === '__MARKET_WIDE__') {
+
+      // Dentro de una frase, conservar solo la coincidencia más fuerte por
+      // sector. Así "crash + risk-off + recession" no triplica el mismo sesgo.
+      const current = matchedBySector.get(rule.sector);
+      if (!current || rule.weight > current.weight) {
+        matchedBySector.set(rule.sector, { direction: rule.direction, weight: rule.weight });
+      }
+    }
+
+    for (const [sector, match] of matchedBySector) {
+      const biasDelta = match.direction * match.weight * 5;
+      if (sector === '__MARKET_WIDE__') {
         marketWideBias += biasDelta;
       } else {
-        sectorBiases[rule.sector] = (sectorBiases[rule.sector] ?? 0) + biasDelta;
+        sectorBiases[sector] = (sectorBiases[sector] ?? 0) + biasDelta;
       }
     }
   }
 
   for (const sector of Object.keys(sectorBiases)) {
-    sectorBiases[sector] = Math.max(-30, Math.min(30, sectorBiases[sector]));
+    sectorBiases[sector] = Math.max(-MAX_NARRATIVE_BIAS, Math.min(MAX_NARRATIVE_BIAS, sectorBiases[sector]));
   }
-  marketWideBias = Math.max(-30, Math.min(30, marketWideBias));
+  marketWideBias = Math.max(-MAX_NARRATIVE_BIAS, Math.min(MAX_NARRATIVE_BIAS, marketWideBias));
 
   return { sectorBiases, marketWideBias };
 }
@@ -192,7 +209,12 @@ export function applyNarrativeBias(
   const sectorBias = sectorBiases[asset.sector] ?? 0;
   const totalBias = sectorBias + marketWideBias;
   if (totalBias === 0) return;
-  asset.qualityScore = Math.max(0, Math.min(100, asset.qualityScore + totalBias));
+
+  // El overlay es contextual, no un filtro de entrada. Su impacto combinado
+  // queda limitado para que nunca sustituya a las señales técnicas, régimen,
+  // R:R, fuerza relativa o controles de liquidez.
+  const boundedBias = Math.max(-MAX_NARRATIVE_BIAS, Math.min(MAX_NARRATIVE_BIAS, totalBias));
+  asset.qualityScore = Math.max(0, Math.min(100, asset.qualityScore + boundedBias));
 }
 
 export function clearNarrativeCache(): void {
