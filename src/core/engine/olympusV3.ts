@@ -916,15 +916,19 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     return t === 'vvsm.de' || t.includes('vvsm');
   });
   const vvsmReturns12m = vvsmIdx >= 0 ? assets[vvsmIdx].returns12m : undefined;
-  const tacticalWeights   = getTacticalWeights(
-    masterRegime.regime, assets, btcMVRV, vvsmReturns12m
-  );
-  const blendedWithTactical = applyTacticalConstraints(
-    blendNorm, tacticalWeights, masterRegime.regime
-  );
-  const finalWeightsBeforeCap = enforceClusterCap(
-    blendedWithTactical, assets, masterRegime.regime
-  );
+  // OLYMPUS CORE v1.0 (FIX-PHASE12-DECISION-MATRIX): el overlay táctico discrecional
+  // (-1.27pp CAGR, -0.09 Sharpe vs 100% cuantitativo) y el cluster cap dependen del
+  // régimen macro — clasificados REMOVE del Core por la matriz de decisión final.
+  // En coreMode el blend cuant (HRP puro) pasa intacto a capas posteriores.
+  const tacticalWeights   = coreMode
+    ? blendNorm // bypass: sin overlay discrecional
+    : getTacticalWeights(masterRegime.regime, assets, btcMVRV, vvsmReturns12m);
+  const blendedWithTactical = coreMode
+    ? blendNorm // bypass: 100% cuant
+    : applyTacticalConstraints(blendNorm, tacticalWeights, masterRegime.regime);
+  const finalWeightsBeforeCap = coreMode
+    ? blendNorm // bypass: sin cluster cap por régimen
+    : enforceClusterCap(blendedWithTactical, assets, masterRegime.regime);
   const totalFinalWeights  = finalWeightsBeforeCap.reduce((s, w) => s + w, 0) || 1;
   // relativeWeights: pesos relativos normalizados a 1.0 (fracción del tramo invertido)
   const relativeWeights = finalWeightsBeforeCap.map(w => w / totalFinalWeights);
@@ -936,11 +940,11 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // CRISIS: +60% gold, -70% crypto → concentracion en safe havens
   // El breadth ya no modifica el tilt sectorial: evita doble conteo.
   // Su único uso productivo es el control de exposición total más abajo.
-  const tiltedRelativeWeights = applyRegimeTilt(
-    relativeWeights,
-    assets,
-    masterRegime.regime,
-  );
+  // CAPA 6.5 — OLYMPUS CORE v1.0: el tilting sectorial depende del régimen macro
+  // (clasificado OFF/UNVERIFIED). En coreMode los pesos pasan sin tilt.
+  const tiltedRelativeWeights = coreMode
+    ? relativeWeights
+    : applyRegimeTilt(relativeWeights, assets, masterRegime.regime);
 
   // ── PESOS DE REFERENCIA ─────────────────────────────────────────────────────
   // FIX M5: etiqueta corregida — es equal weight, no Markowitz.

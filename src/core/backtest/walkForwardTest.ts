@@ -650,11 +650,11 @@ export function runWalkForwardTest(
   }
 
   // Helper para slicear macroHistory incluyendo campos opcionales
-  function sliceMacro(macro: typeof input.macroHistory, start: number, end: number) {
+  function sliceMacro(macro: NonNullable<typeof input.macroHistory>, start: number, end: number) {
     return {
-      vix: macro.vix.slice(start, end),
-      yieldSpread: macro.yieldSpread.slice(start, end),
-      creditSpread: macro.creditSpread.slice(start, end),
+      vix: macro.vix?.slice(start, end) ?? [],
+      yieldSpread: macro.yieldSpread?.slice(start, end) ?? [],
+      creditSpread: macro.creditSpread?.slice(start, end) ?? [],
       m2Growth: macro.m2Growth?.slice(start, end),
       move: macro.move?.slice(start, end),
       dxyTrend: macro.dxyTrend?.slice(start, end),
@@ -668,7 +668,7 @@ export function runWalkForwardTest(
   for (const win of windows) {
     // ---- IN-SAMPLE: datos desde 0 hasta trainEnd ----
     const isCloses = sliceClosesHistory(input.closesHistory, 0, win.trainEnd);
-    const isMacro = sliceMacro(input.macroHistory, 0, win.trainEnd);
+    const isMacro = sliceMacro(input.macroHistory ?? {}, 0, win.trainEnd);
     // FIX: destructure covMatrix out of input to avoid look-ahead bias.
     // Si input contiene una covMatrix precomputada sobre TODOS los datos,
     // al propagarla al IS/OOS estaríamos usando información futura.
@@ -690,7 +690,7 @@ export function runWalkForwardTest(
     // ---- OUT-OF-SAMPLE: datos desde (trainEnd - lookbackDays) hasta testEnd ----
     const oosStart = Math.max(0, win.trainEnd - lookbackDays);
     const oosCloses = sliceClosesHistory(input.closesHistory, oosStart, win.testEnd);
-    const oosMacro = sliceMacro(input.macroHistory, oosStart, win.testEnd);
+    const oosMacro = sliceMacro(input.macroHistory ?? {}, oosStart, win.testEnd);
     const oosInput: BacktestInput = {
       ...inputClean,
       closesHistory: oosCloses,
@@ -784,6 +784,7 @@ export function runWalkForwardTest(
         coreMode: false,
         coreTrendGateEnabled: false,
         coreTrendGateFinalState: null,
+        macroFallbacksUsed: [],
       },
       consistencyScore,
       sharpeDegradation,

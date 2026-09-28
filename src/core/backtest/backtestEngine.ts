@@ -54,10 +54,15 @@ export interface BacktestInput {
   //   Si false/undefined (default), usa Ledoit-Wolf para backward compatibility.
   //   ⚠️  DCC-GARCH con calibración MLE por ventana es ~5-10× más lento.
   useDynamicCovariance?: boolean;
-  macroHistory: {
-    vix: number[];
-    yieldSpread: number[];
-    creditSpread: number[];
+  // OLYMPUS CORE v1.0: macroHistory es OPCIONAL. La evidencia de las Phases 9-12
+  // demostró que ninguna serie macro (VIX, crédito, DXY, MOVE, M2...) produce
+  // efecto medible en el motor: todo desemboca en capas INERTES o coste-sin-protección.
+  // Si se omite, cada serie usa un fallback neutro "CLEAR" explícito (registrado en
+  // macroFallbacksUsed del output — política dataPolicy: nunca silencioso).
+  macroHistory?: {
+    vix?: number[];
+    yieldSpread?: number[];
+    creditSpread?: number[];
     m2Growth?: number[]; // Añadido para Alpha-Boost
     // Campos opcionales para masterRegime completo (si faltan, backtest
     // usa el modelo simplificado solo-VIX — compatible hacia atrás)
@@ -207,6 +212,8 @@ export interface BacktestOutput {
   coreMode: boolean;
   coreTrendGateEnabled: boolean;
   coreTrendGateFinalState: CoreTrendGateState | null;
+  // Fallbacks macro neutros aplicados (dataPolicy: explícito, nunca silencioso)
+  macroFallbacksUsed: string[];
 }
 
 // ── Institutional Benchmark weights (assetRegistry: BTC 10%, WLG 35%, PPFB 20%) ─
@@ -275,6 +282,7 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
     coreMode: false,
     coreTrendGateEnabled: false,
     coreTrendGateFinalState: null,
+    macroFallbacksUsed: [],
   };
 }
 
@@ -614,7 +622,7 @@ function computeAllocationsWithRegime(
 export function runBacktest(input: BacktestInput): BacktestOutput {
   const {
     closesHistory,
-    macroHistory,
+    macroHistory = {},
     lookbackDays = 252,
     rebalanceDays = 21,
     initialCapital = 10_000,
@@ -739,9 +747,20 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let institutionalBreadthMultiplierSum = 0;
   const institutionalRiskBreadths: number[] = [];
 
-  const vixArray = ensureLength(macroHistory.vix, maxLen);
-  const yieldSpreadArray = ensureLength(macroHistory.yieldSpread, maxLen);
-  const creditSpreadArray = ensureLength(macroHistory.creditSpread, maxLen);
+  // OLYMPUS CORE v1.0 — fallbacks macro neutros EXPLÍCITOS (dataPolicy: nunca silenciosos).
+  // Valores "CLEAR": VIX 16 (zona calmada histórica), spreads 0 (neutro), m2 2% (nominal).
+  // Cada fallback usado se registra en macroFallbacksUsed del output.
+  const MACRO_NEUTRAL_FALLBACKS = { vix: 16, yieldSpread: 0, creditSpread: 0, m2Growth: 2 } as const;
+  const macroFallbacksUsed: string[] = [];
+  const vixArray = macroHistory.vix?.length
+    ? ensureLength(macroHistory.vix, maxLen)
+    : (macroFallbacksUsed.push('vix'), Array<number>(maxLen).fill(MACRO_NEUTRAL_FALLBACKS.vix));
+  const yieldSpreadArray = macroHistory.yieldSpread?.length
+    ? ensureLength(macroHistory.yieldSpread, maxLen)
+    : (macroFallbacksUsed.push('yieldSpread'), Array<number>(maxLen).fill(MACRO_NEUTRAL_FALLBACKS.yieldSpread));
+  const creditSpreadArray = macroHistory.creditSpread?.length
+    ? ensureLength(macroHistory.creditSpread, maxLen)
+    : (macroFallbacksUsed.push('creditSpread'), Array<number>(maxLen).fill(MACRO_NEUTRAL_FALLBACKS.creditSpread));
 
   // Tracking arrays para masterRegime y CEWS
   const regimeHistory: { timestamp: string; regime: string }[] = [];
@@ -798,8 +817,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         ? input.portfolioDrawdownOverride(portfolioValue, peakValue, dayIndex)
         : (portfolioValue < peakValue ? (portfolioValue - peakValue) / peakValue : 0);
 
-      const erpAtT = input.macroHistory.erpValue?.[t];
-      const avgCorrAtT = input.macroHistory.avgCorrelation?.[t];
+      const erpAtT = input.macroHistory?.erpValue?.[t];
+      const avgCorrAtT = input.macroHistory?.avgCorrelation?.[t];
     const result = computeAllocationsWithRegime(
         closesHistory, backtestTickers, t, backtestStart, backtestEnd - backtestStart, lookbackDays,
         {
@@ -808,7 +827,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
           dxyTrend: dxyTrendArray?.[t],
           btcVol: btcVolArray?.[t],
           wtiOil: wtiOilArray?.[t],
-          m2Growth: input.macroHistory.m2Growth?.[t],
+          m2Growth: input.macroHistory?.m2Growth?.[t],
           erpValue: erpAtT,
           avgCorrelation: avgCorrAtT,
         },
@@ -862,7 +881,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
             dxyTrend: dxyTrendArray?.[t],
             btcVol: btcVolArray?.[t],
             wtiOil: wtiOilArray?.[t],
-            m2Growth: input.macroHistory.m2Growth?.[t],
+            m2Growth: input.macroHistory?.m2Growth?.[t],
             erpValue: erpAtT,
             avgCorrelation: avgCorrAtT,
           },
@@ -1198,6 +1217,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     coreMode: input.coreMode === true,
     coreTrendGateEnabled: input.coreTrendGate === true,
     coreTrendGateFinalState: input.coreMode === true ? coreTrendGateState : null,
+    macroFallbacksUsed,
   };
 }
 
