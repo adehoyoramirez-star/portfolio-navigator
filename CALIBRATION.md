@@ -71,8 +71,35 @@ Dynamic by regime: EXPANSION (M:0.55, Q:0.10), CONTRACTION (Q:0.30, M:0.30), CRI
 **Value**: TRIGGER_THRESHOLD = 0.025 (2.5% ERP)
 **Justification**: ERP < 2.5% precedes 15-25% corrections with 64% frequency (Damodaran 2024).
 
+## 11. BREADTH RISK POLICY (31-AUG-2026)
+**Production mode**: `PROVISIONAL_LEGACY`.
+
+The legacy majority breadth cap remains a defensive fail-safe, not an alpha signal. It is applied only to total exposure; the same `returns3m` breadth signal must not also suppress regime tilts. The production cap is not promoted or recalibrated from the current 1326-day ablation because it reduced CAGR and Sharpe while improving MaxDD only modestly.
+
+**Institutional candidate**: `INSTITUTIONAL_CANDIDATE` in shadow mode.
+
+The candidate uses risk-weighted adverse breadth, a continuous multiplier, and activation/deactivation hysteresis. Risk weights use covariance-aware marginal contribution when available, otherwise `weight × volatility`. The candidate never changes allocations until it passes out-of-sample validation.
+
+**Priority protocol**:
+1. Tail Risk / Kill Switch (capital protection override)
+2. Volatility target
+3. Production breadth fail-safe
+4. ERP equity cap
+5. Alpha boost
+6. DCA execution decision
+
+A divergence between `EXPANSION` and defensive breadth is expected to be visible and logged; it is not silently treated as a regime change.
+
+**Promotion gate**: before activating the candidate, run a pre-registered walk-forward comparison against the legacy and no-breadth baselines. The report must include CAGR, Sharpe, MaxDD, Calmar, turnover, transaction costs, time under water, activation persistence, and confidence intervals. IS may select parameters; OOS may only evaluate them. No parameter may be selected from the aggregate OOS result.
+
+**Decision log**: every live engine decision records the legacy gate, institutional shadow result, full exposure chain, policy mode, priority protocol, and regime/breadth divergence.
+
+**Paired validation command**: `npm run evidence:paired` executes legacy, no-breadth, and institutional-candidate variants over the same five OOS windows. It reports per-variant bootstrap percentile CIs and paired candidate-minus-benchmark differences with a fixed seed (`20260831`, 10,000 resamples, 95% CI). The resampling unit is the complete OOS window, not an iid daily observation.
+
+**Current evidence run (31-Aug-2026)**: the 1326-day continuous diagnostic evaluated 64 rebalance observations, activated the candidate 15 times and applied a reduction 7 times; `riskBreadth` was P50 20.9%, P75 58.6%, P90 82.0%, maximum 92.1%. The expanded eight-window WFO evaluated 29 OOS rebalance observations, activated 10 times and applied a reduction once. Candidate versus no-breadth was effectively neutral/slightly negative (CAGR difference −0.02 pp; Sharpe difference −0.0013) because most OOS windows did not require a reduction. This is exercise evidence, not promotion evidence; promotion remains blocked until a longer, pre-registered OOS comparison provides meaningful power.
+
 ## WALK-FORWARD VALIDATION
 Grid: trainRatio [0.60-0.80] x nWindows [3-10] = 20 configs. Avg consistency 87.6%, OOS Sharpe 0.72, Grade B. System is robust to +/-20% parameter variation.
 
 ---
-*Olympus Engine V5.4.0 · June 2026 · 10/10 Certification*
+*Olympus Engine V5.3.0 · 31-Aug-2026 · Breadth candidate pending OOS approval*

@@ -55,7 +55,62 @@
 // FIX-V5-9: coreVolEstimate ponderado por pesos reales (no media aritmética).
 // FIX-V5-10: isERPCritical con guard input.erpValue !== undefined.
 // FIX-V5-11: BTC Bear Gate condicionado a MVRV > 2.5 o régimen != EXPANSION.
-export const ENGINE_VERSION = "v5.2.3";
+export const ENGINE_VERSION = "v5.4.0-core1"; // OLYMPUS CORE v1.0: perfil canónico opt-in (evidencia Phases 9-12). Default = comportamiento v5.3 intacto.
+
+// ── Estado del overlay Trend Gate del Core (serializable, determinista) ──
+// Persistido entre rebalanceos por el caller (backtest/dashboard).
+export interface CoreTrendGateState {
+  lastGateCallIndex: number; // nº de evaluaciones del gate hasta ahora
+  reentryCount: number;      // rebalanceos limpios consecutivos acumulados
+  engaged: boolean;          // true mientras haya un episodio de gate activo
+}
+
+// OLYMPUS CORE v1.0 — Trend Gate overlay (especificación exacta del test E_both,
+// Phase 12 / TREND_GATE_FINAL_TEST.csv). NO introduce thresholds nuevos: reusa
+// la señal del gate legacy (>50% de activos con returns3m < 0) y añade los dos
+// mecanismos validados:
+//   - STAGED EXIT: primera activación tras un periodo limpio reduce a cap parcial.
+//   - CONFIRMED RE-ENTRY: exposición completa solo tras N rebalanceos limpios
+//     consecutivos (evita el whipsaw V-recovery, defecto dominante del gate legacy).
+function computeCoreTrendGate(
+  assets: AssetInput[],
+  state: CoreTrendGateState | undefined,
+  enabled: boolean,
+): { multiplier: number; reason: string; active: boolean; newState: CoreTrendGateState } {
+  const cfg = OLYMPUS_CORE.overlay.trendGate;
+  const newState: CoreTrendGateState = {
+    lastGateCallIndex: (state?.lastGateCallIndex ?? -1) + 1,
+    reentryCount: state?.reentryCount ?? 0,
+    engaged: state?.engaged ?? false,
+  };
+  if (!enabled) {
+    return { multiplier: 1.0, reason: 'CORE v1.0: Trend Gate overlay OFF (opcional, evidencia EPISODIC — 1 de 9 episodios)', active: false, newState };
+  }
+  const bearishPct = assets.length > 0 ? assets.filter(a => a.returns3m < 0).length / assets.length : 0;
+  const bearish = bearishPct > 0.50; // misma señal que ABSOLUTE_TREND_GATE majority
+  let multiplier = 1.0;
+  let reason = `CORE gate: ${(bearishPct * 100).toFixed(0)}% activos negativos 3m → sin restricción`;
+  if (bearish) {
+    const freshActivation = !newState.engaged; // venía limpio ≥ N rebalanceos
+    multiplier = freshActivation
+      ? cfg.stagedFirstActivationCap
+      : ABSOLUTE_TREND_GATE.MAJORITY_BEARISH_CAP;
+    reason = `CORE gate E_both: ${(bearishPct * 100).toFixed(0)}% bearish 3m → cap ${(multiplier * 100).toFixed(0)}%${freshActivation ? ' (staged: primera activación)' : ' (confirmado)'}`;
+    newState.engaged = true;
+    newState.reentryCount = 0;
+  } else if (newState.engaged) {
+    newState.reentryCount = newState.reentryCount + 1;
+    if (newState.reentryCount >= cfg.reentryCleanRebalances) {
+      newState.engaged = false;
+      newState.reentryCount = 0;
+      reason = `CORE gate re-entry completado: ${cfg.reentryCleanRebalances} rebalanceos limpios → exposición plena`;
+    } else {
+      multiplier = cfg.stagedFirstActivationCap;
+      reason = `CORE gate re-entry: ${newState.reentryCount}/${cfg.reentryCleanRebalances} rebalanceos limpios → cap parcial ${(multiplier * 100).toFixed(0)}%`;
+    }
+  }
+  return { multiplier, reason, active: multiplier < 1.0, newState };
+}
 
 // ── Imports ─────────────────────────────────────────────────────────────────
 import { calculateMomentum } from "../factors/momentum";
@@ -77,7 +132,14 @@ import { computeDCADecision, type PortfolioRegime } from "../dca/dcaEngine";
 import { computeMetaIntelligence, loadPredictionHistory } from "../risk/metaIntelligence";
 // detectCycleTops removed — auto-detect fallback eliminated (FIX-AUDIT-TRANSVERSAL-R3 #2).
 // cycleTopSignals from dashboard is the single source of truth.
-import { VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, getFactorWeightsByRegime, REGIME_TILT } from "../config/engineConfig";
+import { VOLATILITY_CONFIG, ERP_CONFIG, CORRELATION_PANIC_CONFIG, ABSOLUTE_TREND_GATE, BREADTH_RISK_POLICY, CORE_SIGNAL_WEIGHTS, ALPHA_BOOST_CONFIG, BTC_CAPS_BY_REGIME, getFactorWeightsByRegime, REGIME_TILT, OLYMPUS_CORE } from "../config/engineConfig";
+import {
+  evaluateInstitutionalBreadth,
+  resolveInstitutionalBreadthConfig,
+  type InstitutionalBreadthConfig,
+  type InstitutionalBreadthResult,
+  type InstitutionalBreadthState,
+} from "../risk/institutionalBreadth";
 // FIX-R2-C10: renombrado DISCRETIONARY_OVERLAY. Import usado para allocationProvenance.
 // FIX-AUDIT-R10: allocationProvenance (transparencia del overlay discrecional)
 // FIX-R2-C10: REGIME_TACTICAL_ALLOCATIONS → DISCRETIONARY_OVERLAY
@@ -192,6 +254,24 @@ export interface EngineOutput {
     absoluteTrendGateActive: boolean;
     absoluteTrendGateMultiplier: number;
     absoluteTrendGateReason: string;
+    absoluteTrendGateNegativeCount: number;
+    absoluteTrendGateNegativePct: number;
+    totalInvestedAlpha: number;
+    totalInvestedAfterGate: number;
+    totalInvestedBase: number;
+    erpCapFactor: number;
+    breadthPolicy: typeof BREADTH_RISK_POLICY.productionMode;
+    riskOverlayPriority: typeof BREADTH_RISK_POLICY.institutionalPriority;
+    regimeBreadthDivergence: boolean;
+    institutionalBreadthShadow: InstitutionalBreadthResult | null;
+    institutionalBreadthShadowApplied: boolean;
+    breadthEffectiveMultiplier: number;
+    breadthEffectiveSource: 'legacy' | 'institutional_shadow' | 'legacy_and_institutional_shadow';
+    // OLYMPUS CORE v1.0: trazabilidad del perfil y del overlay Trend Gate
+    coreMode: boolean;
+    coreTrendGateActive: boolean;
+    coreTrendGateMultiplier: number;
+    coreTrendGateReason: string;
     // FIX-AUDIT-R10: transparencia del overlay discrecional
     allocationProvenance: {
       quantWeight: number;
@@ -304,6 +384,30 @@ export interface OlympusEngineInput {
     hrp?: number;
     markowitz?: number;
   };
+  // OLYMPUS CORE v1.0 (evidencia Phases 9-12, ver OLYMPUS_CORE_v1.0_SPEC.md):
+  // perfil canónico opt-in — blend HRP puro, stack defensivo OFF, caps BTC OFF.
+  // Default undefined → comportamiento v5.3 completo (cero cambios en producción).
+  coreMode?: boolean;
+  // Overlay OPCIONAL del Trend Gate (solo relevante si coreMode). Requiere estado
+  // persistente entre rebalanceos para el mecanismo re-entry.
+  coreTrendGate?: boolean;
+  coreTrendGateState?: CoreTrendGateState;
+  // Diagnostic-only counterfactual controls. Defaults preserve production behavior.
+  absoluteTrendGateOverride?: {
+    enabled?: boolean;
+    /** Disables only the legacy breadth branch while preserving BTC/correlation gates. */
+    disableMajority?: boolean;
+    majorityThreshold?: number;
+    majorityCap?: number;
+  };
+  // Institutional breadth candidate. Shadow mode by default; never changes
+  // production allocations unless explicitly promoted after OOS approval.
+  institutionalBreadthShadow?: {
+    enabled?: boolean;
+    applyToAllocations?: boolean;
+    state?: InstitutionalBreadthState;
+    config?: Partial<InstitutionalBreadthConfig>;
+  };
 }
 
 // ── ESCENARIOS PROBABILÍSTICOS ────────────────────────────────────────────────
@@ -389,6 +493,15 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // HRP y BL recibieran una matriz de dimensión distinta → warning en cada ejecución
   // y fallback a equal weight silencioso.
   const hasRealCovMatrix = !!(input.covMatrix && input.covMatrix.length === assets.length && input.covMatrix.every(row => row.length === assets.length));
+
+  // OLYMPUS CORE v1.0 (FIX-PHASE12): el perfil Core puede activarse por llamada
+  // (input.coreMode) o globalmente (OLYMPUS_CORE.enabled, change-control §18).
+  const coreMode = input.coreMode ?? OLYMPUS_CORE.enabled;
+  // Blend Core y pesos carry: coreCarry[i] === 0.0 exacto ∀i → suma idempotente
+  // (preserva bit-idéntico el blend HRP puro validado en Phase 12 y no altera
+  // ninguna suma en modo no-Core).
+  const coreBlend = OLYMPUS_CORE.blend;
+  const coreCarry: number[] = assets.map(() => 0);
 
   // ====== CAPA 0: BTC CYCLE OVERLAY ======
   const btcCycleInput: BTCCycleInput = {
@@ -593,7 +706,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       tailRiskActive:      allCashTailRisk.isActive,
       tailRiskReason:      allCashTailRisk.triggerReason,
       engineVersion: ENGINE_VERSION,
-      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
+      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', absoluteTrendGateNegativeCount: 0, absoluteTrendGateNegativePct: 0, totalInvestedAlpha: 0, totalInvestedAfterGate: 0, totalInvestedBase: 0, erpCapFactor: 1, breadthPolicy: BREADTH_RISK_POLICY.productionMode, riskOverlayPriority: BREADTH_RISK_POLICY.institutionalPriority, regimeBreadthDivergence: false, institutionalBreadthShadow: null, institutionalBreadthShadowApplied: false, breadthEffectiveMultiplier: 1.0, breadthEffectiveSource: 'legacy', coreMode, coreTrendGateActive: false, coreTrendGateMultiplier: 1.0, coreTrendGateReason: 'ALL_CASH: gates bypassed', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
       coreSignal: { regimeComponent: CORE_SIGNAL_WEIGHTS.REGIME * regimeNumeric, btcComponent: CORE_SIGNAL_WEIGHTS.BTC * btcNumeric, riskComponent: CORE_SIGNAL_WEIGHTS.RISK * Math.max(0, riskNumeric), finalScore: coreSignalScore },
@@ -665,15 +778,22 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const currentBlendAccess = currentBlend as Record<string, number>;
 
   const blendWeights = assets.map((_, i) => {
+    if (coreMode) {
+      // OLYMPUS CORE v1.0: HRP puro (bit-idéntico a blendWeights={HRP:1},
+      // el fingerprint validado en los 3 runs OOS de Phase 12).
+      return hrpWeights[i] * coreBlend.HRP;
+    }
     if (hasRealCovMatrix) {
       const weights = input.blendWeights ?? currentBlendAccess;
       return blWeights[i]             * (weights.BL ?? weights.kelly ?? 0.20)
            + hrpWeights[i]            * (weights.HRP ?? weights.hrp ?? 0.65)
-           + minVarW[i]               * (weights.MIN_VAR ?? weights.markowitz ?? 0.00);  // FIX-ABLATION-MINVAR: fallback a 0.00 (MinVar eliminado por ablation study)
+           + minVarW[i]               * (weights.MIN_VAR ?? weights.markowitz ?? 0.00)  // FIX-ABLATION-MINVAR: fallback a 0.00 (MinVar eliminado por ablation study)
+           + coreCarry[i]             * (weights.BL ?? weights.kelly ?? 0.20);
     } else {
       const weights = input.blendWeights ?? currentBlendAccess;
       return kellyNorm[i].kellyNormalized * (weights.KELLY ?? weights.kelly ?? 0.25)
-           + hrpWeights[i]               * (weights.HRP ?? weights.hrp ?? 0.75);
+           + hrpWeights[i]               * (weights.HRP ?? weights.hrp ?? 0.75)
+           + coreCarry[i]                * (weights.KELLY ?? weights.kelly ?? 0.25);
     }
   });
 
@@ -705,7 +825,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     avgCorrelation: number | undefined,
     btcMVRV?: number,
     regime?: string,
+    override: OlympusEngineInput['absoluteTrendGateOverride'] = {},
   ): { multiplier: number; reason: string; active: boolean } {
+    if (override.enabled === false) return { multiplier: 1.0, reason: 'disabled by diagnostic counterfactual', active: false };
+
     let multiplier = 1.0;
     const reasons: string[] = [];
 
@@ -726,20 +849,23 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     const negativeCount = assets.filter(a => a.returns3m < 0).length;
     const negativePct = assets.length > 0 ? negativeCount / assets.length : 0;
     
-    if (negativePct > 0.75) {
-      multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.MOST_BEARISH_CAP);
-      reasons.push(`bear-veto: ${(negativePct*100).toFixed(0)}% activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.MOST_BEARISH_CAP * 100).toFixed(0)}%`);
-    } else if (negativePct > 0.50) {
-      multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.MAJORITY_BEARISH_CAP);
-      reasons.push(`bear-veto: ${(negativePct*100).toFixed(0)}% activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.MAJORITY_BEARISH_CAP * 100).toFixed(0)}%`);
-    }
-    
-    // Gate 1b (legacy): ALL assets negative — superado por MOST (75%)
-    // Mantenido como safety net; MOST lo captura antes.
-    if (assets.length > 0 && assets.every(a => a.returns3m < 0)) {
-      multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP);
-      if (!reasons.some(r => r.includes('bear-veto'))) {
-        reasons.push(`abs-trend: todos los activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP * 100).toFixed(0)}%`);
+    const majorityThreshold = override.majorityThreshold ?? 0.50;
+    const majorityCap = override.majorityCap ?? ABSOLUTE_TREND_GATE.MAJORITY_BEARISH_CAP;
+    if (override.disableMajority !== true) {
+      if (negativePct > 0.75) {
+        multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.MOST_BEARISH_CAP);
+        reasons.push(`bear-veto: ${(negativePct*100).toFixed(0)}% activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.MOST_BEARISH_CAP * 100).toFixed(0)}%`);
+      } else if (negativePct > majorityThreshold) {
+        multiplier = Math.min(multiplier, majorityCap);
+        reasons.push(`bear-veto: ${(negativePct*100).toFixed(0)}% activos negativos 3m → cap ${(majorityCap * 100).toFixed(0)}%`);
+      }
+
+      // Gate 1b (legacy): ALL assets negative — superado por MOST (75%).
+      if (assets.length > 0 && assets.every(a => a.returns3m < 0)) {
+        multiplier = Math.min(multiplier, ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP);
+        if (!reasons.some(r => r.includes('bear-veto'))) {
+          reasons.push(`abs-trend: todos los activos negativos 3m → cap ${(ABSOLUTE_TREND_GATE.ALL_BEARISH_CAP * 100).toFixed(0)}%`);
+        }
       }
     }
 
@@ -808,7 +934,13 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // EXPANSION: +40% crypto, +30% semis, -20% gold → tilt hacia growth
   // CONTRACTION: +40% gold, +15% equity, -40% crypto → tilt hacia defensivos
   // CRISIS: +60% gold, -70% crypto → concentracion en safe havens
-  const tiltedRelativeWeights = applyRegimeTilt(relativeWeights, assets, masterRegime.regime);
+  // El breadth ya no modifica el tilt sectorial: evita doble conteo.
+  // Su único uso productivo es el control de exposición total más abajo.
+  const tiltedRelativeWeights = applyRegimeTilt(
+    relativeWeights,
+    assets,
+    masterRegime.regime,
+  );
 
   // ── PESOS DE REFERENCIA ─────────────────────────────────────────────────────
   // FIX M5: etiqueta corregida — es equal weight, no Markowitz.
@@ -852,11 +984,16 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   const mvrv = mvrvZ ?? mvrvRatioRaw;
   // FIX-AUDIT-C7: BTC caps dinámicos centralizados en BTC_CAPS_BY_REGIME.
   // Antes hardcodeados como 0.20, 0.35, 0.10.
-  let dynamicBtcCap = BTC_CAPS_BY_REGIME[masterRegime.regime] ?? 0.20;
-  if (btcCycle.signal === 'STRONG_BUY' && mvrv < 3.0) {
-    dynamicBtcCap = 0.35; // Permite correr el rally
-  } else if (mvrv > 3.5) {
-    dynamicBtcCap = 0.10; // Protección contra euforia (Z-Score o ratio > 3.5)
+  let dynamicBtcCap = coreMode
+    ? 1.0 // OLYMPUS CORE v1.0: caps BTC eliminados (ablación bit-idéntica — nunca binding).
+          // El control real de BTC es allocation + Trend Gate + satélite → BTC_TOTAL.
+    : (BTC_CAPS_BY_REGIME[masterRegime.regime] ?? 0.20);
+  if (!coreMode) {
+    if (btcCycle.signal === 'STRONG_BUY' && mvrv < 3.0) {
+      dynamicBtcCap = 0.35; // Permite correr el rally
+    } else if (mvrv > 3.5) {
+      dynamicBtcCap = 0.10; // Protección contra euforia (Z-Score o ratio > 3.5)
+    }
   }
 
   const relativeWeightsAfterCap = [...tiltedRelativeWeights];
@@ -912,6 +1049,27 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     relativeWeightsAfterCap.forEach(function(_,i){relativeWeightsAfterCap[i] /= cycleTotal;});
   }
 
+  // Candidato institucional en shadow mode. Usa el riesgo marginal de la
+  // cartera pre-exposición y no interviene en relativeWeightsAfterCap.
+  const institutionalBreadthShadow = input.institutionalBreadthShadow?.enabled === true
+    ? evaluateInstitutionalBreadth(
+        assets.map((asset, index) => ({
+          ticker: asset.ticker ?? asset.name,
+          returns3m: asset.returns3m,
+          volatility: asset.volatility,
+          weight: relativeWeightsAfterCap[index] ?? 0,
+          riskContribution: computeMarginalRiskContribution(
+            relativeWeightsAfterCap,
+            input.covMatrix,
+            index,
+            asset.volatility,
+          ),
+        })),
+        input.institutionalBreadthShadow?.state,
+        resolveInstitutionalBreadthConfig(input.institutionalBreadthShadow?.config),
+      )
+    : null;
+
   // ====== CAPA 7: VOL TARGET (reordenado post-BTC-cap) ======
   // FIX-V5-7 (audit ronda 2): realizedVol usa relativeWeightsAfterCap (post-BTC-cap)
   //   ANTES: se computaba con relativeWeights (pre-cap), ignorando el ajuste de BTC cap
@@ -942,21 +1100,30 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   }
 
-  const volTarget   = computeVolTargetMultiplier({
-    targetVol:     input.targetVol ?? VOLATILITY_CONFIG.DEFAULT_TARGET_VOL,
-    realizedVol:   coreRealizedVol,  // ← usa vol del CORE (ex-BTC)
-    regimePenalty: adjustedRegimePenalty,
-  });
+  // OLYMPUS CORE v1.0 (FIX-PHASE12): Vol Target y Kill Switch OFF por evidencia.
+  //   - Kill Switch: coste robusto (bootstrap CI excluye 0) con MaxDD bit-idéntico.
+  //   - Vol Target: coste -0.64pp con MaxDD idéntico (nunca binding en decisiones).
+  // El stack completo (VT con régimen + KS L1-L5 + crisis sistémica + correlación)
+  // queda intacto al ejecutar sin coreMode.
+  const volTarget = coreMode
+    ? { multiplier: 1.0, effectiveVol: coreRealizedVol, isScaledDown: false, isScaledUp: false }
+    : computeVolTargetMultiplier({
+        targetVol:     input.targetVol ?? VOLATILITY_CONFIG.DEFAULT_TARGET_VOL,
+        realizedVol:   coreRealizedVol,  // ← usa vol del CORE (ex-BTC)
+        regimePenalty: adjustedRegimePenalty,
+      });
 
   // ====== CAPA 8: TAIL RISK ======
-  const tailRisk = computeTailRiskOverlay({
-    drawdown:           input.portfolioDrawdown ?? 0,
-    vix:                macro.vix,
-    creditSpread:       macro.creditSpread,
-    stressScore:        masterRegime.stressDetail.score,
-    portfolioVolatility: realizedVol,  // ← vol FULL (incluye BTC) para la red de seguridad
-    avgCorrelation:     input.avgCorrelation,
-  });
+  const tailRisk = coreMode
+    ? { overlay: 1.0, isActive: false, triggerReason: 'CORE v1.0: Kill Switch OFF (evidencia Phase 11: coste robusto sin reducción de MaxDD)', killSwitchLevel: 0 as const, killSwitchName: 'CORE_KILLSWITCH_OFF', exposureReduction: 0, drawdownOverlay: 1.0, volatilityReduction: 0, correlationPenalty: 0, maxBtcWeightActive: false }
+    : computeTailRiskOverlay({
+        drawdown:           input.portfolioDrawdown ?? 0,
+        vix:                macro.vix,
+        creditSpread:       macro.creditSpread,
+        stressScore:        masterRegime.stressDetail.score,
+        portfolioVolatility: realizedVol,  // ← vol FULL (incluye BTC) para la red de seguridad
+        avgCorrelation:     input.avgCorrelation,
+      });
 
   // FIX-V5-2: aplicación correcta de vol target y tail risk.
   // ANTES: final = blended × volMultiplier × tailOverlay → luego /totalFinal → ambos cancelados.
@@ -1018,13 +1185,32 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   // de mercado absolutas (no cross-sectional). Detecta "bear market
   // silencioso": mercado cae -2%/mes sin picos de VIX → el motor
   // sigue en EXPANSION sin saber que todo baja.
-  const absTrendGate = computeAbsoluteTrendGates(
-    assets,
-    input.avgCorrelation,
-    btcMVRV,
-    masterRegime.regime,
-  );
-  const totalInvested_afterGate = totalInvested_alpha * absTrendGate.multiplier;
+  // OLYMPUS CORE v1.0: overlay Trend Gate opcional (especificación E_both).
+  const coreTrendGate = coreMode
+    ? computeCoreTrendGate(assets, input.coreTrendGateState, input.coreTrendGate === true)
+    : null;
+  if (coreTrendGate && input.coreTrendGateState) {
+    input.coreTrendGateState.lastGateCallIndex = coreTrendGate.newState.lastGateCallIndex;
+    input.coreTrendGateState.reentryCount = coreTrendGate.newState.reentryCount;
+    input.coreTrendGateState.engaged = coreTrendGate.newState.engaged;
+  }
+  const absTrendGate = coreMode && coreTrendGate
+    ? { multiplier: coreTrendGate.multiplier, reason: coreTrendGate.reason, active: coreTrendGate.active }
+    : computeAbsoluteTrendGates(
+        assets,
+        input.avgCorrelation,
+        btcMVRV,
+        masterRegime.regime,
+        input.absoluteTrendGateOverride,
+      );
+  const institutionalBreadthShadowApplied = input.institutionalBreadthShadow?.applyToAllocations === true && institutionalBreadthShadow !== null;
+  const breadthEffectiveMultiplier = institutionalBreadthShadowApplied
+    ? Math.min(absTrendGate.multiplier, institutionalBreadthShadow.multiplier)
+    : absTrendGate.multiplier;
+  const breadthEffectiveSource = institutionalBreadthShadowApplied
+    ? absTrendGate.active ? 'legacy_and_institutional_shadow' as const : 'institutional_shadow' as const
+    : 'legacy' as const;
+  const totalInvested_afterGate = totalInvested_alpha * breadthEffectiveMultiplier;
 
   // ================================================================
   // 📉 CAPA 8c: ERP TRIGGER — Equity-Only Cap (FIX-ERP-EQUITY)
@@ -1223,6 +1409,26 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       absoluteTrendGateActive: absTrendGate.active,
       absoluteTrendGateMultiplier: absTrendGate.multiplier,
       absoluteTrendGateReason: absTrendGate.reason,
+      absoluteTrendGateNegativeCount: assets.filter(a => a.returns3m < 0).length,
+      absoluteTrendGateNegativePct: assets.length > 0 ? assets.filter(a => a.returns3m < 0).length / assets.length : 0,
+      totalInvestedAlpha: totalInvested_alpha,
+      totalInvestedAfterGate: totalInvested_afterGate,
+      totalInvestedBase: totalInvested_base,
+      erpCapFactor,
+      breadthPolicy: BREADTH_RISK_POLICY.productionMode,
+      riskOverlayPriority: BREADTH_RISK_POLICY.institutionalPriority,
+      regimeBreadthDivergence: masterRegime.regime === 'EXPANSION' && (
+        absTrendGate.active || institutionalBreadthShadow?.active === true
+      ),
+      institutionalBreadthShadow,
+      institutionalBreadthShadowApplied,
+      breadthEffectiveMultiplier,
+      breadthEffectiveSource,
+      // OLYMPUS CORE v1.0: trazabilidad del perfil y del overlay Trend Gate
+      coreMode,
+      coreTrendGateActive: coreTrendGate?.active ?? false,
+      coreTrendGateMultiplier: coreTrendGate?.multiplier ?? 1.0,
+      coreTrendGateReason: coreTrendGate?.reason ?? 'CORE v1.0: Trend Gate overlay OFF',
       // FIX-AUDIT-R10: transparencia del overlay discrecional
       // effectiveBlendRatio = blendQuantWeight (fracción del output que viene del motor cuantitativo)
       allocationProvenance: (() => {
@@ -1296,6 +1502,35 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
 // ── HELPERS INTERNOS ──────────────────────────────────────────────────────────
 
+function computeMarginalRiskContribution(
+  weights: number[],
+  covMatrix: number[][] | undefined,
+  index: number,
+  fallbackVolatility: number,
+): number {
+  const fallback = Math.max(0, (weights[index] ?? 0) * fallbackVolatility);
+  if (!covMatrix || covMatrix.length !== weights.length || covMatrix.some(row => row.length !== weights.length)) {
+    return fallback;
+  }
+
+  const marginal = covMatrix[index]?.reduce(
+    (sum, covariance, j) => sum + covariance * (weights[j] ?? 0),
+    0,
+  ) ?? 0;
+  const portfolioVariance = weights.reduce(
+    (variance, weight, i) => variance + weight * (covMatrix[i]?.reduce(
+      (sum, covariance, j) => sum + covariance * (weights[j] ?? 0),
+      0,
+    ) ?? 0),
+    0,
+  );
+  const portfolioVolatility = Math.sqrt(Math.max(0, portfolioVariance));
+  const contribution = portfolioVolatility > 0
+    ? (weights[index] ?? 0) * marginal / portfolioVolatility
+    : fallback;
+  return Number.isFinite(contribution) && contribution > 0 ? contribution : fallback;
+}
+
 /**
  * Aplica tilting de pesos por régimen macro.
  * Multiplica cada peso por el multiplicador correspondiente a su sector/régimen
@@ -1308,21 +1543,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 function applyRegimeTilt(
   weights: number[],
   assets: AssetInput[],
-  regime: string
+  regime: string,
 ): number[] {
-  // FEAT-BEAR-VETO (Jul-2026): price-action veto sobre el regime tilt.
-  // Si >50% de los activos tienen returns3m < 0, el mercado está cayendo
-  // independientemente de lo que diga el regimen macro (VIX, M2, yield curve).
-  // En esta situación, el tilt de regimen (ej: EXPANSION → +40% crypto) empuja
-  // capital hacia los activos que más están cayendo. El precio manda.
-  const negativeCount = assets.filter(a => a.returns3m < 0).length;
-  const negativePct = assets.length > 0 ? negativeCount / assets.length : 0;
-  if (negativePct > 0.50) {
-    // Bear market sincronizado: el regime tilt se desactiva.
-    // Los pesos vuelven tal cual (sin tilt sectorial) para no concentrar en perdedores.
-    return weights;
-  }
-
   const tilts = (REGIME_TILT as Record<string, Record<string, number>>)[regime]
     ?? (REGIME_TILT as Record<string, Record<string, number>>)['EXPANSION'];
 

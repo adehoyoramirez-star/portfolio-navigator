@@ -1222,6 +1222,16 @@ export default function TacticalDashboard() {
                       { label:'Error build', val: scanDiagnostics.errorBuild, c:'#ef4444' },
                       { label:'OHLC sint.', val: scanDiagnostics.sinOhlc, c:'#f59e0b' },
                       { label:'Con señales', val: scanDiagnostics.conSenales, c:'#22c55e' },
+                      { label:'Filtro régimen', val: scanDiagnostics.oppFiltroReg, c:'#f97316' },
+                      { label:'Score bajo', val: scanDiagnostics.oppScoreBajo, c:'#f97316' },
+                      { label:'R:R bajo', val: scanDiagnostics.oppRRBajo, c:'#ef4444' },
+                      { label:'Exec bajo', val: scanDiagnostics.oppExecBajo, c:'#ef4444' },
+                      { label:'RS SPY bajo', val: scanDiagnostics.oppRSBajo, c:'#ef4444' },
+                      { label:'RS sector bajo', val: scanDiagnostics.oppSectorBajo, c:'#ef4444' },
+                      { label:'Agotamiento', val: scanDiagnostics.oppExhaustion, c:'#f97316' },
+                      { label:'MTF bajo', val: scanDiagnostics.oppMTFBajo, c:'#f97316' },
+                      { label:'Volumen bajo', val: scanDiagnostics.oppDollarVol, c:'#f97316' },
+                      { label:'Gap alto', val: scanDiagnostics.oppGapAlto, c:'#f97316' },
                       { label:'Oportunid.', val: scanDiagnostics.oportunidades, c:'#22c55e' },
                     ].map(m => (
                       <div key={m.label} style={{ background:'#1e293b', borderRadius:4, padding:'3px 6px', textAlign:'center' }}>
@@ -1535,7 +1545,7 @@ export default function TacticalDashboard() {
               '🔒 Máximo 20% de la liquidez defensiva de Olympus en el motor táctico.',
               '⏰ Toda posición se cierra en su maxDaysAllowed dinámico (calculado por ATR del activo), nunca fijo.',
               '🚫 No abrir táctica en activo que Olympus esté comprando ese mes.',
-              '📐 Mínimo R:R 1.3:1. Si el mercado no te da ese ratio, no operes.',
+              '📐 Mínimo R:R 1.2:1. Si el mercado no te da ese ratio, no operes.',
               '🐢 Activos con ATR < 0.8%/día (TOO_SLOW) no son aptos. El motor los marca y los excluye.',
               '💡 TP1 al 50% de la posición → subir stop a entrada. TP2 con el 50% restante con trailing.',
             ].map((r, i) => (

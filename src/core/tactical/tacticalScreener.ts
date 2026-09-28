@@ -1065,7 +1065,7 @@ export function defaultTacticalConfig(
     maxOpenPositions:       4,
     minScore:               38,
     requireAboveMA200:      false,
-    minRiskReward:          2.0, // Filtro R/R con diagnóstico (antes hardcodeado en buildOpportunity)
+    minRiskReward:          1.2, // Coherente con calcTakeProfits(): mínimo garantizado por construcción
     maxAtrPct:              0.15,
     maxDaysPerTrade:        75,
     trailingStop:           true,

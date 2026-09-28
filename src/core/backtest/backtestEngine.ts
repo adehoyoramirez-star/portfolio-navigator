@@ -23,7 +23,8 @@ import { ASSET_COST_PARAMS } from "../validation/transactionCosts";
 import { computeGlobalStress } from "../macro/globalStress";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
-import type { AssetInput } from "../engine/olympusV3";
+import type { AssetInput, CoreTrendGateState } from "../engine/olympusV3";
+import type { InstitutionalBreadthConfig, InstitutionalBreadthResult, InstitutionalBreadthState } from "../risk/institutionalBreadth";
 import { sortino, beta as computeBeta, alpha as computeAlpha, hhi } from "../../lib/riskMetrics";
 
 // FIX-AUDIT-R8 3.5: PROXY_MAP now derived from assetRegistry (single source of truth).
@@ -81,7 +82,14 @@ export interface BacktestInput {
   };
   // FIX-AUDIT-INST-03: engineOverrides permite al sensitivity analysis
   // variar parametros del motor (kellyCap, volTarget, etc.) sin modificar engineConfig.ts.
+  // NOTA: engineOverrides está declarado pero NUNCA se consume (auditoría Phase 11:
+  // dead parameter). Se conserva por compatibilidad de firma.
   engineOverrides?: Record<string, number>;
+  // OLYMPUS CORE v1.0 (Phase 12): pass-through del perfil Core y del overlay
+  // Trend Gate opcional hacia runOlympusEngine. Default undefined = v5.3 intacto.
+  coreMode?: boolean;
+  coreTrendGate?: boolean;
+  coreTrendGateState?: CoreTrendGateState;
   // FIX-ACOPLAMIENTO-SATELITE (Ago-2026): override del drawdown que alimenta
   // el kill switch del motor (tail risk). Por defecto el backtest usa el DD del
   // sleeve motor (portfolioValue vs peak), pero PRODUCCIÓN usa el DD del
@@ -89,6 +97,47 @@ export interface BacktestInput {
   // recibe (portfolioValue, peakValue, dayIndex) y devuelve el DD a usar.
   // Si se omite, el comportamiento es EXACTAMENTE el actual (cero cambios).
   portfolioDrawdownOverride?: (portfolioValue: number, peakValue: number, dayIndex: number) => number;
+  // Diagnóstico opcional del bear-veto. Por defecto no duplica las llamadas al motor.
+  absoluteTrendGateOverride?: {
+    enabled?: boolean;
+    disableMajority?: boolean;
+    majorityThreshold?: number;
+    majorityCap?: number;
+  };
+  collectAbsoluteTrendGateDiagnostics?: boolean;
+  // Candidate institutional breadth for counterfactual validation only.
+  institutionalBreadthCandidate?: {
+    enabled?: boolean;
+    config?: Partial<InstitutionalBreadthConfig>;
+  };
+  /** Hysteresis state warmed only from observations available before this run. */
+  institutionalBreadthInitialState?: InstitutionalBreadthState;
+}
+
+export interface AbsoluteTrendGateDiagnostics {
+  evaluatedRebalances: number;
+  activeRebalances: number;
+  majorityBearishRebalances: number;
+  mostBearishRebalances: number;
+  breadthBoundaryUpCrossings: number;
+  breadthBoundaryDownCrossings: number;
+  immediateCostWithGate: number;
+  immediateCostWithoutGate: number;
+  immediateIncrementalCost: number;
+}
+
+export interface InstitutionalBreadthDiagnostics {
+  evaluatedRebalances: number;
+  activeRebalances: number;
+  appliedRebalances: number;
+  averageMultiplier: number;
+  minimumMultiplier: number;
+  riskBreadthP50: number;
+  riskBreadthP75: number;
+  riskBreadthP90: number;
+  riskBreadthP95: number;
+  riskBreadthMaximum: number;
+  riskBreadthObservations: number[];
 }
 
 export type BacktestRegime = "EXPANSION" | "CONTRACTION" | "CRISIS";
@@ -151,6 +200,13 @@ export interface BacktestOutput {
   transactionCostBps: number;
   totalTransactionCosts: number;
   rebalanceCount: number;
+  absoluteTrendGateDiagnostics: AbsoluteTrendGateDiagnostics;
+  institutionalBreadthDiagnostics: InstitutionalBreadthDiagnostics;
+  institutionalBreadthFinalState: InstitutionalBreadthState | null;
+  // OLYMPUS CORE v1.0: trazabilidad del perfil y del overlay Trend Gate
+  coreMode: boolean;
+  coreTrendGateEnabled: boolean;
+  coreTrendGateFinalState: CoreTrendGateState | null;
 }
 
 // ── Institutional Benchmark weights (assetRegistry: BTC 10%, WLG 35%, PPFB 20%) ─
@@ -191,6 +247,34 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
     transactionCostBps: 15,
     totalTransactionCosts: 0,
     rebalanceCount: 0,
+    absoluteTrendGateDiagnostics: {
+      evaluatedRebalances: 0,
+      activeRebalances: 0,
+      majorityBearishRebalances: 0,
+      mostBearishRebalances: 0,
+      breadthBoundaryUpCrossings: 0,
+      breadthBoundaryDownCrossings: 0,
+      immediateCostWithGate: 0,
+      immediateCostWithoutGate: 0,
+      immediateIncrementalCost: 0,
+    },
+    institutionalBreadthDiagnostics: {
+      evaluatedRebalances: 0,
+      activeRebalances: 0,
+      appliedRebalances: 0,
+      averageMultiplier: 1,
+      minimumMultiplier: 1,
+      riskBreadthP50: 0,
+      riskBreadthP75: 0,
+      riskBreadthP90: 0,
+      riskBreadthP95: 0,
+      riskBreadthMaximum: 0,
+      riskBreadthObservations: [],
+    },
+    institutionalBreadthFinalState: null,
+    coreMode: false,
+    coreTrendGateEnabled: false,
+    coreTrendGateFinalState: null,
   };
 }
 
@@ -412,6 +496,16 @@ function computeAllocationsWithRegime(
   timestampsHistory?: Record<string, number[]>,
   useDynamicCovariance?: boolean,
   blendWeights?: BacktestInput['blendWeights'],
+  absoluteTrendGateOverride?: BacktestInput['absoluteTrendGateOverride'],
+  institutionalBreadthCandidate?: {
+    enabled?: boolean;
+    applyToAllocations?: boolean;
+    state?: InstitutionalBreadthState;
+    config?: Partial<InstitutionalBreadthConfig>;
+  },
+  coreMode?: boolean,
+  coreTrendGate?: boolean,
+  coreTrendGateState?: CoreTrendGateState,
 ): {
   allocations: Record<string, number>;
   regime: BacktestRegime;
@@ -419,6 +513,11 @@ function computeAllocationsWithRegime(
   regimePenalty: number;
   stressScore: number;
   cewsPoint?: CEWSDataPoint;
+  absoluteTrendGateActive: boolean;
+  absoluteTrendGateMultiplier: number;
+  absoluteTrendGateNegativeCount: number;
+  absoluteTrendGateReason: string;
+  institutionalBreadthShadow: InstitutionalBreadthResult | null;
 } {
   // ── 1. Construir AssetInput[] desde datos históricos ──
   const n = ASSETS.length;
@@ -483,6 +582,11 @@ function computeAllocationsWithRegime(
     regimeHistory,
     avgCorrelation: macro.avgCorrelation,
     blendWeights,
+    absoluteTrendGateOverride,
+    institutionalBreadthShadow: institutionalBreadthCandidate,
+    coreMode,
+    coreTrendGate,
+    coreTrendGateState,
   });
 
   // ── 6. Extraer allocations del engine output ──
@@ -498,6 +602,11 @@ function computeAllocationsWithRegime(
     regimePenalty: engineOutput.masterRegime.regimePenalty,
     stressScore: engineOutput.masterRegime.stressDetail.score,
     cewsPoint,
+    absoluteTrendGateActive: engineOutput.meta.absoluteTrendGateActive,
+    absoluteTrendGateMultiplier: engineOutput.meta.absoluteTrendGateMultiplier,
+    absoluteTrendGateNegativeCount: engineOutput.meta.absoluteTrendGateNegativeCount,
+    absoluteTrendGateReason: engineOutput.meta.absoluteTrendGateReason,
+    institutionalBreadthShadow: engineOutput.meta.institutionalBreadthShadow,
   };
 }
 
@@ -553,6 +662,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   //   al retorno del día t+1 (closes[t+1] vs closes[t]).
   let pendingNewAllocations: Record<string, number> | null = null;
   let pendingNewCash = 0;
+  // OLYMPUS CORE v1.0: estado persistente del overlay Trend Gate entre rebalanceos
+  // (serializable, determinista — ver OLYMPUS_CORE_v1.0_SPEC.md §6-7).
+  const coreTrendGateState: CoreTrendGateState = input.coreTrendGateState
+    ? { ...input.coreTrendGateState }
+    : { lastGateCallIndex: -1, reentryCount: 0, engaged: false };
   let pendingNewRegime: BacktestRegime | null = null;
 
   // TREND FILTER: previene reduccion acumulativa (100%→50%→25%→12.5%)
@@ -592,6 +706,39 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   let daysWithProxies = 0;
   let daysWithRealData = 0;
 
+  const gateDiagnostics: AbsoluteTrendGateDiagnostics = {
+    evaluatedRebalances: 0,
+    activeRebalances: 0,
+    majorityBearishRebalances: 0,
+    mostBearishRebalances: 0,
+    breadthBoundaryUpCrossings: 0,
+    breadthBoundaryDownCrossings: 0,
+    immediateCostWithGate: 0,
+    immediateCostWithoutGate: 0,
+    immediateIncrementalCost: 0,
+  };
+  let previousBreadthNegativeCount: number | null = null;
+  let institutionalBreadthState: InstitutionalBreadthState = input.institutionalBreadthInitialState ?? {
+    active: false,
+    adverseDays: 0,
+    benignDays: 0,
+  };
+  const institutionalBreadthDiagnostics: InstitutionalBreadthDiagnostics = {
+    evaluatedRebalances: 0,
+    activeRebalances: 0,
+    appliedRebalances: 0,
+    averageMultiplier: 1,
+    minimumMultiplier: 1,
+    riskBreadthP50: 0,
+    riskBreadthP75: 0,
+    riskBreadthP90: 0,
+    riskBreadthP95: 0,
+    riskBreadthMaximum: 0,
+    riskBreadthObservations: [],
+  };
+  let institutionalBreadthMultiplierSum = 0;
+  const institutionalRiskBreadths: number[] = [];
+
   const vixArray = ensureLength(macroHistory.vix, maxLen);
   const yieldSpreadArray = ensureLength(macroHistory.yieldSpread, maxLen);
   const creditSpreadArray = ensureLength(macroHistory.creditSpread, maxLen);
@@ -608,6 +755,15 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
   for (let t = backtestStart; t < backtestEnd; t++) {
     const dayIndex = t - backtestStart;
+    const breadthNegativeCount = computeBreadthNegativeCount(closesHistory, backtestTickers, t);
+    if (previousBreadthNegativeCount !== null) {
+      if (previousBreadthNegativeCount <= 3 && breadthNegativeCount >= 4) {
+        gateDiagnostics.breadthBoundaryUpCrossings++;
+      } else if (previousBreadthNegativeCount >= 4 && breadthNegativeCount <= 3) {
+        gateDiagnostics.breadthBoundaryDownCrossings++;
+      }
+    }
+    previousBreadthNegativeCount = breadthNegativeCount;
 
     // FIX-BT-1: aplicar las allocations pendientes del rebalanceo ANTERIOR
     // al retorno de hoy (closes[t] vs closes[t-1]). Sin esto estaríamos
@@ -662,8 +818,85 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         regimeHistory,
         input.timestampsHistory,
         input.useDynamicCovariance,
-        input.blendWeights
+        input.blendWeights,
+        input.absoluteTrendGateOverride,
+        input.institutionalBreadthCandidate?.enabled === true
+          ? {
+              enabled: true,
+              applyToAllocations: true,
+              state: institutionalBreadthState,
+              config: input.institutionalBreadthCandidate.config,
+            }
+          : undefined,
+        input.coreMode,
+        input.coreTrendGate,
+        input.coreTrendGateState,
       );
+      if (input.institutionalBreadthCandidate?.enabled === true && result.institutionalBreadthShadow) {
+        institutionalBreadthState = result.institutionalBreadthShadow.state;
+        institutionalBreadthDiagnostics.evaluatedRebalances++;
+        institutionalRiskBreadths.push(result.institutionalBreadthShadow.riskBreadth);
+        if (result.institutionalBreadthShadow.active) institutionalBreadthDiagnostics.activeRebalances++;
+        if (result.institutionalBreadthShadow.multiplier < 1) institutionalBreadthDiagnostics.appliedRebalances++;
+        institutionalBreadthMultiplierSum += result.institutionalBreadthShadow.multiplier;
+        institutionalBreadthDiagnostics.minimumMultiplier = Math.min(
+          institutionalBreadthDiagnostics.minimumMultiplier,
+          result.institutionalBreadthShadow.multiplier,
+        );
+        institutionalBreadthDiagnostics.averageMultiplier = institutionalBreadthMultiplierSum / institutionalBreadthDiagnostics.evaluatedRebalances;
+      }
+      if (input.collectAbsoluteTrendGateDiagnostics) {
+        gateDiagnostics.evaluatedRebalances++;
+        if (result.absoluteTrendGateActive) gateDiagnostics.activeRebalances++;
+        if (result.absoluteTrendGateNegativeCount / ASSETS.length > 0.75) {
+          gateDiagnostics.mostBearishRebalances++;
+        } else if (result.absoluteTrendGateNegativeCount / ASSETS.length > 0.50) {
+          gateDiagnostics.majorityBearishRebalances++;
+        }
+
+        const counterfactual = computeAllocationsWithRegime(
+          closesHistory, backtestTickers, t, backtestStart, backtestEnd - backtestStart, lookbackDays,
+          {
+            vix, yieldSpread, creditSpread,
+            move: moveArray?.[t],
+            dxyTrend: dxyTrendArray?.[t],
+            btcVol: btcVolArray?.[t],
+            wtiOil: wtiOilArray?.[t],
+            m2Growth: input.macroHistory.m2Growth?.[t],
+            erpValue: erpAtT,
+            avgCorrelation: avgCorrAtT,
+          },
+          drawdown,
+          currentAllocations,
+          cewsHistory,
+          regimeHistory,
+          input.timestampsHistory,
+          input.useDynamicCovariance,
+          input.blendWeights,
+          { enabled: false },
+          undefined, // counterfactual: sin breadth candidate
+          false,     // counterfactual: sin perfil Core (ruta v5.3, gate legacy neutralizado)
+          false,     // counterfactual: sin overlay Trend Gate
+          undefined, // counterfactual: sin estado compartido (evita mutación cruzada)
+        );
+
+        const immediateCost = (allocations: Record<string, number>): number => {
+          let cost = 0;
+          for (const ticker of ASSETS) {
+            const assetTurnover = Math.abs((allocations[ticker] ?? 0) - (currentAllocations[ticker] ?? 0));
+            if (assetTurnover > 1e-6) {
+              cost += portfolioValue * getAssetSpreadCost(ticker) * assetTurnover + 1.0;
+            }
+          }
+          return cost;
+        };
+        const costWithGate = immediateCost(result.allocations);
+        const costWithoutGate = immediateCost(counterfactual.allocations);
+        gateDiagnostics.immediateCostWithGate += costWithGate;
+        gateDiagnostics.immediateCostWithoutGate += costWithoutGate;
+        gateDiagnostics.immediateIncrementalCost += costWithGate - costWithoutGate;
+      }
+
       // FIX-REGIME-TRACKING (22-Jun-2026): añadir en cada rebalanceo.
       // Usar dayIndex (relativo) para generar timestamps secuenciales sin futuro.
       const daysAgo = (backtestEnd - backtestStart) - dayIndex;
@@ -910,6 +1143,26 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     });
   }
 
+  const sortedInstitutionalRiskBreadths = [...institutionalRiskBreadths].sort((a, b) => a - b);
+  const institutionalRiskBreadthQuantile = (probability: number): number => {
+    if (sortedInstitutionalRiskBreadths.length === 0) return 0;
+    const position = (sortedInstitutionalRiskBreadths.length - 1) * probability;
+    const lower = Math.floor(position);
+    const upper = Math.ceil(position);
+    if (lower === upper) return sortedInstitutionalRiskBreadths[lower];
+    const weight = position - lower;
+    return sortedInstitutionalRiskBreadths[lower]
+      + (sortedInstitutionalRiskBreadths[upper] - sortedInstitutionalRiskBreadths[lower]) * weight;
+  };
+  institutionalBreadthDiagnostics.riskBreadthP50 = institutionalRiskBreadthQuantile(0.50);
+  institutionalBreadthDiagnostics.riskBreadthP75 = institutionalRiskBreadthQuantile(0.75);
+  institutionalBreadthDiagnostics.riskBreadthP90 = institutionalRiskBreadthQuantile(0.90);
+  institutionalBreadthDiagnostics.riskBreadthP95 = institutionalRiskBreadthQuantile(0.95);
+  institutionalBreadthDiagnostics.riskBreadthMaximum = sortedInstitutionalRiskBreadths.length > 0
+    ? sortedInstitutionalRiskBreadths[sortedInstitutionalRiskBreadths.length - 1]
+    : 0;
+  institutionalBreadthDiagnostics.riskBreadthObservations = institutionalRiskBreadths;
+
   const regimeConditional: RegimeConditionalMetrics = {
     EXPANSION:   computeRegimeMetrics(regimeReturns.EXPANSION),
     CONTRACTION: computeRegimeMetrics(regimeReturns.CONTRACTION),
@@ -937,6 +1190,14 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       : 15,
     totalTransactionCosts,
     rebalanceCount,
+    absoluteTrendGateDiagnostics: gateDiagnostics,
+    institutionalBreadthDiagnostics,
+    institutionalBreadthFinalState: input.institutionalBreadthCandidate?.enabled === true
+      ? institutionalBreadthState
+      : null,
+    coreMode: input.coreMode === true,
+    coreTrendGateEnabled: input.coreTrendGate === true,
+    coreTrendGateFinalState: input.coreMode === true ? coreTrendGateState : null,
   };
 }
 
@@ -1054,6 +1315,18 @@ function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
 
 // Mínima varianza (réplica del helper en olympusV3)
 // ── FAST EXIT: helper para contar dias consecutivos VIX < umbral ──
+function computeBreadthNegativeCount(
+  closesHistory: Record<string, number[]>,
+  backtestTickers: Record<string, string>,
+  t: number,
+): number {
+  return ASSETS.filter(ticker => {
+    const closes = closesHistory[backtestTickers[ticker]] ?? [];
+    const lookback = ticker === 'BTC-EUR' ? 91 : 63;
+    return periodReturn(closes, t, lookback) < 0;
+  }).length;
+}
+
 function computeLowVixStreak(vixArray: number[], t: number, threshold: number, minDays: number): boolean {
   if (t < minDays - 1) return false;
   for (let i = 0; i < minDays; i++) {

@@ -44,6 +44,7 @@ import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAl
 import { computeRealizedReturns, recordCurrentPositions, loadPositionHistory } from "@/core/data/positionHistory";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
+import type { InstitutionalBreadthState } from "@/core/risk/institutionalBreadth";
 import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked } from "@/core/macro/masterRegime";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
@@ -165,6 +166,31 @@ function isLegacyClobberedPortfolio(p: {
   return true;
 }
 
+const BREADTH_SHADOW_STATE_KEY = "olympus_institutional_breadth_shadow_v1";
+
+function loadInstitutionalBreadthState(): InstitutionalBreadthState {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(BREADTH_SHADOW_STATE_KEY) ?? "null");
+    if (typeof parsed === "object" && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      if (
+        typeof record.active === "boolean" &&
+        typeof record.adverseDays === "number" &&
+        typeof record.benignDays === "number"
+      ) {
+        return {
+          active: record.active,
+          adverseDays: Math.max(0, Math.floor(record.adverseDays)),
+          benignDays: Math.max(0, Math.floor(record.benignDays)),
+        };
+      }
+    }
+  } catch {
+    // Si no hay estado persistido, el candidato comienza sin confirmación.
+  }
+  return { active: false, adverseDays: 0, benignDays: 0 };
+}
+
 const InstitutionalDashboard: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
 
@@ -235,6 +261,7 @@ const InstitutionalDashboard: React.FC = () => {
   const [vix, setVix] = useState(19);
   const [manualPER, setManualPER] = useState(29.69);
   const [manualBond10y, setManualBond10y] = useState(4.2);
+  const [manualRealYield10y, setManualRealYield10y] = useState<number | undefined>(() => loadFredManual().realYield10y);
   const [bond2y, setBond2y] = useState(3.0);
   const [m2Growth, setM2Growth] = useState(4.3);
   const [creditSpread, setCreditSpread] = useState(1.5);
@@ -849,6 +876,15 @@ const formatCurrency = (value: number): string => {
     });
   }, [portfolio.assets, manualVols, wlgPERatio, emxcPERatio, urnuPERatio, vvsmPERatio]);
 
+  // Candidato institucional: estado persistido para que la histéresis avance
+  // únicamente cuando cambia la observación de mercado, no en cada render.
+  const [institutionalBreadthState, setInstitutionalBreadthState] = useState<InstitutionalBreadthState>(loadInstitutionalBreadthState);
+  const breadthShadowObservationKey = useMemo(
+    () => assetInputs.map(asset => `${asset.ticker ?? asset.name}:${asset.returns3m.toFixed(8)}`).join("|"),
+    [assetInputs],
+  );
+  const processedBreadthObservationRef = useRef<string | null>(null);
+
   const yieldSpread = manualBond10y - bond2y;
 
   // FIX-HWM-INSTITUCIONAL (Jul 2026): High-Water Mark real, no contrafactual.
@@ -982,7 +1018,7 @@ soxRsiWeekly,
       soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
-      realYield10y: loadFredManual().realYield10y,
+      realYield10y: manualRealYield10y,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
       wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
       wlgPERatio: cycleDQ.wlgPERatio,
@@ -997,7 +1033,7 @@ soxRsiWeekly,
       goldCbPurchases,
     };
     return detectCycleTops(cycleInputs);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil,        wlgRsiWeekly, wlgPERatio,
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, manualRealYield10y, wtiOil,        wlgRsiWeekly, wlgPERatio,
         emxcRsiWeekly, emxcPERatio,
         wlgEpsGrowth, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
 
@@ -1073,7 +1109,7 @@ soxRsiWeekly,
       soxSpyRelativeStrength: soxSpyRS,
       bondYield10y: manualBond10y,
       inflationBreakeven,
-      realYield10y: loadFredManual().realYield10y,
+      realYield10y: manualRealYield10y,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
       wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
       wlgPERatio: cycleDQ.wlgPERatio,
@@ -1094,7 +1130,7 @@ soxRsiWeekly,
       goldCbPurchases,
     };
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
-  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, wtiOil,        wlgRsiWeekly, wlgPERatio,
+  }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, manualRealYield10y, wtiOil,        wlgRsiWeekly, wlgPERatio,
         emxcRsiWeekly, emxcPERatio,
         wlgEpsGrowth, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
 
@@ -1154,13 +1190,25 @@ soxRsiWeekly,
       // ANTES: regimeHistory estaba cargado en el dashboard pero nunca llegaba al engine
       // → el bloque `if (regimeHistory !== undefined)` en masterRegime.ts nunca se ejecutaba.
       regimeHistory,
+      institutionalBreadthShadow: {
+        enabled: true,
+        state: institutionalBreadthState,
+      },
     });
   // FIX-DCC-01: dynamicCovResult añadido a deps para que el engine reaccione
   // cuando DCC-GARCH actualiza la Σ dinámica (antes usaba closure estale).
   // FIX-KALMAN-02: kalmanWeights añadido a deps por la misma razón.
   // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
   // FIX-AUDIT-TRANSVERSAL-R3: regimeHistory añadido a deps para regimeDuration.
-  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, liquidityGrowth, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult, regimeHistory]);
+  }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, liquidityGrowth, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult, regimeHistory, institutionalBreadthState]);
+
+  useEffect(() => {
+    const candidate = engineResult?.meta.institutionalBreadthShadow;
+    if (!candidate || processedBreadthObservationRef.current === breadthShadowObservationKey) return;
+    processedBreadthObservationRef.current = breadthShadowObservationKey;
+    setInstitutionalBreadthState(candidate.state);
+    localStorage.setItem(BREADTH_SHADOW_STATE_KEY, JSON.stringify(candidate.state));
+  }, [engineResult, breadthShadowObservationKey]);
 
   // TACTICAL-DAILY (Jul 2026): sync regime to state so cycleBottomResult reacts.
   // currentRegime is used by the tactical daily layer in applyTacticalDaily().
@@ -3088,7 +3136,7 @@ soxRsiWeekly,
       <div style={{ ...styles.card, display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "1rem" }}>
         <div>
           <h4>Liquidez Global</h4>
-          <p>Régimen: <strong>{liquidityOutput.regime}</strong></p>
+          <p>Régimen de liquidez: <strong>{liquidityOutput.regime}</strong></p>
           <p>Crec: {liquidityGrowth.toFixed(1)}%{marketData?.cbLiquiditySource === "FRED" && marketData.cbLiquidityGrowth !== undefined ? <span style={{fontSize:"0.65rem",color:"#10b981",marginLeft:"4px"}}>(Fed+ECB auto)</span> : null}</p>
           <p>DXY Trend: {(liquidityOutput.dxyTrend * 100).toFixed(1)}%</p>
           <p style={{ fontSize: "0.75rem", color: marketData?.cbLiquiditySource === "FRED" ? "#10b981" : "#f59e0b" }}>Fuente: {marketData?.cbLiquiditySource === "FRED" ? "WALCL+ECBASSETSW auto" : "manual + DXY Yahoo"}</p>
@@ -3152,8 +3200,31 @@ soxRsiWeekly,
           <h2>📊 Resultados del Motor Olympus V3 — Nivel 2</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem" }}>
             <div>
-              <p><strong>Régimen:</strong> <span style={{ color: engineResult.regime === "CRISIS" || engineResult.regime === "ALL_CASH" ? "#ef4444" : engineResult.regime === "CONTRACTION" ? "#f59e0b" : "#10b981" }}>{engineResult.regime}</span></p>
+              <p><strong>Régimen motor:</strong> <span style={{ color: engineResult.regime === "CRISIS" || engineResult.regime === "ALL_CASH" ? "#ef4444" : engineResult.regime === "CONTRACTION" ? "#f59e0b" : "#10b981" }}>{engineResult.regime}</span></p>
               <p><strong>Confianza señal:</strong> {engineResult.meta.confidence}</p>
+              <p style={{
+                color: engineResult.meta.absoluteTrendGateActive ? "#f59e0b" : "#6b7280",
+                fontWeight: engineResult.meta.absoluteTrendGateActive ? "bold" : "normal",
+              }}>
+                <strong>{engineResult.meta.absoluteTrendGateActive ? "🛡 Bear-veto activo" : "Bear-veto inactivo"}:</strong>{" "}
+                {engineResult.meta.absoluteTrendGateNegativeCount}/{engineResult.allocations.length} activos negativos 3m
+                {engineResult.meta.absoluteTrendGateActive
+                  ? ` → cap ${(engineResult.meta.absoluteTrendGateMultiplier * 100).toFixed(0)}%`
+                  : ""}
+              </p>
+              {engineResult.meta.institutionalBreadthShadow && (
+                <p style={{ fontSize: "0.72rem", color: "#60a5fa", marginTop: "2px" }}>
+                  🧪 <strong>Breadth institucional (shadow):</strong>{" "}
+                  riesgo {(engineResult.meta.institutionalBreadthShadow.riskBreadth * 100).toFixed(1)}%
+                  {" · "}{engineResult.meta.institutionalBreadthShadow.negativeCount}/{engineResult.allocations.length} negativos
+                  {" · "}{engineResult.meta.institutionalBreadthShadow.active ? `multiplicador ${(engineResult.meta.institutionalBreadthShadow.multiplier * 100).toFixed(1)}%` : "sin reducción confirmada"}
+                </p>
+              )}
+              {engineResult.meta.regimeBreadthDivergence && (
+                <p style={{ fontSize: "0.72rem", color: "#f59e0b", marginTop: "2px" }}>
+                  ⚠️ Divergencia: régimen EXPANSION con breadth defensivo. El shadow no modifica allocations.
+                </p>
+              )}
               <p><strong>Señal dominante:</strong> {engineResult.meta.dominantSignal}</p>
               <p><strong>Prob. crisis:</strong> {engineResult.masterRegime.crisisDetail.crisisProbability.toFixed(1)}%</p>
               <p><strong>p(exp/cont/crisis):</strong> {((engineResult.masterRegime.regimeProbs?.expansion ?? 0) * 100).toFixed(0)}% / {((engineResult.masterRegime.regimeProbs?.contraction ?? 0) * 100).toFixed(0)}% / {((engineResult.masterRegime.regimeProbs?.crisis ?? 0) * 100).toFixed(0)}%</p>
@@ -3955,7 +4026,7 @@ soxRsiWeekly,
       )}
 
       {/* FIX-AUDIT-R9 UI: FRED Manual Inputs Panel — editar M2, CAPE, credit spread, breakeven */}
-      <FredManualPanel onSaved={refreshMarketData} />
+      <FredManualPanel onSaved={() => { setManualRealYield10y(loadFredManual().realYield10y); refreshMarketData(); }} />
 
       {/* OVERRIDE MANUAL DE PRECIOS — fijar precio a mano cuando Yahoo falla (ej. URNU.DE) */}
       <ManualPricePanel onSaved={refreshMarketData} currentPrices={marketData?.prices} />

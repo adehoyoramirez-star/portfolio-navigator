@@ -99,6 +99,25 @@ export async function logEngineDecision(input: DecisionLogInput): Promise<void> 
       m2_growth: macro.m2Growth,
       factor_scores: factorScores,
       allocations_after: allocationsAfter,
+      breadth_policy: engineResult.meta.breadthPolicy,
+      breadth_risk_overlay_priority: engineResult.meta.riskOverlayPriority,
+      breadth_legacy: {
+        active: engineResult.meta.absoluteTrendGateActive,
+        multiplier: engineResult.meta.absoluteTrendGateMultiplier,
+        negativeCount: engineResult.meta.absoluteTrendGateNegativeCount,
+        negativePct: engineResult.meta.absoluteTrendGateNegativePct,
+        reason: engineResult.meta.absoluteTrendGateReason,
+      },
+      breadth_institutional_shadow: engineResult.meta.institutionalBreadthShadow,
+      regime_breadth_divergence: engineResult.meta.regimeBreadthDivergence,
+      risk_chain: {
+        totalInvestedAlpha: engineResult.meta.totalInvestedAlpha,
+        totalInvestedAfterGate: engineResult.meta.totalInvestedAfterGate,
+        totalInvestedBase: engineResult.meta.totalInvestedBase,
+        volTargetMultiplier: engineResult.volTargetMultiplier,
+        tailRiskOverlay: engineResult.tailRiskOverlay,
+        erpCapFactor: engineResult.meta.erpCapFactor,
+      },
       trigger_reason: triggerReason ?? "manual",
     });
     localStorage.setItem(key, JSON.stringify(existing.slice(0, 200)));

@@ -27,6 +27,58 @@ export interface CompositeInput {
   initialCapital: number;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// OLYMPUS CORE v1.0 — §10 BTC TOTAL RISK BUDGET (reparación v1.0.1)
+// El "BTC cap" histórico nunca fue binding (auditoría Phases 9-11: ablación
+// bit-idéntica). El control real de la exposición BTC es allocation + Trend
+// Gate + satélite. Esta métrica de PRIMER NIVEL cuantifica el presupuesto
+// BTC TOTAL del composite:
+//   BTC_MOTOR (posición dentro del sleeve) + BTC_SATELITE = BTC_TOTAL
+// El satélite NO es diversificación: es una decisión de riesgo BTC explícita.
+// ═══════════════════════════════════════════════════════════════════════
+export interface BtcTotalRisk {
+  btcMotorMeanPct: number;      // exposición media BTC dentro del sleeve motor
+  btcMotorP95Pct: number;
+  satelliteWeightPct: number;   // peso fijo del satélite en el composite
+  btcTotalMeanPct: number;      // BTC_TOTAL = satelliteWeight + (1 - satelliteWeight) × BTC motor
+  btcTotalP95Pct: number;
+  btcTotalP99Pct: number;
+  btcTotalMaxPct: number;
+}
+
+export function computeBtcTotalRisk(
+  olympusDailyWeights?: Record<string, number>[],
+  olympusPct: number = 90,
+): BtcTotalRisk {
+  const satellitePct = btcSatPct(olympusPct);
+  const olyPctFrac = olyPctFraction(olympusPct);
+  const quantile = (arr: number[], q: number): number => {
+    const s = [...arr].sort((a, b) => a - b);
+    return s[Math.floor((s.length - 1) * q)] ?? 0;
+  };
+  if (!olympusDailyWeights || olympusDailyWeights.length === 0) {
+    // Fallback explícito: sin pesos diarios solo podemos reportar el satélite (en %).
+    return {
+      btcMotorMeanPct: 0, btcMotorP95Pct: 0, satelliteWeightPct: satellitePct * 100,
+      btcTotalMeanPct: satellitePct * 100, btcTotalP95Pct: satellitePct * 100, btcTotalP99Pct: satellitePct * 100, btcTotalMaxPct: satellitePct * 100,
+    };
+  }
+  const btcMotor = olympusDailyWeights.map(w => {
+    const btcKey = Object.keys(w).find(k => k.toLowerCase().includes('btc') || k.toLowerCase().includes('bitcoin'));
+    return btcKey ? (w[btcKey] ?? 0) : 0;
+  });
+  const btcTotal = btcMotor.map(w => olyPctFrac * w + satellitePct);
+  return {
+    btcMotorMeanPct: btcMotor.reduce((s, v) => s + v, 0) / btcMotor.length * 100,
+    btcMotorP95Pct: quantile(btcMotor, 0.95) * 100,
+    satelliteWeightPct: satellitePct * 100, // btcSatPct devuelve fracción → % del composite
+    btcTotalMeanPct: btcTotal.reduce((s, v) => s + v, 0) / btcTotal.length * 100,
+    btcTotalP95Pct: quantile(btcTotal, 0.95) * 100,
+    btcTotalP99Pct: quantile(btcTotal, 0.99) * 100,
+    btcTotalMaxPct: quantile(btcTotal, 1) * 100,
+  };
+}
+
 const RISK_FREE_RATE = 0.04;
 // FIX-ANNUALIZATION-365: datos de calendario → 365 días/año (ver constants.ts).
 const TRADING_DAYS = 365;

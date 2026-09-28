@@ -660,6 +660,8 @@ export function runWalkForwardTest(
       dxyTrend: macro.dxyTrend?.slice(start, end),
       btcVol: macro.btcVol?.slice(start, end),
       wtiOil: macro.wtiOil?.slice(start, end),
+      erpValue: macro.erpValue?.slice(start, end),
+      avgCorrelation: macro.avgCorrelation?.slice(start, end),
     };
   }
 
@@ -698,6 +700,11 @@ export function runWalkForwardTest(
       initialCapital: cfg.initialCapital,
       transactionCostBps: cfg.transactionCostBps,
       useDynamicCovariance: true,
+      // Warm the candidate hysteresis from IS only; never use OOS observations
+      // to initialize the state that governs the OOS simulation.
+      institutionalBreadthInitialState: input.institutionalBreadthCandidate?.enabled === true
+        ? isResult.institutionalBreadthFinalState ?? input.institutionalBreadthInitialState
+        : undefined,
     };
     const oosResult = runBacktest(oosInput);
 
@@ -749,6 +756,34 @@ export function runWalkForwardTest(
         regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
         daysWithProxies: 0, daysWithRealData: 0,
         transactionCostBps: 0, totalTransactionCosts: 0, rebalanceCount: 0,
+        absoluteTrendGateDiagnostics: {
+          evaluatedRebalances: 0,
+          activeRebalances: 0,
+          majorityBearishRebalances: 0,
+          mostBearishRebalances: 0,
+          breadthBoundaryUpCrossings: 0,
+          breadthBoundaryDownCrossings: 0,
+          immediateCostWithGate: 0,
+          immediateCostWithoutGate: 0,
+          immediateIncrementalCost: 0,
+        },
+        institutionalBreadthDiagnostics: {
+          evaluatedRebalances: 0,
+          activeRebalances: 0,
+          appliedRebalances: 0,
+          averageMultiplier: 1,
+          minimumMultiplier: 1,
+          riskBreadthP50: 0,
+          riskBreadthP75: 0,
+          riskBreadthP90: 0,
+          riskBreadthP95: 0,
+          riskBreadthMaximum: 0,
+          riskBreadthObservations: [],
+        },
+        institutionalBreadthFinalState: null,
+        coreMode: false,
+        coreTrendGateEnabled: false,
+        coreTrendGateFinalState: null,
       },
       consistencyScore,
       sharpeDegradation,

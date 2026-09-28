@@ -9,6 +9,7 @@ import {
   SCAN_MODE_DESCRIPTIONS,
   SCAN_MODE_TIMES,
 } from "../core/tactical/tacticalScreener";
+import { loadTacticalState } from "../core/tactical/tacticalPortfolio";
 
 describe("SCAN_MODE_LABELS y descriptores", () => {
   test("tiene los 3 modos: volatile, core, full", () => {
@@ -98,9 +99,41 @@ describe("defaultTacticalConfig", () => {
     expect(config.maxDaysPerTrade).toBe(75);
   });
 
-  test("minRiskReward es 1.3", () => {
+  test("minRiskReward es 1.2, coherente con calcTakeProfits", () => {
     const config = defaultTacticalConfig(100000, 50000);
-    expect(config.minRiskReward).toBe(2.0);
+    expect(config.minRiskReward).toBe(1.2);
+  });
+
+  test("migra el estado persistido con R:R legado 2.0 a 1.2", () => {
+    const baseConfig = defaultTacticalConfig(100000, 50000);
+    localStorage.setItem("olympus_tactical_state_v5", JSON.stringify({
+      config: { ...baseConfig, minRiskReward: 2.0 },
+      openPositions: [],
+      closedPositions: [],
+      capitalAvailable: 100000,
+      capitalUsed: 0,
+    }));
+
+    const state = loadTacticalState(baseConfig);
+
+    expect(state.config.minRiskReward).toBe(1.2);
+    localStorage.removeItem("olympus_tactical_state_v5");
+  });
+
+  test("conserva un R:R configurado explícitamente distinto de 2.0", () => {
+    const baseConfig = defaultTacticalConfig(100000, 50000);
+    localStorage.setItem("olympus_tactical_state_v5", JSON.stringify({
+      config: { ...baseConfig, minRiskReward: 1.8 },
+      openPositions: [],
+      closedPositions: [],
+      capitalAvailable: 100000,
+      capitalUsed: 0,
+    }));
+
+    const state = loadTacticalState(baseConfig);
+
+    expect(state.config.minRiskReward).toBe(1.8);
+    localStorage.removeItem("olympus_tactical_state_v5");
   });
 
   test("riskPerTradePct es 0.01 (1%)", () => {

@@ -25,7 +25,7 @@
 //   NO usar ^IRX (T-Bill 3 meses ≈ 5.2%) — son instrumentos distintos.
 // ===============================================
 
-export const ENGINE_CONFIG_VERSION = "3.7.1"; // FIX MATH-02 + A2 intermediate band + A1 M2 sigmoid
+export const ENGINE_CONFIG_VERSION = "3.9.0"; // OLYMPUS CORE v1.0: perfil canónico de la auditoría (Phases 9-12) + overlay Trend Gate opcional
 
 // ── ERP TRIGGER ────────────────────────────────────────────────────────────
 // Reducción forzada de exposición cuando el Equity Risk Premium está comprimido.
@@ -96,9 +96,9 @@ export const CORRELATION_PANIC_CONFIG = {
 // circuit breaker: si la mayoría de activos pierde, reducimos exposición.
 // Umbrales calibrados contra drawdowns históricos (2020 COVID, 2022 Fed, 2025).
 export const ABSOLUTE_TREND_GATE = {
-  MAJORITY_BEARISH_CAP: 0.60,   // >50% activos returns3m < 0 → max 60%
-  MOST_BEARISH_CAP: 0.40,       // >75% activos returns3m < 0 → max 40%
-  ALL_BEARISH_CAP: 0.50,        // todos los activos returns3m < 0 → max 50% (legacy, superado por MOST)
+  MAJORITY_BEARISH_CAP: 0.60,   // provisional: >50% activos returns3m < 0 → max 60%
+  MOST_BEARISH_CAP: 0.40,       // provisional: >75% activos returns3m < 0 → max 40%
+  ALL_BEARISH_CAP: 0.50,        // legacy safety net; superado por MOST
   BTC_BEAR_CAP: 0.35,           // BTC returns12m < -30% → max 35%
   BTC_BEAR_THRESHOLD: -0.30,    // umbral de bear market BTC (12 meses)
   CORR_EARLY_PENALTY: 0.0,      // desactivado (redundante con Correlation Panic + Tail Risk corr penalty)
@@ -106,6 +106,18 @@ export const ABSOLUTE_TREND_GATE = {
   // DXY_RISK_OFF_THRESHOLD y DXY_PENALTY eliminados Jul-2026.
   //   dxyTrend ya entra en masterRegime vía computeGlobalStress.
   //   Mantener el gate aquí era doble conteo. Ver AGENTS.md.
+} as const;
+
+// ── BREADTH RISK POLICY (FOR-7DECISIONS, 31-Aug-2026) ───────────────────
+// El gate legacy permanece activo como protección provisional. El candidato
+// institucional se calcula en paralelo y no modifica allocations hasta superar
+// validación walk-forward OOS y aprobación de riesgo.
+export const BREADTH_RISK_POLICY = {
+  productionMode: 'PROVISIONAL_LEGACY' as const,
+  shadowMode: 'INSTITUTIONAL_CANDIDATE' as const,
+  legacyAppliedLayers: ['total_exposure'] as const,
+  institutionalPriority: 'after_tail_risk_and_vol_target_before_erp' as const,
+  promotionStatus: 'PENDING_OOS_VALIDATION' as const,
 } as const;
 
 // ── KELLY CRITERION ───────────────────────────────────────────────────────
@@ -406,6 +418,57 @@ export const DURATION_CONFIG = {
   CRISIS_OLD_BONUS: 0.08,
   YOUNG_THRESHOLD: 4,
   OLD_THRESHOLD: 12,
+} as const;
+
+// ── OLYMPUS CORE v1.0 — perfil canónico de la auditoría forense ──────────
+// Evidencia: Phases 9-12 (ablaciones 64 runs, bootstrap pareado bloque 21d,
+// autopsia de 9 episodios del Trend Gate). Ver OLYMPUS_CORE_v1.0_SPEC.md.
+//
+// PRINCIPIO: "el motor más simple que conserva la evidencia de rendimiento/riesgo
+// demostrada". Cada componente fuera del Core fue removido por evidencia, no por
+// preferencia:
+//   - Kill Switch: coste robusto (CI bootstrap excluye 0) con MaxDD bit-idéntico.
+//   - Vol Target: idéntico (coste -0.64pp, MaxDD igual).
+//   - Régimen macro: bit-idéntico al neutralizarlo (0 días CRISIS en muestra).
+//   - BTC caps: nunca binding (ablación bit-idéntica). El control real de BTC es
+//     allocation + Trend Gate + satélite → métrica BTC_TOTAL de primer nivel.
+//   - Overlay discrecional: -1.27pp CAGR y -0.09 Sharpe vs 100% cuantitativo.
+//   - DCC-GARCH: direccionalmente inconsistente (LW gana por criterio
+//     pre-registrado) → covarianza Ledoit-Wolf es el Core.
+//   - Trend Gate: EPISODIC (protege solo en 1 episodio de 9) → overlay OPCIONAL
+//     con la única variante que superó el test E_both (re-entry 2 rebalanceos +
+//     staged exit 0.60), documentada en TREND_GATE_FINAL_TEST.csv.
+//
+// El default es enabled:false — producción NO cambia hasta aprobación explícita
+// (change-control §18 de la spec). Todos los campos son inmutables por diseño.
+export const OLYMPUS_CORE = {
+  version: "1.0.0",
+  /** Perfil CORE activo (HRP puro, sin stack defensivo). Default: false = comportamiento v5.3 intacto. */
+  enabled: false,
+  /** Asignación Core: HRP puro (audit: único componente con Sharpe/MaxDD consistentes). */
+  blend: { BL: 0.0, HRP: 1.0, MIN_VAR: 0.0 },
+  /** Stack defensivo OFF en Core (evidence-based). */
+  defensiveStack: {
+    killSwitch: false,
+    volTarget: false,
+    correlationPanic: false,   // consolidado en tailRisk (que Core desactiva)
+    absoluteTrendGate: false,  // controlado por overlay.trendGate
+  },
+  /** Overlay OPCIONAL del Trend Gate — especificación exacta del test E_both (Phase 12). */
+  overlay: {
+    trendGate: {
+      enabled: false,
+      /** CONFIRMED RE-ENTRY: exposición completa solo tras 2 rebalanceos con señal limpia. */
+      reentryCleanRebalances: 2,
+      /** STAGED EXIT: primera activación reduce a 60% (no salto directo a cap completo). */
+      stagedFirstActivationCap: 0.60,
+    },
+  },
+  /** Política de datos v1.0.1: prohíbe fallbacks silenciosos (MISSING/ERROR/EXPLICIT FALLBACK). */
+  dataPolicy: {
+    explicitFallbacks: true,   // todo fallback debe loguearse y exponerse en meta
+    noSilentValues: true,
+  },
 } as const;
 
 // ── STORAGE KEYS ───────────────────────────────────────────────────────────

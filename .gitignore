@@ -35,3 +35,14 @@ COM1
 COM2
 LPT1
 LPT2
+
+# ── PHASE 9-12 AUDIT: artefactos personales/pesados fuera del repo ──
+# PDFs de estados de cuenta personales (NUNCA subir)
+/*.pdf
+# Cachés binarias del modelo heatmap (65MB+: regenerables por los scripts .py)
+Heatmap Regression/*.pkl
+Heatmap Regression/__pycache__/
+# Resultados de backtests privados (contienen posiciones reales)
+paper_trading_log.csv
+paper_trading_summary.json
+monitor_report.json

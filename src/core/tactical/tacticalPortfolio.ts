@@ -122,7 +122,14 @@ export function loadTacticalState(config: TacticalConfig): TacticalEngineState {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initTacticalState(config);
     const parsed = JSON.parse(raw) as TacticalEngineState;
-    return sanitizeState({ ...parsed, config });
+    // Migración v5: el valor 2.0 era incompatible con los TP dinámicos (R:R 1.25–1.5).
+    // FIX-CORE-AUDIT: solo se corrigue el legado EXACTO 2.0 → 1.2; la config guardada
+    // (incl. cualquier minRiskReward configurado explícitamente, ej. 1.8) se conserva —
+    // descartarla era un fallback silencioso (prohibido por OLYMPUS_CORE.dataPolicy).
+    const migratedConfig = parsed.config?.minRiskReward === 2.0
+      ? { ...config, minRiskReward: 1.2 }
+      : { ...config, ...parsed.config };
+    return sanitizeState({ ...parsed, config: migratedConfig });
   } catch {
     console.warn('[Tactical] Error al cargar estado — reiniciando');
     return initTacticalState(config);

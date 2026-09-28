@@ -806,3 +806,47 @@ describe("estimatePortfolioVol — avgCorrelation fallback (audit C2)", () => {
     expect(volWithCorr).toBeGreaterThan(volNoCorr);
   });
 });
+
+// =====================================================
+// FORENSIC AUDIT — breadth bear-veto boundary
+// =====================================================
+describe("ABSOLUTE_TREND_GATE — frontera 3/6 ↔ 4/6", () => {
+  function breadthInput(returns3m: number[]): OlympusEngineInput {
+    const tickers = ["BTC-EUR", "VVSM.DE", "0P00000WLG.F", "URNU.DE", "EMXC.DE", "PPFB.DE"];
+    return {
+      assets: tickers.map((ticker, index) => ({
+        name: ticker,
+        ticker,
+        returns12m: 0.20,
+        returns3m: returns3m[index],
+        returns1m: 0.01,
+        earningsYield: ticker === "BTC-EUR" || ticker === "PPFB.DE" ? 0 : 0.03,
+        volatility: ticker === "BTC-EUR" ? 0.60 : 0.20,
+        sector: ticker === "BTC-EUR" ? "crypto" : "equity",
+      })),
+      correlationMatrix: Array.from({ length: 6 }, (_, i) =>
+        Array.from({ length: 6 }, (_, j) => i === j ? 1 : 0.1)
+      ),
+      macro: {
+        vix: 16,
+        yieldSpread: 1,
+        creditSpread: 1.5,
+        move: 80,
+        dxyTrend: 0,
+        btcVol: 0.5,
+        m2Growth: 3,
+      },
+    };
+  }
+
+  test("un cambio de +0.01% a -0.01% activa el cap 60%", () => {
+    const threeNegative = runOlympusEngine(breadthInput([0.0001, 0.0001, 0.0001, -0.0001, -0.0001, -0.0001]));
+    const fourNegative = runOlympusEngine(breadthInput([-0.0001, 0.0001, 0.0001, -0.0001, -0.0001, -0.0001]));
+
+    expect(threeNegative.meta.absoluteTrendGateNegativeCount).toBe(3);
+    expect(threeNegative.meta.absoluteTrendGateMultiplier).toBe(1);
+    expect(fourNegative.meta.absoluteTrendGateNegativeCount).toBe(4);
+    expect(fourNegative.meta.absoluteTrendGateMultiplier).toBe(0.60);
+    expect(fourNegative.meta.absoluteTrendGateMultiplier - threeNegative.meta.absoluteTrendGateMultiplier).toBeCloseTo(-0.40, 10);
+  });
+});
