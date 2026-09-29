@@ -597,6 +597,8 @@ function computeAllocationsWithRegime(
     coreMode,
     coreTrendGate,
     coreTrendGateState,
+    // Perf: en backtest la sombra CORE se descartaría → no computarla.
+    coreShadowMode: true,
   });
 
   // ── 6. Extraer allocations del engine output ──

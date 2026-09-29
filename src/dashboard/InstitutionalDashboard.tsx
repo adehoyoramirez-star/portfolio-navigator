@@ -3135,6 +3135,72 @@ soxRsiWeekly,
         </div>
       </div>
 
+      {/* ── CORE SHADOW — comparativa v5.3 vs CORE v1.0 (solo observabilidad) ── */}
+      {engineResult && (
+        <div style={{ ...styles.card }}>
+          <h4>Observatory — Sombras v5.3 vs CORE</h4>
+          <p style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: "0.75rem" }}>
+            Ejecución dual en paralelo con los mismos inputs. La sombra es de solo-lectura:
+            no puede alterar el resultado principal.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "1rem" }}>
+            {(() => {
+              const shadow = engineResult.meta.coreShadow;
+              const rows: { label: string; legacy: string; core: string; diff?: string }[] = [
+                {
+                  label: "Régimen",
+                  legacy: engineResult.regime,
+                  core: shadow?.regime ?? "—",
+                },
+                {
+                  label: "Exposición total",
+                  legacy: `${(engineResult.totalInvested * 100).toFixed(1)}%`,
+                  core: shadow ? `${(shadow.totalInvested * 100).toFixed(1)}%` : "—",
+                },
+                {
+                  label: "Top 3 pesos",
+                  legacy: [...engineResult.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation).slice(0, 3).map(a => `${a.name} ${(a.finalAllocation * 100).toFixed(0)}%`).join(", "),
+                  core: shadow ? [...shadow.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation).slice(0, 3).map(a => `${a.name} ${(a.finalAllocation * 100).toFixed(0)}%`).join(", ") : "—",
+                },
+              ];
+              return rows.map(r => (
+                <div key={r.label} style={{ background: "#1f2937", borderRadius: "0.5rem", padding: "0.75rem" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: "0.5rem" }}>{r.label}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", marginBottom: "0.25rem" }}>
+                    <span style={{ color: "#9ca3af" }}>v5.3:</span>
+                    <span style={{ fontWeight: "bold" }}>{r.legacy}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem" }}>
+                    <span style={{ color: "#9ca3af" }}>CORE:</span>
+                    <span style={{ fontWeight: "bold", color: "#10b981" }}>{r.core}</span>
+                  </div>
+                </div>
+              ));
+            })()}
+          </div>
+          {(() => {
+            const shadow = engineResult.meta.coreShadow;
+            if (!shadow) {
+              return (
+                <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "0.75rem" }}>
+                  Sombra no disponible (falló silenciosamente o perfil ya activo como principal).
+                </p>
+              );
+            }
+            const legacyTop = [...engineResult.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation)[0]?.name ?? "—";
+            const coreTop = [...shadow.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation)[0]?.name ?? "—";
+            const aligned = legacyTop === coreTop;
+            return (
+              <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.75rem" }}>
+                {aligned
+                  ? "✅ Ambos motores lideran con el mismo activo — divergencia de cartera baja."
+                  : `⚠️ Divergencia de cartera: v5.3 lidera con ${legacyTop}, CORE con ${coreTop}.`}
+              </p>
+            );
+          })()}
+        </div>
+      )}
+
       <div style={{ ...styles.card, display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "1rem" }}>
         <div>
           <h4>Liquidez Global</h4>

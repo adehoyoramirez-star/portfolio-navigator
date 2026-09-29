@@ -722,7 +722,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       tailRiskReason:      allCashTailRisk.triggerReason,
       engineVersion: ENGINE_VERSION,
       meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', absoluteTrendGateNegativeCount: 0, absoluteTrendGateNegativePct: 0, totalInvestedAlpha: 0, totalInvestedAfterGate: 0, totalInvestedBase: 0, erpCapFactor: 1, breadthPolicy: BREADTH_RISK_POLICY.productionMode, riskOverlayPriority: BREADTH_RISK_POLICY.institutionalPriority, regimeBreadthDivergence: false, institutionalBreadthShadow: null, institutionalBreadthShadowApplied: false, breadthEffectiveMultiplier: 1.0, breadthEffectiveSource: 'legacy',      coreMode,
-      coreShadow: coreMode ? { engineVersion: ENGINE_VERSION + "+shadow-stub-v5.3", regime: "PENDING_CUTOVER", allocations: [], totalInvested: 0 } : null,
+      coreShadow: null, // ALL_CASH: sin sombra (borde de emergencia, no comparativa)
       coreTrendGateActive: false, coreTrendGateMultiplier: 1.0, coreTrendGateReason: 'ALL_CASH: gates bypassed', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
@@ -1407,19 +1407,43 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   );
 
-  // ── CORE shadow: réplica v5.3 (solo observabilidad, sin estado ni efectos) ──
-  // El default actual (coreMode off) ES la cartera v5.3 — se reutiliza directamente.
-  // En el cutover (CORE → default) este stub se sustituirá por una ejecución
-  // recursiva runOlympusEngine({ ...input, coreMode: false }). El marcador
-  // PENDING_CUTOVER hace imposible confundirlo con una cartera real.
-  const coreShadow: CoreShadowResult | null = coreMode
-    ? {
-        engineVersion: ENGINE_VERSION + "+shadow-stub-v5.3",
-        regime: "PENDING_CUTOVER",
-        allocations: [],
-        totalInvested: 0,
-      }
-    : null;
+  // ── Modo sombra dual (SOLO observabilidad: sin estado, sin efectos, sin riesgo) ──
+  // Periodo actual (default = v5.3): la sombra ejecuta CORE (HRP+LW, overlay OFF)
+  //   para comparar en el dashboard qué haría el Core con los mismos inputs.
+  // Tras el cutover (CORE = default): la sombra pasará a ejecutar v5.3 legacy.
+  //   (stub PENDING_CUTOVER hasta entonces — imposible confundirlo con cartera real).
+  // Guard de recursión: input.coreShadowMode === true → no se crea sombra.
+  // La ejecución sombra nunca muta estado (coreTrendGateState: undefined) y un
+  // fallo suyo JAMÁS propaga al resultado principal (try/catch → null).
+  const coreShadow: CoreShadowResult | null = input.coreShadowMode === true
+    ? null
+    : coreMode
+      ? {
+          engineVersion: ENGINE_VERSION + "+shadow-stub-v5.3",
+          regime: "PENDING_CUTOVER",
+          allocations: [],
+          totalInvested: 0,
+        }
+      : (() => {
+          try {
+            const shadow = runOlympusEngine({
+              ...input,
+              coreMode: true,
+              coreTrendGate: false,
+              coreTrendGateState: undefined,
+              coreShadowMode: true,
+            });
+            return {
+              engineVersion: shadow.engineVersion,
+              regime: shadow.regime as string,
+              allocations: shadow.allocations.map(a => ({ name: a.name, finalAllocation: a.finalAllocation })),
+              totalInvested: shadow.totalInvested,
+            };
+          } catch {
+            // Observabilidad: si la sombra falla, el principal sigue intacto.
+            return null;
+          }
+        })();
 
   const result: EngineOutput = {
     allocations,

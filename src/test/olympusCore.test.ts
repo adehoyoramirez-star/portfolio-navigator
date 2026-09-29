@@ -48,17 +48,26 @@ describe("CONTRACT v1.0.1 — denominador de drawdown único (live ≡ backtest)
 
 // ── 7. Modo sombra: comparativa CORE vs v5.3 (solo observabilidad) ────────
 describe("Modo sombra CORE vs v5.3", () => {
-  test("v5.3 (default) no emite coreShadow; CORE emite stub PENDING_CUTOVER", () => {
+  test("v5.3 (default) emite sombra CORE; CORE activo emite stub PENDING_CUTOVER (pre-cutover)", () => {
+    // Periodo de sombra: default = v5.3 → la sombra muestra lo que haría CORE.
     const legacy = runOlympusEngine(coreInput());
-    expect(legacy.meta.coreShadow).toBeUndefined();
+    expect(legacy.meta.coreShadow).not.toBeNull();
+    expect(legacy.meta.coreShadow?.regime).not.toBe("PENDING_CUTOVER");
+    expect(legacy.meta.coreShadow?.allocations.length).toBeGreaterThan(0);
+    // Tras el cutover (CORE = default) la sombra pasará a ser v5.3; hasta entonces,
+    // CORE activo emite el stub marcado para evitar confusión con cartera real.
     const core = runOlympusEngine(coreInput({ coreMode: true }));
-    expect(core.meta.coreShadow).not.toBeNull();
     expect(core.meta.coreShadow?.regime).toBe("PENDING_CUTOVER");
   });
-  test("el modo sombra no muta el resultado principal (mismas allocations)", () => {
-    const plain = runOlympusEngine(coreInput({ coreMode: true }));
-    const withShadow = runOlympusEngine(coreInput({ coreMode: true }));
+  test("el modo sombra no muta el resultado principal (idéntico a ejecución sin sombra)", () => {
+    const plain = runOlympusEngine(coreInput());
+    const withShadow = runOlympusEngine(coreInput());
     expect(withShadow.allocations.map(a => a.finalAllocation)).toEqual(plain.allocations.map(a => a.finalAllocation));
+    expect(withShadow.totalInvested).toBe(plain.totalInvested);
+  });
+  test("guard de recursión: input.coreShadowMode=true no crea sombra anidada", () => {
+    const shadowOnly = runOlympusEngine(coreInput({ coreMode: true, coreShadowMode: true }));
+    expect(shadowOnly.meta.coreShadow).toBeUndefined();
   });
 });
 
