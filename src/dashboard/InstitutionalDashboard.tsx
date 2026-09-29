@@ -45,6 +45,7 @@ import { computeRealizedReturns, recordCurrentPositions, loadPositionHistory } f
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
 import { computeUnifiedDrawdown, updateHighWaterMark } from "@/core/risk/drawdown";
+import { computeShadowDivergence, divergenceBand, recordShadowSnapshot, type ShadowSnapshot } from "@/core/monitor/shadowDivergence";
 import type { InstitutionalBreadthState } from "@/core/risk/institutionalBreadth";
 import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked } from "@/core/macro/masterRegime";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
@@ -190,6 +191,30 @@ function loadInstitutionalBreadthState(): InstitutionalBreadthState {
     // Si no hay estado persistido, el candidato comienza sin confirmación.
   }
   return { active: false, adverseDays: 0, benignDays: 0 };
+}
+
+// ── Historial de la sombra CORE vs v5.3 (Observatory) ────────────────────
+const SHADOW_HISTORY_KEY = "olympus_core_shadow_history_v1";
+
+function loadShadowHistory(): ShadowSnapshot[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(SHADOW_HISTORY_KEY) ?? "[]");
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (e): e is ShadowSnapshot =>
+          typeof e === "object" && e !== null &&
+          typeof (e as Record<string, unknown>).date === "string" &&
+          typeof (e as Record<string, unknown>).divergenceScore === "number" &&
+          typeof (e as Record<string, unknown>).l1Pp === "number" &&
+          typeof (e as Record<string, unknown>).aligned === "boolean" &&
+          typeof (e as Record<string, unknown>).legacyTop === "string" &&
+          typeof (e as Record<string, unknown>).coreTop === "string",
+      );
+    }
+  } catch {
+    // Sin historial persistido → comienza vacío.
+  }
+  return [];
 }
 
 const InstitutionalDashboard: React.FC = () => {
@@ -1203,6 +1228,45 @@ soxRsiWeekly,
   // MEJORA-7: walkForwardResult añadido para que el blend autocorregido se propague.
   // FIX-AUDIT-TRANSVERSAL-R3: regimeHistory añadido a deps para regimeDuration.
   }, [assetInputs, corrMatrix, vix, yieldSpread, creditSpread, m2Growth, moveIndex, dxy, btcVol, wtiOil, erpValue, liquidityGrowth, dynamicCovResult, marketData?.covMatrix, marketData?.cbLiquidityGrowth, portfolioDrawdown, portfolioRealizedVol, effectiveCEWSHistory, kalmanWeights, regimeChangeCounter, walkForwardResult, mvrvRatio, puellMultiple, btcRsiWeekly, availableCash, totalPortfolioValue, cycleTopResult, regimeHistory, institutionalBreadthState]);
+
+  // ── CORE shadow: divergencia v5.3 vs CORE (solo observabilidad) ──
+  const [shadowHistory, setShadowHistory] = useState<ShadowSnapshot[]>(loadShadowHistory);
+  const shadowDivergence = useMemo(
+    () => engineResult
+      ? computeShadowDivergence(
+          {
+            allocations: engineResult.allocations.map(a => ({ name: a.name, finalAllocation: a.finalAllocation })),
+            totalInvested: engineResult.totalInvested,
+          },
+          engineResult.meta.coreShadow ?? null,
+        )
+      : null,
+    [engineResult],
+  );
+  const processedShadowObservationRef = useRef<string | null>(null);
+  // Persistencia: un snapshot por observación de mercado (misma clave que el
+  // breadth shadow), siempre la última del día. Sin estado del motor — es solo registro.
+  useEffect(() => {
+    if (!shadowDivergence || shadowDivergence.rows.length === 0) return;
+    if (!engineResult?.meta.coreShadow) return; // sin sombra real → no registrar deltas falsos
+    if (processedShadowObservationRef.current === breadthShadowObservationKey) return;
+    processedShadowObservationRef.current = breadthShadowObservationKey;
+    setShadowHistory(prev => recordShadowSnapshot(prev, {
+      date: new Date().toISOString().slice(0, 10),
+      divergenceScore: shadowDivergence.score,
+      l1Pp: Math.round(shadowDivergence.l1Pp * 10) / 10,
+      aligned: shadowDivergence.aligned,
+      legacyTop: shadowDivergence.legacyTop,
+      coreTop: shadowDivergence.coreTop,
+    }));
+  }, [breadthShadowObservationKey, shadowDivergence, engineResult]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SHADOW_HISTORY_KEY, JSON.stringify(shadowHistory));
+    } catch {
+      // Persistencia best-effort: sin historial el panel simplemente no muestra trend.
+    }
+  }, [shadowHistory]);
 
   useEffect(() => {
     const candidate = engineResult?.meta.institutionalBreadthShadow;
@@ -3138,66 +3202,108 @@ soxRsiWeekly,
       {/* ── CORE SHADOW — comparativa v5.3 vs CORE v1.0 (solo observabilidad) ── */}
       {engineResult && (
         <div style={{ ...styles.card }}>
-          <h4>Observatory — Sombras v5.3 vs CORE</h4>
-          <p style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: "0.75rem" }}>
-            Ejecución dual en paralelo con los mismos inputs. La sombra es de solo-lectura:
-            no puede alterar el resultado principal.
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "1rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "0.5rem" }}>
+            <h4 style={{ margin: 0 }}>Observatory — Sombras v5.3 vs CORE</h4>
             {(() => {
               const shadow = engineResult.meta.coreShadow;
-              const rows: { label: string; legacy: string; core: string; diff?: string }[] = [
-                {
-                  label: "Régimen",
-                  legacy: engineResult.regime,
-                  core: shadow?.regime ?? "—",
-                },
-                {
-                  label: "Exposición total",
-                  legacy: `${(engineResult.totalInvested * 100).toFixed(1)}%`,
-                  core: shadow ? `${(shadow.totalInvested * 100).toFixed(1)}%` : "—",
-                },
-                {
-                  label: "Top 3 pesos",
-                  legacy: [...engineResult.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation).slice(0, 3).map(a => `${a.name} ${(a.finalAllocation * 100).toFixed(0)}%`).join(", "),
-                  core: shadow ? [...shadow.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation).slice(0, 3).map(a => `${a.name} ${(a.finalAllocation * 100).toFixed(0)}%`).join(", ") : "—",
-                },
-              ];
-              return rows.map(r => (
-                <div key={r.label} style={{ background: "#1f2937", borderRadius: "0.5rem", padding: "0.75rem" }}>
-                  <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: "0.5rem" }}>{r.label}</div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", marginBottom: "0.25rem" }}>
-                    <span style={{ color: "#9ca3af" }}>v5.3:</span>
-                    <span style={{ fontWeight: "bold" }}>{r.legacy}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem" }}>
-                    <span style={{ color: "#9ca3af" }}>CORE:</span>
-                    <span style={{ fontWeight: "bold", color: "#10b981" }}>{r.core}</span>
-                  </div>
-                </div>
-              ));
+              if (!shadow || !shadowDivergence) return null;
+              const band = divergenceBand(shadowDivergence.score);
+              const color = band === "LOW" ? "#10b981" : band === "MODERATE" ? "#f59e0b" : "#ef4444";
+              return (
+                <span style={{ fontSize: "0.78rem", fontWeight: "bold", color, background: "#1f2937", padding: "0.2rem 0.6rem", borderRadius: "0.4rem" }}>
+                  Divergencia {shadowDivergence.score}/100 · {band} · L1 {shadowDivergence.l1Pp.toFixed(1)}pp
+                </span>
+              );
             })()}
           </div>
-          {(() => {
-            const shadow = engineResult.meta.coreShadow;
-            if (!shadow) {
-              return (
-                <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "0.75rem" }}>
-                  Sombra no disponible (falló silenciosamente o perfil ya activo como principal).
-                </p>
-              );
-            }
-            const legacyTop = [...engineResult.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation)[0]?.name ?? "—";
-            const coreTop = [...shadow.allocations].sort((a, b) => b.finalAllocation - a.finalAllocation)[0]?.name ?? "—";
-            const aligned = legacyTop === coreTop;
-            return (
-              <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.75rem" }}>
-                {aligned
-                  ? "✅ Ambos motores lideran con el mismo activo — divergencia de cartera baja."
-                  : `⚠️ Divergencia de cartera: v5.3 lidera con ${legacyTop}, CORE con ${coreTop}.`}
-              </p>
-            );
-          })()}
+          <p style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: "0.75rem" }}>
+            Ejecución dual en paralelo con los mismos inputs. La sombra es de solo-lectura:
+            no puede alterar el resultado principal. Δ en puntos porcentuales de cartera
+            (CORE − v5.3) sobre exposición absoluta; L1 = Σ|Δ| (pp de cartera que separan ambos motores).
+          </p>
+          {engineResult.meta.coreShadow && shadowDivergence ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "1rem" }}>
+              <div>
+                <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: "0.4rem" }}>
+                    Deltas por activo (ordenados por |Δ|) — régimen: {engineResult.regime} / {engineResult.meta.coreShadow.regime}
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.75rem" }}>
+                  <thead>
+                    <tr style={{ color: "#9ca3af", textAlign: "right" }}>
+                      <th style={{ textAlign: "left", fontWeight: 500, paddingBottom: "0.3rem" }}>Activo</th>
+                      <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>v5.3</th>
+                      <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>CORE</th>
+                      <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>Δ (pp)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shadowDivergence.rows.slice(0, 8).map(r => {
+                      const c = r.deltaPp > 0.05 ? "#10b981" : r.deltaPp < -0.05 ? "#ef4444" : "#9ca3af";
+                      return (
+                        <tr key={r.name} style={{ borderTop: "1px solid #374151" }}>
+                          <td style={{ padding: "0.25rem 0", color: "#e5e7eb" }}>{r.name}</td>
+                          <td style={{ textAlign: "right", color: "#9ca3af" }}>{r.legacyPct.toFixed(1)}%</td>
+                          <td style={{ textAlign: "right", color: "#10b981" }}>{r.corePct.toFixed(1)}%</td>
+                          <td style={{ textAlign: "right", fontWeight: "bold", color: c }}>
+                            {r.deltaPp > 0 ? "+" : ""}{r.deltaPp.toFixed(1)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr style={{ borderTop: "1px solid #374151" }}>
+                      <td style={{ padding: "0.3rem 0", color: "#9ca3af" }}>Exposición total</td>
+                      <td style={{ textAlign: "right", color: "#9ca3af" }}>{(engineResult.totalInvested * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: "right", color: "#10b981" }}>{(engineResult.meta.coreShadow.totalInvested * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: "right", color: "#9ca3af" }}>
+                        L1 {shadowDivergence.l1Pp.toFixed(1)}pp
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: "0.4rem" }}>
+                  Historial ({shadowHistory.length} obs · máx 180) — {shadowHistory.filter(h => h.aligned).length} alineadas
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem" }}>
+                  <thead>
+                    <tr style={{ color: "#9ca3af", textAlign: "right" }}>
+                      <th style={{ textAlign: "left", fontWeight: 500, paddingBottom: "0.3rem" }}>Fecha</th>
+                      <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>Score</th>
+                      <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>Top v5.3 / CORE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...shadowHistory].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(h => {
+                      const band = divergenceBand(h.divergenceScore);
+                      const color = band === "LOW" ? "#10b981" : band === "MODERATE" ? "#f59e0b" : "#ef4444";
+                      return (
+                        <tr key={h.date} style={{ borderTop: "1px solid #374151" }}>
+                          <td style={{ padding: "0.25rem 0", color: "#e5e7eb" }}>{h.date}</td>
+                          <td style={{ textAlign: "right", fontWeight: "bold", color }}>
+                            {h.divergenceScore} {band === "LOW" ? "✅" : band === "MODERATE" ? "⚠️" : "🔴"}
+                          </td>
+                          <td style={{ textAlign: "right", color: "#9ca3af" }}>
+                            {h.aligned ? "✅ mismo top" : `${h.legacyTop} → ${h.coreTop}`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {shadowHistory.length === 0 && (
+                      <tr><td colSpan={3} style={{ color: "#6b7280", padding: "0.4rem 0" }}>Sin observaciones registradas aún.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                {shadowDivergence.aligned
+                  ? <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.6rem" }}>✅ Hoy ambos motores lideran con el mismo activo ({shadowDivergence.legacyTop}).</p>
+                  : <p style={{ fontSize: "0.72rem", color: "#f59e0b", marginTop: "0.6rem" }}>⚠️ Hoy diverge el activo líder: v5.3 {shadowDivergence.legacyTop} vs CORE {shadowDivergence.coreTop}.</p>}
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: "0.72rem", color: "#6b7280" }}>
+              Sombra no disponible (falló silenciosamente o perfil ya activo como principal).
+            </p>
+          )}
         </div>
       )}
 

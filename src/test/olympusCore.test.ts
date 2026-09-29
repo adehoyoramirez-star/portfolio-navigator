@@ -13,6 +13,78 @@ import {
 import { OLYMPUS_CORE } from "../core/config/engineConfig";
 import { computeBtcTotalRisk } from "../core/backtest/compositeMetrics";
 import { computeUnifiedDrawdown, updateHighWaterMark } from "../core/risk/drawdown";
+import {
+  computeShadowDivergence,
+  divergenceBand,
+  recordShadowSnapshot,
+  SHADOW_HISTORY_MAX_ENTRIES,
+  type ShadowEngineSide,
+} from "../core/monitor/shadowDivergence";
+
+// ── 8. Observatory: divergencia de sombra (solo observabilidad) ──────────
+describe("Modo sombra — divergencia CORE vs v5.3", () => {
+  const mkSide = (allocs: [string, number][], totalInvested: number): ShadowEngineSide => ({
+    allocations: allocs.map(([name, finalAllocation]) => ({ name, finalAllocation })),
+    totalInvested,
+  });
+
+  test("pesos absolutos: mismo relativo con distinta exposición produce deltas", () => {
+    const legacy = mkSide([["A", 0.5], ["B", 0.5]], 1.0);
+    const core = mkSide([["A", 0.5], ["B", 0.5]], 0.6);
+    const d = computeShadowDivergence(legacy, core);
+    expect(d.rows.map(r => r.name)).toEqual(["A", "B"]); // |Δ|=20 ambos → orden estable de inserción
+    expect(d.l1Pp).toBeCloseTo(40, 10); // (50−30) + (50−30)
+  });
+  test("carteras idénticas → L1=0, score 0, aligned", () => {
+    const s = mkSide([["A", 0.6], ["B", 0.4]], 0.9);
+    const d = computeShadowDivergence(s, s);
+    expect(d.l1Pp).toBe(0);
+    expect(d.score).toBe(0);
+    expect(d.aligned).toBe(true);
+    expect(divergenceBand(0)).toBe("LOW");
+  });
+  test("activos presentes solo en un lado entran con peso 0 en el otro", () => {
+    const legacy = mkSide([["A", 1.0]], 1.0);
+    const core = mkSide([["A", 0.7], ["B", 0.3]], 1.0);
+    const d = computeShadowDivergence(legacy, core);
+    expect(d.maxAbsDeltaPp).toBeCloseTo(30, 10); // B: +30pp, A: −30pp
+    expect(d.aligned).toBe(true); // el líder sigue siendo A en ambos (0.7 > 0.3)
+  });
+  test("score cap 100 y bandas de display", () => {
+    const legacy = mkSide([["A", 1.0]], 1.0);
+    const core = mkSide([["B", 1.0]], 1.0);
+    const d = computeShadowDivergence(legacy, core); // L1 = 200pp → score cap 100
+    expect(d.score).toBe(100);
+    expect(d.legacyTop).toBe("A");
+    expect(d.coreTop).toBe("B");
+    expect(divergenceBand(10)).toBe("LOW");
+    expect(divergenceBand(11)).toBe("MODERATE");
+    expect(divergenceBand(25)).toBe("MODERATE");
+    expect(divergenceBand(26)).toBe("HIGH");
+    expect(divergenceBand(50)).toBe("HIGH");
+    expect(divergenceBand(51)).toBe("SEVERE");
+  });
+  test("sombra null → deltas = −pesos absolutos v5.3 (vista de cartera CORE vacía)", () => {
+    const legacy = mkSide([["A", 0.7], ["B", 0.3]], 0.8); // absolutos: A=56%, B=24%
+    const d = computeShadowDivergence(legacy, null);
+    const a = d.rows.find(r => r.name === "A");
+    expect(a?.deltaPp).toBeCloseTo(-56, 10);
+    expect(d.l1Pp).toBeCloseTo(80, 10);
+  });
+  test("recordShadowSnapshot: una fila por día (última gana), recorte al máximo", () => {
+    const base = { aligned: true, legacyTop: "A", coreTop: "A" };
+    const h1 = recordShadowSnapshot([], { date: "2026-09-28", divergenceScore: 5, l1Pp: 1.2, ...base });
+    const h2 = recordShadowSnapshot(h1, { date: "2026-09-28", divergenceScore: 8, l1Pp: 2.0, ...base });
+    expect(h2).toHaveLength(1);
+    expect(h2[0].divergenceScore).toBe(8); // última observación del día
+    let h = h2;
+    for (let i = 0; i < SHADOW_HISTORY_MAX_ENTRIES + 5; i++) {
+      const date = new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10); // fechas únicas
+      h = recordShadowSnapshot(h, { date, divergenceScore: i, l1Pp: i, aligned: true, legacyTop: "A", coreTop: "A" });
+    }
+    expect(h).toHaveLength(SHADOW_HISTORY_MAX_ENTRIES);
+  });
+});
 
 // ── 6. CONTRACT v1.0.1: drawdown LIVE/BACKTEST unificado ─────────────────
 describe("CONTRACT v1.0.1 — denominador de drawdown único (live ≡ backtest)", () => {
