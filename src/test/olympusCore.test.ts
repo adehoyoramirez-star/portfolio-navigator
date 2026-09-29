@@ -12,6 +12,55 @@ import {
 } from "../core/engine/olympusV3";
 import { OLYMPUS_CORE } from "../core/config/engineConfig";
 import { computeBtcTotalRisk } from "../core/backtest/compositeMetrics";
+import { computeUnifiedDrawdown, updateHighWaterMark } from "../core/risk/drawdown";
+
+// ── 6. CONTRACT v1.0.1: drawdown LIVE/BACKTEST unificado ─────────────────
+describe("CONTRACT v1.0.1 — denominador de drawdown único (live ≡ backtest)", () => {
+  test("formula canónica: denominador = peak (HWM), nunca el valor actual", () => {
+    // Caso exacto del contract test Phase 11 §11: 10.000 → 9.500
+    expect(computeUnifiedDrawdown({ currentTotal: 9500, hwm: 10000 })).toBe(-0.05);
+    expect(computeUnifiedDrawdown({ currentTotal: 9500, hwm: 10000 })).not.toBe(-0.05263157894736842);
+  });
+  test("nuevo máximo → DD 0; total <= 0 → DD 0 (guard defensivo)", () => {
+    expect(computeUnifiedDrawdown({ currentTotal: 10500, hwm: 10000 })).toBe(0);
+    expect(computeUnifiedDrawdown({ currentTotal: 0, hwm: 10000 })).toBe(0);
+    expect(computeUnifiedDrawdown({ currentTotal: NaN, hwm: 10000 })).toBe(0);
+  });
+  test("sin HWM externo (hwm <= 0) → peak = currentTotal → DD 0 (arranque en suelo)", () => {
+    expect(computeUnifiedDrawdown({ currentTotal: 5000, hwm: 0 })).toBe(0);
+  });
+  test("updateHighWaterMark: sube solo con nuevos máximos; nunca baja", () => {
+    expect(updateHighWaterMark(11000, 10000)).toEqual({ hwm: 11000, changed: true });
+    expect(updateHighWaterMark(9000, 10000)).toEqual({ hwm: 10000, changed: false });
+  });
+  test("TD1: drawdown de cartera por rebalanceo activa defensivas v5.3 y no altera CORE", () => {
+    const withDD = runOlympusEngine(coreInput({
+      portfolioDrawdown: -0.18,
+      portfolioRealizedVol: 0.28,
+    }));
+    const withDDCore = runOlympusEngine(coreInput({ coreMode: true, portfolioDrawdown: -0.18, portfolioRealizedVol: 0.28 }));
+    expect(withDD.meta.coreMode).toBe(false);
+    expect(withDD.tailRiskActive || withDD.killSwitchLevel > 0 || withDD.volTargetMultiplier < 1).toBe(true);
+    expect(withDDCore.volTargetMultiplier).toBe(1);
+    expect(withDDCore.tailRiskOverlay).toBe(1);
+  });
+});
+
+// ── 7. Modo sombra: comparativa CORE vs v5.3 (solo observabilidad) ────────
+describe("Modo sombra CORE vs v5.3", () => {
+  test("v5.3 (default) no emite coreShadow; CORE emite stub PENDING_CUTOVER", () => {
+    const legacy = runOlympusEngine(coreInput());
+    expect(legacy.meta.coreShadow).toBeUndefined();
+    const core = runOlympusEngine(coreInput({ coreMode: true }));
+    expect(core.meta.coreShadow).not.toBeNull();
+    expect(core.meta.coreShadow?.regime).toBe("PENDING_CUTOVER");
+  });
+  test("el modo sombra no muta el resultado principal (mismas allocations)", () => {
+    const plain = runOlympusEngine(coreInput({ coreMode: true }));
+    const withShadow = runOlympusEngine(coreInput({ coreMode: true }));
+    expect(withShadow.allocations.map(a => a.finalAllocation)).toEqual(plain.allocations.map(a => a.finalAllocation));
+  });
+});
 
 // ── Fixture determinista: 6 activos del universo Core ─────────────────────
 const N = 6;

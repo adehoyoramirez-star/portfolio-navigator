@@ -472,6 +472,8 @@ function computeAssetFactors(
   return { returns12m: r12m, returns3m: r3m, returns1m: r1m, volatility: vol, earningsYield, ticker, name: ticker };
 }
 
+import { computeUnifiedDrawdown } from "../risk/drawdown";
+
 // ── Asignación táctica real (usando runOlympusEngine) ──────────────────
 // BUG-D FIX: Ahora delega al motor real en vez de duplicar la lógica.
 // El backtest siempre refleja fielmente el comportamiento del motor.
@@ -813,9 +815,11 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const creditSpread = creditSpreadArray[t];
       // FIX-ACOPLAMIENTO-SATELITE: si se provee override (DD total con satélite,
       // como hace producción), úsalo; si no, el DD del sleeve motor (comportamiento actual).
+      // CONTRACT v1.0.1 (Phase 11 §11): fórmula canónica ÚNICA compartida con el
+      // dashboard live (src/core/risk/drawdown.ts) — sin duplicación de definiciones.
       const drawdown = input.portfolioDrawdownOverride
         ? input.portfolioDrawdownOverride(portfolioValue, peakValue, dayIndex)
-        : (portfolioValue < peakValue ? (portfolioValue - peakValue) / peakValue : 0);
+        : computeUnifiedDrawdown({ currentTotal: portfolioValue, hwm: peakValue });
 
       const erpAtT = input.macroHistory?.erpValue?.[t];
       const avgCorrAtT = input.macroHistory?.avgCorrelation?.[t];

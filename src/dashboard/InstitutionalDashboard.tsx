@@ -44,6 +44,7 @@ import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAl
 import { computeRealizedReturns, recordCurrentPositions, loadPositionHistory } from "@/core/data/positionHistory";
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
+import { computeUnifiedDrawdown, updateHighWaterMark } from "@/core/risk/drawdown";
 import type { InstitutionalBreadthState } from "@/core/risk/institutionalBreadth";
 import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked } from "@/core/macro/masterRegime";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
@@ -905,17 +906,18 @@ const formatCurrency = (value: number): string => {
   const [hwmResetKey, setHwmResetKey] = useState(0);
   const portfolioDrawdown = useMemo(() => {
     const currentTotal = totalPortfolioValue + cashReserve + defensiveLiquidity;
-    if (currentTotal <= 0) return 0;
-    const peak = hwmRef.current > 0 ? hwmRef.current : currentTotal;
-    if (currentTotal > peak) return 0; // nuevo maximo -> DD 0%
-    return (currentTotal - peak) / peak;
+    // CONTRACT v1.0.1: fórmula canónica única compartida con backtestEngine
+    // (src/core/risk/drawdown.ts — LIVE/BACKTEST DD unificado, Phase 11 §11).
+    return computeUnifiedDrawdown({ currentTotal, hwm: hwmRef.current });
   }, [totalPortfolioValue, cashReserve, defensiveLiquidity, hwmResetKey]);
   // Persistir HWM como efecto puro (separa calculo de side-effect)
   useEffect(() => {
     const currentTotal = totalPortfolioValue + cashReserve + defensiveLiquidity;
-    if (currentTotal > hwmRef.current) {
-      hwmRef.current = currentTotal;
-      localStorage.setItem(HWM_KEY, String(currentTotal));
+    // CONTRACT v1.0.1: regla de HWM canónica compartida (src/core/risk/drawdown.ts).
+    const { hwm, changed } = updateHighWaterMark(currentTotal, hwmRef.current);
+    if (changed) {
+      hwmRef.current = hwm;
+      localStorage.setItem(HWM_KEY, String(hwm));
     }
   }, [totalPortfolioValue, cashReserve, defensiveLiquidity, hwmResetKey]);
   const handleResetHWM = useCallback(() => {

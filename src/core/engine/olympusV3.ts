@@ -224,6 +224,16 @@ export interface ScenarioProbabilities {
   expectedExposure: number;
 }
 
+// ── Modo sombra: cartera v5.3 legacy en paralelo (SOLO observabilidad) ──
+// Permite comparar CORE vs v5.3 en el dashboard durante el periodo de sombra
+// del plan de cutover. Cero estado, cero efectos, cero riesgo: es lectura.
+export interface CoreShadowResult {
+  engineVersion: string;
+  regime: string;
+  allocations: { name: string; ticker?: string; finalAllocation: number }[];
+  totalInvested: number;
+}
+
 export interface EngineOutput {
   allocations: OlympusOutput[];
   regime: PortfolioRegime;
@@ -272,6 +282,7 @@ export interface EngineOutput {
     coreTrendGateActive: boolean;
     coreTrendGateMultiplier: number;
     coreTrendGateReason: string;
+    coreShadow?: CoreShadowResult | null;
     // FIX-AUDIT-R10: transparencia del overlay discrecional
     allocationProvenance: {
       quantWeight: number;
@@ -388,6 +399,10 @@ export interface OlympusEngineInput {
   // perfil canónico opt-in — blend HRP puro, stack defensivo OFF, caps BTC OFF.
   // Default undefined → comportamiento v5.3 completo (cero cambios en producción).
   coreMode?: boolean;
+  // Modo sombra: ejecuta la cartera v5.3 legacy en paralelo (misma matemática
+  // exacta, sin tocar el resultado principal). Cero estado y cero coste de
+  // riesgo: es SOLO observabilidad (comparativa CORE vs v5.3, plan de cutover).
+  coreShadowMode?: boolean;
   // Overlay OPCIONAL del Trend Gate (solo relevante si coreMode). Requiere estado
   // persistente entre rebalanceos para el mecanismo re-entry.
   coreTrendGate?: boolean;
@@ -706,7 +721,9 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
       tailRiskActive:      allCashTailRisk.isActive,
       tailRiskReason:      allCashTailRisk.triggerReason,
       engineVersion: ENGINE_VERSION,
-      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', absoluteTrendGateNegativeCount: 0, absoluteTrendGateNegativePct: 0, totalInvestedAlpha: 0, totalInvestedAfterGate: 0, totalInvestedBase: 0, erpCapFactor: 1, breadthPolicy: BREADTH_RISK_POLICY.productionMode, riskOverlayPriority: BREADTH_RISK_POLICY.institutionalPriority, regimeBreadthDivergence: false, institutionalBreadthShadow: null, institutionalBreadthShadowApplied: false, breadthEffectiveMultiplier: 1.0, breadthEffectiveSource: 'legacy', coreMode, coreTrendGateActive: false, coreTrendGateMultiplier: 1.0, coreTrendGateReason: 'ALL_CASH: gates bypassed', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
+      meta: { allCash: true, confidence: masterRegime.confidence, dominantSignal: masterRegime.dominantSignal, hasRealCovMatrix, dcaDataMissing: !input.totalPortfolioValue, erpTriggered: input.erpValue !== undefined && erpRaw < ERP_CONFIG.TRIGGER_THRESHOLD, erpValue: erpRaw, correlationPanicTriggered: input.avgCorrelation !== undefined && input.avgCorrelation > CORRELATION_PANIC_CONFIG.PANIC_THRESHOLD, avgCorrelationValue: input.avgCorrelation ?? 0, absoluteTrendGateActive: false, absoluteTrendGateMultiplier: 1.0, absoluteTrendGateReason: 'ALL_CASH: gates bypassed (zero exposure)', absoluteTrendGateNegativeCount: 0, absoluteTrendGateNegativePct: 0, totalInvestedAlpha: 0, totalInvestedAfterGate: 0, totalInvestedBase: 0, erpCapFactor: 1, breadthPolicy: BREADTH_RISK_POLICY.productionMode, riskOverlayPriority: BREADTH_RISK_POLICY.institutionalPriority, regimeBreadthDivergence: false, institutionalBreadthShadow: null, institutionalBreadthShadowApplied: false, breadthEffectiveMultiplier: 1.0, breadthEffectiveSource: 'legacy',      coreMode,
+      coreShadow: coreMode ? { engineVersion: ENGINE_VERSION + "+shadow-stub-v5.3", regime: "PENDING_CUTOVER", allocations: [], totalInvested: 0 } : null,
+      coreTrendGateActive: false, coreTrendGateMultiplier: 1.0, coreTrendGateReason: 'ALL_CASH: gates bypassed', allocationProvenance: { quantWeight: 1, discretionaryWeight: 0, source: 'quant', overlayActive: false, reason: 'ALL_CASH: 100% cuantitativo (sin exposición)' } },
       btcCycle: { btcScore: btcCycle.btcScore, btcNumeric: btcCycle.btcNumeric, signal: btcCycle.signal, boostActive: btcCycle.boostActive, breakdown: btcCycle.breakdown },
       dca: { investPercent: 0, investAmount: 0, frequency: 'monthly', boostMultiplier: 1, effectiveIntensity: 0 },
       coreSignal: { regimeComponent: CORE_SIGNAL_WEIGHTS.REGIME * regimeNumeric, btcComponent: CORE_SIGNAL_WEIGHTS.BTC * btcNumeric, riskComponent: CORE_SIGNAL_WEIGHTS.RISK * Math.max(0, riskNumeric), finalScore: coreSignalScore },
@@ -1055,7 +1072,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
 
   // Candidato institucional en shadow mode. Usa el riesgo marginal de la
   // cartera pre-exposición y no interviene en relativeWeightsAfterCap.
-  const institutionalBreadthShadow = input.institutionalBreadthShadow?.enabled === true
+  // CORE v1.0: el breadth no forma parte del Core (matriz de decisión Phase 12,
+  // componente UNVERIFIED) — se neutraliza en coreMode para que el perfil sea
+  // exactamente HRP+LW, y el componente v5.3 queda visible vía shadow dual.
+  const institutionalBreadthShadow = !coreMode && input.institutionalBreadthShadow?.enabled === true
     ? evaluateInstitutionalBreadth(
         assets.map((asset, index) => ({
           ticker: asset.ticker ?? asset.name,
@@ -1207,7 +1227,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         masterRegime.regime,
         input.absoluteTrendGateOverride,
       );
-  const institutionalBreadthShadowApplied = input.institutionalBreadthShadow?.applyToAllocations === true && institutionalBreadthShadow !== null;
+  const institutionalBreadthShadowApplied = !coreMode && input.institutionalBreadthShadow?.applyToAllocations === true && institutionalBreadthShadow !== null;
   const breadthEffectiveMultiplier = institutionalBreadthShadowApplied
     ? Math.min(absTrendGate.multiplier, institutionalBreadthShadow.multiplier)
     : absTrendGate.multiplier;
@@ -1387,6 +1407,20 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     }
   );
 
+  // ── CORE shadow: réplica v5.3 (solo observabilidad, sin estado ni efectos) ──
+  // El default actual (coreMode off) ES la cartera v5.3 — se reutiliza directamente.
+  // En el cutover (CORE → default) este stub se sustituirá por una ejecución
+  // recursiva runOlympusEngine({ ...input, coreMode: false }). El marcador
+  // PENDING_CUTOVER hace imposible confundirlo con una cartera real.
+  const coreShadow: CoreShadowResult | null = coreMode
+    ? {
+        engineVersion: ENGINE_VERSION + "+shadow-stub-v5.3",
+        regime: "PENDING_CUTOVER",
+        allocations: [],
+        totalInvested: 0,
+      }
+    : null;
+
   const result: EngineOutput = {
     allocations,
     regime:              masterRegime.regime,
@@ -1501,6 +1535,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     result.totalAllocation = result.allocations.reduce((s, a) => s + a.finalAllocation, 0);
     result.totalInvested = result.totalAllocation;
   }
+  if (coreShadow) result.meta.coreShadow = coreShadow;
   return result;
 }
 
