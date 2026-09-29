@@ -403,6 +403,12 @@ export interface OlympusEngineInput {
   // exacta, sin tocar el resultado principal). Cero estado y cero coste de
   // riesgo: es SOLO observabilidad (comparativa CORE vs v5.3, plan de cutover).
   coreShadowMode?: boolean;
+  // Covarianza canónica del CORE (Ledoit-Wolf, spec OLYMPUS_CORE v1.0 §4).
+  // SOLO la consume la ejecución en sombra: el CORE validado en Phase 12 usa LW,
+  // mientras el motor principal puede operar con covarianza dinámica (DCC).
+  // Sin fidelidad de covarianza, la sombra mediría "CORE con DCC" — que es
+  // exactamente la configuración que el criterio pre-registrado RECHAZÓ.
+  coreCovMatrix?: number[][];
   // Overlay OPCIONAL del Trend Gate (solo relevante si coreMode). Requiere estado
   // persistente entre rebalanceos para el mecanismo re-entry.
   coreTrendGate?: boolean;
@@ -1428,6 +1434,10 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
           try {
             const shadow = runOlympusEngine({
               ...input,
+              // FIDELIDAD SPEC v1.0: la sombra CORE consume la covarianza
+              // Ledoit-Wolf canónica (coreCovMatrix), no la covarianza activa
+              // del principal (que puede ser DCC).
+              covMatrix: input.coreCovMatrix ?? input.covMatrix,
               coreMode: true,
               coreTrendGate: false,
               coreTrendGateState: undefined,

@@ -1205,6 +1205,10 @@ soxRsiWeekly,
       availableCash,
       totalPortfolioValue,
       avgCorrelation: dynamicCovResult?.avgCorrelation,
+      // FIDELIDAD SOMRA CORE: covarianza Ledoit-Wolf canónica para la sombra
+      // (spec OLYMPUS_CORE v1.0 §4). El principal puede usar DCC; el CORE
+      // validado en Phase 12 fue validado con LW.
+      coreCovMatrix: marketData?.covMatrix,
       blendWeights: autoBlend,
       cycleTopSignals: (cycleTopResult?.signals ?? []).map(s => ({
         ticker: s.ticker,

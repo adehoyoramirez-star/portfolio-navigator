@@ -141,6 +141,22 @@ describe("Modo sombra CORE vs v5.3", () => {
     const shadowOnly = runOlympusEngine(coreInput({ coreMode: true, coreShadowMode: true }));
     expect(shadowOnly.meta.coreShadow).toBeUndefined();
   });
+  test("fidelidad de sombra: coreCovMatrix (LW) → la sombra CORE no usa la covarianza del principal", () => {
+    // Principal: covarianza "DCC" (distinta de LW). Sombra: recibe coreCovMatrix LW.
+    // El CORE consume covMatrix → si la fidelidad funciona, la sombra debe seguir
+    // exactamente la cartera CORE-LW (bit-idéntica a una ejecución CORE-LW pura).
+    const dccCov = covFromVols(0.9); // "DCC": correlación casi perfecta
+    const lwCov = covFromVols(0.3);  // LW canónica
+    const pureCoreLW = runOlympusEngine(coreInput({ coreMode: true, covMatrix: lwCov }));
+    const mainWithShadow = runOlympusEngine(coreInput({ covMatrix: dccCov, coreCovMatrix: lwCov }));
+    expect(mainWithShadow.meta.coreShadow).not.toBeNull();
+    expect(mainWithShadow.meta.coreShadow?.allocations.map(a => a.finalAllocation))
+      .toEqual(pureCoreLW.allocations.map(a => a.finalAllocation));
+    // Y el principal sí se ve afectado por su propia covarianza (sanity del test):
+    const mainDcc = runOlympusEngine(coreInput({ covMatrix: dccCov }));
+    expect(mainDcc.allocations.map(a => a.finalAllocation))
+      .not.toEqual(pureCoreLW.allocations.map(a => a.finalAllocation));
+  });
 });
 
 // ── Fixture determinista: 6 activos del universo Core ─────────────────────
