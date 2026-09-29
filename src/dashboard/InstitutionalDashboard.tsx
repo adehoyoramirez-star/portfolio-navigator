@@ -38,7 +38,7 @@ import {
 
 // ── Core engine & types ──────────────────────────────────────────────────
 import { liquidityScore } from "@/core/macro/liquidity";
-import { compositeTarget } from "@/core/backtest/composite";
+import { compositeTarget, btcTotalExposure, isBtcTotalInAuditedBand, BTC_TOTAL_AUDITED_BAND } from "@/core/backtest/composite";
 import { portfolio as initialPortfolio, Asset, Portfolio } from "@/core/types/portfolio";
 import { calculateCorrelationMatrix, sortinoRatioReal, betaVsBenchmark, jensenAlpha } from "@/core/data/portfolioMetrics";
 import { computeRealizedReturns, recordCurrentPositions, loadPositionHistory } from "@/core/data/positionHistory";
@@ -1668,6 +1668,20 @@ soxRsiWeekly,
   const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
   const btcRet1m = btcAsset?.return1m ?? 0;
 
+  // ── COMPOSITE STRATEGY: exposición BTC TOTAL real ──────────────────────
+  // FIX-COMPOSITE-LABEL (Sep-2026): el slider del panel Composite mostraba
+  // "18% BTC", pero ese es el SATÉLITE, no la exposición a BTC. La fórmula
+  // centralizada (composite.ts, SPEC §7) es:
+  //   BTC_TOTAL = satélite + (1 − satélite) × BTC_motor
+  // Ej.: satélite 18% + motor BTC 19,5% → 34,0% real (casi el doble del label).
+  // Banda auditada Rounds 8-9: 27,0%–33,7% (válida solo con BTC_motor 11-15%).
+  const btcMotorWeight = engineResult?.allocations.find(a => {
+    const pa = portfolio.assets.find(x => x.name === a.name);
+    return pa?.ticker === "BTC-EUR";
+  })?.finalAllocation ?? 0;
+  const btcTotal = btcTotalExposure(olympusPct, btcMotorWeight);
+  const btcTotalInBand = isBtcTotalInAuditedBand(btcTotal);
+
   const smartDCAResult = useMemo(() => {
     // FIX-DCA-01: no emitir señal de compra si el engine todavía no tiene datos.
     // El default "EXPANSION" original podía producir un BUY prematuro en el primer render.
@@ -2762,11 +2776,32 @@ soxRsiWeekly,
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
               <span style={{ color: "#818cf8", fontSize: "0.75rem", fontWeight: "bold" }}>{olympusPct}% Olympus</span>
               <input type="range" min={0} max={100} value={olympusPct} onChange={e => setOlympusPct(Number(e.target.value))} style={{ flex: 1, accentColor: "#6366f1", height: 6 }} />
-              <span style={{ color: "#f59e0b", fontSize: "0.75rem", fontWeight: "bold" }}>{100 - olympusPct}% BTC</span>
+              <span style={{ color: "#f59e0b", fontSize: "0.75rem", fontWeight: "bold" }}>satélite {100 - olympusPct}%</span>
             </div>
             <div style={{ fontSize: "0.58rem", color: olympusPct < 100 ? "#f59e0b" : "#6b7280" }}>
               {olympusPct === 100 ? "100% motor — sin BTC satellite" : olympusPct + "% motor + " + (100-olympusPct) + "% BTC buy & hold"}
             </div>
+            {olympusPct < 100 && (
+              <div
+                title="BTC_TOTAL = satélite + (1 − satélite) × BTC del motor. El satélite NO es diversificación: es presupuesto de riesgo BTC. Banda auditada Rounds 8-9: 27,0%–33,7% (válida con BTC_motor 11-15%)."
+                style={{ marginTop: "0.35rem", paddingTop: "0.35rem", borderTop: "1px solid #374151", fontSize: "0.58rem", lineHeight: 1.5 }}
+              >
+                <span style={{ color: "#6b7280" }}>BTC TOTAL real </span>
+                <strong style={{ color: btcTotalInBand ? "#10b981" : "#ef4444", fontSize: "0.74rem" }}>
+                  {(btcTotal * 100).toFixed(1)}%
+                </strong>
+                <span style={{ color: "#6b7280" }}>
+                  {" (satélite "}{100 - olympusPct}{"% + motor "}{(btcMotorWeight * 100).toFixed(1)}{"%)"}
+                </span>
+                <div style={{ color: btcTotalInBand ? "#10b981" : "#f59e0b" }}>
+                  {btcTotalInBand
+                    ? "✅ dentro de la banda auditada 27,0–33,7%"
+                    : btcTotal < BTC_TOTAL_AUDITED_BAND.min
+                      ? "⚠️ por DEBAJO de la banda auditada 27,0–33,7%"
+                      : "⚠️ por ENCIMA de la banda auditada 27,0–33,7%"}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

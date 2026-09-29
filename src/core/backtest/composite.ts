@@ -47,3 +47,18 @@ export function compositeTarget(engineAlloc: number, olympusPct: number, isBtc: 
 export function btcTotalExposure(olympusPct: number, engineBtcWeight: number): number {
   return btcSatPct(olympusPct) + olyPct(olympusPct) * engineBtcWeight;
 }
+
+/**
+ * Banda auditada de BTC_TOTAL (PRE-IMPLEMENTATION AUDIT Rounds 8-9,
+ * `satelliteInvariant.test.ts`): 27,0% – 33,7%.
+ *
+ * OJO: la invariante se validó sobre la rejilla olympusPct ∈ [78, 82] ×
+ * BTC_motor ∈ [11%, 15%]. Fuera de esa rejilla NO se sostiene — el satélite
+ * por sí solo no garantiza el presupuesto ~30%: hace falta el BTC del motor.
+ */
+export const BTC_TOTAL_AUDITED_BAND = { min: 0.27, max: 0.337 } as const;
+
+/** true si BTC_TOTAL cae dentro de la banda auditada (~30% ±4pp). */
+export function isBtcTotalInAuditedBand(btcTotal: number): boolean {
+  return btcTotal >= BTC_TOTAL_AUDITED_BAND.min && btcTotal <= BTC_TOTAL_AUDITED_BAND.max;
+}

@@ -10,7 +10,10 @@
 //   4. Paridad exacta con la fórmula inline histórica (los 7 sitios).
 // ============================================================
 import { describe, test, expect } from "vitest";
-import { btcSatPct, olyPct, compositeTarget, btcTotalExposure } from "../core/backtest/composite";
+import {
+  btcSatPct, olyPct, compositeTarget, btcTotalExposure,
+  isBtcTotalInAuditedBand, BTC_TOTAL_AUDITED_BAND,
+} from "../core/backtest/composite";
 
 describe("satélite BTC — invariantes (Rounds 8-9)", () => {
   test("btcSatPct: límites y valores clave", () => {
@@ -75,5 +78,39 @@ describe("satélite BTC — invariantes (Rounds 8-9)", () => {
     expect(btc).toBeCloseTo(0.304, 6);
     expect(otros).toBeCloseTo(0.696, 6);
     expect(btc + otros).toBeCloseTo(1, 6);
+  });
+});
+
+// ── FIX-COMPOSITE-LABEL (Sep-2026): el satélite NO es la exposición BTC ──
+// El slider mostraba «18% BTC» (satélite), pero la exposición real es
+// BTC_TOTAL = satélite + (1 − satélite) × BTC_motor. Con satélite 18%
+// (olympusPct 82) el total depende del motor, NO del slider:
+//   motor v5.3 (BTC 19,5%) → 34,0%  ⚠️ por encima del techo auditado (33,7%)
+//   motor CORE (BTC 4,4%)  → 21,6%  ⚠️ por debajo del suelo auditado (27,0%)
+// La banda solo se sostiene con BTC_motor ∈ [11%,15%] (rejilla Rounds 8-9).
+describe("BTC_TOTAL real (satélite + motor) vs banda auditada", () => {
+  test("banda auditada = [27,0%, 33,7%]", () => {
+    expect(BTC_TOTAL_AUDITED_BAND.min).toBeCloseTo(0.27, 10);
+    expect(BTC_TOTAL_AUDITED_BAND.max).toBeCloseTo(0.337, 10);
+    expect(isBtcTotalInAuditedBand(0.304)).toBe(true);
+    expect(isBtcTotalInAuditedBand(0.269)).toBe(false);
+    expect(isBtcTotalInAuditedBand(0.338)).toBe(false);
+  });
+
+  test("satélite 18% (olympusPct 82): el total depende del BTC del motor", () => {
+    // motor v5.3 live (BTC 19,5%) → 0,18 + 0,82×0,195 = 0,3399
+    expect(btcTotalExposure(82, 0.195)).toBeCloseTo(0.3399, 6);
+    expect(isBtcTotalInAuditedBand(btcTotalExposure(82, 0.195))).toBe(false);
+    // motor CORE / HRP (BTC 4,4%) → 0,18 + 0,82×0,044 = 0,21608
+    expect(btcTotalExposure(82, 0.044)).toBeCloseTo(0.21608, 6);
+    expect(isBtcTotalInAuditedBand(btcTotalExposure(82, 0.044))).toBe(false);
+    // caso nominal auditado: satélite 20% + motor 13% → 30,4% (dentro)
+    expect(btcTotalExposure(80, 0.13)).toBeCloseTo(0.304, 6);
+    expect(isBtcTotalInAuditedBand(btcTotalExposure(80, 0.13))).toBe(true);
+  });
+
+  test("sin satélite (olympusPct 100) el total es solo el del motor", () => {
+    expect(btcTotalExposure(100, 0.195)).toBeCloseTo(0.195, 6);
+    expect(isBtcTotalInAuditedBand(btcTotalExposure(100, 0.195))).toBe(false);
   });
 });

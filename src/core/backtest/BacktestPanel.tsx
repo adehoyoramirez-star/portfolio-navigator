@@ -10,7 +10,8 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, AreaChart, Area,
 } from "recharts";
 import { runBacktest, BacktestOutput, BacktestMetrics, RegimeMetrics, PROXY_MAP } from "./backtestEngine";
-import { computeCompositeMetrics } from "./compositeMetrics";
+import { computeCompositeMetrics, computeBtcTotalRisk } from "./compositeMetrics";
+import { isBtcTotalInAuditedBand } from "./composite";
 import { MarketData } from "@/lib/marketData";
 import { ASSETS } from "@/lib/constants";
 import { loadCSVBacktestData, buildMacroHistoryFromCSV, CSVBacktestData } from "@/lib/csvBacktestProvider";
@@ -605,6 +606,15 @@ function CompositeStrategy({
     return { ...m, winRate: 0, sortino: 0, betaVsBenchmark: 0, alphaVsBenchmark: 0, hhi: 0 };
   }, [olympusPct, result, initialCapital, btcPrices]);
 
+  // FIX-COMPOSITE-LABEL (Sep-2026): el slider mostraba "18% BTC", pero ese es el
+  // SATÉLITE. La exposición real es BTC_TOTAL = satélite + (1−satélite) × BTC_motor
+  // (los pesos diarios del sleeve motor vienen en dailyRecords[].allocations).
+  const btcRisk = useMemo(
+    () => computeBtcTotalRisk(result.dailyRecords.map(r => r.allocations), olympusPct),
+    [result, olympusPct],
+  );
+  const btcTotalInBand = isBtcTotalInAuditedBand(btcRisk.btcTotalMeanPct / 100);
+
   return (
     <div style={{ backgroundColor: "#1f2937", borderRadius: 8, padding: "1rem", marginBottom: "1rem", border: "2px solid #6366f1" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -621,7 +631,16 @@ function CompositeStrategy({
             onChange={e => setOlympusPct(Number(e.target.value))}
             style={{ width: 120, accentColor: "#6366f1" }}
           />
-          <span style={{ color: "#f59e0b", fontSize: "0.85rem", fontWeight: "bold" }}>{100 - olympusPct}% BTC</span>
+          <span
+            style={{ color: "#f59e0b", fontSize: "0.85rem", fontWeight: "bold" }}
+            title={`BTC_TOTAL = satélite + (1 − satélite) × BTC del motor. El satélite NO es diversificación: es presupuesto de riesgo BTC. Media del backtest: motor ${btcRisk.btcMotorMeanPct.toFixed(1)}% → total ${btcRisk.btcTotalMeanPct.toFixed(1)}% (P95 ${btcRisk.btcTotalP95Pct.toFixed(1)}%). Banda auditada Rounds 8-9: 27,0–33,7%.`}
+          >
+            satélite {100 - olympusPct}%
+            {" · "}
+            <span style={{ color: btcTotalInBand ? "#10b981" : "#ef4444" }}>
+              BTC total {btcRisk.btcTotalMeanPct.toFixed(1)}%
+            </span>
+          </span>
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
