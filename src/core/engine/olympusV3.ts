@@ -74,7 +74,14 @@
 //   6. "Régimen Mejorando" mide TRANSICIÓN real (previousRegime), no nivel persistente.
 //   7. totalLiquidityFraction: % de TODA la liquidez (el buyFraction histórico era solo broker).
 //   Auditoría origen: PHASE13_FORENSIC (01-oct-2026), informe en deliverables.
-export const ENGINE_VERSION = "v5.4.3"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false).
+// FIX-CLIFF-STRESS-02 (Oct-2026) v5.4.4 — Brent, CB-Liquidity y MOVE continuos
+//   en globalStress (misma plantilla que FIX-CLIFF-CREDIT-01). Caso live
+//   01-oct-2026: CRISIS espurio con VIX 16 (Brent $100 +2 cliff, QT −0.28% +2
+//   cliff, MOVE 110.5 +1 cliff); perturbaciones de $0.20/2bp/0.2 volteaban
+//   regímenes; Brent contaba dos veces (score Y ×0.70). Anclas preservadas
+//   (75/95/115 · 0/−5 · 110/140); wtiPenalty interpolado 1.00→0.50 en $75→$130.
+//   Backtest canónico: headline bit-idéntico; 1 día de label marginal.
+export const ENGINE_VERSION = "v5.4.4"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false).
 
 // ── Estado del overlay Trend Gate del Core (serializable, determinista) ──
 // Persistido entre rebalanceos por el caller (backtest/dashboard).

@@ -61,6 +61,74 @@ export function creditStressContribution(creditSpread: number): number {
   return 1 + (creditSpread - PLATEAU) / (MAX - PLATEAU);
 }
 
+// ═══ FIX-CLIFF-STRESS-02 (Oct-2026) — Brent, CB-Liquidity y MOVE continuos ═══
+// Misma plantilla y justificación que FIX-CLIFF-CREDIT-01 (bloque superior).
+// Motivación (caso live 01-oct-2026): con VIX 16.2 el régimen era CRISIS por
+//   tres cliffs simultáneos — Brent $100.1 (+2 en ≥95), CB-QT −0.28% (+2 en <0)
+//   y MOVE 110.5 (+1 en >110) = 6.3. Perturbaciones de $0.20 de Brent, 2bp de
+//   WALCL o 0.2 de MOVE volteaban EXPANSION↔CRISIS (Δpenalty hasta 0.29 en una
+//   observación). Brent contaba DOS veces (score +2 Y multiplicador ×0.70 →
+//   0.468 pts de penalty en un día). Anclas semánticas preservadas como cambios
+//   de pendiente. VIX, dxyTrend y btcVol NO se tocan (riesgo residual documentado).
+
+// BRENT: score continuo 0→3 pts en $75→$115 (antes +1/+2/+3 escalones).
+export const OIL_STRESS_CONFIG = {
+  FLOOR: 75,     // Brent ≤ FLOOR → contribución 0
+  SHOCK: 95,     // Brent = SHOCK → contribución 1
+  CRISIS: 115,   // Brent ≥ CRISIS → contribución 3 (equivale al antiguo "+3")
+} as const;
+
+export function brentStressContribution(price: number): number {
+  const { FLOOR, SHOCK, CRISIS } = OIL_STRESS_CONFIG;
+  if (price <= FLOOR) return 0;
+  if (price >= CRISIS) return 3;
+  if (price <= SHOCK) return (price - FLOOR) / (SHOCK - FLOOR);
+  return 1 + (price - SHOCK) * (2 / (CRISIS - SHOCK));
+}
+
+// Multiplicador petrolero CONTINUO (antes: 1.00/0.85/0.70/0.50 en saltos).
+// Mismos valores EXACTOS en los umbrales antiguos; interpola linealmente entre
+// ellos y satura en $130 (penalty mínimo 0.50). Elimina el segundo cliff del
+// par score+penalty. La señal NO desaparece — su transporte ya no da tirones.
+export function wtiPenaltyContinuous(price: number): number {
+  if (price <= 75) return 1.0;
+  if (price >= 130) return 0.50;
+  if (price >= 115) return 0.70 - (price - 115) * (0.20 / 15);  // 0.70→0.50 en 115→130
+  if (price >= 95) return 0.85 - (price - 95) * (0.15 / 20);    // 0.85→0.70 en 95→115
+  return 1.0 - (price - 75) * (0.15 / 20);                       // 1.00→0.85 en 75→95
+}
+
+// CB LIQUIDITY: continuo 0→3 pts en +1%→−5% (antes +2 en <0, +3 en <−5).
+// En 0.00 aporta 0.5 — SIN cliff en el cero (2bp de revisión WALCL ya no
+// voltean regímenes). QT marginal (−0.28%) aporta ~0.72, proporcional.
+export const CB_LIQUIDITY_STRESS_CONFIG = {
+  NEUTRAL: 1.0,      // growth ≥ NEUTRAL → contribución 0
+  SATURATION: -5.0,  // growth ≤ SATURATION → contribución 3 (equivale al antiguo "+3")
+} as const;
+
+export function cbLiquidityStressContribution(growthYoY: number | undefined): number {
+  if (growthYoY === undefined) return 0;
+  const { NEUTRAL, SATURATION } = CB_LIQUIDITY_STRESS_CONFIG;
+  if (growthYoY >= NEUTRAL) return 0;
+  if (growthYoY <= SATURATION) return 3;
+  return ((NEUTRAL - growthYoY) / (NEUTRAL - SATURATION)) * 3;
+}
+
+// MOVE: continuo 0→1 en 110→140 y 1→2 en 140→180 (antes +1 en >110, +2 en >140).
+export const MOVE_STRESS_CONFIG = {
+  FLOOR: 110,      // MOVE ≤ FLOOR → contribución 0
+  HIGH: 140,       // MOVE = HIGH → contribución 1 (equivale al antiguo "+1")
+  SATURATION: 180, // MOVE ≥ SATURATION → contribución 2 (equivale al antiguo "+2")
+} as const;
+
+export function moveStressContribution(move: number): number {
+  const { FLOOR, HIGH, SATURATION } = MOVE_STRESS_CONFIG;
+  if (move <= FLOOR) return 0;
+  if (move >= SATURATION) return 2;
+  if (move <= HIGH) return (move - FLOOR) / (HIGH - FLOOR);
+  return 1 + (move - HIGH) / (SATURATION - HIGH);
+}
+
 export interface StressResult {
   score: number;
   regime: StressRegime;
@@ -87,8 +155,8 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   // 10 pb de credit mueven ≤0.003 pts — nunca voltean un régimen por sí solos.
   score += creditStressContribution(inputs.creditSpread);
 
-  if (inputs.move > 140) score += 2;
-  else if (inputs.move > 110) score += 1;
+  // FIX-CLIFF-STRESS-02: contribución continua (0→2 pts en 110→180, sin cliffs en 110/140).
+  score += moveStressContribution(inputs.move);
 
   // FIX B4: dxyTrend en decimal (0.02 = 2% de apreciación).
   // El dashboard puede pasar 1.6 (porcentaje) → dividir por 100 internamente.
@@ -101,27 +169,22 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   // Esto elimina ~40% de los falsos positivos de HIGH_RISK.
   if (inputs.btcVol > 0.80) score += 1;
 
-  // ── BRENT OIL — geopolitical shock multiplier ────────────────────────
+  // ── BRENT OIL — geopolitical shock detector ──────────────────────────
   // El petróleo es el termómetro más rápido de crisis geopolíticas —
   // sube antes que el VIX, antes que credit spreads, antes que cualquier otro indicador.
-  // Umbrales: > $75 → ELEVATED · > $95 → SHOCK · > $115 → CRISIS
+  // FIX-CLIFF-STRESS-02: score CONTINUO (0→3 en $75→$115) y multiplicador
+  // CONTINUO (1.00→0.50 en $75→$130, mismos valores en los umbrales antiguos).
+  // wtiShock queda como ETIQUETA categórica para display/trazabilidad — no
+  // alimenta ninguna fórmula (solo stressScore y wtiPenalty sí).
   let wtiShock: StressResult["wtiShock"] = "NONE";
   let wtiPenalty = 1.0;
 
   if (inputs.wtiOil !== undefined && inputs.wtiOil > 0) {
-    if (inputs.wtiOil >= WTI_THRESHOLDS.crisis) {
-      score += 3;
-      wtiShock = "CRISIS";
-      wtiPenalty = 0.50;
-    } else if (inputs.wtiOil >= WTI_THRESHOLDS.shock) {
-      score += 2;
-      wtiShock = "SHOCK";
-      wtiPenalty = 0.70;
-    } else if (inputs.wtiOil >= WTI_THRESHOLDS.elevated) {
-      score += 1;
-      wtiShock = "ELEVATED";
-      wtiPenalty = 0.85;
-    }
+    score += brentStressContribution(inputs.wtiOil);
+    wtiPenalty = wtiPenaltyContinuous(inputs.wtiOil);
+    if (inputs.wtiOil >= WTI_THRESHOLDS.crisis) wtiShock = "CRISIS";
+    else if (inputs.wtiOil >= WTI_THRESHOLDS.shock) wtiShock = "SHOCK";
+    else if (inputs.wtiOil >= WTI_THRESHOLDS.elevated) wtiShock = "ELEVATED";
   }
 
   // ── GLOBAL CB LIQUIDITY (Fed + BCE) ──────────────────────────────────
@@ -134,14 +197,9 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   //     pero M2 se mantuvo plano porque drenaba del Reverse Repo facility,
   //     no de depósitos bancarios. Divergieron en timing y magnitud.
   //   - Umbrales: > 0% → neutro · < 0% → contractivo (+2 stress) · < -5% → deflacionario (+3).
-  if (inputs.cbLiquidityGrowth !== undefined) {
-    if (inputs.cbLiquidityGrowth < -5) {
-      score += 3;  // QT agresivo + BCE reduciendo → deflación de base monetaria
-    } else if (inputs.cbLiquidityGrowth < 0) {
-      score += 2;  // QT moderado → contracción de liquidez global
-    }
-    // cbLiquidityGrowth > 0 → no añade stress (expansión de liquidez = favorable)
-  }
+  // FIX-CLIFF-STRESS-02: contribución continua (0→3 pts en +1%→−5%, sin cliff en 0).
+  //   QT marginal (−0.28%) aporta ~0.72 pts, no 2.0 — proporcional a su profundidad.
+  score += cbLiquidityStressContribution(inputs.cbLiquidityGrowth);
 
   let regime: StressRegime = "NORMAL";
   if (score >= 6) regime = "CRISIS";

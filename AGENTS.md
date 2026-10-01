@@ -145,6 +145,9 @@ la referencia canónica. Cualquier propuesta de nueva señal debe consultarse aq
 | `m2Growth` | `detectRegimeProbabilistic` (3er input), `CEWS_CONFIG` (warning: 2.0, danger: 0.0) | Dinero AMPLIO. NO confundir con CB Liquidity (dinero BASE). |
 | `cbLiquidityGrowth` | `globalStress` (+2 si < 0%, +3 si < -5%) | Dinero BASE (QE/QT directo). Defensa aprobada Jul-2026. Ver sección CB Liquidity vs M2. |
 | `vix` | `globalStress` (+1 si > 18, +2 si > 25), `crisis.ts` (+1 si > 20) | Misma variable, distinto mecanismo: régimen vs stop-loss puntual. ✅ |
+| `wtiOil` *(Brent real)* — score | `globalStress` (CONTINUO desde Oct-2026: 0→3 pts en $75→$115 — FIX-CLIFF-STRESS-02) | El multiplicador ×0.85/0.70/0.50 ahora TAMBIÉN es continuo (1.00→0.50 en $75→$130). Etiqueta wtiShock = display only. El +2 cliff en $95 causó el CRISIS espurio de Oct-2026 con VIX 16. |
+| `cbLiquidityGrowth` — score | `globalStress` (CONTINUO desde Oct-2026: 0→3 pts en +1%→−5%, valor 0.5 en 0.00 — FIX-CLIFF-STRESS-02) | El +2 cliff en 0⁻ volteaba EXPANSION↔CRISIS con 2bp de revisión WALCL. Defensa base-vs-amplio vs M2: ver sección CB Liquidity vs M2. |
+| `move` — score | `globalStress` (CONTINUO desde Oct-2026: 0→1 en 110→140, 1→2 en 140→180) | El +1 cliff en 110 era el tercer sostenedor del CRISIS espurio de Oct-2026. |
 | `wtiOil` *(Brent real)* | `globalStress` (+1/+2/+3 a 75/95/115), `cycleTopDetector` (gold override) | Dimensiones distintas: shock geopolítico vs protección oro. ✅ |
 | `btcVol` | `globalStress` (+1 si > 80%) | Solo en globalStress. |
 | `move` | `globalStress` (+1 si > 110, +2 si > 140) | Solo en globalStress. |

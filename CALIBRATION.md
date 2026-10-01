@@ -81,6 +81,25 @@ real, batería ±5..100 pb, continuidad/monotonicidad, crisis genuina 5-6% intac
 **Hysteresis**: NO duplicada — la corrección ataca solo el cliff; las capas existentes
 (downgrade hold 6h, Regime Lock, bypass manual) quedan intactas.
 
+## 9d. BRENT · CB-LIQUIDITY · MOVE CONTINUOS EN GLOBAL STRESS (FIX-CLIFF-STRESS-02, Oct-2026)
+**Where**: src/core/macro/globalStress.ts → `brentStressContribution()`, `wtiPenaltyContinuous()`,
+`cbLiquidityStressContribution()`, `moveStressContribution()` (anclas en sus `*_STRESS_CONFIG`)
+**Motivación (caso live 01-oct-2026)**: CRISIS espurio con VIX 16.2 por tres cliffs
+simultáneos: Brent $100.1 (+2 en ≥95), CB-QT −0.28% (+2 en <0) y MOVE 110.5 (+1 en >110).
+Perturbaciones de $0.20 de Brent, 2bp de WALCL o 0.2 de MOVE volteaban EXPANSION↔CRISIS
+(Δpenalty hasta 0.29). Brent contaba DOS veces (score +2 Y multiplicador ×0.70 → 0.468 pts).
+**Ahora** (anclas semánticas preservadas como cambios de pendiente, no saltos):
+- Brent: 0→3 pts en $75→$115 (pendientes 1/20 y 2/20 pts/$); multiplicador continuo
+  1.00→0.50 en $75→$130 pasando EXACTO por 0.85/0.70 en 95/115. wtiShock = etiqueta display.
+- CB-Liquidity: 0→3 pts en +1%→−5%; en 0.00 aporta 0.5 (SIN cliff); QT marginal −0.28% ≈ 0.72.
+- MOVE: 0→1 en 110→140, 1→2 en 140→180.
+- VIX, dxyTrend, btcVol: SIN cambios (esciones de 1 pt documentados como riesgo residual).
+**Efecto caso live**: score 6.31 (CRISIS ×0.532) → 3.48 (NORMAL ×0.812); 6/6 perturbaciones
+mínimas estables.
+**Backtest canónico**: headline bit-idéntico (22.98%/1.29/−14.55%/€21.260,156); 1 día de
+label marginal CONTRACTION→EXPANSION (score frontera por cliff de MOVE; sin efecto equity).
+**Pinned por**: src/test/stressCliff.test.ts (20 tests).
+
 ## 9c. ORDER GUARD DEL REBALANCER (FIX-CLIFF-CREDIT-01 · Fase 4/5, Oct-2026)
 **Where**: src/core/portfolio/rebalancer.ts + `ORDER_GUARD_CONFIG` (engineConfig)
 **Regla**: BUY ≤ min(déficit, 25% NAV, €2.500) · SELLs sin cap · déficit no ejecutado →
@@ -167,4 +186,4 @@ histórico era % del broker solo — el usuario leía "50%" siendo 39% del total
 war chest intacta; señal UI honesta ("despliega N% de la liquidez total").
 
 ---
-*Olympus Engine v5.4.3 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 + FIX-PHASE13-INSTITUTIONAL · Breadth candidate pending OOS approval*
+*Olympus Engine v5.4.4 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 + FIX-PHASE13-INSTITUTIONAL + FIX-CLIFF-STRESS-02 · Breadth candidate pending OOS approval*
