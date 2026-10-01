@@ -2,6 +2,19 @@
 // ARCHIVO: src/core/portfolio/rebalancer.ts
 // NIVEL 4 — Rebalanceo real con soporte de SELL
 // ===============================================
+// FIX-ORDER-GUARD (Oct-2026, FIX-CLIFF-CREDIT-01 · Fase 4/5):
+//   ORDER = target·NAV − actual es correcto y NO se toca (target-driven).
+//   Se añade una CAPA DE SEGURIDAD DE EJECUCIÓN sobre las BUYs:
+//     orden ≤ min(deficit, MAX_WEIGHT_INCREMENT_PER_REBALANCE·NAV, MAX_ORDER_VALUE)
+//   Los límites viven en ORDER_GUARD_CONFIG (engineConfig) — nada hardcodeado
+//   aquí y cero excepciones por activo. El déficit no ejecutado NO se elimina:
+//   queda en suggestion.pendingDeficit para el siguiente rebalanceo.
+//   Los SELLs (trim de ciclo / sobrepeso) NO tienen cap: reducir exposición
+//   nunca es la orden desproporcionada peligrosa.
+//   No es un segundo motor de sizing:
+//     INDICADORES → REGIME → PENALTY → TARGET → DRIFT → ORDER GUARD → ORDER
+
+import { ORDER_GUARD_CONFIG } from "../config/engineConfig";
 
 // CycleTopSignal definido inline para que rebalancer.ts sea autónomo.
 // Misma interfaz que src/core/risk/cycleTopDetector.ts — no importar desde allí
@@ -67,6 +80,12 @@ export interface RebalanceSuggestion {
   cycleIndicatorValue?: string;
   /** True si es recorte de concentración (sobrepeso), NO señal de techo. */
   isOverweightTrim?: boolean;
+  /**
+   * FIX-ORDER-GUARD: parte del déficit que el guard de ejecución deja para
+   * futuros rebalanceos (solo BUYs — los sells no tienen cap). El gap no se
+   * descarta: compras repetidas hacia el mismo target lo cierran.
+   */
+  pendingDeficit?: number;
 }
 
 export interface RebalanceOutput {
@@ -249,16 +268,24 @@ export function computeRebalanceSuggestions(
 
       for (const asset of underweight) {
         if (loopCash <= 0) break;
-        const cashForThis = Math.min(
+        const rawCashForThis = Math.min(
           (asset.deficitValue / totalDeficit) * cashForBuys,
           asset.deficitValue, loopCash
         );
+        // ── ORDER GUARD (FIX-ORDER-GUARD): límites de EJECUCIÓN, no de sizing ──
+        // La orden sigue siendo deficit-pro-rata; solo se trunca al máximo
+        // permitido por sesión (incremento de peso y valor absoluto). Lo que
+        // no cabe hoy queda como déficit pendiente, no se elimina.
+        const maxByWeight = ORDER_GUARD_CONFIG.MAX_WEIGHT_INCREMENT_PER_REBALANCE * totalValue;
+        const cashForThis = Math.min(rawCashForThis, maxByWeight, ORDER_GUARD_CONFIG.MAX_ORDER_VALUE);
         const sharesToBuy = asset.ticker === "BTC-EUR"
           ? Math.floor((cashForThis / asset.price) * 10000) / 10000
           : Math.floor(cashForThis / asset.price);
         if (sharesToBuy <= 0) continue;
         const cost = sharesToBuy * asset.price;
         if (cost > loopCash) continue;
+        // Déficit pendiente = deficit original − coste realmente ejecutable hoy.
+        const pendingDeficit = Math.max(0, asset.deficitValue - cost);
 
         const absDrift = Math.abs(asset.drift * 100);
         // FIX-REBALANCER-CORR: degradar HIGH si el activo tiene alta correlación con BTC
@@ -284,6 +311,7 @@ export function computeRebalanceSuggestions(
           currentPct: asset.currentPct, targetPct: asset.targetPct, drift: asset.drift,
           priority,
           reason: `Infraponderado ${absDrift.toFixed(1)}pp (actual ${(asset.currentPct * 100).toFixed(1)}% → objetivo ${(asset.targetPct * 100).toFixed(1)}%)`,
+          pendingDeficit: pendingDeficit > 0.01 ? pendingDeficit : undefined,
           cycleZone: asset.cycleSignal?.zone,
           cycleIndicator: asset.cycleSignal?.indicator,
           cycleIndicatorValue: asset.cycleSignal?.indicatorValue,

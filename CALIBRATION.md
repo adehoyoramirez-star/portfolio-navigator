@@ -66,6 +66,32 @@ Dynamic by regime: EXPANSION (M:0.55, Q:0.10), CONTRACTION (Q:0.30, M:0.30), CRI
 - Credit spread: CRISIS > 3.5% (~2 sigma above mean)
 - Yield spread: inversion (< 0) triggers warning
 
+## 9b. CREDIT SPREAD EN GLOBAL STRESS — CONTINUO (FIX-CLIFF-CREDIT-01, Oct-2026)
+**Where**: src/core/macro/globalStress.ts → `creditStressContribution()` (anclas en `CREDIT_STRESS_CONFIG`)
+**Antes**: escalones enteros `>3% → +1`, `>5% → +2` — cliff en 3.00% y 5.00%.
+**Evento corregido**: credit 2.98%→3.08% (10 pb) volteaba CONTRACTION→CRISIS con resto-de-inputs=5
+(VIX 26 + MOVE 145 + dxyTrend 3%), saltando penalty 0.925→0.550 en UNA observación y
+generando una orden material (~225 URNU). El rebalancer era correcto; el cliff vivía aquí.
+**Ahora**: piecewise lineal 2.0%→6.0% mapea 0→2 pts (tramos 1/3 y 1 pts/pp). Continua,
+monótona, sin cliffs; anclas semánticas preservadas (2%=0, 5%=1, 6%=2).
+**Elección A/B/C**: piecewise lineal > sigmoid/smoothstep (la sigmoid difumina exactamente
+la zona de acción ≥3%); escalón descartado (causa del bug). Documentado en el código.
+**Pinned por**: src/test/creditCliffRegime.test.ts (12 tests: caso exacto vía getMasterRegime
+real, batería ±5..100 pb, continuidad/monotonicidad, crisis genuina 5-6% intacta).
+**Hysteresis**: NO duplicada — la corrección ataca solo el cliff; las capas existentes
+(downgrade hold 6h, Regime Lock, bypass manual) quedan intactas.
+
+## 9c. ORDER GUARD DEL REBALANCER (FIX-CLIFF-CREDIT-01 · Fase 4/5, Oct-2026)
+**Where**: src/core/portfolio/rebalancer.ts + `ORDER_GUARD_CONFIG` (engineConfig)
+**Regla**: BUY ≤ min(déficit, 25% NAV, €2.500) · SELLs sin cap · déficit no ejecutado →
+`suggestion.pendingDeficit` (el gap NO se elimina; compras repetidas lo cierran).
+**Alcance**: general a TODOS los activos, cero excepciones URNU. Capa de seguridad de
+EJECUCIÓN, no un segundo motor de sizing (target-driven intacto).
+**Justificación del 25%/€2.500**: ninguna ejecución institucional coloca >25% del NAV de un
+activo volátil en una sesión; €2.500 ≈ tamaño máximo razonable por orden a este patrimonio.
+**Pinned por**: src/test/orderGuard.test.ts (8 tests: cap por peso y valor, gap pendiente,
+sells sin cap, invariante de cash, generalidad sobre BTC/VVSM/EMXC/WLG/Gold/URNU).
+
 ## 10. ERP TRIGGER
 **Where**: src/core/config/engineConfig.ts
 **Value**: TRIGGER_THRESHOLD = 0.025 (2.5% ERP)
@@ -102,4 +128,4 @@ A divergence between `EXPANSION` and defensive breadth is expected to be visible
 Grid: trainRatio [0.60-0.80] x nWindows [3-10] = 20 configs. Avg consistency 87.6%, OOS Sharpe 0.72, Grade B. System is robust to +/-20% parameter variation.
 
 ---
-*Olympus Engine V5.3.0 · 31-Aug-2026 · Breadth candidate pending OOS approval*
+*Olympus Engine v5.4.1 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 (credit continuo + order guard) · Breadth candidate pending OOS approval*

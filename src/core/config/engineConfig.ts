@@ -510,3 +510,30 @@ export const API_CONFIG = {
 // Si se añade IS3R al portfolio, reducir proporcionalmente VVSM.DE o WLG
 // para no superar el SECTOR_CAP de tecnología/equity del 35%.
 // ─────────────────────────────────────────────────────────────────────────
+
+// ── ORDER GUARD (FIX-CLIFF-CREDIT-01 · Fase 4/5 del plan de corrección) ──
+// PROBLEMA: ORDER = target·NAV − actual puede ser material cuando el TARGET
+//   salta de golpe (p.ej. cambio de régimen). El rebalancer es target-driven
+//   y correcto; el cliff vivía en globalStress. Este guard es una CAPA DE
+//   SEGURIDAD DE EJECUCIÓN, no un segundo motor de sizing:
+//
+//   INDICADORES → REGIME → PENALTY → TARGET → DRIFT → ORDER GUARD → ORDER
+//
+// REGLAS:
+//   - SOLO limita BUYs. Los SELLs (trim de ciclo / sobrepeso) quedan sin cap:
+//     reducir exposición nunca puede ser la orden desproporcionada peligrosa.
+//   - Cap de INCREMENTO DE PESO por rebalanceo: los robots institucionales
+//     no ejecutan >25% del NAV de un activo volátil en una sesión; el resto
+//     queda como déficit pendiente para el siguiente rebalanceo (gap NO se
+//     elimina). Esto preserva la capacidad de comprar en caídas: compras
+//     repetidas hacia el mismo target siguen funcionando.
+//   - Cap de VALOR absoluto por orden: límite operativo por sesión.
+//   - General a TODOS los activos. Cero excepciones URNU.
+//   - Ajuste a la baja de BUYs ya financiados: se reduce la orden, el déficit
+//     restante se reporta en pendingDeficit (nunca se descarta).
+export const ORDER_GUARD_CONFIG = {
+  /** Incremento máximo de peso por activo y rebalanceo (25% del NAV). */
+  MAX_WEIGHT_INCREMENT_PER_REBALANCE: 0.25,
+  /** Valor máximo por orden individual en € (2.500€ por sesión). */
+  MAX_ORDER_VALUE: 2500,
+} as const;

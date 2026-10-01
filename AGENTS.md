@@ -141,7 +141,7 @@ la referencia canónica. Cualquier propuesta de nueva señal debe consultarse aq
 | `dxyTrend` | `globalStress` (+1 si > 2% apreciación) | Gate 3 DXY eliminado Jul-2026 (doble conteo). Solo en globalStress. |
 | `dxy` (spot) | `cycleTopDetector` (EMXC, > 103 → +0.75, > 115 → +3) | Distinta de dxyTrend: spot mide nivel EM, trend mide régimen global. ✅ |
 | `yieldSpread` (T10Y2Y) | `crisis.ts` (+4 puntos si invertida), `CEWS_CONFIG` (danger: -0.5) | NO añadir a cycleTopDetector. Doble capa ya justificada (umbrales distintos). |
-| `creditSpread` | `globalStress` (+1 si > 3, +2 si > 5) | También en `crisis.ts` (+4 puntos si > 5). Umbrales no solapados (3/5 vs 5). ✅ |
+| `creditSpread` | `globalStress` (CONTINUO desde Oct-2026: piecewise 2→6% → 0→2 pts, sin cliffs en 3.0/5.0 — FIX-CLIFF-CREDIT-01) | También en `crisis.ts` (×2×0.4 en score) y `CEWS_CONFIG` (warning 2.0/danger 3.5). El antiguo escalón +1 en >3 causó el evento "225 URNU" (10 pb volteaban CONTRACTION→CRISIS). |
 | `m2Growth` | `detectRegimeProbabilistic` (3er input), `CEWS_CONFIG` (warning: 2.0, danger: 0.0) | Dinero AMPLIO. NO confundir con CB Liquidity (dinero BASE). |
 | `cbLiquidityGrowth` | `globalStress` (+2 si < 0%, +3 si < -5%) | Dinero BASE (QE/QT directo). Defensa aprobada Jul-2026. Ver sección CB Liquidity vs M2. |
 | `vix` | `globalStress` (+1 si > 18, +2 si > 25), `crisis.ts` (+1 si > 20) | Misma variable, distinto mecanismo: régimen vs stop-loss puntual. ✅ |

@@ -19,6 +19,48 @@ export interface StressInputs {
 
 export type StressRegime = "NORMAL" | "HIGH_RISK" | "CRISIS";
 
+// ═══ CREDIT SPREAD CONTINUO — FIX-CLIFF-CREDIT-01 (Oct-2026) ═══
+// PROBLEMA AUDITADO (caso real): el escalón entero `if (credit > 3) score += 1`
+//   hacía que 10 pb (credit 2.98% → 3.08%) voltearan CONTRACTION → CRISIS con
+//   resto-de-inputs=5, saltando el penalty 0.925 → 0.550 en UNA observación y
+//   generando una orden material (≈225 URNU) sin cambio macro real.
+//
+// SOLUCIÓN: contribución CONTINUA y MONÓTONA por tramos lineales.
+//   credit ≤ 2.0%  → 0.0 pts   (spread comprimido: complacencia, cero estrés)
+//   credit 2→5%    → 0→1 pts   (pendiente 1/3 pts por pp — zona de acción)
+//   credit 5→6%    → 1→2 pts   (pendiente 1 pp — zona de crisis real)
+//   credit ≥ 6.0%  → 2.0 pts   (saturación; equivalentes a credit=∞)
+//
+// ELECCIÓN DE FUNCIÓN (A/B/C comparadas):
+//   A) step/binaria (ANTES)        — RECHAZADA: cliff en 3.0 y 5.0 (causa del bug).
+//   B) piecewise linear por tramos — ELEGIDA: monotona, continua, preserva la
+//      interpretación económica de los umbrales (2.0 normal / 3.0 estrés / 5.0
+//      disfunción) como CAMBIOS DE PENDIENTE, no saltos de nivel.
+//   C) sigmoid / smoothstep        — RECHAZADA: difumina exactamente la zona de
+//      acción (≥3%) donde el indicador debe discriminar; su sensibilidad máxima
+//      caería en el centro del tramo y casi cero en los propios umbrales.
+//
+// PROPIEDADES GARANTIZADAS (pinned en creditCliffRegime.test.ts):
+//   - Continuidad: sin saltos en 2.0, 3.0, 5.0 ni 6.0.
+//   - Monotonicidad: no decreciente en todo el rango.
+//   - Sin cliffs: |f(x+δ)−f(x)| ≤ pendiente·δ en cualquier punto; 10 pb de credit
+//     mueven ≤0.0034 pts en el tramo de acción 2→5% (≤0.1 en el tramo 5→6%)
+//     vs 1.0 pts del escalón antiguo → nunca voltean un régimen por sí solos.
+//   - Las demás contribuciones de computeGlobalStress NO cambian.
+export const CREDIT_STRESS_CONFIG = {
+  FLOOR: 2.0,    // credit ≤ FLOOR → contribución 0
+  PLATEAU: 5.0,  // credit = PLATEAU → contribución 1.0 (equivale al antiguo "+1")
+  MAX: 6.0,      // credit ≥ MAX → contribución 2.0 (equivale al antiguo "+2")
+} as const;
+
+export function creditStressContribution(creditSpread: number): number {
+  const { FLOOR, PLATEAU, MAX } = CREDIT_STRESS_CONFIG;
+  if (creditSpread <= FLOOR) return 0;
+  if (creditSpread >= MAX) return 2;
+  if (creditSpread <= PLATEAU) return (creditSpread - FLOOR) / (PLATEAU - FLOOR);
+  return 1 + (creditSpread - PLATEAU) / (MAX - PLATEAU);
+}
+
 export interface StressResult {
   score: number;
   regime: StressRegime;
@@ -41,8 +83,9 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   if (inputs.vix > 25) score += 2;
   else if (inputs.vix > 18) score += 1;
 
-  if (inputs.creditSpread > 5) score += 2;
-  else if (inputs.creditSpread > 3) score += 1;
+  // FIX-CLIFF-CREDIT-01: contribución continua (0→2 pts en 2%→6%, sin cliffs en 3.0/5.0).
+  // 10 pb de credit mueven ≤0.003 pts — nunca voltean un régimen por sí solos.
+  score += creditStressContribution(inputs.creditSpread);
 
   if (inputs.move > 140) score += 2;
   else if (inputs.move > 110) score += 1;

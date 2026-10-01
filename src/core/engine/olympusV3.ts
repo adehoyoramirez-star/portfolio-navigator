@@ -55,7 +55,15 @@
 // FIX-V5-9: coreVolEstimate ponderado por pesos reales (no media aritmética).
 // FIX-V5-10: isERPCritical con guard input.erpValue !== undefined.
 // FIX-V5-11: BTC Bear Gate condicionado a MVRV > 2.5 o régimen != EXPANSION.
-export const ENGINE_VERSION = "v5.4.0-core1"; // OLYMPUS CORE v1.0: perfil canónico opt-in (evidencia Phases 9-12). Default = comportamiento v5.3 intacto.
+// FIX-CLIFF-CREDIT-01 (Oct-2026) v5.4.1:
+//   1. globalStress: contribución de credit spread CONTINUA (piecewise 2%→6%: 0→2 pts)
+//      en vez de escalones enteros +1/+2 en 3.0/5.0. Causa raíz del evento "225 URNU":
+//      10 pb (2.98→3.08) volteaban CONTRACTION→CRISIS con resto-de-inputs=5 y saltaban
+//      el penalty 0.925→0.550 en una observación. Backtest canónico BIT-IDÉNTICO.
+//   2. rebalancer: ORDER GUARD de ejecución para BUYs — min(deficit, 25% NAV, €2.500),
+//      límites en ORDER_GUARD_CONFIG (engineConfig), déficit no ejecutado en
+//      suggestion.pendingDeficit (no se elimina). Sells sin cap. No es un segundo motor.
+export const ENGINE_VERSION = "v5.4.1"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false). Default = v5.3 + fix cliff credit + order guard.
 
 // ── Estado del overlay Trend Gate del Core (serializable, determinista) ──
 // Persistido entre rebalanceos por el caller (backtest/dashboard).
