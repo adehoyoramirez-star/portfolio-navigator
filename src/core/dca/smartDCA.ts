@@ -45,6 +45,36 @@ const DCA_CONFIG = {
       PROBE:  [0.25, 0.00] as const,   // Tramo 1: testear fondo sin quemar pólvora (FIX-H7)
     },
     MULTIPLIERS: { MAX: 3.0, STRONG: 2.0, ENTRY: 1.5, PROBE: 1.25 },
+    // FIX-PROBE-OFFBYONE + FIX-REGIME-ATTACK-COUPLING (Phase 13, Oct-2026):
+    //   La cadena de tramos capturaba >=3 con ENTRY antes de llegar a PROBE
+    //   (off-by-one: ramas en orden descendente). Ahora la escalera es explícita:
+    //     3/8 → PROBE [0.25, 0.00]   (como documenta FIX-H7: sin war chest)
+    //     4/8 → ENTRY [0.50, 0.33]
+    //     5/8 → STRONG [0.75, 0.66] · >=6 → MAX [1.00, 1.00]
+    //   Y el CAPITAL DE ATAQUE escala con el régimen (antes: solo KS/recovery —
+    //   CONTRACTION x0.682 desplegaba lo mismo que EXPANSION x1.0). El tramo
+    //   selecciona la CONVICCIÓN; el multiplicador de régimen selecciona el VOLUMEN:
+    //     regimeAttackScale = clamp(0.60, penalty + 0.15, 1.00)
+    //   (floor 0.60: en CONTRACTION profunda ×0.40 el attack no baja de 60%
+    //   del tramo — preserva la capacidad de comprar en capitulación).
+    REGIME_ATTACK_COUPLING: {
+      FLOOR: 0.60,
+      SHIFT: 0.15,
+    },
+    // FIX-DEFENSIVE-GATE (Phase 13): la war chest (liquidez defensiva) SOLO se
+    //   despliega en ataques de cartera completa (macroConfluence >= 2 →
+    //   MIN_MACRO_FOR_FULL_ATTACK). Un ataque BTC-only, por fuerte que sea,
+    //   es tesis de UN activo: no justifica tocar el war chest.
+    DEFENSIVE_GATE: {
+      REQUIRE_FULL_ATTACK: true,
+    },
+    // FIX-BTC-TOTAL-GATE (Phase 13): si BTC_TOTAL (composite) >= BAND_CEILING
+    // (0.337, techo de la banda auditada Rounds 8-9), el ataque NO compra BTC
+    // (lo deja para el rebalanceo, que respeta targets). Es awareness de la
+    // banda, no un motor de sizing: el ataque sigue operando en el resto.
+    BTC_TOTAL_GATE: {
+      BAND_CEILING: 0.337,
+    },
   },
   // DCA normal (sin ataque)
   NORMAL: {
@@ -66,7 +96,7 @@ const DCA_CONFIG = {
 export type DCAAction =
   | "BLOCK_STALE_DATA" | "BLOCK_CRISIS" | "BLOCK_TAIL_RISK" | "BLOCK_VOL"
   | "WAIT" | "SMALL_BUY" | "BUY" | "FULL_BUY"
-  | "ATTACK_ENTRY" | "ATTACK_STRONG" | "ATTACK_MAX"
+  | "ATTACK_PROBE" | "ATTACK_ENTRY" | "ATTACK_STRONG" | "ATTACK_MAX"
   | "BTC_CYCLE_OVERRIDE";
 
 export interface CurrentAllocation {
@@ -84,6 +114,13 @@ export interface SmartDCAInput {
   mvrvZScore?: number;  // MVRV Z-Score — primario sobre ratio bruto (FIX-H4)
   regime: string;
   regimePenalty: number;
+  /**
+   * FIX-REGIME-ATTACK-COUPLING: régimen ANTERIOR (opcional). Permite a la señal
+   * "Régimen Mejorando" medir una TRANSICIÓN real (CRISIS→CONTRACTION,
+   * CONTRACTION→EXPANSION) en vez del nivel actual — elimina el doble conteo
+   * de estado persistente detectado en Phase 13.
+   */
+  previousRegime?: string;
   volTargetMultiplier: number;
   tailRiskActive: boolean;
   tailRiskOverlay: number;
@@ -100,8 +137,23 @@ export interface SmartDCAInput {
    *  Si se proporciona, buildAllocations solo comprará activos con drift POSITIVO
    *  (infraponderados), prorrateando el cash según el drift en vez del target absoluto. */
   currentAllocations?: CurrentAllocation[];
+  /**
+   * FIX-MUTEX-REBALANCE-DCA: tickers con BUY pendiente del rebalancer en este
+   * mismo ciclo. El DCA NO los compra (evita doble despliegue sobre el mismo
+   * gap — ambos módulos capan contra el mismo snapshot de pesos). Los tikers
+   * pendientes de rebalance siguen recibiendo su asignación pro-rata en el
+   * DCA output como informativa (cashToInvest > 0), pero con actualCost 0.
+   */
+  pendingRebalanceTickers?: string[];
   cewsOutput?: CEWSOutput;
   cewsPreviousLevel?: CEWSLevel;
+  /**
+   * FIX-BTC-TOTAL-GATE (Phase 13): exposición BTC TOTAL del composite
+   * (satélite + (1−satélite)×BTC_motor — fórmula de composite.ts). Si ≥
+   * BTC_TOTAL_GATE.BAND_CEILING (0.337, techo banda auditada), el ataque no
+   * añade BTC. Opcional: sin dato, el gate no aplica.
+   */
+  btcTotalComposite?: number;
   /** Señales de techo de ciclo por activo. Si un activo tiene shouldTrim=true,
    *  SmartDCA no comprará más de ese activo (redistribuye el cash a los demás).
    *  Si HAY trims activos en OTROS activos, los BUYs de activos no-trimmed se
@@ -136,6 +188,13 @@ export interface SmartDCAOutput {
   action: DCAAction;
   score: number;
   buyFraction: number;
+  /**
+   * FIX-BUYFRACTION-CLARITY (Phase 13): fracción de la LIQUIDEZ TOTAL
+   * (olympusAvailableCash + tacticalAvailableCash) que el plan despliega.
+   * `buyFraction` es solo sobre el broker cash Olympus — históricamente se leía
+   * como "50%" siendo 39% del total. Este campo es el honesto para el dashboard.
+   */
+  totalLiquidityFraction: number;
   totalCashToInvest: number;
   allocationByAsset: DCAAllocation[];
   reasoning: string;
@@ -154,7 +213,7 @@ export interface SmartDCAOutput {
 
 // ── SEÑALES DE CONFLUENCIA DE FONDO (8 señales: 4 BTC + 3 Macro + 1 per-asset) ──
 export function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
-  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, regimePenalty, btcDominance, mvrvRatio, mvrvZScore, cycleBottomSignals } = input;
+  const { btcRsi, btcZScore, btcMomentum1m, cewsOutput, cewsPreviousLevel, regime, previousRegime, regimePenalty, btcDominance, mvrvRatio, mvrvZScore, cycleBottomSignals } = input;
 
   const S = DCA_CONFIG.SIGNALS;
   const btcOversold = btcRsi < S.BTC_RSI_OVERSOLD && btcZScore < S.BTC_Z_OVERSOLD;
@@ -166,10 +225,19 @@ export function detectBottomConfluence(input: SmartDCAInput): AttackSignal[] {
   //      typeof check   → undefined/NaN NO dispara macro spurio en producción.
   //      threshold ↑   → 0.80→0.85, 0.55→0.65; solo ciclos con mejora fuerte cuentan como macro.
   // FIX-AUDIT-R5 R5.1 v2 (post-reviewer): EXPANSION strengthened (0.80→0.85), CONTRACTION changes reverted to original 0.55 to avoid silent breakage en tests existentes.
+  // FIX-REGIME-TRANSITION (Phase 13): la señal mide TRANSICIÓN real, no nivel.
+  //   previousRegime no dado → comportamiento legacy (nivel, compat tests).
+  //   previousRegime dado  → exige mejora de severidad real:
+  //     CRISIS→CONTRACTION · CRISIS→EXPANSION · CONTRACTION→EXPANSION.
+  //   CONTRACTION→CONTRACTION con penalty alto ya NO cuenta como "mejorando".
+  const SEV: Record<string, number> = { EXPANSION: 0, CONTRACTION: 1, CRISIS: 2 };
+  const regimeImproved = previousRegime !== undefined && SEV[previousRegime] !== undefined
+    ? SEV[regime] < SEV[previousRegime]
+    : null; // null = sin dato de transición → fallback legacy
   const regimeImproving = (
     (regime === "EXPANSION" && typeof regimePenalty === "number" && regimePenalty >= S.REGIME_EXPANSION_THRESHOLD) ||
     (regime === "CONTRACTION" && typeof regimePenalty === "number" && regimePenalty > S.REGIME_CONTRACTION_THRESHOLD)
-  );
+  ) && regimeImproved !== false;
   const momentumDivergence = btcMomentum1m < S.MOMENTUM_DIVERGENCE && btcZScore > S.MOMENTUM_Z_FLOOR;
   const dominanceAccumulation = btcDominance !== undefined && btcDominance > S.BTC_DOMINANCE_ACCUMULATION;
   const mvrvForSignal = mvrvZScore ?? mvrvRatio;  // FIX-H4: Z-Score primario
@@ -528,7 +596,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
     const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:", new Set(), new Map(), false, totalPortfolioValueEUR ?? 0, bottomMultipliers);
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
-    return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/8 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
+    const totalLiq = olympusAvailableCash + tacticalAvailableCash;
+    return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalLiquidityFraction: totalLiq > 0 ? cost / totalLiq : 0, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/8 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
   }
 
   // ── MODO ATAQUE ─────────────────────────────────────────────────────
@@ -537,30 +606,81 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const btcOnlyAttack = canAttack && macroConfluence < ATK.MIN_MACRO_FOR_FULL_ATTACK;
   let olympusInvested = 0, tacticalInvested = 0, tacticalAccumulated = tacticalAvailableCash;
 
+  // FIX-REGIME-ATTACK-COUPLING (Phase 13): el TRAMO selecciona la CONVICCIÓN;
+  //   el RÉGIMEN modula el VOLUMEN. Antes el attack ignoraba regimePenalty
+  //   (CONTRACTION ×0.682 desplegaba exactamente lo mismo que EXPANSION ×1.0).
+  //   FLOOR 0.60: en contracción profunda el ataque no baja del 60% del tramo
+  //   — preserva la capacidad de comprar en capitulación (regla institucional).
+  const regimeAttackScale = Math.max(
+    ATK.REGIME_ATTACK_COUPLING.FLOOR,
+    Math.min(1.0, regimePenalty + ATK.REGIME_ATTACK_COUPLING.SHIFT)
+  );
+  const attackScale = ksScaleWithRecovery * regimeAttackScale;
+
+  // FIX-BTC-TOTAL-GATE (Phase 13): awareness de la banda auditada (Rounds 8-9,
+  //   techo 33.7% BTC_TOTAL = satélite + (1−satélite)×BTC_motor). Por encima del
+  //   techo el ataque NO añade BTC — el rebalanceo es quien respeta targets.
+  const btcBlockedByBand = input.btcTotalComposite !== undefined
+    && input.btcTotalComposite >= ATK.BTC_TOTAL_GATE.BAND_CEILING;
+  if (btcOnlyAttack && btcBlockedByBand) {
+    // Ataque BTC-only con banda excedida → el premise del ataque (comprar el
+    // dip de BTC) violaría el presupuesto de riesgo. Pausa, cash acumula.
+    // NO se redistribuye al resto: la evidencia macro es débil (0-1 macro).
+    const btcAlloc = motorAllocations.find(a => a.ticker === "BTC-EUR");
+    return {
+      action: "WAIT",
+      score: attackConfluence, buyFraction: 0,
+      totalLiquidityFraction: 0,
+      totalCashToInvest: 0,
+      allocationByAsset: btcAlloc ? [{
+        ticker: btcAlloc.ticker, name: btcAlloc.name,
+        cashToInvest: 0, actualCost: 0, motorWeight: btcAlloc.finalAllocation,
+        shares: 0, pricePerShare: btcAlloc.price, isFractional: true,
+        skipped: true,
+        reason: `BANDA BTC_TOTAL ${(input.btcTotalComposite! * 100).toFixed(1)}% ≥ techo ${(ATK.BTC_TOTAL_GATE.BAND_CEILING * 100).toFixed(1)}% — ataque BTC en pausa, cash acumula`,
+      }] : [],
+      reasoning: `⏸️ ATAQUE BTC EN PAUSA — ${attackConfluence}/8 señales pero BTC_TOTAL ${(input.btcTotalComposite! * 100).toFixed(1)}% ≥ techo de banda auditada (${(ATK.BTC_TOTAL_GATE.BAND_CEILING * 100).toFixed(0)}%). El cash acumula hasta que la banda dé espacio.`,
+      attackMode: true, attackConfluence, attackSignals,
+      attackMultiplier: 1.25, attackTranche: 1,
+      olympusInvested: 0, tacticalInvested: 0,
+      tacticalAccumulated: tacticalAvailableCash,
+      rebalanceFirst: false,
+    };
+  }
+  // Ataque de cartera completa con banda excedida → BTC se salta (skip);
+  //   el cash se redistribuye a los demás infraponderados (macro ya es fuerte).
+  const allocationSkipSet = new Set(cycleTopTickers);
+  if (btcBlockedByBand) allocationSkipSet.add("BTC-EUR");
+
   // ── GRADUACIÓN KELLY-INSPIRED (Jul-2026) ──────────────────────────
-  // Despliegue proporcional a la convicción. Olympus escala 50→75→100%,
-  // Táctico escala más lento 33→66→100% porque es war chest acumulado.
-  // Tramo 1 (4/7): probe — testear el fondo sin quemar pólvora.
-  // Tramo 2 (5/7): convicción — edge ya claro, desplegar mayoría.
-  // Tramo 3 (6-7/7): fat pitch — coste de oportunidad > riesgo de caída.
+  // Despliegue proporcional a la convicción. Olympus escala 25→50→75→100%,
+  // Táctico (war chest) solo con ataque de cartera completa (≥2 macro):
+  //   0% → 33% → 66% → 100%.
+  // FIX-PROBE-OFFBYONE (Phase 13): la cadena descendente capturaba >=3 con
+  //   ENTRY y PROBE [0.25, 0] era CÓDIGO MUERTO (off-by-one). La escalera es
+  //   ahora explícita y exclusiva, como documenta FIX-H7:
+  //     3/8 PROBE (sin war chest) · 4/8 ENTRY · 5/8 STRONG · ≥6 MAX.
+  // FIX-DEFENSIVE-GATE (Phase 13): un ataque BTC-only es tesis de UN activo —
+  //   no toca el war chest aunque haya 7-8 señales.
   const G = ATK.GRADUATION;
-  if (attackConfluence >= 6) {           // TRAMO 3: ATTACK_MAX
-    olympusInvested = olympusAvailableCash * G.MAX[0] * ksScaleWithRecovery;
-    tacticalInvested = tacticalAvailableCash * G.MAX[1] * ksScaleWithRecovery;
-    tacticalAccumulated = 0;
+  const defensiveUnlocked = !btcOnlyAttack; // full attack ⇒ ≥2 macro
+  if (attackConfluence >= 6) {           // TRAMO 4: ATTACK_MAX
+    olympusInvested = olympusAvailableCash * G.MAX[0] * attackScale;
+    tacticalInvested = defensiveUnlocked ? tacticalAvailableCash * G.MAX[1] * attackScale : 0;
+    tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
   } else if (attackConfluence >= 5) {    // TRAMO 3: ATTACK_STRONG (5/8)
-    olympusInvested = olympusAvailableCash * G.STRONG[0] * ksScaleWithRecovery;
-    tacticalInvested = tacticalAvailableCash * G.STRONG[1] * ksScaleWithRecovery;
+    olympusInvested = olympusAvailableCash * G.STRONG[0] * attackScale;
+    tacticalInvested = defensiveUnlocked ? tacticalAvailableCash * G.STRONG[1] * attackScale : 0;
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
-  } else if (attackConfluence >= ATK.THRESHOLD) { // TRAMO 2: ATTACK_ENTRY (4/8)
-    olympusInvested = olympusAvailableCash * G.ENTRY[0] * ksScaleWithRecovery;
-    tacticalInvested = tacticalAvailableCash * G.ENTRY[1] * ksScaleWithRecovery;
+  } else if (attackConfluence >= 4) {    // TRAMO 2: ATTACK_ENTRY (4/8)
+    olympusInvested = olympusAvailableCash * G.ENTRY[0] * attackScale;
+    tacticalInvested = defensiveUnlocked ? tacticalAvailableCash * G.ENTRY[1] * attackScale : 0;
     tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
-  } else if (attackConfluence >= 3) {             // TRAMO 1: ATTACK_PROBE (3/8) — H7 grey zone
-    olympusInvested = olympusAvailableCash * G.PROBE[0] * ksScaleWithRecovery;
-    tacticalInvested = 0;  // probe: sin tactico, testear el fondo
+  } else if (attackConfluence >= 3) {    // TRAMO 1: ATTACK_PROBE (3/8) — FIX-H7: sin war chest
+    olympusInvested = olympusAvailableCash * G.PROBE[0] * attackScale;
+    tacticalInvested = 0;
     tacticalAccumulated = tacticalAvailableCash;
-  } else {                               // DCA NORMAL
+  } else {                               // DCA NORMAL (<3 señales)
     // FIX-BOTTOM-POOL (Jul 2026): cuando hay señales de suelo (bottom),
     // el Cycle Top no debe asfixiar las compras de activos infravalorados.
     // Escala la fracción con el multiplicador de suelo más fuerte:
@@ -579,6 +699,8 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   let totalCash = olympusInvested + tacticalInvested;
   // cycleTopTickers: activos en zona de techo de ciclo no se compran
   // btcOnlyAttack: solo BTC-EUR se compra, el resto del cash se acumula
+  // FIX-BTC-TOTAL-GATE: en full attack con banda BTC excedida, BTC se salta
+  //   (allocationSkipSet) y el cash se redistribuye a los demás infraponderados.
   const allocAssets = btcOnlyAttack
     ? motorAllocations.filter(a => a.ticker === "BTC-EUR")
     : motorAllocations;
@@ -589,8 +711,31 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // con target 10.5% recibía €1,591). Ahora siempre se respetan las posiciones
   // actuales. El ataque despliega más cash pero solo en activos con drift > 0.
   let allocs = totalCash > 0
-    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", cycleTopTickers, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers)
+    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", allocationSkipSet, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers)
     : [];
+
+  // FIX-MUTEX-REBALANCE-DCA (Phase 13): los tickers con BUY pendiente del
+  //   rebalancer NO reciben ejecución del DCA en el mismo ciclo (ambos módulos
+  //   capan contra el mismo snapshot → sin mutex desplegarían ~2× el gap).
+  //   Se marca actualCost=0 y el reason lo explica; el cash queda sin desplegar.
+  const rebalanceSet = new Set((input.pendingRebalanceTickers ?? []).map(t => t.split('.')[0]));
+  if (rebalanceSet.size > 0) {
+    allocs = allocs.map(a => {
+      const base = a.ticker.split('.')[0];
+      if (!rebalanceSet.has(base) || a.skipped || a.actualCost <= 0) return a;
+      return { ...a, actualCost: 0, shares: 0,
+        reason: `${a.reason} — ⏸️ BUY ya pendiente en el rebalanceo de este ciclo (mutex); sin doble compra` };
+    });
+    const actualDeployed = allocs.reduce((s, a) => s + a.actualCost, 0);
+    if (actualDeployed < totalCash && totalCash > 0) {
+      const scale = totalCash > 0 ? actualDeployed / totalCash : 0;
+      olympusInvested = Math.round(olympusInvested * scale);
+      tacticalInvested = actualDeployed - olympusInvested;
+      if (tacticalInvested < 0) { olympusInvested = actualDeployed; tacticalInvested = 0; }
+      tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
+      totalCash = actualDeployed;
+    }
+  }
 
   // FIX-DCA-FALLBACK (v3 Jul-2026): cuando totalCash > 0 pero buildAllocations
   // no encuentra activos elegibles (todos cycle top, sobreponderados, o sin drift),
@@ -681,7 +826,13 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     }
   }
 
-  const action: DCAAction = canAttack ? (attackConfluence >= 6 ? "ATTACK_MAX" : attackConfluence >= 5 ? "ATTACK_STRONG" : "ATTACK_ENTRY") : "BUY";
+  // FIX-PROBE-OFFBYONE: la acción refleja el TRAMO real — 3/8 es PROBE (25%, sin war chest).
+  const action: DCAAction = canAttack
+    ? (attackConfluence >= 6 ? "ATTACK_MAX"
+     : attackConfluence >= 5 ? "ATTACK_STRONG"
+     : attackConfluence >= 4 ? "ATTACK_ENTRY"
+     : "ATTACK_PROBE")
+    : "BUY";
   const reasoning = canAttack
     ? btcOnlyAttack
       ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
@@ -691,9 +842,10 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const M = ATK.MULTIPLIERS;
   const attackMultiplier = canAttack ? (attackConfluence >= 6 ? M.MAX : attackConfluence >= 5 ? M.STRONG : attackConfluence >= 4 ? M.ENTRY : M.PROBE) : 1.0;
   const attackTranche = canAttack ? (attackConfluence >= 6 ? 4 : attackConfluence >= 5 ? 3 : attackConfluence >= 4 ? 2 : 1) : 0;
-  return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier, attackTranche, olympusInvested, tacticalInvested, tacticalAccumulated, rebalanceFirst: cycleTopActive };
+  const totalLiquidity = olympusAvailableCash + tacticalAvailableCash;
+  return { action, score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? olympusInvested / olympusAvailableCash : 0, totalLiquidityFraction: totalLiquidity > 0 ? totalCash / totalLiquidity : 0, totalCashToInvest: totalCash, allocationByAsset: allocs, reasoning, attackMode: canAttack, attackConfluence, attackSignals, attackMultiplier, attackTranche, olympusInvested, tacticalInvested, tacticalAccumulated, rebalanceFirst: cycleTopActive };
 }
 
 function emptyOutput(action: DCAAction, reason: string, signals: AttackSignal[], confluence: number, olympusCash: number, tacticalCash: number): SmartDCAOutput {
-  return { action, score: 0, buyFraction: 0, totalCashToInvest: 0, allocationByAsset: [], reasoning: reason, blockReason: reason, attackMode: false, attackConfluence: confluence, attackSignals: signals, attackMultiplier: 1, attackTranche: 0, olympusInvested: 0, tacticalInvested: 0, tacticalAccumulated: tacticalCash, rebalanceFirst: false };
+  return { action, score: 0, buyFraction: 0, totalLiquidityFraction: 0, totalCashToInvest: 0, allocationByAsset: [], reasoning: reason, blockReason: reason, attackMode: false, attackConfluence: confluence, attackSignals: signals, attackMultiplier: 1, attackTranche: 0, olympusInvested: 0, tacticalInvested: 0, tacticalAccumulated: tacticalCash, rebalanceFirst: false };
 }

@@ -63,7 +63,18 @@
 //   2. rebalancer: ORDER GUARD de ejecución para BUYs — min(deficit, 25% NAV, €2.500),
 //      límites en ORDER_GUARD_CONFIG (engineConfig), déficit no ejecutado en
 //      suggestion.pendingDeficit (no se elimina). Sells sin cap. No es un segundo motor.
-export const ENGINE_VERSION = "v5.4.1"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false). Default = v5.3 + fix cliff credit + order guard.
+// FIX-PHASE13-INSTITUTIONAL (Oct-2026) v5.4.3 — coherencia DCA/Attack/Liquidez:
+//   1. PROBE alcanzable (off-by-one): 3/8 = PROBE [25%,0%] — antes ENTRY [50%,33%]
+//      consumía 39% de la liquidez total con 3 señales débiles y persistentes.
+//   2. regimeAttackScale = clamp(0.60, penalty+0.15, 1.0): el régimen modula el
+//      VOLUMEN del ataque (antes solo KS/recovery; CONTRACTION desplegaba igual que EXPANSION).
+//   3. War chest (defensiva) SOLO en full attack (≥2 macro) — BTC-only no la toca.
+//   4. Banda BTC_TOTAL ≥33.7% → ataque BTC en pausa / BTC skip en full attack.
+//   5. Mutex rebalance∩DCA (pendingRebalanceTickers) — sin doble compra del mismo gap.
+//   6. "Régimen Mejorando" mide TRANSICIÓN real (previousRegime), no nivel persistente.
+//   7. totalLiquidityFraction: % de TODA la liquidez (el buyFraction histórico era solo broker).
+//   Auditoría origen: PHASE13_FORENSIC (01-oct-2026), informe en deliverables.
+export const ENGINE_VERSION = "v5.4.3"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false).
 
 // ── Estado del overlay Trend Gate del Core (serializable, determinista) ──
 // Persistido entre rebalanceos por el caller (backtest/dashboard).

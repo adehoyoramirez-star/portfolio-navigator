@@ -128,4 +128,43 @@ A divergence between `EXPANSION` and defensive breadth is expected to be visible
 Grid: trainRatio [0.60-0.80] x nWindows [3-10] = 20 configs. Avg consistency 87.6%, OOS Sharpe 0.72, Grade B. System is robust to +/-20% parameter variation.
 
 ---
-*Olympus Engine v5.4.1 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 (credit continuo + order guard) · Breadth candidate pending OOS approval*
+## 12. DCA / ATTACK / LIQUIDEZ — COHERENCIA INSTITUCIONAL (FIX-PHASE13-INSTITUTIONAL, Oct-2026)
+**Origen**: auditoría forense 01-oct-2026 (informe PHASE13_FORENSIC en deliverables).
+El dashboard mostraba CONTRACTION ×0.682 + ATTACK_ENTRY desplegando 39% de la liquidez
+total con 3 señales débiles y persistentes.
+
+**1. Escalera de ataque (FIX-PROBE-OFFBYONE)** — smartDCA.ts, graduación:
+| Señales | Tramo | Olympus | War chest |
+|---|---|---|---|
+| 0-2 | DCA normal | 30% (15% con cycle-top activo) | 0% |
+| 3 | ATTACK_PROBE | 25% × scale | **0% (antes bug: ENTRY 50/33)** |
+| 4 | ATTACK_ENTRY | 50% × scale | 33% × scale (solo full attack) |
+| 5 | ATTACK_STRONG | 75% × scale | 66% × scale (solo full attack) |
+| ≥6 | ATTACK_MAX | 100% × scale | 100% × scale (solo full attack) |
+
+**2. regimeAttackScale** = clamp(0.60, regimePenalty + 0.15, 1.00). El tramo selecciona
+convicción; el régimen modula volumen. FLOOR 0.60 = defensa-en-profundidad (la banda
+operativa real es penalty > 0.45 por BLOCK_CRISIS, preexistente).
+
+**3. War chest (liquidez defensiva)**: SOLO se despliega en full attack
+(macroConfluence ≥ 2 = MIN_MACRO_FOR_FULL_ATTACK). Ataques BTC-only no la tocan.
+
+**4. Banda BTC_TOTAL** (techo 0.337, Rounds 8-9): BTC-only attack con banda excedida →
+WAIT (cash acumula). Full attack → BTC skip, cash redistribuido al resto.
+
+**5. Mutex rebalance∩DCA**: pendingRebalanceTickers (BUYs ya emitidos por el rebalancer
+en el ciclo) reciben actualCost=0 en el DCA — sin doble despliegue del mismo gap.
+
+**6. "Régimen Mejorando"** mide TRANSICIÓN (previousRegime dado por el dashboard desde
+regimeHistory): CRISIS→CONTRACTION o CONTRACTION→EXPANSION. Persistencia de régimen
+ya no infla la confluencia. Sin previousRegime → fallback legacy (compat).
+
+**7. totalLiquidityFraction**: % de TODA la liquidez (broker + defensiva). El buyFraction
+histórico era % del broker solo — el usuario leía "50%" siendo 39% del total.
+
+**Pinned por**: src/test/smartDCA_phase13.test.ts (14 tests).
+**Efecto en el caso 01-oct-2026**: 3 señales → €4.801 (39%) pasa a €899 (7,3%);
+war chest intacta; señal UI honesta ("despliega N% de la liquidez total").
+
+---
+*Olympus Engine v5.4.3 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 + FIX-PHASE13-INSTITUTIONAL · Breadth candidate pending OOS approval*

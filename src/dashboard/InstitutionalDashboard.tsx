@@ -1682,6 +1682,49 @@ soxRsiWeekly,
   const btcTotal = btcTotalExposure(olympusPct, btcMotorWeight);
   const btcTotalInBand = isBtcTotalInAuditedBand(btcTotal);
 
+  // FIX-MUTEX-REBALANCE-DCA (Phase 13): única fuente de verdad del rebalanceo.
+  //   smartDCAResult (abajo) consume sus BUYs pendientes para no duplicar compras
+  //   sobre el mismo gap (ambos módulos capan contra el mismo snapshot de pesos).
+  //   rebalanceFinal reutiliza EXACTAMENTE esta base — los guards post-hoc se
+  //   aplican encima. Un solo computeRebalanceSuggestions por ciclo → orden
+  //   determinista: rebalancer → smartDCA (mutex) → rebalanceFinal (guards).
+  const rebalanceBase = useMemo(() => {
+    if (!engineResult) return null;
+    const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
+      const alloc = engineResult.allocations.find(a => a.name === asset.name);
+      const engineAlloc = alloc?.finalAllocation ?? 0;
+      const isBtc = asset.ticker === 'BTC-EUR';
+      const compositeAlloc = compositeTarget(engineAlloc, olympusPct, isBtc);
+      return {
+        ticker: asset.ticker,
+        name: asset.name,
+        price: asset.price,
+        shares: asset.shares,
+        targetAllocation: compositeAlloc,
+      };
+    });
+    return computeRebalanceSuggestions(
+      rebalanceAssets,
+      availableCash,
+      totalPortfolioValue,
+      0.02,
+      cycleTopResult.signals,
+      cycleBottomResult?.signals
+    );
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult, olympusPct]);
+
+  // FIX-REGIME-TRANSITION (Phase 13): régimen previo real desde regimeHistory —
+  //   permite a la señal "Régimen Mejorando" del attack medir una TRANSICIÓN
+  //   (CRISIS→CONTRACTION, CONTRACTION→EXPANSION) en vez del nivel persistente.
+  const previousRegime = useMemo(() => {
+    const current = engineResult ? (engineResult.regime === "ALL_CASH" ? "CRISIS" : engineResult.regime) : undefined;
+    if (!current) return undefined;
+    for (let i = regimeHistory.length - 1; i >= 0; i--) {
+      if (regimeHistory[i].regime !== current) return regimeHistory[i].regime;
+    }
+    return undefined;
+  }, [engineResult?.regime, regimeHistory]);
+
   const smartDCAResult = useMemo(() => {
     // FIX-DCA-01: no emitir señal de compra si el engine todavía no tiene datos.
     // El default "EXPANSION" original podía producir un BUY prematuro en el primer render.
@@ -1694,6 +1737,12 @@ soxRsiWeekly,
       mvrvRatio,
       regime: engineResult.regime,
       regimePenalty: engineResult.masterRegime.regimePenalty,
+      // FIX-REGIME-TRANSITION: transición real para la señal "Régimen Mejorando"
+      previousRegime,
+      // FIX-BTC-TOTAL-GATE: banda BTC composite (satélite + motor) para el gate
+      btcTotalComposite: btcTotal,
+      // FIX-MUTEX-REBALANCE-DCA: BUYs ya pendientes en el rebalanceo de este ciclo
+      pendingRebalanceTickers: (rebalanceBase?.buySuggestions ?? []).map(s => s.ticker),
       volTargetMultiplier: engineResult.volTargetMultiplier,        tailRiskActive: engineResult.tailRiskActive,
         tailRiskOverlay: engineResult.tailRiskOverlay,
         killSwitchLevel: engineResult.killSwitchLevel ?? 0,
@@ -1746,7 +1795,7 @@ soxRsiWeekly,
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, olympusPct]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, olympusPct, rebalanceBase, previousRegime]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";
@@ -1852,14 +1901,10 @@ soxRsiWeekly,
         targetAllocation: compositeAlloc,
       };
     });
-    const baseRebalance = computeRebalanceSuggestions(
-      rebalanceAssets,
-      availableCash,
-      totalPortfolioValue,
-      0.02,
-      cycleTopResult.signals,
-      cycleBottomResult?.signals
-    );
+    // FIX-MUTEX-REBALANCE-DCA: reutiliza la base única (rebalanceBase) — misma
+    //   instancia que consumió smartDCAResult para el mutex. Sin recálculo.
+    const baseRebalance = rebalanceBase;
+    if (!baseRebalance) return null;
     // FIX-AUDIT-R3 R3-01: trigger extendido para liquidación total.
     // ANTES: solo `regime === "ALL_CASH"` disparaba el branch de liquidación. PERO el engine
     // solo emite "ALL_CASH" cuando totalKelly===0 (todos los kelly sums son cero), lo cual
@@ -1979,7 +2024,7 @@ soxRsiWeekly,
       coverageRatio: 0,
       isFullyFunded: false,
     };
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult]);
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult, rebalanceBase, olympusPct]);
 
   const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
     const sells = rebalanceFinal?.sellSuggestions ?? [];
@@ -2706,16 +2751,27 @@ soxRsiWeekly,
             border: `1px solid ${engineResult.regime === "CRISIS" ? "#ef4444" : "#10b981"}`,
             borderRadius: 8, padding: "0.6rem 0.9rem",
           }}>
-            <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>SEÑAL DCA</div>
+            <div style={{ fontSize: "0.65rem", color: "#6b7280", marginBottom: 2 }}>SEÑAL DCA <span style={{ color: "#f59e0b" }}>● smart</span></div>
             <div style={{
               fontSize: "0.85rem", fontWeight: "bold",
-              color: engineResult.regime === "CRISIS" ? "#ef4444" : "#10b981"
+              color: dcaBlocked ? "#ef4444" : smartDCAResult?.action.startsWith("ATTACK") || smartDCAResult?.action === "BTC_CYCLE_OVERRIDE" ? "#f59e0b" : "#10b981"
             }}>
-              {engineResult.regime === "CRISIS" ? "🛑 BLOQUEADO" :
-                engineResult.regime === "CONTRACTION" ? "⚠️ REDUCIDO" : "✅ ACTIVO"}
+              {dcaBlocked ? "🛑 BLOQUEADO"
+                : smartDCAResult?.action === "BTC_CYCLE_OVERRIDE" ? "⚡ BTC OVERRIDE"
+                : smartDCAResult?.action === "ATTACK_MAX" ? "🚀 ATAQUE MÁX"
+                : smartDCAResult?.action === "ATTACK_STRONG" ? "🚀 ATAQUE FUERTE"
+                : smartDCAResult?.action === "ATTACK_ENTRY" ? "🎯 ATAQUE ENTRY"
+                : smartDCAResult?.action === "ATTACK_PROBE" ? "🔍 ATAQUE PROBE"
+                : smartDCAResult?.action === "WAIT" ? "⏸️ EN PAUSA"
+                : smartDCAResult?.action === "SMALL_BUY" ? "💧 COMPRA PEQUEÑA"
+                : smartDCAResult?.action === "FULL_BUY" ? "✅ COMPRA COMPLETA"
+                : "✅ COMPRA NORMAL"}
             </div>
             <div style={{ fontSize: "0.65rem", color: "#6b7280" }}>
-              {engineResult.regime === "CRISIS" ? "mantener liquidez" : "compras permitidas"}
+              {dcaBlocked ? (smartDCAResult?.blockReason ?? "mantener liquidez")
+                : smartDCAResult
+                  ? `despliega ${((smartDCAResult.totalLiquidityFraction ?? 0) * 100).toFixed(0)}% de la liquidez total (€${smartDCAResult.totalCashToInvest.toFixed(0)})`
+                  : "compras permitidas"}
             </div>
           </div>
 

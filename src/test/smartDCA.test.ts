@@ -158,9 +158,13 @@ describe("DCA Normal (< 4 señales)", () => {
       mvrvRatio: 1.4,
     }));
     // Señales activas: BTC oversold (1) + BTC.D (2) + MVRV (3) = 3 total, 0 macro
-    expect(result2.action).toBe("ATTACK_ENTRY");  // FIX-H7: THRESHOLD 4->3, 3 signals -> PROBE -> ATTACK_ENTRY
-    expect(result2.attackMode).toBe(true);  // canAttack=true with THRESHOLD=3
+    // FIX-PROBE-OFFBYONE (Phase 13): 3/8 ahora SÍ es PROBE (era código muerto —
+    //   ENTRY capturaba >=3 antes). FIX-H7 documentaba PROBE; el pin del test
+    //   reflejaba el bug. Además: BTC-only → war chest intacta (tactical 0).
+    expect(result2.action).toBe("ATTACK_PROBE");
+    expect(result2.attackMode).toBe(true);
     expect(result2.attackConfluence).toBe(3);
+    expect(result2.tacticalInvested).toBe(0);   // PROBE: sin war chest
   });
 
   test("Distribuye cash proporcionalmente entre activos", () => {
@@ -215,9 +219,10 @@ describe("BTC-Only Attack (≥4 señales, < 2 macro)", () => {
     // BTC-only: solo se compra BTC-EUR
     expect(result.allocationByAsset.every(a => a.ticker === "BTC-EUR")).toBe(true);
     expect(result.reasoning).toContain("BTC-ONLY");
-    // Olympus 50% (Tramo 1), táctico 33%
-    expect(result.olympusInvested).toBe(500);
-    expect(result.tacticalInvested).toBe(165);
+    // Olympus ENTRY 50% × regimeAttackScale 0.65 (penalty 0.50 → max(0.60, 0.50+0.15))
+    expect(result.olympusInvested).toBe(325);
+    // FIX-DEFENSIVE-GATE (Phase 13): BTC-only → war chest NO se toca (era 165)
+    expect(result.tacticalInvested).toBe(0);
   });
 
   test("4 señales BTC/on-chain + 1 macro → BTC-ONLY attack (solo 1 macro < 2)", () => {
@@ -296,8 +301,9 @@ describe("BTC-Only Attack (≥4 señales, < 2 macro)", () => {
     expect(tickers).toContain("BTC-EUR");
     expect(tickers).toContain("0P00000WLG.F");
     // totalCashToInvest = cash real desplegado tras fallback (BTC skipped → €0)
-    // Los 5 underweight reciben: WLG 3×75=225 + URNU 1×28=28 + EMXC 3×30=90 + PPFB 2×70=140 + VVSM 1×55=55 = 538
-    expect(result.totalCashToInvest).toBe(538);
+    // Olympus planificado = 50% × 1000 × regimeAttackScale 0.95 (penalty 0.80+0.15) = 475
+    // Los 5 underweight reciben prorata de 475: WLG 285+URNU 34.75... → floor 363 total
+    expect(result.totalCashToInvest).toBe(363);
   });
 });
 
@@ -334,9 +340,9 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
     expect(hasNonBtc).toBe(true);
     expect(result.reasoning).toContain("ATAQUE");
     expect(result.reasoning).not.toContain("BTC-ONLY");
-    // Olympus 50% (Tramo 1), táctico 33%
-    expect(result.olympusInvested).toBe(500);
-    expect(result.tacticalInvested).toBe(165);
+    // Olympus ENTRY 50% × regimeAttackScale 0.85 (penalty 0.70+0.15); táctico 33% × 0.85
+    expect(result.olympusInvested).toBe(425);
+    expect(result.tacticalInvested).toBeCloseTo(140.25, 2);
   });
 
   test("7 señales con 3 macro → ATTACK_MAX, cartera completa", () => {
@@ -720,9 +726,9 @@ describe("Edge Cases", () => {
 
     expect(result.attackMode).toBe(true);
     expect(result.olympusInvested).toBe(0);
-    // Tramo 2 (5/7): 66% táctico = 660
-    expect(result.tacticalInvested).toBe(660);
-    expect(result.totalCashToInvest).toBe(660);
+    // Tramo STRONG (5/8): 66% táctico × regimeAttackScale 0.85 (penalty 0.70+0.15)
+    expect(result.tacticalInvested).toBeCloseTo(561, 2);
+    expect(result.totalCashToInvest).toBeCloseTo(561, 2);
   });
 
   // FIX-TEST-RECALIBRACION (Jul-2026): verificar que el fallback recalibra
