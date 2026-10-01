@@ -233,6 +233,114 @@ describe("PHASE 13 — FIX-MUTEX-REBALANCE-DCA", () => {
   });
 });
 
+describe("PHASE 13.1 — FIX-MUTEX-V2: semántica de porción financiada del gap", () => {
+  // Caso live 01-oct-2026: €3.900 en broker, COMPRA NORMAL (2/8), €0 desplegados
+  // un mes. El mutex binario v1 prohibía al DCA los MISMOS tickers que el
+  // panel de rebalanceo tenía SUGERIDOS (persistente toda la semana) → parálisis.
+  // v2: el DCA solo puede aportar el REMANENTE del gap no financiado por el rebalanceo.
+  const TPV = 100_000;
+
+  test("gap 100% financiado por el rebalanceo → DCA aporta 0 y el cash se recalcula", () => {
+    // Solo WLG infraponderado (drift 4pp = €4.000 de gap). El rebalanceo ya
+    // financia los €4.000 → allowed = 0 → el DCA no añade nada.
+    const r = computeSmartDCA(baseInput({
+      totalPortfolioValueEUR: TPV,
+      currentAllocations: [
+        { ticker: "BTC-EUR", name: "BTC", currentWeight: 0.30 },
+        { ticker: "0P00000WLG.F", name: "WLG", currentWeight: 0.10 },
+        { ticker: "VVSM.DE", name: "VVSM", currentWeight: 0.14 },
+        { ticker: "EMXC.DE", name: "EMXC", currentWeight: 0.14 },
+        { ticker: "URNU.DE", name: "URNU", currentWeight: 0.14 },
+        { ticker: "PPFB.DE", name: "Gold", currentWeight: 0.14 },
+      ],
+      pendingRebalanceBuys: [{ ticker: "0P00000WLG.F", cost: 4000 }],
+    }));
+    const wlg = r.allocationByAsset.find(a => a.ticker === "0P00000WLG.F");
+    expect(wlg?.actualCost ?? 0).toBe(0);
+    expect(wlg?.reason).toContain("gap ya cubierto por el rebalanceo");
+    // Sin doble compra ⇒ el despliegue es 0 y el estado de liquidez es coherente
+    expect(r.totalCashToInvest).toBe(0);
+    expect(r.olympusInvested).toBe(0);
+    expect(r.tacticalAccumulated).toBe(DEF);
+  });
+
+  test("gap parcialmente financiado → top-up solo del remanente", () => {
+    // WLG drift 8pp = €8.000 de gap; el rebalanceo financia €7.500 → el DCA
+    // solo puede aportar €500 → 6 acciones × €72,10 = €432,60.
+    const r = computeSmartDCA(baseInput({
+      totalPortfolioValueEUR: TPV,
+      currentAllocations: [
+        { ticker: "BTC-EUR", name: "BTC", currentWeight: 0.30 },
+        { ticker: "0P00000WLG.F", name: "WLG", currentWeight: 0.06 },
+        { ticker: "VVSM.DE", name: "VVSM", currentWeight: 0.14 },
+        { ticker: "EMXC.DE", name: "EMXC", currentWeight: 0.14 },
+        { ticker: "URNU.DE", name: "URNU", currentWeight: 0.14 },
+        { ticker: "PPFB.DE", name: "Gold", currentWeight: 0.14 },
+      ],
+      pendingRebalanceBuys: [{ ticker: "0P00000WLG.F", cost: 7500 }],
+    }));
+    const wlg = r.allocationByAsset.find(a => a.ticker === "0P00000WLG.F");
+    expect(wlg?.shares).toBe(6);
+    expect(wlg?.actualCost).toBeCloseTo(432.60, 2);
+    expect(wlg?.reason).toContain("top-up");
+    // El despliegue reportado = lo realmente ejecutado (rescale conservador)
+    const deployed = r.allocationByAsset.reduce((s, a) => s + a.actualCost, 0);
+    expect(r.totalCashToInvest).toBeCloseTo(deployed, 6);
+    expect(r.olympusInvested).toBeCloseTo(432.60, 1);
+  });
+
+  test("activo NO financiado por el rebalanceo → ejecución DCA normal (caso live)", () => {
+    // Forma del caso real: WLG financiado por el rebalanceo (mutex), URNU no
+    // financiado → el DCA SÍ compra URNU. Antes (v1) el mutex binario
+    // prohibía TODOS los tickers sugeridos → €0 desplegados.
+    const r = computeSmartDCA(baseInput({
+      totalPortfolioValueEUR: TPV,
+      currentAllocations: [
+        { ticker: "BTC-EUR", name: "BTC", currentWeight: 0.30 },
+        { ticker: "0P00000WLG.F", name: "WLG", currentWeight: 0.10 },
+        { ticker: "VVSM.DE", name: "VVSM", currentWeight: 0.14 },
+        { ticker: "EMXC.DE", name: "EMXC", currentWeight: 0.14 },
+        { ticker: "URNU.DE", name: "URNU", currentWeight: 0.10 },
+        { ticker: "PPFB.DE", name: "Gold", currentWeight: 0.14 },
+      ],
+      pendingRebalanceBuys: [{ ticker: "0P00000WLG.F", cost: 4000 }],
+    }));
+    const wlg = r.allocationByAsset.find(a => a.ticker === "0P00000WLG.F");
+    const urnu = r.allocationByAsset.find(a => a.ticker === "URNU.DE");
+    expect(wlg?.actualCost ?? 0).toBe(0);
+    expect(wlg?.reason).toContain("mutex");
+    // URNU: prorrateo 648,30 → 146 acciones × €4,44 = €648,24
+    expect(urnu?.actualCost).toBeCloseTo(648.24, 2);
+    // El DCA ya NO queda paralizado: despliega lo del activo no financiado
+    expect(r.totalCashToInvest).toBeCloseTo(648.24, 2);
+    expect(r.olympusInvested).toBeGreaterThan(0);
+  });
+
+  test("pendingRebalanceBuys presente → precede al mutex binario legacy", () => {
+    // El dashboard pasa AMBOS arrays (misma fuente). Con mapa v2 no vacío,
+    // el set de exclusión sale de SUS claves: VVSM (solo en legacy) opera normal.
+    const r = computeSmartDCA(baseInput({
+      totalPortfolioValueEUR: TPV,
+      currentAllocations: [
+        { ticker: "BTC-EUR", name: "BTC", currentWeight: 0.30 },
+        { ticker: "0P00000WLG.F", name: "WLG", currentWeight: 0.10 },
+        { ticker: "VVSM.DE", name: "VVSM", currentWeight: 0.10 },
+        { ticker: "EMXC.DE", name: "EMXC", currentWeight: 0.14 },
+        { ticker: "URNU.DE", name: "URNU", currentWeight: 0.14 },
+        { ticker: "PPFB.DE", name: "Gold", currentWeight: 0.14 },
+      ],
+      pendingRebalanceBuys: [{ ticker: "0P00000WLG.F", cost: 4000 }],
+      pendingRebalanceTickers: ["VVSM.DE"],
+    }));
+    const wlg = r.allocationByAsset.find(a => a.ticker === "0P00000WLG.F");
+    const vvsm = r.allocationByAsset.find(a => a.ticker === "VVSM.DE");
+    // WLG 100% financiado → 0 (v2)
+    expect(wlg?.actualCost ?? 0).toBe(0);
+    // VVSM solo estaba en el legacy → NO se prohíbe (11 × €58,20 = €640,20)
+    expect(vvsm?.actualCost).toBeCloseTo(640.20, 2);
+  });
+});
+
 describe("PHASE 13 — FIX-REGIME-TRANSITION: señal mide transición real", () => {
   test("CONTRACTION→CONTRACTION (persistencia) ya NO cuenta como mejorando", () => {
     const sig = detectBottomConfluence(baseInput({

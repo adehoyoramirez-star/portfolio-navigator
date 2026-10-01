@@ -1741,7 +1741,10 @@ soxRsiWeekly,
       previousRegime,
       // FIX-BTC-TOTAL-GATE: banda BTC composite (satélite + motor) para el gate
       btcTotalComposite: btcTotal,
-      // FIX-MUTEX-REBALANCE-DCA: BUYs ya pendientes en el rebalanceo de este ciclo
+      // FIX-MUTEX-REBALANCE-DCA (Phase 13.1, v2): BUYs del rebalanceo CON coste
+      // para semántica de porción financiada (cap por gap). Legacy tickers
+      // mantenido como fallback si buySuggestions está vacío.
+      pendingRebalanceBuys: (rebalanceBase?.buySuggestions ?? []).map(s => ({ ticker: s.ticker, cost: s.cost })),
       pendingRebalanceTickers: (rebalanceBase?.buySuggestions ?? []).map(s => s.ticker),
       volTargetMultiplier: engineResult.volTargetMultiplier,        tailRiskActive: engineResult.tailRiskActive,
         tailRiskOverlay: engineResult.tailRiskOverlay,

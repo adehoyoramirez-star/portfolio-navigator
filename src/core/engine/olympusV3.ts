@@ -81,7 +81,26 @@
 //   regímenes; Brent contaba dos veces (score Y ×0.70). Anclas preservadas
 //   (75/95/115 · 0/−5 · 110/140); wtiPenalty interpolado 1.00→0.50 en $75→$130.
 //   Backtest canónico: headline bit-idéntico; 1 día de label marginal.
-export const ENGINE_VERSION = "v5.4.4"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false).
+// FIX-MUTEX-V2 (Oct-2026) v5.4.5 — Phase 13.1, mutex rebalance∩DCA por PORCIÓN
+//   FINANCIADA del gap (no binario). El mutex v1 (FIX-PHASE13-INSTITUTIONAL #5)
+//   prohibía a Smart DCA comprar cualquier ticker SUGERIDO por el panel de
+//   rebalanceo. Como las sugerencias persisten toda la semana y cubren los
+//   MISMOS gaps (WLG/EMXC/PPFB), DCA quedaba auto-bloqueado → actualDeployed=0
+//   → €0 desplegados durante un mes mientras el rebalanceo se aplazaba (bug live
+//   01-oct-2026, €3.900 en caja del bróker sin invertir).
+//   AHORA: nuevo input pendingRebalanceBuys (ticker + cost) — el DCA trata la
+//   porción YA financiada del gap como cubierta y solo top-a el resto:
+//   allowed = max(0, gapValue − funded); allow≤0.01 → sin doble compra (razón
+//   "gap ya cubierto por el rebalanceo"); actualCost>allowed → cap + razón
+//   "top-up: el rebalanceo ya cubre €X del gap". Legacy pendingRebalanceTickers
+//   conservado como fallback (binario) si no llega el mapa de costes.
+//   Bug incidental corregido: el cap usaba a.price (campo inexistente en
+//   DCAAllocation) → NaN shares; el campo real es a.pricePerShare.
+//   Replay (scripts/replay-dca-mutex-v2.ts, temporal): caso live €0 → €1.094,92
+//   (9,8% de la liquidez total); rebalanceo financiado mismo ciclo → €0 (correcto,
+//   sin doble gasto); gap parcialmente financiado → top-up a €954,42.
+//   No toca el camino de backtest → fingerprint canónico sin cambios.
+export const ENGINE_VERSION = "v5.4.5"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false).
 
 // ── Estado del overlay Trend Gate del Core (serializable, determinista) ──
 // Persistido entre rebalanceos por el caller (backtest/dashboard).

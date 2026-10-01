@@ -138,13 +138,22 @@ export interface SmartDCAInput {
    *  (infraponderados), prorrateando el cash según el drift en vez del target absoluto. */
   currentAllocations?: CurrentAllocation[];
   /**
-   * FIX-MUTEX-REBALANCE-DCA: tickers con BUY pendiente del rebalancer en este
-   * mismo ciclo. El DCA NO los compra (evita doble despliegue sobre el mismo
-   * gap — ambos módulos capan contra el mismo snapshot de pesos). Los tikers
-   * pendientes de rebalance siguen recibiendo su asignación pro-rata en el
-   * DCA output como informativa (cashToInvest > 0), pero con actualCost 0.
+   * FIX-MUTEX-REBALANCE-DCA (v1): tickers con BUY pendiente del rebalancer.
+   * Mutex binario legacy — el DCA no ejecuta esos tickers. Mantenido por
+   * compatibilidad; preferir pendingRebalanceBuys (v2, cap por gap).
    */
   pendingRebalanceTickers?: string[];
+  /**
+   * FIX-MUTEX-V2 (Phase 13.1): BUYs del rebalanceo con su coste financiado.
+   * Semántica de PORCIÓN FINANCIADA del gap:
+   *   cost ≥ déficit del ticker → el DCA aporta 0 (gap ya cubierto).
+   *   cost < déficit → el DCA solo puede cubrir el resto (top-up).
+   *   ticker sin entrada → el DCA opera con normalidad.
+   * Elimina la parálisis del mutex binario: si el usuario difiere el
+   * rebalanceo, el DCA sigue trabajando los gaps NO financiados (30%/mes)
+   * sin duplicar nunca el dinero del rebalanceo.
+   */
+  pendingRebalanceBuys?: { ticker: string; cost: number }[];
   cewsOutput?: CEWSOutput;
   cewsPreviousLevel?: CEWSLevel;
   /**
@@ -714,15 +723,48 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", allocationSkipSet, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers)
     : [];
 
-  // FIX-MUTEX-REBALANCE-DCA (Phase 13): los tickers con BUY pendiente del
-  //   rebalancer NO reciben ejecución del DCA en el mismo ciclo (ambos módulos
-  //   capan contra el mismo snapshot → sin mutex desplegarían ~2× el gap).
-  //   Se marca actualCost=0 y el reason lo explica; el cash queda sin desplegar.
-  const rebalanceSet = new Set((input.pendingRebalanceTickers ?? []).map(t => t.split('.')[0]));
+  // FIX-MUTEX-REBALANCE-DCA (Phase 13, v2 en Phase 13.1): evitar que rebalancer
+  //   y DCA compren el MISMO gap con dinero distinto. v2 = semántica de porción
+  //   financiada: el DCA solo puede top-up el resto del gap (déficit − cost ya
+  //   financiado). Sin esta versión, el mutex binario paralizaba el DCA (€0)
+  //   mientras el rebalanceo estuviera SUGERIDO pero sin ejecutar — el caso live
+  //   01-oct-2026: €3.900 en broker, COMPRA NORMAL, €0 desplegados un mes.
+  const rebalanceBuysMap = new Map<string, number>();
+  for (const b of input.pendingRebalanceBuys ?? []) {
+    const base = b.ticker.split('.')[0];
+    rebalanceBuysMap.set(base, (rebalanceBuysMap.get(base) ?? 0) + b.cost);
+  }
+  const rebalanceSet = rebalanceBuysMap.size > 0
+    ? new Set(rebalanceBuysMap.keys())
+    : new Set((input.pendingRebalanceTickers ?? []).map(t => t.split('.')[0]));
   if (rebalanceSet.size > 0) {
     allocs = allocs.map(a => {
       const base = a.ticker.split('.')[0];
-      if (!rebalanceSet.has(base) || a.skipped || a.actualCost <= 0) return a;
+      if (!rebalanceSet.has(base) || a.skipped) return a;
+      if (rebalanceBuysMap.size > 0) {
+        // ── v2: cap por porción financiada del gap ──
+        const funded = rebalanceBuysMap.get(base) ?? 0;
+        const gapValue = Math.max(0, a.drift ?? 0) * (totalPortfolioValueEUR ?? 0);
+        const allowed = Math.max(0, gapValue - funded);
+        if (a.actualCost <= 0) return a;
+        if (allowed <= 0.01) {
+          return { ...a, actualCost: 0, shares: 0,
+            reason: `${a.reason} — ⏸️ gap ya cubierto por el rebalanceo (mutex); sin doble compra` };
+        }
+        if (a.actualCost > allowed) {
+          const cappedShares = a.isFractional ? allowed / a.pricePerShare : Math.floor(allowed / a.pricePerShare);
+          const cappedCost = cappedShares * a.pricePerShare;
+          if (cappedCost <= 0) {
+            return { ...a, actualCost: 0, shares: 0,
+              reason: `${a.reason} — ⏸️ gap ya cubierto por el rebalanceo (mutex)` };
+          }
+          return { ...a, shares: cappedShares, actualCost: cappedCost,
+            reason: `${a.reason} — top-up: el rebalanceo ya cubre €${funded.toFixed(0)} del gap (mutex)` };
+        }
+        return a;
+      }
+      // legacy binario (pendingRebalanceTickers sin costes)
+      if (a.actualCost <= 0) return a;
       return { ...a, actualCost: 0, shares: 0,
         reason: `${a.reason} — ⏸️ BUY ya pendiente en el rebalanceo de este ciclo (mutex); sin doble compra` };
     });

@@ -171,8 +171,18 @@ operativa real es penalty > 0.45 por BLOCK_CRISIS, preexistente).
 **4. Banda BTC_TOTAL** (techo 0.337, Rounds 8-9): BTC-only attack con banda excedida →
 WAIT (cash acumula). Full attack → BTC skip, cash redistribuido al resto.
 
-**5. Mutex rebalance∩DCA**: pendingRebalanceTickers (BUYs ya emitidos por el rebalancer
-en el ciclo) reciben actualCost=0 en el DCA — sin doble despliegue del mismo gap.
+**5. Mutex rebalance∩DCA (v2, Phase 13.1 — FIX-MUTEX-V2)**: semántica de PORCIÓN
+FINANCIADA del gap. `pendingRebalanceBuys` = BUYs del rebalancer CON coste:
+   · cost ≥ déficit del ticker → el DCA aporta 0 ("gap ya cubierto por el rebalanceo").
+   · cost < déficit → el DCA solo cubre el remanente (top-up capado a gap − cost).
+   · ticker sin entrada → el DCA opera con normalidad.
+El mutex binario v1 (pendingRebalanceTickers) queda como fallback cuando no hay costes.
+CAUSA RAÍZ del bug live 01-oct-2026: v1 prohibía al DCA los MISMOS tickers que el
+rebalancer tenía SUGERIDOS (sugerencia persistente toda la semana) → €0 desplegados
+un mes con €3.900 en broker. v2: si el usuario difiere el rebalanceo, el DCA sigue
+trabajando los gaps NO financiados (30%/mes) sin duplicar nunca el dinero del rebalanceo.
+FIX incidental: `pricePerShare` (no `price`) en el cap del top-up — el NaN resultante
+hubiera corrompido la fila del activo top-up.
 
 **6. "Régimen Mejorando"** mide TRANSICIÓN (previousRegime dado por el dashboard desde
 regimeHistory): CRISIS→CONTRACTION o CONTRACTION→EXPANSION. Persistencia de régimen
@@ -181,9 +191,13 @@ ya no infla la confluencia. Sin previousRegime → fallback legacy (compat).
 **7. totalLiquidityFraction**: % de TODA la liquidez (broker + defensiva). El buyFraction
 histórico era % del broker solo — el usuario leía "50%" siendo 39% del total.
 
-**Pinned por**: src/test/smartDCA_phase13.test.ts (14 tests).
+**Pinned por**: src/test/smartDCA_phase13.test.ts (18 tests).
 **Efecto en el caso 01-oct-2026**: 3 señales → €4.801 (39%) pasa a €899 (7,3%);
 war chest intacta; señal UI honesta ("despliega N% de la liquidez total").
+**Efecto Phase 13.1 (replay del caso live)**: rebalanceo pendiente sin ejecutar →
+€0 (bug v1) pasa a €1.095 (9,8% de la liquidez total: WLG €144, EMXC €421, URNU €169,
+PPFB €360). Rebalanceo financiado en el mismo ciclo → €0 correcto (sin doble gasto).
+Replay: scripts/replay-dca-mutex-v2.ts (temporal, eliminado tras verificación).
 
 ---
-*Olympus Engine v5.4.4 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 + FIX-PHASE13-INSTITUTIONAL + FIX-CLIFF-STRESS-02 · Breadth candidate pending OOS approval*
+*Olympus Engine v5.4.5 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 + FIX-PHASE13-INSTITUTIONAL + FIX-CLIFF-STRESS-02 + FIX-MUTEX-V2 (Phase 13.1) · Breadth candidate pending OOS approval*
