@@ -100,7 +100,26 @@
 //   (9,8% de la liquidez total); rebalanceo financiado mismo ciclo → €0 (correcto,
 //   sin doble gasto); gap parcialmente financiado → top-up a €954,42.
 //   No toca el camino de backtest → fingerprint canónico sin cambios.
-export const ENGINE_VERSION = "v5.4.5"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false).
+// FIX-MUTEX-V3 (Oct-2026) v5.4.6 — "un hueco, un euro" por CAPAS. Sustituye al
+//   candado rebalanceo∩DCA por SUGERENCIA (v1 binario de v5.4.3, v2 porción
+//   financiada de v5.4.5), que seguía dejando €0 desplegados un mes con €3.900
+//   en el bróker (bug live 01-oct-2026). Un candado debe medir COMPROMISO, no
+//   INTENCIÓN: el candado se activaba con las sugerencias del panel, que
+//   persisten todo el ciclo; con cadencia MENSUAL (rebalanceo) + SEMANAL (DCA)
+//   bloqueaba hasta 4 tranches semanales seguidas.
+//   AHORA la exclusión mutua depende del ESTADO (pesos + cash operativo), que se
+//   actualiza al confirmar cada ejecución. Reparto por capas:
+//     1ª capa (semanal) → Smart DCA despliega su tranche por drift, SIN veto
+//        (se eliminan pendingRebalanceTickers / pendingRebalanceBuys del input).
+//     2ª capa (mensual) → computeRebalanceSuggestions(..., dcaCommitted) cierra
+//        solo el REMANENTE del hueco (deficitValue − dcaCommitted) con el cash
+//        no comprometido (cashForBuys − ΣdcaCommitted); matching por ticker base.
+//   Invariante: gap_i = dca_i + buy_i  ·  Σdca + Σbuy ≤ cashReserve.
+//   Dashboard: rebalanceBase se calcula DESPUÉS de smartDCAResult (orden de capas)
+//   y el bloque SmartDCA se muestra también con despliegue €0 con banda
+//   "Despliegue €0 — motivo" (antes se ocultaba justo cuando hacía falta).
+//   No toca el camino de backtest → fingerprint canónico sin cambios.
+export const ENGINE_VERSION = "v5.4.6"; // OLYMPUS CORE v1.0 intacto (perfil opt-in, enabled:false).
 
 // ── Estado del overlay Trend Gate del Core (serializable, determinista) ──
 // Persistido entre rebalanceos por el caller (backtest/dashboard).

@@ -1682,36 +1682,11 @@ soxRsiWeekly,
   const btcTotal = btcTotalExposure(olympusPct, btcMotorWeight);
   const btcTotalInBand = isBtcTotalInAuditedBand(btcTotal);
 
-  // FIX-MUTEX-REBALANCE-DCA (Phase 13): única fuente de verdad del rebalanceo.
-  //   smartDCAResult (abajo) consume sus BUYs pendientes para no duplicar compras
-  //   sobre el mismo gap (ambos módulos capan contra el mismo snapshot de pesos).
-  //   rebalanceFinal reutiliza EXACTAMENTE esta base — los guards post-hoc se
-  //   aplican encima. Un solo computeRebalanceSuggestions por ciclo → orden
-  //   determinista: rebalancer → smartDCA (mutex) → rebalanceFinal (guards).
-  const rebalanceBase = useMemo(() => {
-    if (!engineResult) return null;
-    const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
-      const alloc = engineResult.allocations.find(a => a.name === asset.name);
-      const engineAlloc = alloc?.finalAllocation ?? 0;
-      const isBtc = asset.ticker === 'BTC-EUR';
-      const compositeAlloc = compositeTarget(engineAlloc, olympusPct, isBtc);
-      return {
-        ticker: asset.ticker,
-        name: asset.name,
-        price: asset.price,
-        shares: asset.shares,
-        targetAllocation: compositeAlloc,
-      };
-    });
-    return computeRebalanceSuggestions(
-      rebalanceAssets,
-      availableCash,
-      totalPortfolioValue,
-      0.02,
-      cycleTopResult.signals,
-      cycleBottomResult?.signals
-    );
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult, olympusPct]);
+  // FIX-MUTEX-V3 (Oct-2026): rebalanceBase se movió DEBAJO de smartDCAResult.
+  //   El rebalanceo es ahora la 2ª capa del reparto "un hueco, un euro" y
+  //   necesita `dcaCommitted` (€ que la capa semanal ya despliega). Orden:
+  //   smartDCA (1ª capa, semanal) → rebalanceBase (2ª capa, mensual) →
+  //   rebalanceFinal (guards post-hoc).
 
   // FIX-REGIME-TRANSITION (Phase 13): régimen previo real desde regimeHistory —
   //   permite a la señal "Régimen Mejorando" del attack medir una TRANSICIÓN
@@ -1741,11 +1716,8 @@ soxRsiWeekly,
       previousRegime,
       // FIX-BTC-TOTAL-GATE: banda BTC composite (satélite + motor) para el gate
       btcTotalComposite: btcTotal,
-      // FIX-MUTEX-REBALANCE-DCA (Phase 13.1, v2): BUYs del rebalanceo CON coste
-      // para semántica de porción financiada (cap por gap). Legacy tickers
-      // mantenido como fallback si buySuggestions está vacío.
-      pendingRebalanceBuys: (rebalanceBase?.buySuggestions ?? []).map(s => ({ ticker: s.ticker, cost: s.cost })),
-      pendingRebalanceTickers: (rebalanceBase?.buySuggestions ?? []).map(s => s.ticker),
+      // FIX-MUTEX-V3: el DCA ya no recibe las sugerencias del rebalanceo (el
+      // candado por sugerencia se eliminó). El neteo vive en rebalanceBase.
       volTargetMultiplier: engineResult.volTargetMultiplier,        tailRiskActive: engineResult.tailRiskActive,
         tailRiskOverlay: engineResult.tailRiskOverlay,
         killSwitchLevel: engineResult.killSwitchLevel ?? 0,
@@ -1798,10 +1770,72 @@ soxRsiWeekly,
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, olympusPct, rebalanceBase, previousRegime]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, olympusPct, previousRegime]);
+
+  // FIX-MUTEX-V3 (Oct-2026): única fuente de verdad del rebalanceo — calculada
+  //   DESPUÉS del Smart DCA. El rebalanceo (MENSUAL) es la 2ª capa: recibe
+  //   `dcaCommitted` (€ que la capa semanal ya despliega por ticker), cierra SOLO
+  //   el remanente de cada hueco y su presupuesto de cash se reduce en esa suma.
+  //   Invariante "un hueco, un euro": gap_i = dca_i + buy_i  ·  Σdca + Σbuy ≤ cash.
+  //   Sustituye al orden anterior (rebalancer → DCA con mutex por SUGERENCIA),
+  //   que paralizaba el DCA durante todo el ciclo (bug live 01-oct-2026: €3.900
+  //   sin invertir un mes). rebalanceFinal reutiliza EXACTAMENTE esta base — los
+  //   guards post-hoc se aplican encima.
+  const rebalanceBase = useMemo(() => {
+    if (!engineResult) return null;
+    const rebalanceAssets: RebalanceAsset[] = portfolio.assets.map(asset => {
+      const alloc = engineResult.allocations.find(a => a.name === asset.name);
+      const engineAlloc = alloc?.finalAllocation ?? 0;
+      const isBtc = asset.ticker === 'BTC-EUR';
+      const compositeAlloc = compositeTarget(engineAlloc, olympusPct, isBtc);
+      return {
+        ticker: asset.ticker,
+        name: asset.name,
+        price: asset.price,
+        shares: asset.shares,
+        targetAllocation: compositeAlloc,
+      };
+    });
+    // FIX-MUTEX-V3: € comprometidos por la capa semanal (Smart DCA), por ticker.
+    const dcaCommitted: Record<string, number> = {};
+    for (const a of smartDCAResult?.allocationByAsset ?? []) {
+      if (a.skipped || a.actualCost <= 0) continue;
+      dcaCommitted[a.ticker] = (dcaCommitted[a.ticker] ?? 0) + a.actualCost;
+    }
+    return computeRebalanceSuggestions(
+      rebalanceAssets,
+      availableCash,
+      totalPortfolioValue,
+      0.02,
+      cycleTopResult.signals,
+      cycleBottomResult?.signals,
+      dcaCommitted
+    );
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult, olympusPct, smartDCAResult]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";
+
+  // FIX-DCA-DIAG (Oct-2026): el desglose por activo del SmartDCA se ocultaba con
+  //   el guard `totalCashToInvest > 0` — es decir, justo cuando el despliegue era
+  //   €0 el usuario no veía NINGÚN motivo (activos en peso/Cycle Top, sin cash
+  //   operativo, o escala de despliegue a 0). Esta línea hace explícito el
+  //   bloqueador. FIX-MUTEX-V3: el candado del rebalanceo ya no puede dejar el
+  //   DCA en €0 — el reparto es por capas (DCA primero, rebalanceo el remanente).
+  const dcaZeroReason = useMemo(() => {
+    if (!smartDCAResult || smartDCAResult.totalCashToInvest > 0.01) return "";
+    if (olympusAvailableCash <= 0) {
+      return "la Caja de reserva (cash operativo del broker) está a €0 — el DCA normal solo invierte desde ahí.";
+    }
+    const reasons = smartDCAResult.allocationByAsset.map(a => a.reason ?? "").join(" | ");
+    if (/cycle top/i.test(reasons)) {
+      return "todos los activos infraponderados están bloqueados por Cycle Top (zona de techo de ciclo).";
+    }
+    if (reasons.length > 0) {
+      return "ningún activo está infraponderado frente a su objetivo (todos en peso o sobreponderados).";
+    }
+    return "el multiplicador de despliegue (Kill Switch / recuperación) dejó la fracción en 0.";
+  }, [smartDCAResult, olympusAvailableCash]);
 
   // CASH-REDESIGN-05: eliminados los 3 useEffects de auto-acumulación.
   //   - defensiveLiquidityRef + useEffect que movía monthlyInjection → defensiveLiquidity en CRISIS
@@ -1904,8 +1938,8 @@ soxRsiWeekly,
         targetAllocation: compositeAlloc,
       };
     });
-    // FIX-MUTEX-REBALANCE-DCA: reutiliza la base única (rebalanceBase) — misma
-    //   instancia que consumió smartDCAResult para el mutex. Sin recálculo.
+    // FIX-MUTEX-V3: reutiliza la base única (rebalanceBase) — la misma instancia
+    //   ya neteada con dcaCommitted. Sin recálculo.
     const baseRebalance = rebalanceBase;
     if (!baseRebalance) return null;
     // FIX-AUDIT-R3 R3-01: trigger extendido para liquidación total.
@@ -4806,10 +4840,18 @@ soxRsiWeekly,
       )}
 
       {/* SmartDCA por activo */}
-      {(smartDCAResult?.totalCashToInvest ?? 0) > 0 && (
+      {/* FIX-DCA-DIAG (Oct-2026): antes se ocultaba cuando el despliegue era €0,
+          dejando al usuario sin diagnóstico del bloqueo. Ahora se muestra siempre
+          (salvo WAIT/BLOCK, que ya tienen su propio panel). */}
+      {smartDCAResult && smartDCAResult.action !== "WAIT" && !smartDCAResult.action.startsWith("BLOCK") && (
         <div style={styles.card}>
           <h2>💸 SmartDCA — Distribución por Motor (Nivel 4)</h2>
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{smartDCAResult?.reasoning}</p>
+          {smartDCAResult.totalCashToInvest <= 0.01 && (
+            <div style={{ backgroundColor: "#78350f", border: "1px solid #f59e0b", borderRadius: 8, padding: "0.6rem 0.9rem", marginBottom: "0.75rem", fontSize: "0.8rem", color: "#fde68a" }}>
+              <strong>⚠️ Despliegue €0 — motivo:</strong> {dcaZeroReason}
+            </div>
+          )}
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
               <thead>
@@ -4838,7 +4880,7 @@ soxRsiWeekly,
                       {a.skipped ? "€0" : `€${a.actualCost.toFixed(2)}`}
                     </td>
                     <td style={{ padding: "0.5rem", color: "#6b7280", fontSize: "0.75rem" }}>
-                      {a.skipped ? `Necesita €${a.pricePerShare.toFixed(0)} mín.` : a.reason.split("→")[1]?.trim() ?? a.reason}
+                      {a.skipped ? (a.reason || `Necesita €${a.pricePerShare.toFixed(0)} mín.`) : a.reason.split("→")[1]?.trim() ?? a.reason}
                     </td>
                     {/* MEJORA-9: Ejecutado en DCA */}
                     <td style={{ padding: "0.5rem" }}>

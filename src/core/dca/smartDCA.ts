@@ -137,23 +137,12 @@ export interface SmartDCAInput {
    *  Si se proporciona, buildAllocations solo comprará activos con drift POSITIVO
    *  (infraponderados), prorrateando el cash según el drift en vez del target absoluto. */
   currentAllocations?: CurrentAllocation[];
-  /**
-   * FIX-MUTEX-REBALANCE-DCA (v1): tickers con BUY pendiente del rebalancer.
-   * Mutex binario legacy — el DCA no ejecuta esos tickers. Mantenido por
-   * compatibilidad; preferir pendingRebalanceBuys (v2, cap por gap).
-   */
-  pendingRebalanceTickers?: string[];
-  /**
-   * FIX-MUTEX-V2 (Phase 13.1): BUYs del rebalanceo con su coste financiado.
-   * Semántica de PORCIÓN FINANCIADA del gap:
-   *   cost ≥ déficit del ticker → el DCA aporta 0 (gap ya cubierto).
-   *   cost < déficit → el DCA solo puede cubrir el resto (top-up).
-   *   ticker sin entrada → el DCA opera con normalidad.
-   * Elimina la parálisis del mutex binario: si el usuario difiere el
-   * rebalanceo, el DCA sigue trabajando los gaps NO financiados (30%/mes)
-   * sin duplicar nunca el dinero del rebalanceo.
-   */
-  pendingRebalanceBuys?: { ticker: string; cost: number }[];
+  // FIX-MUTEX-V3 (Oct-2026): se ELIMINARON pendingRebalanceTickers y
+  //   pendingRebalanceBuys. El candado rebalanceo→DCA ya no vive dentro de
+  //   Smart DCA: la capa semanal despliega su tranche y es el rebalanceo
+  //   mensual quien netea lo ya comprometido por el DCA (parámetro
+  //   dcaCommitted de computeRebalanceSuggestions). Razón: un candado sobre
+  //   SUGERENCIAS persistentes paralizaba el DCA durante todo el ciclo.
   cewsOutput?: CEWSOutput;
   cewsPreviousLevel?: CEWSLevel;
   /**
@@ -166,8 +155,10 @@ export interface SmartDCAInput {
   /** Señales de techo de ciclo por activo. Si un activo tiene shouldTrim=true,
    *  SmartDCA no comprará más de ese activo (redistribuye el cash a los demás).
    *  Si HAY trims activos en OTROS activos, los BUYs de activos no-trimmed se
-   *  marcan como "⚠️ rebalanceo pendiente" porque su drift puede venir de la
-   *  redistribución de capital, no de una oportunidad genuina de compra con cash. */
+   *  marcan como "⚠️ cycle top activo" porque su drift puede venir de la
+   *  redistribución de capital, no de una oportunidad genuina de compra con cash.
+   *  (Nota FIX-MUTEX-V3: el rótulo antiguo era "rebalanceo pendiente"; el DCA ya
+   *  no está subordinado al rebalanceo — ver el bloque FIX-MUTEX-V3.) */
   cycleTopSignals?: { ticker: string; shouldTrim: boolean; zone: string }[];
   /** FIX-AUDIT-R9 4: circuit breaker — true if Yahoo data >72h stale. DCA blocked. */
   staleDataBlock?: boolean;
@@ -463,7 +454,7 @@ export function buildAllocations(
       motorWeight: a.finalAllocation, shares,
       pricePerShare: a.price, isFractional: a.isFractional,
       skipped: false,
-      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)${capNote}${cycleTopActive ? ' ⚠️ rebalanceo pendiente' : ''}`,
+      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)${capNote}${cycleTopActive ? ' ⚠️ cycle top activo' : ''}`,
       drift: a.drift, currentWeight: a.currentWeight,
     };
   });
@@ -723,61 +714,24 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", allocationSkipSet, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers)
     : [];
 
-  // FIX-MUTEX-REBALANCE-DCA (Phase 13, v2 en Phase 13.1): evitar que rebalancer
-  //   y DCA compren el MISMO gap con dinero distinto. v2 = semántica de porción
-  //   financiada: el DCA solo puede top-up el resto del gap (déficit − cost ya
-  //   financiado). Sin esta versión, el mutex binario paralizaba el DCA (€0)
-  //   mientras el rebalanceo estuviera SUGERIDO pero sin ejecutar — el caso live
-  //   01-oct-2026: €3.900 en broker, COMPRA NORMAL, €0 desplegados un mes.
-  const rebalanceBuysMap = new Map<string, number>();
-  for (const b of input.pendingRebalanceBuys ?? []) {
-    const base = b.ticker.split('.')[0];
-    rebalanceBuysMap.set(base, (rebalanceBuysMap.get(base) ?? 0) + b.cost);
-  }
-  const rebalanceSet = rebalanceBuysMap.size > 0
-    ? new Set(rebalanceBuysMap.keys())
-    : new Set((input.pendingRebalanceTickers ?? []).map(t => t.split('.')[0]));
-  if (rebalanceSet.size > 0) {
-    allocs = allocs.map(a => {
-      const base = a.ticker.split('.')[0];
-      if (!rebalanceSet.has(base) || a.skipped) return a;
-      if (rebalanceBuysMap.size > 0) {
-        // ── v2: cap por porción financiada del gap ──
-        const funded = rebalanceBuysMap.get(base) ?? 0;
-        const gapValue = Math.max(0, a.drift ?? 0) * (totalPortfolioValueEUR ?? 0);
-        const allowed = Math.max(0, gapValue - funded);
-        if (a.actualCost <= 0) return a;
-        if (allowed <= 0.01) {
-          return { ...a, actualCost: 0, shares: 0,
-            reason: `${a.reason} — ⏸️ gap ya cubierto por el rebalanceo (mutex); sin doble compra` };
-        }
-        if (a.actualCost > allowed) {
-          const cappedShares = a.isFractional ? allowed / a.pricePerShare : Math.floor(allowed / a.pricePerShare);
-          const cappedCost = cappedShares * a.pricePerShare;
-          if (cappedCost <= 0) {
-            return { ...a, actualCost: 0, shares: 0,
-              reason: `${a.reason} — ⏸️ gap ya cubierto por el rebalanceo (mutex)` };
-          }
-          return { ...a, shares: cappedShares, actualCost: cappedCost,
-            reason: `${a.reason} — top-up: el rebalanceo ya cubre €${funded.toFixed(0)} del gap (mutex)` };
-        }
-        return a;
-      }
-      // legacy binario (pendingRebalanceTickers sin costes)
-      if (a.actualCost <= 0) return a;
-      return { ...a, actualCost: 0, shares: 0,
-        reason: `${a.reason} — ⏸️ BUY ya pendiente en el rebalanceo de este ciclo (mutex); sin doble compra` };
-    });
-    const actualDeployed = allocs.reduce((s, a) => s + a.actualCost, 0);
-    if (actualDeployed < totalCash && totalCash > 0) {
-      const scale = totalCash > 0 ? actualDeployed / totalCash : 0;
-      olympusInvested = Math.round(olympusInvested * scale);
-      tacticalInvested = actualDeployed - olympusInvested;
-      if (tacticalInvested < 0) { olympusInvested = actualDeployed; tacticalInvested = 0; }
-      tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
-      totalCash = actualDeployed;
-    }
-  }
+  // FIX-MUTEX-V3 (Oct-2026): ELIMINADO el candado rebalanceo→DCA por SUGERENCIA.
+  //   Los mutex v1 (binario) y v2 (porción financiada) trataban las sugerencias
+  //   del panel de rebalanceo — que persisten todo el ciclo (mes) — como si
+  //   fueran órdenes comprometidas. Con cadencia MENSUAL (rebalanceo) + SEMANAL
+  //   (DCA) un candado por sugerencia bloquea hasta 4 tranches semanales
+  //   seguidas: el caso live 01-oct-2026 (€3.900 en el bróker, COMPRA NORMAL,
+  //   €0 desplegados un mes) no era un bug del sizing sino de la BASE del
+  //   candado (sugerencia ≠ compromiso).
+  //   AHORA el reparto "un hueco, un euro" es simétrico y por capas:
+  //     1ª capa (semanal) → Smart DCA despliega su tranche (15%/30% del cash
+  //                          operativo) prorrateado por drift, SIN veto.
+  //     2ª capa (mensual) → el rebalanceo recibe dcaCommitted (€ por ticker) y
+  //                          cierra solo el REMANENTE de cada hueco con el cash
+  //                          restante. Ver computeRebalanceSuggestions().
+  //   La exclusión mutua ya no depende de una sugerencia: depende del ESTADO
+  //   (pesos + cash operativo), que se actualiza al confirmar cada ejecución.
+  //   Garantía: gap_ticker = dcaCommitted_ticker + buy_rebalanceo_ticker, y
+  //   dcaTotal + buyTotal ≤ cashReserve. Nunca doble compra del mismo hueco.
 
   // FIX-DCA-FALLBACK (v3 Jul-2026): cuando totalCash > 0 pero buildAllocations
   // no encuentra activos elegibles (todos cycle top, sobreponderados, o sin drift),
@@ -836,7 +790,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
         } else if (skipped) {
           reason = motivo;
         } else {
-          reason = `${canAttack ? "ATAQUE:" : "DCA:"} prorrateado ${(a.finalAllocation*100).toFixed(1)}% · ${motivo}${cycleTopActive ? ' ⚠️ rebalanceo pendiente' : ''}`;
+          reason = `${canAttack ? "ATAQUE:" : "DCA:"} prorrateado ${(a.finalAllocation*100).toFixed(1)}% · ${motivo}${cycleTopActive ? ' ⚠️ cycle top activo' : ''}`;
         }
         return {
           ticker: a.ticker, name: a.name,
@@ -879,7 +833,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     ? btcOnlyAttack
       ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
       : `🚀 ATAQUE — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
-    : `DCA normal Olympus €${olympusInvested.toFixed(0)}${recoveryMultiplier > 1 ? ` (recuperación ×${recoveryMultiplier.toFixed(1)} tras Kill Switch — quedan ${recoveryCyclesRemaining} ciclos)` : ''}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — ejecuta PRIMERO el rebalanceo)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
+    : `DCA normal Olympus €${olympusInvested.toFixed(0)}${recoveryMultiplier > 1 ? ` (recuperación ×${recoveryMultiplier.toFixed(1)} tras Kill Switch — quedan ${recoveryCyclesRemaining} ciclos)` : ''}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — el rebalanceo mensual cubrirá el remanente del hueco)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
   const M = ATK.MULTIPLIERS;
   const attackMultiplier = canAttack ? (attackConfluence >= 6 ? M.MAX : attackConfluence >= 5 ? M.STRONG : attackConfluence >= 4 ? M.ENTRY : M.PROBE) : 1.0;

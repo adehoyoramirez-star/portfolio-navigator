@@ -12,7 +12,20 @@
 //   Los SELLs (trim de ciclo / sobrepeso) NO tienen cap: reducir exposición
 //   nunca es la orden desproporcionada peligrosa.
 //   No es un segundo motor de sizing:
-//     INDICADORES → REGIME → PENALTY → TARGET → DRIFT → ORDER GUARD → ORDER
+//     INDICADORES → REGIME → PENALTY → TARGET → DRIFT → CAPA DCA → ORDER GUARD → ORDER
+//
+// FIX-MUTEX-V3 (Oct-2026) — "un hueco, un euro" con capas (rebalanceo MENSUAL
+//   + DCA SEMANAL), sustituye al mutex por SUGERENCIA de FIX-PHASE13-INSTITUTIONAL #5:
+//     El candado v1/v2 vivía DENTRO de Smart DCA y se activaba con las sugerencias
+//     del panel (que persisten todo el ciclo) → el DCA quedaba en €0 mientras el
+//     rebalanceo no se ejecutase (bug live 01-oct-2026: €3.900 sin invertir un mes).
+//     AHORA la exclusión es simétrica y por estado:
+//       1ª capa (semanal) → Smart DCA despliega su tranche por drift, sin veto.
+//       2ª capa (mensual) → este módulo recibe dcaCommitted (€ por ticker) y cierra
+//                           solo el REMANENTE del hueco, con el cash restante.
+//     Invariante: gap_i = dcaCommitted_i + buy_i  ·  Σ dca + Σ buy ≤ cashReserve.
+//     La exclusión mutua depende del ESTADO (pesos + cash), que se actualiza al
+//     confirmar cada ejecución — nunca de una sugerencia.
 
 import { ORDER_GUARD_CONFIG } from "../config/engineConfig";
 
@@ -105,7 +118,17 @@ export function computeRebalanceSuggestions(
   totalPortfolioValue: number,
   driftThreshold = 0.02,
   cycleTopSignals: CycleTopSignal[] = [],
-  cycleBottomSignals: CycleBottomSignal[] = []
+  cycleBottomSignals: CycleBottomSignal[] = [],
+  /**
+   * FIX-MUTEX-V3 (Oct-2026): € por ticker ya comprometidos por la capa SEMANAL
+   * (Smart DCA) en este ciclo. El rebalanceo MENSUAL es la 2ª capa: cierra solo
+   * el REMANENTE de cada hueco (deficitValue − dcaCommitted) y su presupuesto de
+   * cash se reduce en la suma comprometida. Invariante "un hueco, un euro":
+   *   gap_i = dcaCommitted_i + buy_rebalanceo_i  ·  Σ dca + Σ buy ≤ cash.
+   * Sustituye al mutex por SUGERENCIA (v1/v2), que paralizaba el DCA durante
+   * todo el ciclo. La exclusión mutua pasa a depender del ESTADO compartido.
+   */
+  dcaCommitted: Record<string, number> = {}
 ): RebalanceOutput {
 
   const emptyOutput: RebalanceOutput = {
@@ -118,6 +141,18 @@ export function computeRebalanceSuggestions(
 
   const totalValue = totalPortfolioValue + Math.max(0, availableCash);
 
+  // FIX-MUTEX-V3: € comprometidos por la capa SEMANAL (Smart DCA) en este ciclo,
+  //   agregados por ticker base (exchange-agnostic: WLG ≈ 0P00000WLG.F).
+  const dcaCommittedByBase = new Map<string, number>();
+  let dcaCommittedTotal = 0;
+  for (const [ticker, amount] of Object.entries(dcaCommitted)) {
+    const value = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+    if (value <= 0) continue;
+    const base = ticker.split('.')[0];
+    dcaCommittedByBase.set(base, (dcaCommittedByBase.get(base) ?? 0) + value);
+    dcaCommittedTotal += value;
+  }
+
   const withDrift = assets.map(asset => {
     const currentValue = asset.price * asset.shares;
     const currentPct   = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
@@ -126,10 +161,15 @@ export function computeRebalanceSuggestions(
     //   POSITIVO = sobreponderado (vender) · NEGATIVO = infraponderado (comprar).
     //   ⚠️ OPUESTA a smartDCA.ts (target − current). No cruzar valores entre módulos.
     const drift        = currentPct - targetPct;
-    const deficitValue = Math.max(0, targetPct * totalValue - currentValue);
     // FIX-CYCLEMATCH: matching exchange-agnostic para cubrir alias de ticker
     // (ej: VVSM.DE y VVSM, 0P00000WLG.F y WLG). El split en '.' captura el ticker base.
     const baseTicker = asset.ticker.split('.')[0];
+    // FIX-MUTEX-V3: hueco BRUTO (target·NAV − actual) y hueco NETO de lo que la
+    // capa semanal (DCA) ya está desplegando en este ciclo. Si el DCA cubre todo
+    // el hueco, el rebalanceo no emite BUY para ese activo (deficitValue → 0).
+    const deficitGross = Math.max(0, targetPct * totalValue - currentValue);
+    const dcaAlready = dcaCommittedByBase.get(baseTicker) ?? 0;
+    const deficitValue = Math.max(0, deficitGross - dcaAlready);
     const cycleSignal  = cycleTopSignals.find(s =>
       s.ticker === asset.ticker || s.ticker.split('.')[0] === baseTicker
     );
@@ -240,7 +280,10 @@ export function computeRebalanceSuggestions(
   const sellProceeds = suggestions
     .filter(s => s.action === "SELL")
     .reduce((sum, s) => sum + s.proceedsIfSold, 0);
-  const cashForBuys = availableCash + sellProceeds;
+  // FIX-MUTEX-V3: presupuesto de cash COMPARTIDO con la capa semanal. La parte
+  //   del cash operativo ya comprometida por el DCA no puede financiar de nuevo
+  //   el rebalanceo del mismo ciclo (sería doble gasto del mismo euro).
+  const cashForBuys = Math.max(0, availableCash + sellProceeds - dcaCommittedTotal);
 
   // FIX-DUAL-SIGNAL: failsafe post-hoc — después de calcular SELLs, ningún activo
   // vendido puede aparecer también como BUY. Esto resuelve el bug donde VVSM (semis)

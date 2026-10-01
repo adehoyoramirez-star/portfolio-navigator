@@ -171,18 +171,26 @@ operativa real es penalty > 0.45 por BLOCK_CRISIS, preexistente).
 **4. Banda BTC_TOTAL** (techo 0.337, Rounds 8-9): BTC-only attack con banda excedida →
 WAIT (cash acumula). Full attack → BTC skip, cash redistribuido al resto.
 
-**5. Mutex rebalance∩DCA (v2, Phase 13.1 — FIX-MUTEX-V2)**: semántica de PORCIÓN
-FINANCIADA del gap. `pendingRebalanceBuys` = BUYs del rebalancer CON coste:
-   · cost ≥ déficit del ticker → el DCA aporta 0 ("gap ya cubierto por el rebalanceo").
-   · cost < déficit → el DCA solo cubre el remanente (top-up capado a gap − cost).
-   · ticker sin entrada → el DCA opera con normalidad.
-El mutex binario v1 (pendingRebalanceTickers) queda como fallback cuando no hay costes.
-CAUSA RAÍZ del bug live 01-oct-2026: v1 prohibía al DCA los MISMOS tickers que el
-rebalancer tenía SUGERIDOS (sugerencia persistente toda la semana) → €0 desplegados
-un mes con €3.900 en broker. v2: si el usuario difiere el rebalanceo, el DCA sigue
-trabajando los gaps NO financiados (30%/mes) sin duplicar nunca el dinero del rebalanceo.
-FIX incidental: `pricePerShare` (no `price`) en el cap del top-up — el NaN resultante
-hubiera corrompido la fila del activo top-up.
+**5. Reparto de huecos entre capas (FIX-MUTEX-V3, Oct-2026)**: "un hueco, un euro".
+El candado rebalance∩DCA por SUGERENCIA (v1 binario de v5.4.3, v2 porción financiada de
+v5.4.5) queda **ELIMINADO**: con cadencia MENSUAL (rebalanceo) + SEMANAL (DCA) una
+sugerencia persistente bloqueaba hasta 4 tranches semanales → €0 desplegados un mes con
+€3.900 en broker (bug live 01-oct-2026, que persistía tras v5.4.5). Un candado debe medir
+COMPROMISO, no INTENCIÓN. Reparto por capas:
+   · **1ª capa (semanal)** — Smart DCA despliega su tranche (30%, 15% con cycle-top)
+     prorrateada por drift, SIN veto. Se eliminan `pendingRebalanceTickers` y
+     `pendingRebalanceBuys` de SmartDCAInput.
+   · **2ª capa (mensual)** — `computeRebalanceSuggestions(..., dcaCommitted)` cierra solo
+     el REMANENTE del hueco (`deficitValue − dcaCommitted`) con el cash que la capa
+     semanal no compromete (`cashForBuys − Σ dcaCommitted`). Matching exchange-agnostic.
+**Invariante**: `gap_i = dca_i + buy_i`  ·  `Σdca + Σbuy ≤ cashReserve`.
+La exclusión mutua depende del ESTADO (pesos + cash operativo), no de una sugerencia:
+cada ejecución confirmada actualiza el estado, así que nunca hay doble compra del hueco.
+Dashboard: `rebalanceBase` se calcula DESPUÉS de `smartDCAResult` (orden de capas) y el
+bloque SmartDCA se muestra también con despliegue €0, con banda "Despliegue €0 — motivo"
+(antes el desglose se ocultaba justo cuando el diagnóstico era necesario).
+FIX incidental heredado de v5.4.5: `pricePerShare` (no `price`) en el cap del top-up —
+el NaN resultante hubiera corrompido la fila del activo.
 
 **6. "Régimen Mejorando"** mide TRANSICIÓN (previousRegime dado por el dashboard desde
 regimeHistory): CRISIS→CONTRACTION o CONTRACTION→EXPANSION. Persistencia de régimen
@@ -191,13 +199,15 @@ ya no infla la confluencia. Sin previousRegime → fallback legacy (compat).
 **7. totalLiquidityFraction**: % de TODA la liquidez (broker + defensiva). El buyFraction
 histórico era % del broker solo — el usuario leía "50%" siendo 39% del total.
 
-**Pinned por**: src/test/smartDCA_phase13.test.ts (18 tests).
+**Pinned por**: src/test/smartDCA_phase13.test.ts (19 tests) + src/test/orderGuard.test.ts
++ src/test/driftConvention.test.ts (fórmula de déficit intacta con dcaCommitted = {}).
 **Efecto en el caso 01-oct-2026**: 3 señales → €4.801 (39%) pasa a €899 (7,3%);
 war chest intacta; señal UI honesta ("despliega N% de la liquidez total").
-**Efecto Phase 13.1 (replay del caso live)**: rebalanceo pendiente sin ejecutar →
-€0 (bug v1) pasa a €1.095 (9,8% de la liquidez total: WLG €144, EMXC €421, URNU €169,
-PPFB €360). Rebalanceo financiado en el mismo ciclo → €0 correcto (sin doble gasto).
-Replay: scripts/replay-dca-mutex-v2.ts (temporal, eliminado tras verificación).
+**Efecto Phase 13.2 (FIX-MUTEX-V3)**: con €3.900 en el bróker y BUYs sugeridos del
+rebalanceo, el DCA ya NO queda en €0 — despliega su tranche semanal sobre los huecos y el
+rebalanceo mensual cierra el remanente (`gap = dca + buy`). El caso "rebalanceo financiado
+el mismo ciclo → €0" de v5.4.5 desaparece por diseño: la exclusión es por estado, no por
+sugerencia.
 
 ---
-*Olympus Engine v5.4.5 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 + FIX-PHASE13-INSTITUTIONAL + FIX-CLIFF-STRESS-02 + FIX-MUTEX-V2 (Phase 13.1) · Breadth candidate pending OOS approval*
+*Olympus Engine v5.4.6 · 01-Oct-2026 · FIX-CLIFF-CREDIT-01 + FIX-PHASE13-INSTITUTIONAL + FIX-CLIFF-STRESS-02 + FIX-MUTEX-V3 (Phase 13.2) · Breadth candidate pending OOS approval*
