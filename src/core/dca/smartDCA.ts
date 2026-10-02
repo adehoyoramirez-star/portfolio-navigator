@@ -592,6 +592,24 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // Se ejecuta DESPUÉS de todos los bloqueos para garantizar que
   // no compra con datos stale ni con protección de capital activa.
   if (isBTC_OverrideCandidate) {
+    // FASE 3B · CORRECCIÓN 3 (T6-1): el override respeta BTC_TOTAL_GATE igual que el
+    //   ataque BTC-only. Antes evadía la banda (0.337) y compraba BTC con BTC_TOTAL sobre el techo.
+    if (input.btcTotalComposite !== undefined && input.btcTotalComposite >= ATK.BTC_TOTAL_GATE.BAND_CEILING) {
+      const btcDiag = motorAllocations.find(a => a.ticker === "BTC-EUR");
+      return {
+        action: "WAIT",
+        score: attackConfluence, buyFraction: 0, totalLiquidityFraction: 0, totalCashToInvest: 0,
+        allocationByAsset: btcDiag ? [{
+          ticker: btcDiag.ticker, name: btcDiag.name,
+          cashToInvest: 0, actualCost: 0, motorWeight: btcDiag.finalAllocation,
+          shares: 0, pricePerShare: btcDiag.price, isFractional: true, skipped: true,
+          reason: `BANDA BTC_TOTAL ${(input.btcTotalComposite * 100).toFixed(1)}% ≥ techo ${(ATK.BTC_TOTAL_GATE.BAND_CEILING * 100).toFixed(1)}% — override BTC bloqueado`,
+        }] : [],
+        reasoning: `⏸️ BTC OVERRIDE bloqueado — BTC_TOTAL ${(input.btcTotalComposite * 100).toFixed(1)}% ≥ techo de banda auditada (${(ATK.BTC_TOTAL_GATE.BAND_CEILING * 100).toFixed(0)}%).`,
+        attackMode: false, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 0,
+        olympusInvested: 0, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false,
+      };
+    }
     const btcOnly = motorAllocations.filter(a => a.ticker === "BTC-EUR");
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
     const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:", new Set(), new Map(), false, totalPortfolioValueEUR ?? 0, bottomMultipliers);
