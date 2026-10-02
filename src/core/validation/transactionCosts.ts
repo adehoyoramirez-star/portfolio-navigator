@@ -12,7 +12,10 @@
 //
 // MODELO:
 //   totalCost = fixedCost + spreadCost + impactCost
-//   spreadCost = halfSpread × turnover
+//   spreadCost = FULL spread × turnover = (2 × halfSpreadBps) × turnover
+//     CORRECCIÓN 1 (FASE 3B, oct-2026): antes cobraba medio spread (halfSpread × turnover),
+//     incoherente con el motor (backtestEngine.ts getAssetSpreadCost = halfSpreadBps × 2 / 10_000).
+//     El campo sigue llamándose halfSpreadBps (bid-ask/2) y aquí se aplica el spread COMPLETO.
 //   impactCost = impactCoeff × sqrt(turnover / dailyVolume) × volatility
 //
 // REFERENCIAS:
@@ -139,8 +142,10 @@ export function computeTradeCost(input: TradeCostInput): TradeCostOutput {
   const fixedCost = FIXED_COST_EUR;
 
   // ── 2. Spread cost ──────────────────────────────────────────────────
-  // half-spread × turnover (pagas el spread al entrar Y al salir)
-  const spreadCost = turnoverEur * (params.halfSpreadBps / 10_000);
+  // CORRECCIÓN 1 (FASE 3B): spread COMPLETO = (2 × halfSpreadBps) × turnover.
+  //   Antes cobraba solo el medio spread → subestimaba el coste de ejecución ~2×.
+  //   Coherente con el motor: backtestEngine `getAssetSpreadCost = halfSpreadBps × 2 / 10_000`.
+  const spreadCost = turnoverEur * ((params.halfSpreadBps * 2) / 10_000);
 
   // ── 3. Market impact (Almgren square-root model) ────────────────────
   // impact = σ × coefficient × sqrt(Q / V)
