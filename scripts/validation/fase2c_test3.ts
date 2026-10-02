@@ -100,8 +100,10 @@ function rets(a: string, closes: Record<string, number[]>, di: number, w: number
         const m = rs[0].length; const means = rs.map(x => x.reduce((q, z) => q + z, 0) / m);
         const n = ASSETS.length; const C: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
         for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { let acc = 0; for (let t2 = 0; t2 < m; t2++) acc += (rs[i][t2] - means[i]) * (rs[j][t2] - means[j]); C[i][j] = acc / m; }
-        let varP = 0; const Sw = new Array(n).fill(0);
-        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { Sw[i] += C[i][j] * (w[ASSETS[j]] ?? 0); varP += (w[ASSETS[i]] ?? 0) * Sw[i]; }
+        // FASE 3A FIX: varP se acumulaba DENTRO del doble bucle (sobre-conteo N×) → RC infravalorado.
+        const Sw = new Array(n).fill(0);
+        for (let i = 0; i < n; i++) { let acc = 0; for (let j = 0; j < n; j++) acc += C[i][j] * (w[ASSETS[j]] ?? 0); Sw[i] = acc; }
+        let varP = 0; for (let i = 0; i < n; i++) varP += (w[ASSETS[i]] ?? 0) * Sw[i];
         const b = ASSETS.indexOf('BTC-EUR');
         if (varP > 0) vals.push(((w['BTC-EUR'] ?? 0) * Sw[b]) / varP);
       }

@@ -73,6 +73,10 @@ export interface SimResult {
   // FASE 2C · TEST 2 — instrumentación de la capa DCA
   dcaEvalDays: number; ksBlockedDays: number; vtBlockedDays: number;
   dcaBuyCount: number; dcaBuyEur: number; sellCount: number; sellEur: number;
+  // FASE 3A · TEST 1 — series diarias y log de órdenes
+  investedSeries: number[]; targetTotalSeries: number[]; ksSeries: number[]; engineCashSeries: number[];
+  orderLog: { day: number; date: string; source: 'DCA' | 'REB'; action: 'BUY' | 'SELL'; ticker: string; notional: number; reason: string }[];
+  rebalLog: { day: number; date: string; ticker: string; currentPct: number; targetPct: number; drift: number; soldEur: number }[];
 }
 
 function btcIndicators(ds: Dataset, di: number) {
@@ -122,7 +126,15 @@ export function runEngine(ds: Dataset) {
   return { twr, values, dates, metrics: metrics(twr, values, dates), regimeDays: bt.regimeDays, recs, bt };
 }
 
-export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: number; vetoSeries?: { penalty: number[]; volTarget: number[]; ks: number[] } } = {}): SimResult {
+export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: number; vetoSeries?: { penalty: number[]; volTarget: number[]; ks: number[] }; targetsOverride?: Record<string, number>[]; rebalanceEvery?: number; strictDeRisk?: boolean; deRiskTrigger?: number; cycleBottomByDay?: { ticker: string; attackMultiplier: number; shouldAccumulate: boolean; zone: string }[][] } = {}): SimResult {
+  const rebalanceEvery = opts.rebalanceEvery ?? 30;
+  const strictDeRisk = opts.strictDeRisk ?? false;
+  const allocAt = (kk: number) => (opts.targetsOverride?.[kk] ?? recs0(kk).allocations) as Record<string, number>;
+  const recs0 = (kk: number) => recs[Math.max(0, Math.min(kk, recs.length - 1))];
+  const sumAllocAt = (kk: number) => { const al = allocAt(kk); return ASSETS.reduce((s, a) => s + Math.max(0, al[a] ?? 0), 0); };
+  const investedSeries: number[] = [], targetTotalSeries: number[] = [], ksSeries: number[] = [], engineCashSeries: number[] = [];
+  const orderLog: SimResult['orderLog'] = [];
+  const rebalLog: SimResult['rebalLog'] = [];
   const startOffset = opts.startOffset ?? 0;
   setCostScale(opts.costScale ?? 1);
   const { dates, closes } = ds;
@@ -166,7 +178,7 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
     }
     const prevVal = values.length ? values[values.length - 1] : CFG.initialCapital;
     const pv = cash + ASSETS.reduce((s, a) => s + shares[a] * px(a), 0);
-    const alloc = rcs[k].allocations as Record<string, number>;
+    const alloc = (opts.targetsOverride?.[k] ?? rcs[k].allocations) as Record<string, number>;
     let dcaCommitted: Record<string, number> = {};
 
     if (k % 7 === 0 && k > 0) {
@@ -189,7 +201,7 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
         totalPortfolioValueEUR: pv,
         motorAllocations: ASSETS.map(a => ({ name: a, ticker: a, finalAllocation: Math.max(0, alloc[a] ?? 0), price: px(a), isFractional: isBTC(a) })),
         currentAllocations: ASSETS.map(a => ({ ticker: a, name: a, currentWeight: pv > 0 ? (shares[a] * px(a)) / pv : 0 })),
-        cycleBottomSignals: [],
+        cycleBottomSignals: opts.cycleBottomByDay?.[k] ?? [],
         btcTotalComposite: btcTotalExposure(1.0, pv > 0 ? (shares['BTC-EUR'] * px('BTC-EUR')) / pv : 0),
       };
       const r = computeSmartDCA(inp);
@@ -206,6 +218,7 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
         cash -= not + c; shares[a.ticker] += sh;
         totalCosts += c; turnoverEur += not; nOrders++;
         dcaBuyCount++; dcaBuyEur += not;
+        orderLog.push({ day: k, date: dstr, source: 'DCA', action: 'BUY', ticker: a.ticker, notional: not, reason: r.action ?? 'DCA' });
         dcaBoughtEver[a.ticker] = (dcaBoughtEver[a.ticker] ?? 0) + not;
         buysSinceReb[a.ticker] = (buysSinceReb[a.ticker] ?? 0) + not;
         (buyEvents[a.ticker] ??= []).push([k, not]);
@@ -213,12 +226,15 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
       }
     }
 
-    if (k % 30 === 0 && k > 0) {
+    const deRiskEvent = !!opts.deRiskTrigger && k > 0 && (sumAllocAt(k - 1) - sumAllocAt(k)) > opts.deRiskTrigger;
+    if ((k % rebalanceEvery === 0 && k > 0) || deRiskEvent) {
       const pv2 = cash + ASSETS.reduce((s, a) => s + shares[a] * px(a), 0);
+      const preW: Record<string, number> = {};
+      ASSETS.forEach(a => preW[a] = pv2 > 0 ? (shares[a] * px(a)) / pv2 : 0);
       const rbAssets: RebalanceAsset[] = ASSETS.map(a => ({
         ticker: a, name: a, price: px(a), shares: shares[a], targetAllocation: Math.max(0, alloc[a] ?? 0),
       }));
-      const out = computeRebalanceSuggestions(rbAssets, cash, pv2, 0.02, [], [], dcaCommitted);
+      const out = computeRebalanceSuggestions(rbAssets, cash, pv2, 0.02, [], opts.cycleBottomByDay?.[k] ?? [], dcaCommitted);
       for (const s of out.suggestions) {
         const p = px(s.ticker); if (p <= 0) continue;
         if (s.action === 'SELL' && s.sharesToSell > 0) {
@@ -229,6 +245,7 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
           shares[s.ticker] -= sh; cash += not - c;
           totalCosts += c; turnoverEur += not; nOrders++;
           sellCount++; sellEur += not;
+          orderLog.push({ day: k, date: dstr, source: 'REB', action: 'SELL', ticker: s.ticker, notional: not, reason: s.reason });
           if (s.isOverweightTrim) {
             trimCountAll++; trimEurAll += not;
             if ((dcaBoughtEver[s.ticker] ?? 0) > 0) { legacyRoundTrips++; legacyRoundTripEur += not; }
@@ -249,7 +266,31 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
           if (not + c > cash) continue;
           cash -= not + c; shares[s.ticker] += sh;
           totalCosts += c; turnoverEur += not; nOrders++;
+          orderLog.push({ day: k, date: dstr, source: 'REB', action: 'BUY', ticker: s.ticker, notional: not, reason: s.reason });
         }
+      }
+      // FASE 3A · corrección SINTÉTICA (solo en script): forzar de-risking hacia cash
+      //   vende cualquier exceso restante sobre (target + floor=0) hasta dejar Σinvested ≈ Σtarget.
+      if (strictDeRisk) {
+        for (const a of ASSETS) {
+          const p = px(a); if (p <= 0) continue;
+          const tgtVal = Math.max(0, alloc[a] ?? 0) * pv2;
+          const curVal = shares[a] * p;
+          if (curVal - tgtVal > 0.01) {
+            const not = curVal - tgtVal;
+            const sh = isBTC(a) ? not / p : Math.floor(not / p);
+            if (sh <= 0) continue;
+            const actual = sh * p;
+            const c = computeTradeCost({ ticker: a, oldWeight: 0, newWeight: actual / pv2, portfolioValueEur: pv2, priceEur: p }).totalCostEur;
+            shares[a] -= sh; cash += actual - c;
+            totalCosts += c; turnoverEur += actual; nOrders++; sellCount++; sellEur += actual;
+            orderLog.push({ day: k, date: dstr, source: 'REB', action: 'SELL', ticker: a, notional: actual, reason: 'strictDeRisk' });
+          }
+        }
+      }
+      for (const a of ASSETS) {
+        const sold = orderLog.filter(ol => ol.day === k && ol.ticker === a && ol.source === 'REB' && ol.action === 'SELL').reduce((s2, ol) => s2 + ol.notional, 0);
+        rebalLog.push({ day: k, date: dstr, ticker: a, currentPct: preW[a], targetPct: Math.max(0, alloc[a] ?? 0), drift: preW[a] - Math.max(0, alloc[a] ?? 0), soldEur: sold });
       }
       lastRebK = k; lastRebPv = pv2;
       ASSETS.forEach(a => { lastRebPrice[a] = px(a); lastRebTarget[a] = alloc[a] ?? 0; });
@@ -260,6 +301,10 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
     const flow = (k > 0 && parseInt(dstr.slice(5, 7), 10) !== parseInt(dates[di - 1].slice(5, 7), 10)) ? CFG.monthlyContribution : 0;
     values.push(pvNow);
     cashSeries.push(cash / Math.max(1e-9, pvNow));
+    investedSeries.push(1 - cash / Math.max(1e-9, pvNow));
+    targetTotalSeries.push(ASSETS.reduce((s, a) => s + Math.max(0, alloc[a] ?? 0), 0));
+    ksSeries.push(opts.vetoSeries ? (opts.vetoSeries.ks[k] ?? 0) : 0);
+    engineCashSeries.push(rcs[k].cash);
     if (k > 0) twr.push((pvNow - flow) / prevVal - 1);
   }
   void lastRebTarget;
@@ -280,6 +325,7 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
     trimLog, trimCountAll, trimEurAll, legacyRoundTrips, legacyRoundTripEur, churnDirectEur,
     finalValue, contributions, xirr: xirr(fl), regimeDays: bt.regimeDays,
     dcaEvalDays, ksBlockedDays, vtBlockedDays, dcaBuyCount, dcaBuyEur, sellCount, sellEur,
+    investedSeries, targetTotalSeries, ksSeries, engineCashSeries, orderLog, rebalLog,
   };
 }
 
