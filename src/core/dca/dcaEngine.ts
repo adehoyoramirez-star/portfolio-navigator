@@ -82,6 +82,14 @@ const DCA_CONFIG = {
     // FIX-BUG-3: era 0.04 (vol DIARIA calibrado en producción como anualizado).
     // 0.18 (vol anual normal) > 0.04 → pánico SIEMPRE. Umbral correcto: 0.40 anual.
     PANIC_VOLATILITY:  0.40,
+    /**
+     * @deprecated FASE 3B · CORRECCIÓN 5 — CONTROL MUERTO.
+     *   La "VENTA DE EMERGENCIA" (liquidación del 30%) solo se publica en el campo
+     *   escalar `investAmount` de conveniencia/retrocompatibilidad (olympusV3 output.dca).
+     *   NO existe ningún consumidor que la ejecute: el dashboard usa computeSmartDCA como
+     *   fuente única de verdad y NO liquida por volatilidad. No conectar a ejecución.
+     *   Ver `src/test/dcaEngine_deprecated.test.ts` (test de "no consumidores").
+     */
     LIQUIDATION_RATIO: 0.30,
   },
 } as const;
@@ -113,6 +121,8 @@ export function computeDCADecision(input: DCAEngineInput): DCAEngineOutput {
   const effectiveVol = portfolioVolatility ?? 0.15;
   const isPanic = effectiveVol > DCA_CONFIG.RISK_LIMITS.PANIC_VOLATILITY;
 
+  // @deprecated FASE 3B · CORRECCIÓN 5 — rama de VENTA DE EMERGENCIA (30%) SIN consumidores.
+  //   Se conserva solo como notificación en `investAmount`; ninguna capa de ejecución la usa.
   if (isPanic && totalPortfolioValue > 100) {
     const sellAmount = totalPortfolioValue * DCA_CONFIG.RISK_LIMITS.LIQUIDATION_RATIO;
     return {
