@@ -29,6 +29,38 @@
 
 import { ORDER_GUARD_CONFIG } from "../config/engineConfig";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 3B · CORRECCIÓN 2 — EVENTO DE DE-RISKING (fuera de cadencia)
+//   Si la exposición objetivo TOTAL del motor (Σtarget) cae más de THRESHOLD_PP
+//   respecto de su valor en el último rebalanceo, el día se marca como
+//   "rebalanceo recomendado": el caller debe generar las órdenes de venta hacia
+//   el nuevo objetivo SIN esperar a la cadencia mensual.
+//   El umbral es FIJO (no tunable) y el detector NO ejecuta nada por sí mismo.
+//   Motivo (FASE 3A): la cuenta aplicaba el de-risking una cadencia entera tarde
+//   (el nuevo target aparece el registro siguiente al rebalanceo del motor),
+//   lo que costó ~10.7 pp de MaxDD en COVID-2020.
+// ─────────────────────────────────────────────────────────────────────────────
+export const DERISK_EVENT_CONFIG = { THRESHOLD_PP: 0.05 } as const;
+
+/** Exposición objetivo total (Σtarget) de un mapa de pesos objetivo. */
+export function totalTarget(allocations: Record<string, number>): number {
+  return Object.values(allocations).reduce((s, w) => s + (Number.isFinite(w) && w > 0 ? w : 0), 0);
+}
+
+/**
+ * true si la exposición objetivo total cayó más de THRESHOLD_PP (5 pp) respecto
+ * del último rebalanceo. Umbral FIJO (DERISK_EVENT_CONFIG). Estrictamente mayor.
+ */
+export function detectDeRiskEvent(
+  prevTotalTarget: number,
+  currTotalTarget: number,
+  thresholdPp: number = DERISK_EVENT_CONFIG.THRESHOLD_PP
+): boolean {
+  // epsilon para robustez frente a coma flotante: "> 5 pp" exacto NO dispara.
+  return Number.isFinite(prevTotalTarget) && Number.isFinite(currTotalTarget)
+    && (prevTotalTarget - currTotalTarget) > thresholdPp + 1e-9;
+}
+
 // CycleTopSignal definido inline para que rebalancer.ts sea autónomo.
 // Misma interfaz que src/core/risk/cycleTopDetector.ts — no importar desde allí
 // para evitar dependencia circular y errores de módulo no encontrado.
