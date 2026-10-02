@@ -391,7 +391,9 @@ export function buildAllocations(
       : cashAssignedRaw;
     // FIX-BOTTOM-MULT: si hay señal de suelo de ciclo, escalar asignación
     //   y relajar el cap proporcionalmente (entrar overweight es aceptable en un suelo).
-    const cashAssigned = Math.min(cashAssignedRaw * bottomMul, maxCashToTarget * bottomMul);
+    // FASE 3B · CORRECCIÓN 4 (T6-2): el cap NO se multiplica por bottomMul.
+    //   El tope real = target + floor (EXTREME 5 pp). Antes el ×bottomMul lo llevaba a 10 pp.
+    const cashAssigned = Math.min(cashAssignedRaw * bottomMul, maxCashToTarget);
     const isFractional = a.ticker === "BTC-EUR";
     const shares = isFractional ? cashAssigned / a.price : Math.floor(cashAssigned / a.price);
     const actualCost = shares * a.price;
@@ -445,7 +447,8 @@ export function buildAllocations(
     const maxCap = totalPortfolioValueEUR > 0
       ? effDrift * totalPortfolioValueEUR
       : totalBeforeCap;
-    const total = Math.min(totalBeforeCap, maxCap * bottomMul);
+    // FASE 3B · CORRECCIÓN 4 (T6-2): tope en target+floor (5 pp EXTREME), sin ×bottomMul.
+    const total = Math.min(totalBeforeCap, maxCap);
     const shares = a.isFractional ? total / a.price : Math.floor(total / a.price);
     const capNote = capped ? ` (cap €${a.cashAssigned.toFixed(0)} de €${(a as any).cashAssignedRaw.toFixed(0)})` : '';
     return {
