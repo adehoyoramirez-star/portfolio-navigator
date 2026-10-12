@@ -232,14 +232,25 @@ describe("detectGoldTop - GOLD-CB-SENSOR (Ago 2026)", () => {
 
   test("compras récord de BC (1100 t/año) → atenúa a CAUTION", () => {
     const g = gold(detectCycleTops({ ...base, goldCbPurchases: 1100 }));
+    // M3/M4 · P4 (FIX-RECLASS-GOLD): el multiplier crudo pasa de 0.225→0.425
+    // (alivio CB +0.20), pero el tope duro del 20% lo floorea a 0.80 al devolver.
+    // La atenuación sigue visible en `zone` (DANGER→CAUTION), que se calcula
+    // ANTES del cap. Verificado: 0.425 crudo → CAUTION, devuelto 0.80 → trim 20%.
     expect(g.zone).toBe("CAUTION");
-    expect(g.allocationMultiplier).toBeCloseTo(0.40, 2);
+    expect(g.allocationMultiplier).toBeCloseTo(0.80, 2);
+    expect(g.trimPct).toBe(20);
   });
 
-  test("BC récord atenúa (multiplier mayor) pero NO convierte en SAFE", () => {
+  test("BC récord atenúa la ZONA pero NO convierte en SAFE", () => {
     const sin = gold(detectCycleTops(base));
     const con = gold(detectCycleTops({ ...base, goldCbPurchases: 1100 }));
-    expect(con.allocationMultiplier).toBeGreaterThan(sin.allocationMultiplier);
+    // M3/M4 · P4: con el tope del 20% el multiplier devuelto queda flooreado en
+    // 0.80 en ambos casos (0.225 y 0.425 crudos), así que la atenuación CB ya no
+    // se mide en el multiplier devuelto sino en la ZONA: DANGER (crudo 0.225)
+    // vs CAUTION (crudo 0.425). Ninguno de los dos llega a SAFE.
+    expect(sin.zone).toBe("DANGER");
+    expect(con.zone).toBe("CAUTION");
+    expect(con.zone).not.toBe("SAFE");
     expect(con.allocationMultiplier).toBeLessThan(1.0);
   });
 
@@ -674,5 +685,41 @@ describe("cycleTopDetector — P3 tope 30% por detector (M3/M4)", () => {
     for (let dxy = 100; dxy <= 119.0001; dxy += 0.25) {
       expect(trimAt(dxy, 50)).toBeLessThanOrEqual(30);
     }
+  });
+});
+
+// ── M3/M4 · P4 — el oro deja de ser techo: viento en contra con tope 20% ──
+// A4 (INFORME_M4): el retorno forward a 6 meses tras activar el recorte del oro
+// es −10,4% frente a +6,0% incondicional. El recorte llega DESPUÉS de la subida.
+describe("cycleTopDetector — P4 oro con tope 20% (M3/M4)", () => {
+  const gold = (inputs: Partial<CycleTopInputs>) =>
+    detectCycleTops({ bondYield10y: 4.0, ...inputs }).signals.find(s => s.ticker === "PPFB.DE")!;
+
+  test("el recorte del oro nunca supera el 20%", () => {
+    for (const real of [0, 1, 2, 3, 5]) {
+      for (const brent of [50, 80, 95, 115, 150]) {
+        expect(gold({ realYield10y: real, brentOil: brent }).trimPct).toBeLessThanOrEqual(20);
+      }
+    }
+  });
+
+  test("el multiplier devuelto queda en ≥0,80 (coherente con el tope, invariante intacto)", () => {
+    for (const real of [0, 1, 2, 3, 5]) {
+      const g = gold({ realYield10y: real });
+      expect(g.allocationMultiplier).toBeGreaterThanOrEqual(0.80);
+      expect(g.trimPct).toBe(Math.round((1 - g.allocationMultiplier) * 100));
+    }
+  });
+
+  test("sin presión (tipo real 0) el oro queda SAFE sin recorte", () => {
+    const g = gold({ realYield10y: 0 });
+    expect(g.trimPct).toBe(0);
+    expect(g.zone).toBe("SAFE");
+  });
+
+  test("zona DANGER con presión extrema (tipo real 5%, sin mitigantes) — señal fuerte, recorte acotado", () => {
+    const g = gold({ realYield10y: 5 });
+    expect(g.zone).toBe("DANGER");
+    expect(g.trimPct).toBe(20);
   });
 });

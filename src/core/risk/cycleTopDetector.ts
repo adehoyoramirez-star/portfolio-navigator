@@ -585,6 +585,15 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
   }
   const zone: CycleTopSignal["zone"] =
     multiplier <= 0.30 ? "DANGER" : multiplier < 1.0 ? "CAUTION" : "SAFE";
+  // FIX-RECLASS-GOLD (M3/M4 · P4): el oro NO es un techo: es viento en contra.
+  //   A4 (INFORME_M4): fwd6m tras activar -10.4% vs incondicional +6.0% => el
+  //   recorte llega tras la subida, no antes. Tope duro 20%.
+  //   Se acota el MULTIPLIER (trim ≤ 20% ⟺ multiplier ≥ 0.80), NO el trimPct
+  //   derivado, para preservar el invariante FIX-STRUCTURAL (Jul-2026):
+  //   trimPct === round((1 − multiplier) * 100).
+  //   `zone` se calcula ANTES del cap (misma convención que P3/EMXC): describe
+  //   la fuerza de la señal, no el tamaño del recorte aplicado.
+  multiplier = Math.min(1.0, Math.max(0.80, multiplier));
   const trimPct = Math.round((1 - multiplier) * 100);
 
   return {
