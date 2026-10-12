@@ -110,7 +110,7 @@ pregunta está respondida.
 
 - **Ninguna activación**: `OLYMPUS_CORE.enabled` sigue `false`; `ENGINE_CONFIG_VERSION`
   sigue `3.9.0`; **cero cambios en `src/`**.
-- **Sí se corrió** el bootstrap pareado de ΔSharpe (§7 del preregistro) — es el que
-decidió el veredicto.
+- **No se ejecutaron ventanas múltiples OOS** ni el **backtest completo de cartera** con
+  el perfil activo: es lo único que podría reabrir la pregunta (§4), y no está aquí.
 - No se midió el coste en vivo / contrato live-backtest (§18.2).
 - No se ejecutó la suite de tests del perfil (no existe; `scripts/` no tiene tests).
