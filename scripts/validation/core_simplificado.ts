@@ -147,6 +147,51 @@ function wfa(input: BacktestInput, label: string) {
 const wfaL = wfa(mkInput(false), 'LEGACY') as unknown as Record<string, number>;
 const wfaC = wfa(mkInput(true), 'CORE') as unknown as Record<string, number>;
 
+// ── A7/K5: bootstrap pareado del ΔSharpe OOS (§7 del preregistro) ──
+console.log('\n  ── BOOTSTRAP PAREADO ΔSharpe OOS (bloque 21d, 10.000, seed 20261013) ──');
+function oosSeries(s: { daily: { twr: number[]; dates: string[] } }) {
+  const r: number[] = [], d: string[] = [];
+  for (let i = 0; i < s.daily.twr.length; i++) {
+    const day = s.daily.dates[i + 1];
+    if (day !== undefined && day >= SPLIT) { r.push(s.daily.twr[i]); d.push(day); }
+  }
+  return { r, d };
+}
+const oL = oosSeries(legacy), oC = oosSeries(core);
+if (oL.d.length !== oC.d.length || oL.d.some((x, i) => x !== oC.d[i])) {
+  console.error(
+    `  ❌ Las series OOS no se alinean por fecha (legacy ${oL.d.length} vs core ${oC.d.length}). ` + `No se puede comparar nada, se aborta.`,
+  );
+  process.exit(1);
+}
+const sharpeOf = (x: number[]) => {
+  const mu = x.reduce((a, b) => a + b, 0) / x.length;
+  const sd = Math.sqrt(x.reduce((s, r) => s + (r - mu) ** 2, 0) / x.length);
+  return sd > 0 ? (mu * CFG.dpy - CFG.rf) / (sd * Math.sqrt(CFG.dpy)) : 0;
+};
+const D = 21, B = 10000;
+let seed = 20261013;
+const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+const mN = Math.min(oL.r.length, oC.r.length);
+const deltas: number[] = [];
+for (let b = 0; b < B; b++) {
+  const a: number[] = [], c: number[] = []; let n = 0;
+  while (n < mN) {
+    const st = Math.floor(rnd() * (mN - D));
+    for (let j = 0; j < D && n < mN; j++, n++) { a.push(oC.r[st + j]); c.push(oL.r[st + j]); }
+  }
+  deltas.push(sharpeOf(a) - sharpeOf(c));
+}
+deltas.sort((x, y) => x - y);
+const bLo = deltas[Math.floor(B * 0.025)], bHi = deltas[Math.floor(B * 0.975)], bMed = deltas[Math.floor(B * 0.5)];
+const A7 = bMed > 0 && (bLo > 0 || bHi < 0);
+const K5 = !A7;
+const observed = sharpeOf(oC.r) - sharpeOf(oL.r);
+console.log(
+  `  n=${mN} · ΔSharpe observado ${observed.toFixed(3)} · mediana ${bMed.toFixed(3)} · IC95 [${bLo.toFixed(3)}, ${bHi.toFixed(3)}]`,
+);
+console.log(`  → ${A7 ? 'IC95 EXCLUYE 0 (cumple A7)' : 'IC95 INCLUYE 0 (K5: ventaja no distinguible del ruido)'}`);
+
 // K4 tal y como está ESCRITO en el preregistro: "la ventaja del simplificado
 // desaparece al mover la ventana (Sharpe OOS por ventana <= legacy)".
 // Se usa sharpeOosAvg como agregador. overallConsistency / avgSharpeDegradation
@@ -165,6 +210,7 @@ const rows: [string, boolean, string][] = [
   ['A5 turnover ≤15/año', A5, `${core.turnoverPerYear.toFixed(1)}/año`],
   ['A6 data policy (sin fallbacks silenciosos)', A6, `${core.fallbacks.length} fallback(s)`],
   ['K4 Sharpe OOS por ventana gana', !K4, `CORE ${wfaC.sharpeOosAvg.toFixed(3)} vs LEGACY ${wfaL.sharpeOosAvg.toFixed(3)} · degradación IS→OOS ${wfaC.avgSharpeDegradation.toFixed(3)} vs ${wfaL.avgSharpeDegradation.toFixed(3)} · consistencia ${wfaC.overallConsistency.toFixed(3)} vs ${wfaL.overallConsistency.toFixed(3)}`],
+  ['A7 ΔSharpe OOS es real (IC95 excluye 0)', A7, `mediana ${bMed.toFixed(3)} · IC95 [${bLo.toFixed(3)}, ${bHi.toFixed(3)}] · observado ${observed.toFixed(3)}`],
   ['rango spec (§13.2) [informativo]', inRange, `CAGR ${pct(coreOos.cagr)} · Sharpe ${coreOos.sharpe.toFixed(3)} · DD ${pct(coreOos.maxDD, 1)} (ventana distinta a Phase 12)`],
 ];
 for (const [n, ok, detail] of rows) console.log(`  ${ok ? '✅' : '❌'} ${n.padEnd(44)} — ${detail}`);
@@ -176,6 +222,12 @@ if (K4) {
   kills.push(
     `K4: Sharpe OOS por ventana del simplificado NO supera al legacy ` +
       `(${wfaC.sharpeOosAvg.toFixed(3)} vs ${wfaL.sharpeOosAvg.toFixed(3)})`,
+  );
+}
+if (K5) {
+  kills.push(
+    `K5: el IC95 del ΔSharpe OOS incluye 0 ` +
+      `[${bLo.toFixed(3)}, ${bHi.toFixed(3)}] → la ventaja no es distinguible del ruido`,
   );
 }
 

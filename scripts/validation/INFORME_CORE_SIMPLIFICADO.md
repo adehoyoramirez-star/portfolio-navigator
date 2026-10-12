@@ -48,11 +48,28 @@ Dataset canónico · split IS/OOS **2023-10-28** (mismo que la ablación) · `tr
 ✅ A5 turnover ≤15/año            — 2,0/año
 ✅ A6 data policy                 — 0 fallbacks
 ✅ K4 Sharpe OOS por ventana gana — CORE 1,668 vs LEGACY 1,630
+❌ A7 ΔSharpe OOS es real         — IC95 [−0,173, 1,021] INCLUYE 0
 ```
 
-**Ningún criterio aniquilador disparado.** K4 se implementó TAL COMO ESTÁ ESCRITO en el
-preregistro (Sharpe OOS por ventana); la primera versión del script lo había medido por
-`overallConsistency` y disparaba por 0,7 pp — se corrigió el script, **no el criterio**.
+K4 se implementó TAL COMO ESTÁ ESCRITO en el preregistro (Sharpe OOS por ventana); la
+primera versión del script lo había medido por `overallConsistency` y disparaba por 0,7 pp
+— se corrigió el script, **no el criterio**.
+
+### Bootstrap pareado del ΔSharpe (A7/K5, §7)
+
+```
+n = 1029 · ΔSharpe observado 0,415 · mediana 0,442 · IC95 [−0,173, 1,021]
+```
+
+**El IC95 incluye cero.** El simplificado parece ganar 0,415 de Sharpe en OOS, pero esa
+diferencia es **estadísticamente indistinguible de cero**: dentro del intervalo está la
+posibilidad real de que la ventaja sea cero o incluso negativa. **K5 dispara.**
+
+A7/K5 se añadieron al preregistro **antes** de ejecutar el bootstrap (§7), documentando
+la fecha, para que conste que el criterio no se inventó con el resultado delante. Usa la
+misma metodología que `ablation.ts` (bloque 21 d, 10.000 remuestreos, pareado) y el script
+**falla** si las dos series OOS no se alinean por fecha — esa comprobación se ejecutó y
+pasó (mismo `n` en ambas).
 
 ## 3. ⚠️ La evidencia que no puede quedarse sin decir
 
@@ -69,21 +86,31 @@ mejora institucionalmente defendible.**
 
 ## 4. Recomendación
 
-**No activar todavía.** El criterio congelado se cumple y por eso queda registrado como
-pasa — no se reescribe tras ver los números. Pero el perfil **degrada su robustez de B a C**
-y el borde en OOS es de 0,038, dentro del ruido.
+**No activar. Punto cerrado.**
 
-Antes de tocar `OLYMPUS_CORE.enabled` harían falta dos cosas que **no se ejecutaron aquí**:
+El bootstrap se ejecutó y **confirma la sospecha**: el IC95 del ΔSharpe OOS es
+[−0,173, 1,021], **incluye cero**. El parecido con la ablación del repo (V5 vs V3:
+IC95 [−1,095, 0,097], también incluyendo 0) no es casualidad: **en ambas comparaciones la
+diferencia es indistinguible del ruido**.
 
-- **Bootstrap pareado** del ΔSharpe entre CORE y legacy en OOS (el preregistro no lo
-  pidió; la ablación sí lo hace para V5/V3). Con un borde de 0,038 es casi seguro que el
-  IC95 incluiría 0, es decir: **sin ventaja estadísticamente distinguible**.
-- **Ventanas múltiples del dataset** (hoy: una sola ventana OOS).
+La combinación completa es concluyente:
+
+1. El borde en OOS es **0,415 de Sharpe**, pero **no significativo** (IC95 cruza 0).
+2. La degradación IS→OOS **se dispara 2,4×** (0,345 → 0,819).
+3. El repositorio **baja de nota B a C** y de sobreajuste **MODERATE a HIGH**.
+
+Se paga un **riesgo de sobreajuste alto** por una ventaja que **los datos no distinguen
+de cero**. Ese intercambio no se sostiene.
+
+**Si algún día se quisiera reabrir**, haría falta una muestra que dé potencia: más ventanas
+OOS, o el backtest completo de cartera con el perfil activo. Con la muestra actual la
+pregunta está respondida.
 
 ## 5. Qué NO se ejecutó
 
 - **Ninguna activación**: `OLYMPUS_CORE.enabled` sigue `false`; `ENGINE_CONFIG_VERSION`
   sigue `3.9.0`; **cero cambios en `src/`**.
-- No se corrió el bootstrap pareado de ΔSharpe (§4).
+- **Sí se corrió** el bootstrap pareado de ΔSharpe (§7 del preregistro) — es el que
+decidió el veredicto.
 - No se midió el coste en vivo / contrato live-backtest (§18.2).
 - No se ejecutó la suite de tests del perfil (no existe; `scripts/` no tiene tests).

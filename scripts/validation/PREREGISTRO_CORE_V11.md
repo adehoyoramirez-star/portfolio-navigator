@@ -74,3 +74,31 @@ el rango de la spec se reporta como referencia, no como veredicto.
 
 - **No se modifica `src/`** en esta fase: `coreMode` se pasa por llamada en el script.
 - La activación (si procede) se haría como **commit aparte**, con su test.
+
+---
+
+## 7. ADICIÓN POSTERIOR — CRITERIO A7/K5 (congelado ANTES de ejecutar el bootstrap)
+
+> Añadido el 13-oct-2026 **después** de la primera corrida de este preregistro pero
+> **ANTES** de ejecutar el bootstrap. Se documenta con fechas para que se vea que el
+> criterio no se inventó con el resultado delante. El §5 original se cumplió; esta
+> adición nace de una evidencia que no estaba prevista: el borde en OOS es de 0,038
+> de Sharpe por ventana, demasiado pequeño para juzgarlo a ojo.
+
+**Contexto**: K4 pasó por **1,668 vs 1,630 = +0,038**. Con una diferencia así, lo
+normal es que un remuestreo pareado no la distinga de cero. La ablación del propio repo
+(`ablation.ts`) ya usaba este mismo test para V5/V3 y devolvió un IC95 que **incluía 0**.
+
+### Criterio
+
+- **A7 — La ventaja es real**: bootstrap **pareado por bloques** del ΔSharpe OOS
+  (CORE − LEGACY), bloque **21 días**, **10.000** remuestreos, **semilla fija 20261013**:
+  **mediana > 0 E IC95 [P2.5, P97.5] excluye 0**.
+- **K5 — Criterio aniquilador**: el IC95 **incluye 0** → la ventaja del simplificado no
+  es distinguible del ruido → **no activar**, pase lo que pase con el resto de criterios.
+
+**Método declarado de antemano**: mismas fórmulas que `ablation.ts` para que los dos
+informes sean comparables — `sharpe(x) = (μ·dpy − rf) / (σ·√dpy)`, remuestreo del par
+(core[i], legacy[i]) **siempre juntos** (ese es el sentido de *pareado*), índice de
+independencia por la fecha, sin reordenar. Las dos series deben alinearse por fecha; si
+no lo hacen, el script **falla** en vez de comparar cosas distintas.
