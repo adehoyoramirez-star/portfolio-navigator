@@ -1,0 +1,13 @@
+=== 2.1 VERIFICACIÓN INDEPENDIENTE — EMXC (Cash 0%, mi implementación vs harness) ===
+                  CAGR      vol     MaxDD     ops    ventana
+indep  ON   |   9.47% |  22.9% |  -62.6% |  30 | 2003-04-17→2026-10-07 (23.47a)
+harness ON  |   9.47% |   22.9% |  -62.6% |  34 | (m3_output.txt L19)
+indep  OFF  |   9.85% |  23.2% |  -62.6% |   0 |
+harness OFF |   9.81% |   23.2% |  -62.6% |   0 | (m3_output.txt L18)
+Δ CAGR ON   = 0.00pp · Δ vol = -0.05pp · Δ MaxDD = -0.03pp · Δ ops = -4
+
+=== 2.2 TESTS DE CARTERA (motor de cartera mínimo e independiente) ===
+g) trim≡0: ON(lee trims=0) CAGR=25.9924% · OFF(sin trims) CAGR=25.9967% · Δ=-0.0043pp · ops 270/268 → PASS
+g-bis) exposición con trim≡0: media=82.9% · esperado 5/6=83.3% (1 sleeve sin serie) → PASS · el bug /6 daría 16.7%
+h) trim 50% en TODOS los sleeves: exposición media=41.2% · final=39.7% · esperado (5/6)·0.5=41.7% → PASS
+    (rotación: ops ON=110 vs OFF=268)

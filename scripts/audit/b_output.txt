@@ -1,0 +1,134 @@
+=== B2a: precios BTC (CM vs Yahoo) en 14 fechas — validación (intersección 2014-09→2026-10) ===
+  2014-10-01: CM 382.91 vs Yahoo 383.61 → err rel 0.184%
+  2015-06-15: CM 236.79 vs Yahoo 236.82 → err rel 0.014%
+  2016-03-01: CM 432.81 vs Yahoo 435.12 → err rel 0.532%
+  2017-01-10: CM 906.50 vs Yahoo 907.68 → err rel 0.130%
+  2017-12-15: CM 17702.00 vs Yahoo 17706.90 → err rel 0.028%
+  2018-12-15: CM 3185.07 vs Yahoo 3236.76 → err rel 1.597%
+  2020-03-23: CM 6486.41 vs Yahoo 6416.31 → err rel 1.092%
+  2021-04-16: CM 61571.11 vs Yahoo 61572.79 → err rel 0.003%
+  2022-06-18: CM 19013.87 vs Yahoo 19017.64 → err rel 0.020%
+  2023-01-01: CM 16606.75 vs Yahoo 16625.08 → err rel 0.110%
+  2024-03-14: CM 71505.27 vs Yahoo 71396.59 → err rel 0.152%
+  2024-09-17: CM 60238.22 vs Yahoo 60308.54 → err rel 0.117%
+  2025-04-01: CM 85226.71 vs Yahoo 85169.17 → err rel 0.068%
+  2026-03-01: CM 65733.52 vs Yahoo 65738.10 → err rel 0.007%
+  MAX err rel 1.597% (2018-12-15)
+
+=== B2b: BTC OFF (hold, cero costes, mismo grid), ventana común 2014-09-19 → 2026-10-07 (630 semanas) ===
+  CoinMetrics : P0 2014-09-19 393.89 → P1 2026-10-07 83273.72 · CAGR 55.94%
+  Yahoo       : P0 2014-09-19 394.80 → P1 2026-10-07 83275.93 · CAGR 55.91%
+
+=== B5: MVRV Z en picos (expansiva [fase2] vs ventana completa) + Puell ===
+pico | fecha | Z_exp | Z_full | Δ | Puell | (publicado, de memoria)
+  2013-11-29: Z_exp 12.23 | Z_full -0.56 | Δ 12.79 | Puell 9.29 | Glassnode ~7.9 (de memoria)
+  2017-12-15: Z_exp 11.83 | Z_full 0.11 | Δ 11.72 | Puell 5.75 | Glassnode ~7.2 (de memoria)
+  2021-04-16: Z_exp 7.40 | Z_full 1.91 | Δ 5.49 | Puell 1.87 | Glassnode ~6.4 (de memoria)
+  2025-10-03: Z_exp 4.36 | Z_full 3.65 | Δ 0.71 | Puell 1.01 | sin ref publicada (de memoria)
+  maxZ 2013: 2013-04-09 · Z_exp 13.51 · Z_full -0.59 · Δ 14.09
+  maxZ 2017: 2017-12-07 · Z_exp 14.61 · Z_full 0.11 · Δ 14.50
+  maxZ 2021: 2021-01-08 · Z_exp 11.86 · Z_full 1.15 · Δ 10.71
+  maxZ 2025: 2025-01-21 · Z_exp 5.37 · Z_full 3.37 · Δ 1.99
+
+=== B4: barrido sintético con detectCycleTops() REAL — max Δtrim contiguo ===
+detector | input | trim real | trim interpolado (propuesta)
+BTC (Puell)     rango [0,6] paso 0.01: max Δtrim REAL 35.0pp (2.50→2.51) → INTERP 0.2pp (0.82→0.83)
+EMXC (DXY)      rango [100,120] paso 0.01: max Δtrim REAL 30.0pp (102.99→103.00) → INTERP 0.1pp (100.10→100.11)
+SEMIS (RS Z)    rango [0,3] paso 0.01: max Δtrim REAL 30.0pp (0.99→1.00) → INTERP 0.4pp (0.15→0.16)
+SEMIS (RSI-W)   rango [70,90] paso 0.05: max Δtrim REAL 35.0pp (80.00→80.05) → INTERP 0.2pp (70.10→70.15)
+BTC (RSI-W)     rango [70,90] paso 0.05: max Δtrim REAL 1.0pp (80.00→80.05) → INTERP 0.2pp (70.10→70.15)
+
+=== B6: trim por detector (detectCycleTops() real) en ventanas de estrés ===
+  GFC 2008-09 (2008-09-01→2009-03-31):
+    2008-09-05: activos ORO · trim agregado 50.00
+    2008-09-12: activos ORO · trim agregado 52.00
+    2008-09-19: activos ORO · trim agregado 54.00
+    2008-09-26: activos ORO · trim agregado 60.00
+    2008-10-03: activos ORO · trim agregado 62.00
+    2008-10-10: activos ORO · trim agregado 70.00
+    2008-10-17: activos ORO · trim agregado 70.00
+    2008-10-24: activos ORO · trim agregado 70.00
+    2008-10-31: activos ORO · trim agregado 70.00
+    2008-11-07: activos ORO · trim agregado 70.00
+    2008-11-14: activos ORO · trim agregado 70.00
+    2008-11-21: activos ORO · trim agregado 70.00
+    2008-11-28: activos ORO · trim agregado 70.00
+    2008-12-05: activos ORO · trim agregado 63.00
+    2008-12-12: activos ORO · trim agregado 68.00
+    2008-12-19: activos ORO · trim agregado 57.00
+    2008-12-26: activos ORO · trim agregado 58.00
+    2009-01-02: activos ORO · trim agregado 65.00
+    2009-01-09: activos ORO · trim agregado 54.00
+    2009-01-16: activos ORO · trim agregado 53.00
+    2009-01-23: activos ORO · trim agregado 56.00
+    2009-01-30: activos ORO · trim agregado 51.00
+    2009-02-06: activos ORO · trim agregado 53.00
+    2009-02-13: activos ORO · trim agregado 50.00
+    2009-02-20: activos ORO · trim agregado 49.00
+    2009-02-27: activos ORO · trim agregado 59.00
+    2009-03-06: activos SEMIS+ORO · trim agregado 88.00
+    2009-03-13: activos SEMIS+ORO · trim agregado 84.00
+    2009-03-20: activos SEMIS+ORO · trim agregado 73.00
+    2009-03-27: activos SEMIS+ORO · trim agregado 87.00
+  COVID mar-2020 (2020-02-15→2020-04-15):
+    2020-02-21: activos SEMIS · trim agregado 30.00
+    2020-02-28: activos SEMIS · trim agregado 30.00
+    2020-03-06: activos SEMIS · trim agregado 30.00
+    2020-03-13: activos SEMIS+ORO · trim agregado 32.00
+    2020-03-20: activos ORO · trim agregado 10.00
+    2020-03-27: activos SEMIS · trim agregado 30.00
+    2020-04-03: activos SEMIS · trim agregado 30.00
+    2020-04-09: activos — · trim agregado 0.00
+  2022 (2022-01-01→2022-12-31):
+    2022-01-07: activos SEMIS · trim agregado 30.00
+    2022-01-14: activos SEMIS · trim agregado 45.00
+    2022-01-21: activos — · trim agregado 0.00
+    2022-01-28: activos — · trim agregado 0.00
+    2022-02-04: activos — · trim agregado 0.00
+    2022-02-11: activos — · trim agregado 0.00
+    2022-02-18: activos — · trim agregado 0.00
+    2022-02-25: activos — · trim agregado 0.00
+    2022-03-04: activos — · trim agregado 0.00
+    2022-03-11: activos — · trim agregado 0.00
+    2022-03-18: activos — · trim agregado 0.00
+    2022-03-25: activos — · trim agregado 0.00
+    2022-04-01: activos — · trim agregado 0.00
+    2022-04-08: activos — · trim agregado 0.00
+    2022-04-14: activos — · trim agregado 0.00
+    2022-04-22: activos — · trim agregado 0.00
+    2022-04-29: activos ORO · trim agregado 1.00
+    2022-05-06: activos ORO+EMXC · trim agregado 46.00
+    2022-05-13: activos ORO+EMXC · trim agregado 44.00
+    2022-05-20: activos ORO+EMXC · trim agregado 44.00
+    2022-05-27: activos ORO · trim agregado 7.00
+    2022-06-03: activos ORO · trim agregado 13.00
+    2022-06-10: activos ORO+EMXC · trim agregado 53.00
+    2022-06-17: activos ORO+EMXC · trim agregado 64.00
+    2022-06-24: activos ORO+EMXC · trim agregado 62.00
+    2022-07-01: activos ORO+EMXC · trim agregado 61.00
+    2022-07-08: activos ORO+EMXC · trim agregado 90.00
+    2022-07-15: activos ORO+EMXC · trim agregado 87.00
+    2022-07-22: activos ORO+EMXC · trim agregado 82.00
+    2022-07-29: activos ORO+EMXC · trim agregado 38.00
+    2022-08-05: activos ORO+EMXC · trim agregado 79.00
+    2022-08-12: activos ORO+EMXC · trim agregado 52.00
+    2022-08-19: activos ORO+EMXC · trim agregado 82.00
+    2022-08-26: activos ORO+EMXC · trim agregado 84.00
+    2022-09-02: activos ORO+EMXC · trim agregado 90.00
+    2022-09-09: activos ORO+EMXC · trim agregado 94.00
+    2022-09-16: activos ORO+EMXC · trim agregado 98.00
+    2022-09-23: activos ORO+EMXC · trim agregado 123.00
+    2022-09-30: activos ORO+EMXC · trim agregado 131.00
+    2022-10-07: activos ORO+EMXC · trim agregado 129.00
+    2022-10-14: activos ORO+EMXC · trim agregado 129.00
+    2022-10-21: activos ORO+EMXC · trim agregado 131.00
+    2022-10-28: activos ORO+EMXC · trim agregado 127.00
+    2022-11-04: activos ORO+EMXC · trim agregado 131.00
+    2022-11-11: activos ORO+EMXC · trim agregado 60.00
+    2022-11-18: activos ORO+EMXC · trim agregado 108.00
+    2022-11-25: activos ORO+EMXC · trim agregado 82.00
+    2022-12-02: activos ORO+EMXC · trim agregado 75.00
+    2022-12-09: activos ORO+EMXC · trim agregado 80.00
+    2022-12-16: activos ORO+EMXC · trim agregado 81.00
+    2022-12-23: activos ORO+EMXC · trim agregado 86.00
+    2022-12-30: activos ORO+EMXC · trim agregado 87.00

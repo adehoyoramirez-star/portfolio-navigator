@@ -1,0 +1,16 @@
+# PROPUESTA (NO APLICADA) - Reclasifica el oro a capa de viento en contra (tope 20%)
+# Generado por scripts/audit/_mkpatch.py (M4)
+--- a/src/core/risk/cycleTopDetector.ts
++++ b/src/core/risk/cycleTopDetector.ts
+@@ -585,7 +585,10 @@
+   }
+   const zone: CycleTopSignal["zone"] =
+     multiplier <= 0.30 ? "DANGER" : multiplier < 1.0 ? "CAUTION" : "SAFE";
+-  const trimPct = Math.round((1 - multiplier) * 100);
++  // FIX-RECLASS-GOLD (propuesto M4): el oro NO es un techo: es viento en contra.
++  //   A4: fwd6m tras activar -10.4% vs incondicional +6.0% => el recorte llega tras
++  //   la subida, no antes. Tope duro 20%.
++  const trimPct = Math.min(20, Math.round((1 - multiplier) * 100));
+ 
+   return {
+     asset: "Gold (ETC)",

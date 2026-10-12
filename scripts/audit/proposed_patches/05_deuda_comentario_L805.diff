@@ -1,0 +1,14 @@
+# PROPUESTA (NO APLICADA) - Corrige el comentario obsoleto del peso 1.5x del DXY
+# Generado por scripts/audit/_mkpatch.py (M4)
+--- a/src/core/risk/cycleTopDetector.ts
++++ b/src/core/risk/cycleTopDetector.ts
+@@ -802,7 +802,8 @@
+ //   1. Encarece el servicio de deuda en USD para países EM
+ //   2. Provoca salida de capitales (flight-to-safety hacia USA)
+ //   3. Comprime los márgenes de exportadores EM (commodities nominados en USD)
+-// El DXY tiene peso 1.5× sobre P/E porque es más predictivo en ciclos EM.
++// NOTA (M4): el DXY se SUMA como score, NO se multiplica por 1.5. El P/E de EMXC
++// fue ELIMINADO del scoring de techo (Jul-2026). El comentario anterior era obsoleto.
+ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
+   const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
+   const emxcRsi = clampRSI(emxcRsiWeekly); // FIX-RSI-CLAMP: [0,100]

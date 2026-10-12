@@ -1,0 +1,16 @@
+# PROPUESTA (NO APLICADA) - Tope por detector: EMXC 30% (capa de viento en contra)
+# Generado por scripts/audit/_mkpatch.py (M4)
+--- a/src/core/risk/cycleTopDetector.ts
++++ b/src/core/risk/cycleTopDetector.ts
+@@ -874,7 +874,10 @@
+   // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
+   //   multiplierFromScore con rampas suaves. EMXC mapea casi exacto a los anclajes genéricos:
+   //   topSignals=0.5→0.75, 1.5→0.55, 2.5→0.35, 3.5→0.20, 5.0→0.10 (idénticos a los antiguos).
+-  const { multiplier, zone, trimPct } = multiplierFromScore(topSignals);
++  const { multiplier, zone, trimPct: trimRaw } = multiplierFromScore(topSignals);
++  // FIX-CAP-EMXC (propuesto M4): tope duro 30% por detector (capa de viento en
++  //   contra, no techo). Ver C4/D1: cap30 reduce ops 455->213 en SEMIS a 0 coste.
++  const trimPct = Math.min(30, trimRaw);
+ 
+   const parts: string[] = [];
+   if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);

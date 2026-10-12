@@ -1,0 +1,43 @@
+[input] semanas=2441 · con input=2441 · desde 1980-01-04 hasta 2026-10-07
+
+=== A1: N de episodios con separación 26 y 52 semanas (gap >= horizonte) ===
+detector | gap | N | aciertos decl>10% en 26 sem | fwd6m medio
+BTC    |  26 |  8 | 1/8 | 219.2%
+BTC    |  52 |  6 | 1/6 | 272.9%
+SEMIS  |  26 | 16 | 5/16 | 15.3%
+SEMIS  |  52 |  9 | 2/9 | 28.1%
+ORO    |  26 |  2 | 1/2  <-- PRIOR CON TOPE (N<5) | -10.4%
+ORO    |  52 |  2 | 1/2  <-- PRIOR CON TOPE (N<5) | -10.4%
+EMXC   |  26 |  2 | 1/2  <-- PRIOR CON TOPE (N<5) | 5.4%
+EMXC   |  52 |  2 | 1/2  <-- PRIOR CON TOPE (N<5) | 5.4%
+WLG    |  26 |  8 | 1/8 | 3.9%
+WLG    |  52 |  5 | 0/5 | 3.2%
+
+=== A2: acierto vs tasa base (caída >10% en 26 sem) · test de aleatorización por bloques (26 sem) ===
+detector | señal (IC90 Wilson) | tasa base (n) | Δ | IC90 del NULO (N semanas al azar) | veredicto
+BTC    | 12.5% [3–41%] (1/8) | 54.9% (n=821) | -42.4pp | [0.0, 100.0]pp | NO DISCRIMINA
+SEMIS  | 31.3% [16–52%] (5/16) | 42.0% (n=1667) | -10.7pp | [0.0, 100.0]pp | NO DISCRIMINA
+ORO    | 50.0% [12–88%] (1/2) | 17.2% (n=1117) | 32.8pp | [0.0, 100.0]pp | NO DISCRIMINA
+EMXC   | 50.0% [12–88%] (1/2) | 31.9% (n=1200) | 18.1pp | [0.0, 100.0]pp | NO DISCRIMINA
+WLG    | 12.5% [3–41%] (1/8) | 17.7% (n=744) | -5.2pp | [0.0, 100.0]pp | NO DISCRIMINA
+
+=== A3: forward 3/6/12m tras activación vs incondicional · IC90 del incondicional (bloques 26 sem) ===
+detector | horizonte | fwd señal | fwd incond | IC90 incond | veredicto
+BTC    | 3m  | 91.7% (N=8) | 62.0% | [28%, 109%] | dentro del azar
+BTC    | 6m  | 219.2% (N=8) | 178.0% | [63%, 331%] | dentro del azar
+BTC    | 12m | 2440.2% (N=8) | 519.8% | [181%, 628%] | señal MEJOR
+SEMIS  | 3m  | 3.6% (N=16) | 5.2% | [3%, 8%] | dentro del azar
+SEMIS  | 6m  | 15.3% (N=16) | 10.7% | [6%, 15%] | dentro del azar
+SEMIS  | 12m | 22.7% (N=16) | 21.8% | [12%, 29%] | dentro del azar
+ORO    | 3m  | -2.5% (N=2) | 2.9% | [2%, 5%] | señal PEOR
+ORO    | 6m  | -10.4% (N=2) | 6.0% | [4%, 9%] | señal PEOR
+ORO    | 12m | 2.8% (N=2) | 12.8% | [8%, 17%] | señal PEOR
+EMXC   | 3m  | 7.4% (N=2) | 2.9% | [1%, 4%] | señal MEJOR
+EMXC   | 6m  | 5.4% (N=2) | 5.9% | [2%, 9%] | dentro del azar
+EMXC   | 12m | 18.4% (N=2) | 11.0% | [5%, 15%] | señal MEJOR
+WLG    | 3m  | 2.2% (N=8) | 3.0% | [2%, 4%] | dentro del azar
+WLG    | 6m  | 3.9% (N=8) | 6.2% | [4%, 8%] | señal PEOR
+WLG    | 12m | 11.7% (N=8) | 12.6% | [9%, 16%] | dentro del azar
+
+=== A3b: BTC excluyendo 2010-2013 ===
+BTC 2014+ | fwd6m señal=63.1% (N=6) | incond=46.0% | IC90 incond=[21%, 77%] | aciertos 1/6

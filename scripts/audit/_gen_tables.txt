@@ -1,0 +1,51 @@
+BTC | n=843 | desde 2010-08 | >0=23.0% | >20=20.4% | >35=16.8% | max=90% | N=21 | dur=9.9 | acierto=5/21 (23.8%) | IC90=[9.5,38.1] | fwd3m=+151.4% fwd6m=+368.6% fwd12m=+1369.5%
+SEMIS | n=1679 | desde 1994-08 | >0=38.6% | >20=38.6% | >35=26.0% | max=83% | N=38 | dur=18.8 | acierto=10/38 (26.3%) | IC90=[15.8,36.8] | fwd3m=+4.9% fwd6m=+12.2% fwd12m=+20.3%
+ORO | n=1241 | desde 2003-01 | >0=81.9% | >20=69.1% | >35=52.5% | max=82% | N=5 | dur=186.8 | acierto=1/5 (20.0%) | IC90=[0.0,60.0] | fwd3m=+0.3% fwd6m=-0.4% fwd12m=+6.1%
+EMXC | n=2441 | desde 1980-01 | >0=23.4% | >20=23.4% | >35=18.2% | max=73% | N=7 | dur=17.1 | acierto=2/7 (28.6%) | IC90=[0.0,57.1] | fwd3m=+1.3% fwd6m=+3.3% fwd12m=+14.7%
+WLG | n=756 | desde 2012-04 | >0=15.1% | >20=15.1% | >35=14.6% | max=55% | N=21 | dur=6.3 | acierto=1/21 (4.8%) | IC90=[0.0,14.3] | fwd3m=+4.2% fwd6m=+8.1% fwd12m=+14.6%
+URANIO | NO VERIFICADO (input Spot/LT no reconstruible) — excluido de FASE 2 y de cartera
+
+===== TABLE =====
+
+BTC OFF | CAGR=138.14% vol=103.5% MaxDD=-91.2% ops=0 impuestos=0 spreads=0 expoMedia=100.0% expo<50=0.0%
+BTC ON-CASH0 | CAGR=67.28% vol=75.3% MaxDD=-86.3% ops=177 impuestos=16749789 spreads=236285 expoMedia=87.0% expo<50=14.9%
+BTC ON-TBILL | CAGR=67.43% vol=75.3% MaxDD=-86.3% ops=177 impuestos=16880077 spreads=234207 expoMedia=87.0% expo<50=14.9%
+SEMIS OFF | CAGR=15.57% vol=35.2% MaxDD=-86.5% ops=0 impuestos=0 spreads=0 expoMedia=100.0% expo<50=0.0%
+SEMIS ON-CASH0 | CAGR=11.94% vol=31.2% MaxDD=-81.6% ops=455 impuestos=108804 spreads=3436 expoMedia=82.1% expo<50=14.1%
+SEMIS ON-TBILL | CAGR=12.43% vol=31.2% MaxDD=-81.4% ops=455 impuestos=121128 spreads=3677 expoMedia=82.1% expo<50=14.5%
+ORO OFF | CAGR=10.16% vol=17.3% MaxDD=-44.7% ops=0 impuestos=0 spreads=0 expoMedia=100.0% expo<50=0.0%
+ORO ON-CASH0 | CAGR=4.17% vol=11.5% MaxDD=-42.4% ops=432 impuestos=4268 spreads=186 expoMedia=65.5% expo<50=33.7%
+ORO ON-TBILL | CAGR=5.19% vol=11.5% MaxDD=-42.3% ops=429 impuestos=4715 spreads=203 expoMedia=65.5% expo<50=34.2%
+EMXC OFF | CAGR=9.81% vol=23.2% MaxDD=-62.6% ops=0 impuestos=0 spreads=0 expoMedia=100.0% expo<50=0.0%
+EMXC ON-CASH0 | CAGR=9.47% vol=22.9% MaxDD=-62.6% ops=34 impuestos=10494 spreads=152 expoMedia=96.5% expo<50=0.6%
+EMXC ON-TBILL | CAGR=9.63% vol=22.9% MaxDD=-62.6% ops=35 impuestos=10511 spreads=160 expoMedia=96.5% expo<50=0.6%
+WLG OFF | CAGR=12.15% vol=15.6% MaxDD=-32.7% ops=0 impuestos=0 spreads=0 expoMedia=100.0% expo<50=0.0%
+WLG ON-CASH0 | CAGR=11.59% vol=15.3% MaxDD=-32.7% ops=96 impuestos=9264 spreads=302 expoMedia=93.0% expo<50=6.9%
+WLG ON-TBILL | CAGR=11.73% vol=15.3% MaxDD=-32.7% ops=96 impuestos=9346 spreads=319 expoMedia=93.0% expo<50=7.2%
+
+===== TABLE =====
+
+pico 2013 2013-11-29 | precio=? | Z=12.24 Puell=9.29 | trim pico=90% | -30d=73% -60d=0% -90d=35%
+pico 2017 2017-12-15 | precio=? | Z=11.83 Puell=5.75 | trim pico=90% | -30d=87% -60d=86% -90d=35%
+pico 2021 2021-04-16 | precio=? | Z=7.4 Puell=1.87 | trim pico=79% | -30d=90% -60d=90% -90d=90%
+pico 2024-25 2025-10-03 | precio=? | Z=4.36 Puell=1.01 | trim pico=0% | -30d=0% -60d=0% -90d=32%
+
+===== TABLE =====
+
+TBILL | CAGR=5.11% vol=7.9% MaxDD=-30.4% ops=589 impuestos=22020 spreads=516 (aprox)
+CASH0 | CAGR=4.92% vol=7.9% MaxDD=-30.6% ops=588 impuestos=21415 spreads=501 (aprox)
+TBILL-gross | CAGR=5.11% vol=7.9% MaxDD=-30.4% ops=589 impuestos=22020 spreads=516 (aprox)
+
+===== TABLE =====
+
+raw (step) | CAGR=9.47% MaxDD=-62.6% ops=34 impuestos=10494 spreads=152
++hyst ENTRADA | CAGR=9.52% MaxDD=-62.6% ops=26 impuestos=10271 spreads=101
+cap | raw | ops=432 impuestos=4268 spreads=186 CAGR=4.17% MaxDD=-42.4%
+cap | cap30 | ops=219 impuestos=4877 spreads=129 CAGR=7.05% MaxDD=-42.4%
+cap | cap40 | ops=271 impuestos=4616 spreads=138 CAGR=6.13% MaxDD=-42.4%
+cap | raw | ops=34 impuestos=10494 spreads=152 CAGR=9.47% MaxDD=-62.6%
+cap | cap30 | ops=21 impuestos=10017 spreads=95 CAGR=9.55% MaxDD=-62.6%
+cap | cap40 | ops=33 impuestos=10467 spreads=143 CAGR=9.53% MaxDD=-62.6%
+cap | raw | ops=455 impuestos=108804 spreads=3436 CAGR=11.94% MaxDD=-81.6%
+cap | cap30 | ops=213 impuestos=114846 spreads=1612 CAGR=13.08% MaxDD=-82.8%
+cap | cap40 | ops=336 impuestos=109466 spreads=2336 CAGR=12.55% MaxDD=-82.4%

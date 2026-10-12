@@ -1,0 +1,20 @@
+=== 4.1(a) DXY: ANTES (escalón real) vs DESPUÉS (rampa neutra) ===
+ANTES  : maxΔtrim=30pp en 102.99→103.00 · cliffs≥5pp=4
+  x=103.00: 0%→30% (Δ30pp)
+  x=106.00: 30%→45% (Δ15pp)
+  x=110.00: 45%→65% (Δ20pp)
+  x=115.00: 65%→73% (Δ8pp)
+DESPUÉS: maxΔtrim=1pp en 103.03→103.04 · cliffs≥5pp=0
+
+CONSECUENCIA (declarada): arrancar en 0 exactamente en 103 y quitar el cliff
+OBLIGA a retrasar el primer tramo (no se puede tener 0 en 103 y 30% en 103+).
+La rampa conserva TODOS los niveles de trim (30/45/65/73%) pero los reparte en 103→118.
+  DXY  100.00: antes   0% · después   0%
+  DXY  102.99: antes   0% · después   0%
+  DXY  103.00: antes   0% · después   0%
+  DXY  104.75: antes  30% · después  22%
+  DXY  106.00: antes  30% · después  30%
+  DXY  108.00: antes  45% · después  38%
+  DXY  110.00: antes  45% · después  45%
+  DXY  115.00: antes  65% · después  65%
+  DXY  118.00: antes  73% · después  73%

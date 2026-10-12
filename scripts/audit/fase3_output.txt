@@ -1,0 +1,45 @@
+=== 3.1: cliff del umbral DXY 103 (EMXC) — tramos reales vs rampa ===
+  DXY     | step pts | trim step | ramp pts | trim ramp
+    102.90 |     0.00 |        0% |     0.57 |       26%
+    103.00 |     0.00 |        0% |     0.58 |       27%
+    103.01 |     0.75 |       30% |     0.58 |       27%
+    105.99 |     0.75 |       30% |     1.07 |       36%
+    106.00 |     0.75 |       30% |     1.07 |       36%
+    106.01 |     1.50 |       45% |     1.07 |       36%
+    110.00 |     1.50 |       45% |     1.94 |       54%
+    110.01 |     2.50 |       65% |     1.95 |       54%
+    115.00 |     2.50 |       65% |     2.73 |       68%
+    115.01 |     3.00 |       73% |     2.73 |       68%
+
+=== 3.1b: EMXC (EEM) con trim STEP (real) vs RAMP (suavizado) ===
+EMXC step (real)     | CAGR   3.39% | MaxDD  -13.4% | ops  667 | impuestos€   1566 | spreads€ 41
+EMXC ramp (prop.)    | CAGR   3.37% | MaxDD  -13.4% | ops  667 | impuestos€   1645 | spreads€ 38
+
+=== 3.2: deadband + histéresis (enter trim>20%, exit trim<5%), estado externo ===
+EMXC.DE raw          | CAGR   3.39% | MaxDD  -13.4% | ops  667 | impuestos€   1566 | spreads€ 41
+EMXC.DE +hyst        | CAGR   3.39% | MaxDD  -13.4% | ops  667 | impuestos€   1566 | spreads€ 41
+VVSM.DE raw          | CAGR   4.78% | MaxDD  -13.4% | ops  905 | impuestos€   6925 | spreads€ 281
+VVSM.DE +hyst        | CAGR   4.78% | MaxDD  -13.4% | ops  905 | impuestos€   6925 | spreads€ 281
+PPFB.DE raw          | CAGR   2.42% | MaxDD   -8.1% | ops  584 | impuestos€    696 | spreads€ 32
+PPFB.DE +hyst        | CAGR   2.43% | MaxDD   -8.3% | ops  585 | impuestos€    699 | spreads€ 31
+
+=== 3.3: topes de trim por activo (cap 30% / 40%) ===
+PPFB.DE raw (máx 82%) | CAGR   2.42% | MaxDD   -8.1% | ops  584 | impuestos€    696 | spreads€ 32
+PPFB.DE cap30        | CAGR   2.85% | MaxDD   -8.1% | ops  613 | impuestos€    961 | spreads€ 26
+PPFB.DE cap40        | CAGR   2.71% | MaxDD   -8.1% | ops  611 | impuestos€    868 | spreads€ 27
+EMXC.DE raw (máx 73%) | CAGR   3.39% | MaxDD  -13.4% | ops  667 | impuestos€   1566 | spreads€ 41
+EMXC.DE cap30        | CAGR   3.40% | MaxDD  -13.4% | ops  668 | impuestos€   1556 | spreads€ 38
+EMXC.DE cap40        | CAGR   3.40% | MaxDD  -13.4% | ops  667 | impuestos€   1560 | spreads€ 39
+VVSM.DE raw (máx 83%) | CAGR   4.78% | MaxDD  -13.4% | ops  905 | impuestos€   6925 | spreads€ 281
+VVSM.DE cap30        | CAGR   4.99% | MaxDD  -13.6% | ops  919 | impuestos€   6969 | spreads€ 184
+VVSM.DE cap40        | CAGR   4.89% | MaxDD  -13.5% | ops  909 | impuestos€   6845 | spreads€ 215
+
+=== 3.4: presupuesto agregado (cap de la suma de trims del universo) ===
+  semanas con suma>1.0: 304/2441
+  trim agregado medio: raw 0.511 → con presupuesto 0.467
+    VVSM.DE        ops 905→886 · impuestos €6925→€6854 · MaxDD -13.4%→-13.5%
+    PPFB.DE        ops 584→586 · impuestos €696→€843 · MaxDD -8.1%→-8.1%
+    EMXC.DE        ops 667→667 · impuestos €1566→€1573 · MaxDD -13.4%→-13.4%
+    0P00000WLG.F   ops 432→427 · impuestos €923→€905 · MaxDD -6.0%→-6.0%
+
+[saved] audit/fase3_results.json

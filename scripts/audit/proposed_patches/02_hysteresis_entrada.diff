@@ -1,0 +1,25 @@
+# PROPUESTA (NO APLICADA) - Histeresis sobre la ENTRADA (estado DXY) — requiere campo nuevo en CycleTopInputs
+# Generado por scripts/audit/_mkpatch.py (M4)
+--- a/src/core/risk/cycleTopDetector.ts
++++ b/src/core/risk/cycleTopDetector.ts
+@@ -138,6 +138,8 @@
+   inflationBreakeven?: number; // Breakeven 5Y, porcentaje; fallback explícito
+   realYield10y?: number;       // DFII10: rendimiento real 10Y TIPS, porcentaje; fuente preferida
+   brentOil?: number;           // $/barril — si >$95 la guerra/inflación protege al oro → override HOLD
++  emxcDxyActive?: boolean;     // FIX-HYST (propuesto M4): estado de histeresis DXY
++                               //   (entrar >103 / salir <101). Lo gestiona el dashboard.
+   goldCbPurchases?: number;   // GOLD-CB-SENSOR (Ago-2026, Comité): compras netas de oro de
+                               //   bancos centrales (toneladas/año, World Gold Council trimestral).
+                               //   COINCIDENTE/estructural, NO leading → NO puntúa: actúa como
+@@ -835,7 +837,10 @@
+   //   DXY 0.0 — un valor imposible (mínimo histórico ~70) que induce a error.
+   //   Con isValidReading(dxy, 50) garantizamos que solo procesamos valores realistas
+   //   y que un NaN de FRED/Yahoo no pase como "datos válidos".
+-  if (isValidReading(dxy, 50)) {
++  // FIX-HYST (propuesto M4): histeresis sobre la ENTRADA, no sobre el trim.
++  //   El estado entra en 103 y NO sale hasta 101 (banda 2 pt). Sube el score
++  //   solo mientras el régimen de dólar fuerte sigue activo.
++  if (isValidReading(dxy, 50) && inputs.emxcDxyActive) {
+     if (dxy > 115) {
+       topSignals += 3;
+       reasons.push(`DXY ${dxy.toFixed(1)} — dólar en niveles de crisis EM (México 1994, Asia 1997, Argentina 2018)`);

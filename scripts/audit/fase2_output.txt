@@ -1,0 +1,157 @@
+=== FASE 2.1: series semanales con detectCycleTops() REAL ===
+
+=== 2.4: % de semanas con trim>0 / >20% / >35% (datos reales) ===
+BTC    (n=843, desde 2010-08-20): >0 23.0% · >20 20.4% · >35 16.8% · trim máximo 90%
+SEMIS  (n=1679, desde 1994-08-12): >0 38.6% · >20 38.6% · >35 26.0% · trim máximo 83%
+ORO    (n=1241, desde 2003-01-03): >0 81.9% · >20 69.1% · >35 52.5% · trim máximo 82%
+EMXC   (n=2441, desde 1980-01-04): >0 23.4% · >20 23.4% · >35 18.2% · trim máximo 73%
+WLG    (n=756, desde 2012-04-20): >0 15.1% · >20 15.1% · >35 14.6% · trim máximo 55%
+URANIO: SIN DATOS (input no reconstruible) → NO VERIFICADO
+
+=== 2.5/2.6: episodios de activación (min gap 4 semanas) ===
+BTC   : episodios N=21 · duración media 9.9 sem · aciertos (decl>10% en 6m) 5/21 · fwd-6m medio tras activación 368.6%
+SEMIS : episodios N=38 · duración media 18.8 sem · aciertos (decl>10% en 6m) 10/38 · fwd-6m medio tras activación 12.2%
+ORO   : episodios N=5 · duración media 186.8 sem · aciertos (decl>10% en 6m) 1/5 · fwd-6m medio tras activación -0.4%
+EMXC  : episodios N=7 · duración media 17.1 sem · aciertos (decl>10% en 6m) 2/7 · fwd-6m medio tras activación 3.3%
+WLG   : episodios N=21 · duración media 6.3 sem · aciertos (decl>10% en 6m) 1/21 · fwd-6m medio tras activación 8.1%
+URANIO: sin serie de precio en cartera → skip
+
+Incondicional fwd-6m medio (todas las semanas del activo):
+  BTC: 178.0% (n=821)
+  SEMIS: 10.7% (n=1667)
+  ORO: 6.0% (n=1117)
+  EMXC: 5.9% (n=1200)
+  WLG: 6.2% (n=744)
+
+=== 2.2/2.3 (v2, con re-entrada): backtest por activo ON vs OFF ===
+     variantes de caja: ON-CASH0 (caja 0%) y ON-TBILL (T-bill 3m ^IRX); gross = sin fricción
+activo | ventana | variante | CAGR | vol | MaxDD | Calmar | sells | buys | impuestos€ | spreads€
+BTC    | 2010-08-20→2026-10-07 | OFF | 138.86% | 103.7% | -91.2% | 1.52 | 0 | 0 | 0 | 0
+BTC    | 2010-08-20→2026-10-07 | ON-CASH0 | 12.72% | 12.6% | -23.5% | 0.54 | 456 | 387 | 19144 | 272
+BTC    | 2010-08-20→2026-10-07 | ON-CASH0-gross | 12.77% | 12.6% | -23.5% | 0.54 | 456 | 387 | 0 | 0
+BTC    | 2010-08-20→2026-10-07 | ON-TBILL | 14.19% | 12.5% | -23.5% | 0.60 | 453 | 390 | 19937 | 288
+SEMIS  | 1994-08-12→2026-10-07 | OFF | 15.36% | 35.2% | -86.5% | 0.18 | 0 | 0 | 0 | 0
+SEMIS  | 1994-08-12→2026-10-07 | ON-CASH0 | 2.54% | 5.2% | -18.3% | 0.14 | 899 | 780 | 4294 | 176
+SEMIS  | 1994-08-12→2026-10-07 | ON-CASH0-gross | 2.58% | 5.2% | -18.2% | 0.14 | 900 | 779 | 0 | 0
+SEMIS  | 1994-08-12→2026-10-07 | ON-TBILL | 4.72% | 5.2% | -13.4% | 0.35 | 897 | 782 | 6667 | 273
+ORO    | 2004-11-19→2026-10-07 | OFF | 10.20% | 17.3% | -44.7% | 0.23 | 0 | 0 | 0 | 0
+ORO    | 2004-11-19→2026-10-07 | ON-CASH0 | 0.76% | 1.9% | -8.2% | 0.09 | 589 | 554 | 590 | 28
+ORO    | 2004-11-19→2026-10-07 | ON-CASH0-gross | 0.77% | 1.9% | -8.2% | 0.09 | 589 | 554 | 0 | 0
+ORO    | 2004-11-19→2026-10-07 | ON-TBILL | 2.42% | 1.9% | -8.1% | 0.30 | 584 | 559 | 696 | 32
+EMXC   | 2003-04-17→2026-10-07 | OFF | 9.85% | 23.2% | -62.6% | 0.16 | 0 | 0 | 0 | 0
+EMXC   | 2003-04-17→2026-10-07 | ON-CASH0 | 1.89% | 3.8% | -14.1% | 0.13 | 678 | 548 | 1401 | 35
+EMXC   | 2003-04-17→2026-10-07 | ON-CASH0-gross | 1.90% | 3.8% | -14.1% | 0.14 | 675 | 544 | 0 | 0
+EMXC   | 2003-04-17→2026-10-07 | ON-TBILL | 3.39% | 3.8% | -13.4% | 0.25 | 667 | 559 | 1566 | 41
+WLG    | 2012-04-20→2026-10-07 | OFF | 11.81% | 15.7% | -32.7% | 0.36 | 0 | 0 | 0 | 0
+WLG    | 2012-04-20→2026-10-07 | ON-CASH0 | 1.95% | 2.6% | -6.1% | 0.32 | 436 | 320 | 816 | 35
+WLG    | 2012-04-20→2026-10-07 | ON-CASH0-gross | 1.97% | 2.6% | -6.0% | 0.33 | 432 | 319 | 0 | 0
+WLG    | 2012-04-20→2026-10-07 | ON-TBILL | 3.43% | 2.6% | -6.0% | 0.57 | 425 | 331 | 875 | 37
+
+=== BTC: MVRV Z / Puell / trim en picos 2013, 2017, 2021, 2024-25 ===
+pico 2013: 2013-11-29 · P/BTC 1.1k · Z 12.24 · Puell 9.29 · trim 90%
+   -30d (2013-11-01): Z 4.97 · Puell 2.97 · trim 73%
+   -60d (2013-09-27): Z 3.00 · Puell 1.93 · trim 0%
+   -90d (2013-08-30): Z 3.28 · Puell 2.53 · trim 35%
+pico 2017: 2017-12-15 · P/BTC 17.7k · Z 11.83 · Puell 5.75 · trim 90%
+   -30d (2017-11-17): Z 7.59 · Puell 3.44 · trim 87%
+   -60d (2017-10-13): Z 7.42 · Puell 2.59 · trim 86%
+   -90d (2017-09-15): Z 4.60 · Puell 2.63 · trim 35%
+pico 2021: 2021-04-16 · P/BTC 61.6k · Z 7.40 · Puell 1.87 · trim 79%
+   -30d (2021-03-19): Z 8.66 · Puell 2.99 · trim 90%
+   -60d (2021-02-12): Z 10.06 · Puell 2.83 · trim 90%
+   -90d (2021-01-15): Z 9.23 · Puell 2.62 · trim 90%
+pico 2024-25: 2025-10-03 · P/BTC 122.3k · Z 4.36 · Puell 1.01 · trim 0%
+   -30d (2025-09-05): Z 3.80 · Puell 1.16 · trim 0%
+   -60d (2025-08-01): Z 4.24 · Puell 1.33 · trim 0%
+   -90d (2025-07-03): Z 4.36 · Puell 1.35 · trim 32%
+[validación precio BTC] CM 60238 vs Yahoo 60309 (2024-09-17)
+
+=== EMXC: trim semanal 2022 y posterior ===
+  2021-06: trim 0%
+  2021-07: trim 0%
+  2021-08: trim 0%
+  2021-09: trim 0%
+  2021-10: trim 0%
+  2021-11: trim 0%
+  2021-12: trim 0%
+  2022-01: trim 0%
+  2022-02: trim 0%
+  2022-03: trim 0%
+  2022-04: trim 0%
+  2022-05: trim 0%
+  2022-06: trim 30%
+  2022-07: trim 30%
+  2022-08: trim 45%
+  2022-09: trim 65%
+  2022-10: trim 65%
+  2022-11: trim 30%
+  2022-12: trim 30%
+  2023-01: trim 0%
+  2023-02: trim 30%
+  2023-03: trim 0%
+  2023-04: trim 0%
+  2023-05: trim 30%
+  2023-06: trim 0%
+  2023-07: trim 0%
+  2023-08: trim 30%
+  2023-09: trim 45%
+  2023-10: trim 45%
+  2023-11: trim 30%
+  2023-12: trim 0%
+
+=== ORO: semanas con DFII10 > 2.5% desde 2003 (fwd 3/6/12m del oro) ===
+  inicio de episodios: N=5
+  2006-06-16: fwd 3m -0.5% · 6m 5.8% · 12m 12.4%
+  2007-06-01: fwd 3m 0.1% · 6m 16.4% · 12m 31.6%
+  2007-08-10: fwd 3m 23.4% · 6m 36.7% · 12m 26.8%
+  2008-10-10: fwd 3m 0.8% · 6m 3.7% · 12m 23.6%
+  2026-09-11: fwd 3m -5.7% · 6m -5.7% · 12m -5.7%
+
+=== 2.7: bootstrap de tasa de acierto (LCG determinista, 10.000 remuestreos) ===
+BTC   : N=21 · acierto 23.8% · IC90 [9.5, 38.1]%
+SEMIS : N=38 · acierto 26.3% · IC90 [15.8, 36.8]%
+ORO   : N=5 · acierto 20.0% · IC90 [0.0, 60.0]%
+EMXC  : N=7 · acierto 28.6% · IC90 [0.0, 57.1]%
+WLG   : N=21 · acierto 4.8% · IC90 [0.0, 14.3]%
+URANIO: sin episodios → NA
+
+=== 2.8: transversal (5 detectores reconstruibles; URNU sin input) ===
+ventana común 2012-04-20→2026-10-07 (756 semanas)
+año | media de detectores activos (de 5) | max simultáneos
+  2012: 0.59 · max 2
+  2013: 1.71 · max 3
+  2014: 1.88 · max 3
+  2015: 1.34 · max 2
+  2016: 1.73 · max 4
+  2017: 3.13 · max 4
+  2018: 1.38 · max 4
+  2019: 2.02 · max 4
+  2020: 1.32 · max 3
+  2021: 0.98 · max 3
+  2022: 1.37 · max 2
+  2023: 2.25 · max 3
+  2024: 2.69 · max 5
+  2025: 2.08 · max 4
+  2026: 1.90 · max 3
+correlación de activaciones (0/1):
+  BTC    vs SEMIS : 0.04
+  BTC    vs ORO   : -0.15
+  BTC    vs EMXC  : -0.10
+  BTC    vs WLG   : 0.24
+  SEMIS  vs ORO   : 0.06
+  SEMIS  vs EMXC  : -0.16
+  SEMIS  vs WLG   : 0.20
+  ORO    vs EMXC  : 0.25
+  ORO    vs WLG   : -0.02
+  EMXC   vs WLG   : -0.06
+trim agregado (suma de trims 0..1) en ventanas clave:
+  COVID mar-2020: trim agregado medio 0.24 · máximo 0.32 (8 sem)
+  2022: trim agregado medio 0.56 · máximo 1.31 (52 sem)
+  GFC 2008-09: fuera de ventana común (datos insuficientes)
+
+=== 2.9: cartera 6 sleeves equal-weight, rebalanceo semanal, ON vs OFF ===
+  OFF       2012-01-13→2026-10-07 | CAGR 26.77% | vol 17.5% | MaxDD -32.9% | ops 277 | impuestos€ 46433 | spreads€ 320
+  ON        2012-01-13→2026-10-07 | CAGR 17.13% | vol 14.0% | MaxDD -30.4% | ops 589 | impuestos€ 21910 | spreads€ 514
+  ON-gross  2012-01-13→2026-10-07 | CAGR 17.21% | vol 14.0% | MaxDD -30.4% | ops 588 | impuestos€ 0 | spreads€ 0
+
+[saved] audit/fase2_series.json
