@@ -7,6 +7,7 @@ import {
   isStale,
   getStaleFields,
   degradeStaleInputs,
+  buildStalenessReport,
   CYCLE_STALENESS_RULES,
 } from "../lib/dataQuality";
 
@@ -53,5 +54,36 @@ describe("DataQuality — reglas de ciclo", () => {
     expect(degraded.wlgPERatio).toBe(19);
     // el original NO se mutó
     expect(data.uraniumSpot).toBe(85);
+  });
+});
+
+describe("DataQuality — informe de frescura (visible)", () => {
+  test("solo lista campos CON timestamp (no inventa antigüedad)", () => {
+    const rep = buildStalenessReport({ uraniumSpot: NOW - 3 * DAY }, CYCLE_STALENESS_RULES, NOW);
+    expect(rep.map(e => e.field)).toEqual(["uraniumSpot"]);
+    expect(rep[0].ageDays).toBeCloseTo(3, 6);
+    expect(rep[0].limitDays).toBe(7);
+    expect(rep[0].isStale).toBe(false);
+    expect(rep[0].frequency).toBe("diario");
+  });
+
+  test("sin timestamps -> informe vacío (no se afirma nada)", () => {
+    expect(buildStalenessReport(undefined, CYCLE_STALENESS_RULES, NOW)).toEqual([]);
+    expect(buildStalenessReport({}, CYCLE_STALENESS_RULES, NOW)).toEqual([]);
+  });
+
+  test("caducados primero y, entre ellos, los más antiguos", () => {
+    const asOf = {
+      goldCbPurchases: NOW - 30 * DAY, // fresco (trimestral, 92d)
+      uraniumSpot: NOW - 10 * DAY,     // stale (diario, 7d)
+      soxRsiWeekly: NOW - 40 * DAY,    // stale (semanal, 14d)
+    };
+    const rep = buildStalenessReport(asOf, CYCLE_STALENESS_RULES, NOW);
+    expect(rep.map(e => e.field)).toEqual(["soxRsiWeekly", "uraniumSpot", "goldCbPurchases"]);
+    expect(rep.map(e => e.isStale)).toEqual([true, true, false]);
+  });
+
+  test("un timestamp no finito se ignora (no genera entrada)", () => {
+    expect(buildStalenessReport({ uraniumSpot: NaN }, CYCLE_STALENESS_RULES, NOW)).toEqual([]);
   });
 });

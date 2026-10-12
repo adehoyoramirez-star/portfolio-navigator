@@ -90,7 +90,7 @@ import {
   RebalanceSuggestion,
 } from "@/core/portfolio/rebalancer";
 import { loadCycleManual, saveCycleManual } from "@/lib/cycleManualInputs";
-import { applyCycleDataQuality } from "@/lib/dataQuality";
+import { applyCycleDataQuality, buildStalenessReport, CYCLE_STALENESS_RULES } from "@/lib/dataQuality";
 import {
   detectCycleTops,
   detectCycleBottoms,
@@ -1078,6 +1078,30 @@ const formatCurrency = (value: number): string => {
     },
     cycleAsOf,
   ), [cycleAsOf, uraniumSpot, uraniumLT, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, marketData?.per]);
+
+  // FIX-STALENESS-VISIBLE (Oct-2026, Comite): el guard de frescura existia y
+  //   degradaba los inputs stale a undefined ANTES de que el detector los viera
+  //   — pero EN SILENCIO. Si el operador no actualizaba un input, el motor
+  //   simplemente decia sin el y nadie se enteraba. Este informe lo hace
+  //   visible, con la antiguedad y la frecuencia esperada de cada campo.
+  const stalenessAlerts = useMemo(() => {
+    const entries = buildStalenessReport(cycleAsOf, CYCLE_STALENESS_RULES);
+    // On-chain MVRV Z: tiene su propio timestamp (clave separada de cycleAsOf).
+    try {
+      const ts = parseInt(localStorage.getItem(MVRV_ZSCORE_TS_KEY) ?? "0");
+      if (ts > 0 && Date.now() - ts > MVRV_ZSCORE_MAX_AGE_MS) {
+        entries.unshift({
+          field: "mvrvZScore (on-chain)",
+          frequency: "semanal",
+          ageDays: (Date.now() - ts) / 86_400_000,
+          limitDays: MVRV_ZSCORE_MAX_AGE_MS / 86_400_000,
+          isStale: true,
+        });
+      }
+    } catch { /* localStorage no disponible -> no se puede afirmar nada */ }
+    return entries;
+    // cycleAsOf se refresca al editar/guardar los inputs manuales.
+  }, [cycleAsOf]);
 
   const cycleTopResult = useMemo(() => {
     const cycleInputs: CycleTopInputs = {
@@ -2527,6 +2551,36 @@ soxRsiWeekly,
               </button>
             </div>
           </div>
+
+          {/* FIX-STALENESS-VISIBLE (Oct-2026, Comite): el guard existia y
+              degradaba a undefined EN SILENCIO. Aqui se hace visible: que inputs
+              manuales estan caducados, su antiguedad y su frecuencia esperada,
+              ANTES de que el motor decida sin ellos. */}
+          {stalenessAlerts.length > 0 && (
+            <div style={{
+              background: "#1a1207",
+              border: "2px solid #f59e0b",
+              borderRadius: 8,
+              padding: "0.6rem 0.9rem",
+              marginBottom: "12px",
+            }}>
+              <div style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: "bold", marginBottom: "0.3rem" }}>
+                ⚠️ INPUTS MANUALES CADUCADOS ({stalenessAlerts.length}) — el motor decide SIN ellos
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                {stalenessAlerts.slice(0, 12).map(a => (
+                  <span key={a.field} style={{
+                    fontSize: "0.62rem", color: "#e5e7eb", background: "#111827",
+                    border: "1px solid #7f1d1d", borderRadius: 4, padding: "2px 6px",
+                  }}>
+                    <strong>{a.field}</strong>
+                    · {Math.round(a.ageDays)}d
+                    <span style={{ color: "#6b7280" }}> / {a.frequency} (limite {a.limitDays}d)</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Instrucción */}
           <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginBottom: '12px', background: '#1e3a5f', padding: '7px 10px', borderRadius: '6px' }}>

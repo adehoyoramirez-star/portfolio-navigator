@@ -138,3 +138,60 @@ export function applyCycleDataQuality(
 
   return out;
 }
+// ============================================================
+// INFORME DE FRESCURA (Oct-2026, Comite) — VISIBILIDAD DEL GUARD.
+//
+// El guard de staleness ya existia: applyCycleDataQuality degrada los inputs
+// caducados a undefined ANTES de que el detector los vea. Pero lo hacia EN
+// SILENCIO: si el operador no actualizaba un input manual, el motor decia sin
+// el y nadie se enteraba (riesgo operativo declarado en el informe del comite).
+//
+// Este informe NO cambia la politica: solo hace explicito y visible que campos
+// estan caducados, con su antiguedad y su frecuencia esperada, para que el
+// operador pueda actuar ANTES de operar.
+// ============================================================
+
+export interface StalenessEntry {
+  /** Nombre del campo (clave de los inputs manuales). */
+  field: string;
+  /** Frecuencia esperada legible (regla pre-registrada). */
+  frequency: string;
+  /** Antiguedad en dias. */
+  ageDays: number;
+  /** Limite en dias antes de considerar el dato caducado. */
+  limitDays: number;
+  /** true si supera el limite (el motor decide sin el). */
+  isStale: boolean;
+}
+
+/**
+ * Informe de frescura de los inputs manuales. Solo incluye campos CON
+ * timestamp: de un campo sin fecha no se puede afirmar nada, asi que no se
+ * inventa una antiguedad. Orden: caducados primero (mas antiguos antes).
+ */
+export function buildStalenessReport(
+  asOfMap: Record<string, number> | undefined,
+  rules: Record<string, StalenessRule>,
+  now = Date.now(),
+): StalenessEntry[] {
+  if (!asOfMap) return [];
+  const out: StalenessEntry[] = [];
+  for (const field of Object.keys(rules)) {
+    const asOf = asOfMap[field];
+    if (asOf === undefined || !Number.isFinite(asOf)) continue;
+    const rule = rules[field];
+    const age = ageMs(asOf, now) ?? 0;
+    out.push({
+      field,
+      frequency: rule.label,
+      ageDays: age / DAY,
+      limitDays: rule.staleAfterMs / DAY,
+      isStale: isStale(asOf, rule.staleAfterMs, now),
+    });
+  }
+  return out.sort((a, b) => {
+    if (a.isStale !== b.isStale) return a.isStale ? -1 : 1;
+    return b.ageDays - a.ageDays;
+  });
+}
+
