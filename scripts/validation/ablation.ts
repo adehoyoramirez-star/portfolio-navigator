@@ -95,10 +95,24 @@ const variants: [string, number[], string[], number][] = [
   ['V2 HRP estático', s2.twr, s2.dates, s2.costs],
   ['V3 HRP+volTarget', s3.twr, s3.dates, s3.costs],
   ['V4 V3+tailRisk/KS', s4.twr, s4.dates, s4.costs],
-  ['V5 MOTOR (runBacktest)', R.twr, R.dates, 0],
+  ['V5 MOTOR (runBacktest)', R.twr, R.dates, R.bt.totalTransactionCosts],
   ["V5' shadow del motor", s5p.twr, s5p.dates, s5p.costs],
   ['V6 B&H equal (costes)', s6.twr, s6.dates, s6.costs],
 ];
+
+// ── Guarda de datos: la columna de costes de V5 estaba HARDCODEADA a 0 ──
+// El motor ya exponía la cifra real (BacktestOutput.totalTransactionCosts) y el
+// harness imprimía un literal. Se salía en verde con un "€0" imposible que
+// invalidaba la columna entera de costes. Si vuelve a faltar el dato, el script
+// FALLA en vez de publicar un 0 que miente.
+if (!(R.bt.totalTransactionCosts > 0) || !Number.isFinite(R.bt.totalTransactionCosts)) {
+  console.error(
+    `\n  ❌ V5 sin costes medidos: totalTransactionCosts=${R.bt.totalTransactionCosts} ` +
+      `· rebalanceCount=${R.bt.rebalanceCount}. Un motor con rebalances NO puede costar 0 €: ` +
+      `la columna de costes sería engañosa, así que se aborta.`,
+  );
+  process.exit(1);
+}
 
 console.log('='.repeat(122));
 console.log('  TEST 2 — ABLACIÓN (harness común: €10k, rebalanceo 21d, costes reales, TWR)');

@@ -25,7 +25,7 @@ Reparto IS/OOS: split `2023-10-28`.
 | V2 HRP estático | 25,49% | 1,446 | −12,3% | 0,999 | **1,556** | 29,59% | −12,3% | €412 |
 | **V3 HRP+volTarget** | 26,31% | 1,586 | −13,3% | 0,831 | **1,756** | 30,92% | −13,3% | €296 |
 | V4 V3+tailRisk/KS | 25,21% | 1,541 | −13,3% | 0,831 | **1,702** | 29,45% | −13,3% | €298 |
-| **V5 MOTOR** | 23,14% | 1,266 | −15,4% | 1,237 | **1,291** | 25,04% | −15,4% | €0 ⚠ |
+| **V5 MOTOR** | 23,14% | 1,266 | −15,4% | 1,237 | **1,291** | 25,04% | −15,4% | €590 |
 | V5' shadow del motor | 22,78% | 1,281 | −14,4% | 1,491 | **1,260** | 23,78% | −14,4% | €715 |
 | V6 B&H equal c/costes | 34,94% | 1,304 | −25,0% | 2,135 | **1,185** | 33,72% | −25,0% | €24 |
 
@@ -41,10 +41,18 @@ VEREDICTO IMPRESO POR EL HARNESS: SIMPLIFICAR — V3 no es superado en los tres 
 generalización: en la ventana OOS, un HRP con vol target (V3) rinde más y con menos
 bache. Es exactamente el patrón de sobreajuste que la ablación existe para detectar.
 
-**Limitación declarada:** la columna de costes de **V5 marca €0** mientras su *shadow*
-(V5') marca €715. Un motor con rebalanceo real no puede costar cero: **esa celda no es
-fiable** y hay que reconciliarla antes de usar el cuadro para decidir. La comparación de
-Sharpe/MaxDD no depende de esa celda, pero la de costes sí.
+**Celda de costes de V5 — ARREGLADA (13-oct-2026).** La columna mostraba **€0** porque
+`ablation.ts` pasaba un **literal `0`** en vez de leer la cifra que el motor ya exponía
+(`BacktestOutput.totalTransactionCosts`). Era un dato de *pintado*, no de cálculo: los
+retornos de V5 **ya incluían** costes reales (el motor resta `costThisRebalance` del
+`portfolioValue`, modelo `FIX-AUDIT-INST-02`: spread por activo + €1 fijo). Ahora la celda
+marca **€590** y el script **falla** si el dato vuelve a faltar.
+
+**Consecuencia para el veredicto: NINGUNA.** El criterio pre-registrado usa Sharpe OOS,
+MaxDD OOS y el *bootstrap* del ΔSharpe — ninguno lee esa celda, y los retornos ya eran
+cost-inclusive. El veredicto **SIMPLIFICAR** se sostiene con la celda corregida. Lo que
+corrige este arreglo es que **la tabla ahora es mentira** y que V5 no aparece como si
+operara gratis (€590, en línea con V5' €715 y con V3 €296).
 
 ## 2. SENSIBILIDAD Y ROBUSTEZ
 
@@ -80,7 +88,7 @@ reporta tal cual, sin forzar la coincidencia.
 |---|---|
 | Degradación del detector de techo (P1–P5) | Evidencia medida; **sin aplicar** → `PREREGISTRO_M4_DEGRADACION.md` |
 | Backtest de cartera con los 4 parches a la vez | **No ejecutado** (requisito previo a producción) |
-| Reconciliar la celda de costes de V5 en la ablación | **Pendiente** (dato no fiable) |
+| Reconciliar la celda de costes de V5 en la ablación | ✅ **Hecho**: era un literal `0`; ahora €590 con guarda que aborta si falta |
 | Candidato de Breadth institucional | `PENDING_OOS_VALIDATION` en shadow |
 | P1 regime-conditional valuation shift | Diseñado, sin backtest de sensibilidad |
 | Cuatro señales sin validar (MVRV Z manual, P/E forward WLG, Spot/LT uranio, credit spread <2023) | **PARCIAL** por falta de dato de época |
