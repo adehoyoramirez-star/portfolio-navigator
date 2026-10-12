@@ -2552,36 +2552,6 @@ soxRsiWeekly,
             </div>
           </div>
 
-          {/* FIX-STALENESS-VISIBLE (Oct-2026, Comite): el guard existia y
-              degradaba a undefined EN SILENCIO. Aqui se hace visible: que inputs
-              manuales estan caducados, su antiguedad y su frecuencia esperada,
-              ANTES de que el motor decida sin ellos. */}
-          {stalenessAlerts.length > 0 && (
-            <div style={{
-              background: "#1a1207",
-              border: "2px solid #f59e0b",
-              borderRadius: 8,
-              padding: "0.6rem 0.9rem",
-              marginBottom: "12px",
-            }}>
-              <div style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: "bold", marginBottom: "0.3rem" }}>
-                ⚠️ INPUTS MANUALES CADUCADOS ({stalenessAlerts.length}) — el motor decide SIN ellos
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-                {stalenessAlerts.slice(0, 12).map(a => (
-                  <span key={a.field} style={{
-                    fontSize: "0.62rem", color: "#e5e7eb", background: "#111827",
-                    border: "1px solid #7f1d1d", borderRadius: 4, padding: "2px 6px",
-                  }}>
-                    <strong>{a.field}</strong>
-                    · {Math.round(a.ageDays)}d
-                    <span style={{ color: "#6b7280" }}> / {a.frequency} (limite {a.limitDays}d)</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Instrucción */}
           <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginBottom: '12px', background: '#1e3a5f', padding: '7px 10px', borderRadius: '6px' }}>
             ⚠️ <strong style={{ color: '#e2e8f0' }}>Revisa cada dato.</strong> Si algo no es correcto, cámbialo directamente aquí antes de continuar. Los cambios se guardan solos.
@@ -2728,6 +2698,36 @@ soxRsiWeekly,
       {lastSavedAt && !showSessionBanner && (
         <div style={{ fontSize: '0.72rem', color: '#475569', textAlign: 'right', marginBottom: '8px' }}>
           💾 Guardado automáticamente · {lastSavedAt}
+        </div>
+      )}
+
+      {/* FIX-STALENESS-VISIBLE (Oct-2026, Comite): el guard existia y
+          degradaba a undefined EN SILENCIO. Aqui se hace visible: que inputs
+          manuales estan caducados, su antiguedad y su frecuencia esperada,
+          ANTES de que el motor decida sin ellos. */}
+      {stalenessAlerts.length > 0 && (
+        <div style={{
+          background: "#1a1207",
+          border: "2px solid #f59e0b",
+          borderRadius: 8,
+          padding: "0.6rem 0.9rem",
+          marginBottom: "12px",
+        }}>
+          <div style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: "bold", marginBottom: "0.3rem" }}>
+            ⚠️ INPUTS MANUALES CADUCADOS ({stalenessAlerts.length}) — el motor decide SIN ellos
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+            {stalenessAlerts.slice(0, 12).map(a => (
+              <span key={a.field} style={{
+                fontSize: "0.62rem", color: "#e5e7eb", background: "#111827",
+                border: "1px solid #7f1d1d", borderRadius: 4, padding: "2px 6px",
+              }}>
+                <strong>{a.field}</strong>
+                · {Math.round(a.ageDays)}d
+                <span style={{ color: "#6b7280" }}> / {a.frequency} (limite {a.limitDays}d)</span>
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
