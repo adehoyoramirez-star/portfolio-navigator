@@ -612,12 +612,60 @@ const formatCurrency = (value: number): string => {
       }));
 
       if (engineResult) {
+        // FIX-REG-AUDIT (Oct-2026): el registro de la decisión incluye los INPUTS
+        // MANUALES con su valor, su fecha de entrada (asOf) y su fuente, más la
+        // política de data quality aplicada en la frontera del detector. Los
+        // datos manuales son CORRECTOS: aquí se ESTAMPAN para que la decisión
+        // sea reconstruible (MiFID II Art. 16(6)); no se sustituyen ni se juzgan.
+        const cycleAsOfMap = loadCycleManual()._asOf ?? cycleAsOf;
+        const asOfOf = (field: string) => cycleAsOfMap[field];
+        const cycDQ = applyCycleDataQuality(
+          { uraniumSpot, uraniumLT, wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, wlgCAPE: md.per },
+          cycleAsOfMap,
+        );
         logEngineDecision({
           engineResult,
           macro: { vix: md.vix, creditSpread, yieldSpread: md.tnx - md.irx, m2Growth },
           marketData: md,
           allocationsBefore: portfolio.assets,
           triggerReason: "scheduled_refresh",
+          // Camino de producción que produjo la decisión: permite atribuir el
+          // track record a un motor concreto (Core vs legacy).
+          path: engineResult.meta.coreMode === true ? "core" : "legacy",
+          // FIX-REG-AUDIT: si el Z-Score declarado fue degradado por staleness
+          // (mvrvZScoreEffective → undefined), se hace constar en la política de
+          // data quality: el motor decidió SIN ese dato y el registro lo refleja.
+          dataQuality: {
+            stale: [...cycDQ.stale, ...(mvrvZScore !== undefined && mvrvZScoreEffective === undefined ? ["mvrvZScore"] : [])],
+            blocked: cycDQ.blocked,
+          },
+          manualInputs: {
+            // On-chain BTC (manual: Glassnode o proxy blockchain.info)
+            mvrvZScore:     { value: mvrvZScoreEffective, source: onChainSource === "GLASSNODE" ? "glassnode" : "manual" },
+            mvrvRatio:      { value: mvrvRatio,      source: onChainSource === "GLASSNODE" ? "glassnode" : "manual" },
+            puellMultiple:  { value: puellMultiple,  source: onChainSource === "GLASSNODE" ? "glassnode" : "manual" },
+            btcRsiWeekly:   { value: btcRsiWeekly,   source: "yahoo" },
+            btcDominance:   { value: btcDominance,   source: "coingecko" },
+            // Ciclo por activo (valor + fecha de entrada persistida)
+            uraniumSpot:    { value: uraniumSpot,    asOfMs: asOfOf("uraniumSpot"),    source: "manual" },
+            uraniumLT:      { value: uraniumLT,      asOfMs: asOfOf("uraniumLT"),      source: "manual" },
+            siaSalesYoY:    { value: siaSalesYoY,    asOfMs: asOfOf("siaSalesYoY"),    source: "manual" },
+            soxRsiWeekly:   { value: soxRsiWeekly,   asOfMs: asOfOf("soxRsiWeekly"),   source: "manual" },
+            wlgRsiWeekly:   { value: wlgRsiWeekly,   asOfMs: asOfOf("wlgRsiWeekly"),   source: "manual" },
+            wlgPERatio:     { value: wlgPERatio,     asOfMs: asOfOf("wlgPERatio"),     source: "manual" },
+            wlgEpsGrowth:   { value: wlgEpsGrowth,   asOfMs: asOfOf("wlgEpsGrowth"),   source: "manual" },
+            emxcRsiWeekly:  { value: emxcRsiWeekly,  asOfMs: asOfOf("emxcRsiWeekly"),  source: "manual" },
+            emxcPERatio:    { value: emxcPERatio,    asOfMs: asOfOf("emxcPERatio"),    source: "manual" },
+            urnuPERatio:    { value: urnuPERatio,    asOfMs: asOfOf("urnuPERatio"),    source: "manual" },
+            vvsmPERatio:    { value: vvsmPERatio,    asOfMs: asOfOf("vvsmPERatio"),    source: "manual" },
+            goldCbPurchases:{ value: goldCbPurchases,asOfMs: asOfOf("goldCbPurchases"),source: "World Gold Council (trimestral)" },
+            // Macro manual (nivel y tasas)
+            manualPER:          { value: manualPER,          source: "manual (P/E TTM S&P 500)" },
+            manualBond10y:      { value: manualBond10y,      source: "manual (US10Y)" },
+            manualRealYield10y: { value: manualRealYield10y, source: "FRED:DFII10" },
+            moveIndex:          { value: moveIndex,          source: "manual" },
+            erpValue:           { value: erpValue,           source: "derivado 1/P-E − bono 10Y" },
+          },
         });
       }
 
