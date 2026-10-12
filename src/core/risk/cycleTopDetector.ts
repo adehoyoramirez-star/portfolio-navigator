@@ -836,20 +836,23 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   //   DXY 0.0 — un valor imposible (mínimo histórico ~70) que induce a error.
   //   Con isValidReading(dxy, 50) garantizamos que solo procesamos valores realistas
   //   y que un NaN de FRED/Yahoo no pase como "datos válidos".
+  // FIX-CLIFF-DXY (propuesto M4): rampa continua que arranca en 0 EXACTAMENTE
+  //   en DXY=103 (mismo punto que el escalon) y conserva los niveles de trim
+  //   30/45/65/73% repartidos en 103-118. Elimina el salto de 30 pp a cambio de
+  //   retrasar el primer tramo (ver m4_cliffs.ts: 4 cliffs -> 0).
   if (isValidReading(dxy, 50)) {
-    if (dxy > 115) {
-      topSignals += 3;
-      reasons.push(`DXY ${dxy.toFixed(1)} — dólar en niveles de crisis EM (México 1994, Asia 1997, Argentina 2018)`);
-    } else if (dxy > 110) {
-      topSignals += 2.5;
-      reasons.push(`DXY ${dxy.toFixed(1)} — dólar extremadamente fuerte. Capital huyendo de emergentes.`);
-    } else if (dxy > 106) {
-      topSignals += 1.5;
-      reasons.push(`DXY ${dxy.toFixed(1)} — dólar fuerte. Presión significativa sobre emergentes y commodities.`);
-    } else if (dxy > 103) {
-      topSignals += 0.75;
-      reasons.push(`DXY ${dxy.toFixed(1)} — dólar apreciándose. Vigilar flujos EM.`);
-    }
+    const dxyScore = smoothScore(dxy, [
+      [103, 0],
+      [106, 0.75],
+      [110, 1.5],
+      [115, 2.5],
+      [118, 3],
+    ]);
+    topSignals += dxyScore;
+    if (dxy > 115)      reasons.push(`DXY ${dxy.toFixed(1)} — dólar en niveles de crisis EM (México 1994, Asia 1997, Argentina 2018)`);
+    else if (dxy > 110) reasons.push(`DXY ${dxy.toFixed(1)} — dólar extremadamente fuerte. Capital huyendo de emergentes.`);
+    else if (dxy > 106) reasons.push(`DXY ${dxy.toFixed(1)} — dólar fuerte. Presión significativa sobre emergentes y commodities.`);
+    else if (dxy > 103) reasons.push(`DXY ${dxy.toFixed(1)} — dólar apreciándose. Vigilar flujos EM.`);
   }
 
   // Evaluar RSI semanal (umbrales más altos porque EM es más volátil) — clamp [0,100]

@@ -610,3 +610,37 @@ describe("P1.3: WLG — PEG modifier", () => {
     expect(wlg.trimPct).toBeGreaterThan(30);
   });
 });
+
+// ── M3/M4 · P1 — rampa continua del DXY para EMXC ─────────────────────────
+// ANTES: escalón `>103 → +0.75` que disparaba el trim de 0% a 30% con UN pb de
+// DXY (4 saltos ≥5pp, máx 30pp). AHORA: rampa continua que arranca en 0
+// EXACTAMENTE en 103 y conserva los niveles 30/45/65/73% en 103→118.
+// trimPct es PERCENTAJE ENTERO: Math.round((1 − multiplier) * 100).
+describe("cycleTopDetector — P1 rampa DXY sin cliffs (M3/M4)", () => {
+  const trimAt = (dxy: number) =>
+    detectCycleTops({ bondYield10y: 4.0, dxy }).signals.find(s => s.ticker === "EMXC.DE")!.trimPct;
+
+  test("un 1 pb en torno a 103 NO mueve el trim (antes: 0% → 30%)", () => {
+    expect(trimAt(102.99)).toBe(0);
+    expect(trimAt(103.00)).toBe(0);
+  });
+
+  test("criterio M4: ningún salto ≥5pp en el barrido 100→119", () => {
+    let prev = trimAt(100);
+    let maxJump = 0;
+    for (let x = 100.01; x <= 119.0001; x += 0.01) {
+      const t = trimAt(x);
+      maxJump = Math.max(maxJump, Math.abs(t - prev));
+      prev = t;
+    }
+    expect(maxJump).toBeLessThanOrEqual(5);
+  });
+
+  test("conserva los niveles de trim originales", () => {
+    expect(trimAt(100)).toBe(0);
+    expect(trimAt(106)).toBe(30);
+    expect(trimAt(110)).toBe(45);
+    expect(trimAt(115)).toBe(65);
+    expect(trimAt(118)).toBe(73);
+  });
+});
