@@ -36,6 +36,11 @@ COM2
 LPT1
 LPT2
 
+# ── Supabase CLI: estado local del proyecto (ref, pooler-url, versiones) ──
+# No son secretos (no contienen contraseñas), pero son estado de máquina que
+# no debe versionarse: cada quien debe generar el suyo con `supabase link`.
+supabase/.temp/
+
 # ── PHASE 9-12 AUDIT: artefactos personales/pesados fuera del repo ──
 # PDFs de estados de cuenta personales (NUNCA subir)
 /*.pdf

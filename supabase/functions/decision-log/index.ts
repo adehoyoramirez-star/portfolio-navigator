@@ -41,7 +41,8 @@
  *   duplicate boolean         true si record_hash ya existía (conflicto 409)
  *   errors    string[]
  *
- * Códigos: 200 OK · 400 contrato inválido · 405 método · 429 rate limit ·
+ * Códigos: 200 OK · 400 contrato inválido (incluye las columnas NOT NULL que
+ *          falten: regime, regime_penalty) · 405 método · 429 rate limit ·
  *          500 configuración de servidor · 502 error del almacén.
  *
  * SEGURIDAD: nunca se registra ni se devuelve la service role key; los
@@ -121,6 +122,18 @@ function validateRecord(raw: unknown): string[] {
   }
   if (raw.prev_hash !== undefined && raw.prev_hash !== null && typeof raw.prev_hash !== 'string') {
     errors.push('prev_hash: string o null si se envía');
+  }
+  // `regime` y `regime_penalty` son NOT NULL en la tabla. Se validan AQUÍ para
+  // que un registro incompleto devuelva un 400 que diga QUÉ falta, en vez del
+  // 502 opaco ("almacén rechazó el registro (HTTP 400)") que producía el
+  // incumplimiento de la restricción en PostgREST. El camino de producción
+  // siempre las emite: buildDecisionRecord fija
+  // `regime: engineResult.regime` y `regime_penalty: round(...) ?? 0`.
+  if (typeof raw.regime !== 'string' || raw.regime.length === 0) {
+    errors.push('regime: string no vacío requerido');
+  }
+  if (typeof raw.regime_penalty !== 'number' || !Number.isFinite(raw.regime_penalty)) {
+    errors.push('regime_penalty: número finito requerido');
   }
   return errors;
 }
