@@ -124,7 +124,11 @@ describe("G2 — Invariantes Cycle Top", () => {
 
     const emxc = detectCycleTops({ bondYield10y: 4.0, emxcRsiWeekly: 100.3 })
       .signals.find(s => s.ticker === "EMXC.DE")!;
-    expect(emxc.trimPct).toBe(55);
+    // M3/M4 · P3: EMXC es el ÚNICO detector con tope duro (30%), así que su trim
+    // clamped es 30 y no 55. Lo que este test protege —que el clampRSI evita que
+    // RSI=100.3 colapse a SAFE— sigue verificado: el trim es 30, no 0. El tope
+    // tiene su propio test en "P3 tope 30% por detector".
+    expect(emxc.trimPct).toBe(30);
 
     // RSI negativo (también imposible) → clamp a 0 → sin señal de techo.
     const btcNeg = detectCycleTops({ bondYield10y: 4.0, btcRsiWeekly: -5 })

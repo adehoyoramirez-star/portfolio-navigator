@@ -878,7 +878,14 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   // FIX-STRUCTURAL (Jul-2026): multiplier única fuente de verdad, trimPct derivado.
   //   multiplierFromScore con rampas suaves. EMXC mapea casi exacto a los anclajes genéricos:
   //   topSignals=0.5→0.75, 1.5→0.55, 2.5→0.35, 3.5→0.20, 5.0→0.10 (idénticos a los antiguos).
-  const { multiplier, zone, trimPct } = multiplierFromScore(topSignals);
+  const { multiplier: rawMultiplier, zone } = multiplierFromScore(topSignals);
+  // FIX-CAP-EMXC (M3/M4 · P3): tope duro del 30% por detector (capa de viento
+  //   en contra, no techo). Ver C4/D1: cap30 reduce ops 455→213 en SEMIS a 0 coste.
+  //   Se acota el MULTIPLIER, no el trimPct derivado, para preservar el invariante
+  //   FIX-STRUCTURAL (Jul-2026): trimPct se DERIVA SIEMPRE de multiplier
+  //   (trimPct === round((1 − multiplier) * 100)). trim ≤ 30% ⟺ multiplier ≥ 0.70.
+  const multiplier = Math.min(1.0, Math.max(0.70, rawMultiplier));
+  const trimPct = Math.round((1 - multiplier) * 100);
 
   const parts: string[] = [];
   if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);

@@ -636,11 +636,43 @@ describe("cycleTopDetector — P1 rampa DXY sin cliffs (M3/M4)", () => {
     expect(maxJump).toBeLessThanOrEqual(5);
   });
 
-  test("conserva los niveles de trim originales", () => {
+  test("conserva el tramo de la rampa; las anclas altas las acota P3", () => {
+    // Tramo bajo intacto: la rampa empieza en 0 exactamente en 103 y llega a 30 en 106.
     expect(trimAt(100)).toBe(0);
     expect(trimAt(106)).toBe(30);
-    expect(trimAt(110)).toBe(45);
-    expect(trimAt(115)).toBe(65);
-    expect(trimAt(118)).toBe(73);
+    // Las anclas altas de la rampa son 45/65/73 (110/115/118), pero P3
+    // (03_caps_por_detector.diff) las acota a 30 a propósito: convierte al
+    // detector en capa de viento en contra. Esto NO es una regresión de P1:
+    // la rampa sigue continua (ver test de saltos) y el acotado es monotono,
+    // así que no puede introducir un cliff. Verificado en el test P3.
+    expect(trimAt(110)).toBe(30);
+    expect(trimAt(115)).toBe(30);
+    expect(trimAt(118)).toBe(30);
+  });
+});
+
+// ── M3/M4 · P3 — tope duro del 30% por detector (EMXC) ────────────────────
+// Capa de VIENTO EN CONTRA, no techo: aunque el score marque trim de 90%, el
+// detector no puede recortar más del 30% de un activo. trimPct es porcentaje
+// entero, así que el tope se expresa en 30.
+describe("cycleTopDetector — P3 tope 30% por detector (M3/M4)", () => {
+  const trimAt = (dxy: number, rsi = 95) =>
+    detectCycleTops({ bondYield10y: 4.0, dxy, emxcRsiWeekly: rsi })
+      .signals.find(s => s.ticker === "EMXC.DE")!.trimPct;
+
+  test("en zona extrema el trim se queda en el tope (no llega a 73)", () => {
+    expect(trimAt(118)).toBe(30);
+  });
+
+  test("ningún DXY produce trim > 30% con RSI extremo", () => {
+    for (let dxy = 100; dxy <= 119.0001; dxy += 0.25) {
+      expect(trimAt(dxy)).toBeLessThanOrEqual(30);
+    }
+  });
+
+  test("con RSI normal el tope no toca nada (trim por debajo del cap)", () => {
+    for (let dxy = 100; dxy <= 119.0001; dxy += 0.25) {
+      expect(trimAt(dxy, 50)).toBeLessThanOrEqual(30);
+    }
   });
 });
