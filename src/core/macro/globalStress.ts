@@ -158,11 +158,10 @@ export function computeGlobalStress(inputs: StressInputs): StressResult {
   // FIX-CLIFF-STRESS-02: contribución continua (0→2 pts en 110→180, sin cliffs en 110/140).
   score += moveStressContribution(inputs.move);
 
-  // FIX B4: dxyTrend en decimal (0.02 = 2% de apreciación).
-  // El dashboard puede pasar 1.6 (porcentaje) → dividir por 100 internamente.
-  // Para compatibilidad: si dxyTrend > 1.0 asumimos que viene en % y lo convertimos.
-  const dxyDecimal = inputs.dxyTrend > 1.0 ? inputs.dxyTrend / 100 : inputs.dxyTrend;
-  if (dxyDecimal > 0.02) score += 1;
+  // Contrato estricto: dxyTrend siempre es retorno decimal a 20 días naturales.
+  // Ejemplo: 0.02 = apreciación del 2%. La normalización corresponde a cada fuente;
+  // no inferimos unidades dentro del motor de riesgo.
+  if (inputs.dxyTrend > 0.02) score += 1;
 
   // FIX B3: threshold subido 0.65→0.80. BTC vol media es 60-70% — con 0.65 casi siempre
   // activo. 0.80 captura solo entornos de estrés real (> +2σ sobre media BTC vol).
