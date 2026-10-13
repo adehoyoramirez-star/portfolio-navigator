@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { runWalkForwardTest, formatWFResult, DEFAULT_WF_CONFIG } from './walkForwardTest';
 import { ASSETS } from '../../lib/constants';
+import { computeGlobalStress } from '../macro/globalStress';
 
 // ── 1. Cargar CSV augmentado ──────────────────────
 // El archivo de public/ es la serie diaria canónica versionada para la app.
@@ -149,6 +150,37 @@ console.log(`   MOVE: ${Math.min(...move).toFixed(1)}–${Math.max(...move).toFi
 console.log(`   DXY Trend (20d): ${(Math.min(...dxyTrend) * 100).toFixed(2)}%–${(Math.max(...dxyTrend) * 100).toFixed(2)}%`);
 // btcVol is annualized volatility in decimal form (0.50 = 50%), as expected by globalStress.ts.
 console.log(`   BTC Vol: ${(Math.min(...btcVol) * 100).toFixed(0)}%–${(Math.max(...btcVol) * 100).toFixed(0)}%`);
+
+// ── 4b. Diagnóstico causal intermedio del DXY ─────────────────────────
+// Separa tres cosas: días que activan el umbral, cambio en stress score y
+// cambio de etiqueta NORMAL/HIGH_RISK/CRISIS. No presume impacto en allocations.
+let dxyThresholdDays = 0;
+let dxyStressScoreChangedDays = 0;
+let dxyStressRegimeChangedDays = 0;
+let dxyTotalScoreDelta = 0;
+for (let i = 0; i < minLen; i++) {
+  const commonStressInputs = {
+    vix: vix[i],
+    creditSpread: creditSpread[i],
+    move: move[i],
+    btcVol: btcVol[i],
+  };
+  const withDxy = computeGlobalStress({ ...commonStressInputs, dxyTrend: dxyTrend[i] });
+  const withoutDxy = computeGlobalStress({ ...commonStressInputs, dxyTrend: 0 });
+  if (dxyTrend[i] > 0.02) dxyThresholdDays++;
+  if (withDxy.score !== withoutDxy.score) {
+    dxyStressScoreChangedDays++;
+    dxyTotalScoreDelta += withDxy.score - withoutDxy.score;
+  }
+  if (withDxy.regime !== withoutDxy.regime) dxyStressRegimeChangedDays++;
+}
+console.log('\n🔬 DXY EFFECT DIAGNOSTICS — stress-score layer only');
+console.log(`   DXY > +2% over 20d: ${dxyThresholdDays}/${minLen} days (${(100 * dxyThresholdDays / minLen).toFixed(2)}%)`);
+console.log(`   Stress score changed vs DXY=0: ${dxyStressScoreChangedDays}/${minLen} days`);
+console.log(`   Stress regime label changed: ${dxyStressRegimeChangedDays}/${minLen} days`);
+console.log(`   Sum of daily score deltas: ${dxyTotalScoreDelta.toFixed(2)}`);
+console.log('   Scope: isolated computeGlobalStress only; does not measure downstream allocation changes.');
+
 
 // ── 5. Ejecutar walk-forward con masterRegime completo ─────────────────
 console.log('\n🚀 Ejecutando WALK-FORWARD TEST con masterRegime completo...');
