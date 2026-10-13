@@ -19,7 +19,7 @@ import { covarianceMatrix } from "../../lib/marketData";
 // FIX-R2-A3: DCC-GARCH integration for backtest-live alignment
 import { getDynamicCovMatrix } from "../risk/dccGarch";
 import { detectCrisis } from "../macro/crisis";
-import { ASSET_COST_PARAMS, computeTradeCost } from "../validation/transactionCosts";
+import { computeTradeCost } from "../validation/transactionCosts";
 import { computeGlobalStress } from "../macro/globalStress";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
@@ -630,17 +630,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     lookbackDays = 252,
     rebalanceDays = 21,
     initialCapital = 10_000,
-    transactionCostBps = 15,
   } = input;
-  // FIX-AUDIT-INST-02: Costes realistas por activo (spread + fixed cost).
-  // ANTES: 15bps flat para todos los activos, ignorando diferencias de liquidez.
-  // AHORA: usa ASSET_COST_PARAMS de transactionCosts.ts con half-spread por activo.
-  // BTC-EUR paga ~30bps efectivos, PPFB paga ~6bps. Benchmark sigue usando flat 15bps.
-  const txCostRate = transactionCostBps / 10_000;
-  const getAssetSpreadCost = (ticker: string): number => {
-    const params = ASSET_COST_PARAMS[ticker];
-    return params ? (params.halfSpreadBps * 2) / 10_000 : txCostRate;
-  };
+  // El backtest aplica el modelo unificado de transactionCosts.ts:
+  // spread completo + coste fijo + impacto de mercado, también a benchmarks.
   let totalTransactionCosts = 0;
   let rebalanceCount = 0;
 
