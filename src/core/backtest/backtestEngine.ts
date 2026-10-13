@@ -78,6 +78,8 @@ export interface BacktestInput {
   lookbackDays?: number;
   rebalanceDays?: number;
   initialCapital?: number;
+  /** @deprecated Ignorado por runBacktest: se usa el modelo de costes por activo de transactionCosts.ts. */
+  transactionCostBps?: number;
   // FIX-AUDIT-T4: blendWeights opcionales para simular autocorrección del motor.
   // El dashboard los inyecta cuando WFO detecta overfitting.
   blendWeights?: {
