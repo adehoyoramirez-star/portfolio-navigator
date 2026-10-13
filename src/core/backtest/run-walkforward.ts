@@ -10,9 +10,12 @@ import { runWalkForwardTest, formatWFResult, DEFAULT_WF_CONFIG } from './walkFor
 import { ASSETS } from '../../lib/constants';
 
 // ── 1. Cargar CSV augmentado ──────────────────────
+// El archivo de public/ es la serie diaria canónica versionada para la app.
+ // En la raíz existe una copia de trabajo con actualizaciones parciales y huecos;
+ // no debe prevalecer sobre la fuente canónica aunque tenga fechas más recientes.
 const csvCandidates = [
-  path.join(process.cwd(), 'historical_data_daily_augmented.csv'),
   path.join(process.cwd(), 'public', 'historical_data_daily_augmented.csv'),
+  path.join(process.cwd(), 'historical_data_daily_augmented.csv'),
 ];
 const csvPath = csvCandidates.find(candidate => fs.existsSync(candidate));
 if (!csvPath) {
