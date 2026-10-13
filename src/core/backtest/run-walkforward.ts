@@ -133,7 +133,7 @@ for (let i = 0; i < minLen; i++) {
   if (i < 20) { dxyTrend.push(0); continue; }
   const prev = dxy[i - 20];
   const curr = dxy[i];
-  dxyTrend.push(prev > 0 ? ((curr - prev) / prev) * 100 : 0);
+  dxyTrend.push(prev > 0 ? (curr - prev) / prev : 0); // decimal return: 0.02 = +2%, contract with globalStress.ts
 }
 
 console.log(`\n📊 Datos cargados: ${minLen} días`);
@@ -141,12 +141,12 @@ console.log(`   Período: ${firstDate} → ${lastDate}`);
 console.log(`   Antigüedad del último dato: ${staleDays} días`);
 if (staleDays > 7) console.warn('   ADVERTENCIA: CSV histórico desactualizado; resultados solo describen el período disponible.');
 console.warn('   ADVERTENCIA METODOLÓGICA: creditSpread es un proxy sintético derivado de HYG/LQD, no un spread histórico observado.');
-console.warn('   COBERTURA MACRO INCOMPLETA: el WFO actual NO carga una serie histórica de Brent/WTI ni cbLiquidityGrowth (balances Fed+BCE); esos inputs llegan undefined y no aportan señal histórica.');
+console.warn('   COBERTURA MACRO INCOMPLETA: el WFO no carga series históricas de Brent/WTI, cbLiquidityGrowth (balances Fed+BCE) ni M2; M2 usa el fallback fijo de 2 y no aporta variación histórica.');
 console.warn('   DXY sí se incluye, pero solo como variación porcentual a 20 días; no se prueban aún ventanas 60/90 días ni una ablación que mida su contribución incremental.');
 console.warn('   Por tanto, estos resultados NO validan el bloque macro completo. No interpretar las métricas WFO como validación de petróleo, liquidez de bancos centrales o crédito observado.');
 console.log(`   VIX: ${Math.min(...vix).toFixed(1)}–${Math.max(...vix).toFixed(1)}`);
 console.log(`   MOVE: ${Math.min(...move).toFixed(1)}–${Math.max(...move).toFixed(1)}`);
-console.log(`   DXY Trend: ${Math.min(...dxyTrend).toFixed(2)}%–${Math.max(...dxyTrend).toFixed(2)}%`);
+console.log(`   DXY Trend (20d): ${(Math.min(...dxyTrend) * 100).toFixed(2)}%–${(Math.max(...dxyTrend) * 100).toFixed(2)}%`);
 // btcVol is annualized volatility in decimal form (0.50 = 50%), as expected by globalStress.ts.
 console.log(`   BTC Vol: ${(Math.min(...btcVol) * 100).toFixed(0)}%–${(Math.max(...btcVol) * 100).toFixed(0)}%`);
 
