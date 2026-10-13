@@ -158,8 +158,14 @@ export interface WFTestResult {
   // FIX-AUDIT-R11: Deflated Sharpe Ratio (López de Prado 2014)
   /** Deflated Sharpe Ratio — corrige por múltiples comparaciones */
   deflatedSharpeRatio: number;
-  /** Probabilistic Sharpe Ratio — P(SR > 0 | datos) */
+  /** Probabilistic Sharpe Ratio: estimación exploratoria, no inferencia calibrada. */
   probabilisticSharpeRatio: number;
+  /**
+   * Estas métricas no se consideran evidencia estadística validada:
+   * DSR usa ventanas WFO como proxy de trials y PSR omite momentos no normales/
+   * dependencia temporal. Mantener explícito el estado evita sobreinterpretación.
+   */
+  statisticalMetricsStatus: 'PROVISIONAL_NOT_VALIDATED';
   /** Benchmark Equal Weight Sharpe promedio OOS */
   equalWeightSharpeOosAvg: number;
   /** ¿El motor bate al Equal Weight en OOS? */
@@ -322,10 +328,16 @@ function computeAdaptiveWeights(
   }
 }
 
-// ── Deflated Sharpe Ratio (López de Prado 2014) ──────────────────────────
-// Corrige el Sharpe por el número de pruebas/ventanas.
-// Cuantas más ventanas evaluamos, más probable es encontrar una
-// con Sharpe alto por puro azar (sesgo de selección múltiple).
+// ── Métricas exploratorias DSR/PSR (NO validadas para inferencia) ────────
+// LIMITACIÓN INSTITUCIONAL ABIERTA:
+// - nWindows es el número de segmentos WFO, NO el número efectivo de trials
+//   (estrategias/parámetros/variantes) considerados durante el desarrollo.
+// - La aproximación DSR no incorpora distribución empírica de Sharpes entre
+//   trials ni skewness/kurtosis de retornos.
+// - La PSR simplificada posterior asume normalidad e independencia.
+// Por tanto, estos valores son diagnósticos exploratorios; no deben utilizarse
+// como criterio de aprobación estadística hasta implementar una metodología
+// con trials documentados y retornos OOS correctamente concatenados.
 //
 // DSR = (SR - E[max(SR)]) / σ[max(SR)]
 //
@@ -351,7 +363,9 @@ function computeAdaptiveWeights(
 // DSR > 2: estadísticamente significativo al 95%
 
 /**
- * Calcula el Deflated Sharpe Ratio (López de Prado 2014).
+ * Calcula una aproximación exploratoria tipo DSR. NO es una implementación
+ * validada del DSR de Bailey/López de Prado mientras falten el número efectivo
+ * de trials y los ajustes de distribución de retornos.
  *
  * @param sharpeOosAvg - Sharpe OOS promedio ANUALIZADO (×√365, serie de días naturales)
  * @param nWindows - Número de ventanas walk-forward
@@ -392,8 +406,8 @@ function deflatedSharpeRatio(
 }
 
 /**
- * Calcula el Probabilistic Sharpe Ratio (PSR).
- * PSR = probabilidad de que el Sharpe real sea > 0 dado el Sharpe observado.
+ * Calcula una aproximación normal simplificada al PSR; no está calibrada para
+ * inferencia porque omite skewness, kurtosis y dependencia temporal de retornos.
  *
  * FIX-R2-A2 (auditoría institucional ronda 2):
  *   ANTES: usaba sharpeOosAvg anualizado con √T diario → z inflado.
@@ -623,6 +637,7 @@ function insufficientDataResult(
     adaptiveFactorWeights: { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 },
     deflatedSharpeRatio: 0,
     probabilisticSharpeRatio: 0.5,
+    statisticalMetricsStatus: 'PROVISIONAL_NOT_VALIDATED',
     equalWeightSharpeOosAvg: 0,
     beatsEqualWeight: false,
     pctBullMarketWindows: 0,
@@ -883,6 +898,7 @@ export function runWalkForwardTest(
     adaptiveFactorWeights: computeAdaptiveWeights(overfittingRisk),
     deflatedSharpeRatio: dsr,
     probabilisticSharpeRatio: psr,
+    statisticalMetricsStatus: 'PROVISIONAL_NOT_VALIDATED',
     equalWeightSharpeOosAvg: ewSharpeOosAvg,
     beatsEqualWeight: beatsEW,
     pctBullMarketWindows: pctBullWindows,
@@ -930,9 +946,10 @@ export function formatWFResult(result: WFTestResult): string {
       return `  V${i + 1}: Sharpe ${w.inSample.metrics.sharpe.toFixed(2)}→${w.outOfSample.metrics.sharpe.toFixed(2)} | CAGR ${(w.inSample.metrics.cagr * 100).toFixed(1)}%→${(w.outOfSample.metrics.cagr * 100).toFixed(1)}% | ${emoji} ${(w.consistencyScore * 100).toFixed(0)}% | ${ewTag}${bullTag}`;
     }),
     '',
-    '─── DSR (Deflated Sharpe Ratio) ───',
-    `  DSR:   ${result.deflatedSharpeRatio.toFixed(3)} ${result.deflatedSharpeRatio > 1 ? '🟢 p<0.32' : result.deflatedSharpeRatio > 0 ? '🟡' : '🔴'}`,
-    `  PSR:   ${(result.probabilisticSharpeRatio * 100).toFixed(1)}% probabilidad de Sharpe > 0`,
+    '─── MÉTRICAS ESTADÍSTICAS (PROVISIONALES; NO VALIDADAS) ───',
+    `  Estado: ${result.statisticalMetricsStatus}`,
+    `  DSR exploratorio: ${result.deflatedSharpeRatio.toFixed(3)} (no interpretar como significación calibrada)`,
+    `  PSR aproximado:   ${(result.probabilisticSharpeRatio * 100).toFixed(1)}% (no interpretar como probabilidad calibrada)`,
     `  EW OOS: Sharpe ${result.equalWeightSharpeOosAvg.toFixed(3)} — Motor ${result.beatsEqualWeight ? '🟢 BATE' : '🔴 PIERDE'} vs Equal Weight`,
     `  Bull:   ${(result.pctBullMarketWindows * 100).toFixed(0)}% ventanas en bull market BTC (>100%)`,
     '',
