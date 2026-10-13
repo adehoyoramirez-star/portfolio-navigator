@@ -19,7 +19,7 @@ import { covarianceMatrix } from "../../lib/marketData";
 // FIX-R2-A3: DCC-GARCH integration for backtest-live alignment
 import { getDynamicCovMatrix } from "../risk/dccGarch";
 import { detectCrisis } from "../macro/crisis";
-import { ASSET_COST_PARAMS } from "../validation/transactionCosts";
+import { ASSET_COST_PARAMS, computeTradeCost } from "../validation/transactionCosts";
 import { computeGlobalStress } from "../macro/globalStress";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
@@ -950,51 +950,61 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         pendingNewRegime = 'EXPANSION';
       }
 
-      // Costes de transacción: se aplican en el momento del rebalanceo
-      // (cuando se decide girar la cartera), no en el día siguiente.
-      let turnover = 0;
-      for (const ticker of ASSETS) {
-        const newWeight = pendingNewAllocations[ticker] ?? 0;
-        const oldWeight = oldAllocations[ticker] ?? 0;
-        turnover += Math.abs(newWeight - oldWeight);
-      }
-      // FIX-AUDIT-INST-02: Coste por activo con spread real + coste fijo €1/operación.
-      // Suma el half-spread × 2 (compra + venta implícito) × turnover weight × portfolio value.
-      let costThisRebalance = 0;
-      for (const ticker of ASSETS) {
-        const newWeight = pendingNewAllocations[ticker] ?? 0;
-        const oldWeight = oldAllocations[ticker] ?? 0;
-        const assetTurnover = Math.abs(newWeight - oldWeight);
-        if (assetTurnover > 1e-6) {
-          const spread = getAssetSpreadCost(ticker);
-          costThisRebalance += portfolioValue * spread * assetTurnover;
-          costThisRebalance += 1.0; // €1 fixed cost per traded asset
+      // Costes de transacción: se aplican al decidir el rebalanceo.
+      // Usar el mismo modelo por activo (spread completo + coste fijo + impacto)
+      // para estrategia y benchmarks evita comparar una estrategia con impacto
+      // frente a benchmarks que solo pagan una tasa plana.
+      const calculateRebalanceCost = (
+        oldWeights: Record<string, number>,
+        newWeights: Record<string, number>,
+        navEur: number,
+      ): number => {
+        let totalCost = 0;
+        for (const ticker of ASSETS) {
+          const oldWeight = oldWeights[ticker] ?? 0;
+          const newWeight = newWeights[ticker] ?? 0;
+          if (Math.abs(newWeight - oldWeight) < 1e-6) continue;
+          const closes = closesHistory[backtestTickers[ticker]] ?? [];
+          const cost = computeTradeCost({
+            ticker,
+            oldWeight,
+            newWeight,
+            portfolioValueEur: navEur,
+            priceEur: closes[t] ?? 0,
+          });
+          totalCost += cost.totalCostEur;
         }
-      }
-      portfolioValue -= costThisRebalance;
+        return totalCost;
+      };
+
+      const costThisRebalance = calculateRebalanceCost(
+        oldAllocations,
+        pendingNewAllocations,
+        portfolioValue,
+      );
+      portfolioValue = Math.max(0, portfolioValue - costThisRebalance);
       totalTransactionCosts += costThisRebalance;
 
-      // ── Benchmark rebalance ──
-      // Reset to equal weights. Apply the same transaction costs for fair comparison.
-      let benchTurnover = 0;
-      for (const ticker of ASSETS) {
-        benchTurnover += Math.abs(eqWeight - (benchmarkWeights[ticker] ?? 0));
-      }
-      const benchCost = benchmarkValue * txCostRate * benchTurnover;
-      benchmarkValue -= benchCost;
-      // FIX-AUDIT-B3: guardar pesos como PENDIENTES (se aplican al día siguiente),
-      // igual que pendingNewAllocations para la estrategia.
-      pendingBenchmarkWeights = equalWeightAllocations();
+      // Benchmark equal-weight: mismo modelo de costes que la estrategia.
+      const nextBenchmarkWeights = equalWeightAllocations();
+      const benchCost = calculateRebalanceCost(
+        benchmarkWeights,
+        nextBenchmarkWeights,
+        benchmarkValue,
+      );
+      benchmarkValue = Math.max(0, benchmarkValue - benchCost);
+      // FIX-AUDIT-B3: guardar pesos como PENDIENTES (se aplican al día siguiente).
+      pendingBenchmarkWeights = nextBenchmarkWeights;
 
-      // ── Institutional Benchmark rebalance ──
-      // Reset to assetRegistry weights (BTC 10%, WLG 35%, PPFB 20%, etc.).
-      let instBenchTurnover = 0;
-      for (const ticker of ASSETS) {
-        instBenchTurnover += Math.abs((INSTITUTIONAL_BENCHMARK_WEIGHTS[ticker] ?? 0) - (instBenchmarkWeights[ticker] ?? 0));
-      }
-      const instBenchCost = instBenchmarkValue * txCostRate * instBenchTurnover;
-      instBenchmarkValue -= instBenchCost;
-      pendingInstBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
+      // Benchmark institucional: mismo modelo de costes que la estrategia.
+      const nextInstBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
+      const instBenchCost = calculateRebalanceCost(
+        instBenchmarkWeights,
+        nextInstBenchmarkWeights,
+        instBenchmarkValue,
+      );
+      instBenchmarkValue = Math.max(0, instBenchmarkValue - instBenchCost);
+      pendingInstBenchmarkWeights = nextInstBenchmarkWeights;
 
       // Reset trend filter state for the new rebalance cycle
       trendReduced.clear();
