@@ -51,6 +51,16 @@ for (let i = 0; i < dates.length; i++) {
   if (i > 0 && dates[i] <= dates[i - 1]) {
     throw new Error(`Fechas duplicadas o no ordenadas: ${dates[i - 1]} → ${dates[i]}`);
   }
+  if (i > 0) {
+    const previousDay = Date.parse(`${dates[i - 1]}T00:00:00Z`);
+    const currentDay = Date.parse(`${dates[i]}T00:00:00Z`);
+    const gapDays = Math.round((currentDay - previousDay) / 86_400_000);
+    // El dataset conserva filas diarias (incluidos fines de semana forward-filled).
+    // Un hueco de calendario implica que no podemos tratar índices como días consecutivos.
+    if (gapDays !== 1) {
+      throw new Error(`Hueco temporal en CSV: ${dates[i - 1]} → ${dates[i]} (${gapDays} días). Repara/recupera las fechas ausentes antes del WFO.`);
+    }
+  }
 }
 const firstDate = dates[0];
 const lastDate = dates[dates.length - 1];
