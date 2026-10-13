@@ -106,7 +106,6 @@ export default function BacktestPanel({
         lookbackDays,
         rebalanceDays,
         initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
-        transactionCostBps: 15,
         useDynamicCovariance: true,
       });
     }
