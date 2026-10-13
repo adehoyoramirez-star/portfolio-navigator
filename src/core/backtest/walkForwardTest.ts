@@ -593,6 +593,19 @@ export function runWalkForwardTest(
     };
   }
 
+  // Keep timestamps on the exact same local index range as the corresponding
+  // close series. Passing full-history timestamps beside sliced prices silently
+  // misaligns calendar filters and covariance calculations in WFO.
+  function sliceTimestamps(
+    timestamps: NonNullable<BacktestInput['timestampsHistory']>,
+    start: number,
+    end: number
+  ): NonNullable<BacktestInput['timestampsHistory']> {
+    return Object.fromEntries(
+      Object.entries(timestamps).map(([ticker, values]) => [ticker, values.slice(start, end)])
+    );
+  }
+
   for (const win of windows) {
     // ---- IN-SAMPLE: datos desde 0 hasta trainEnd ----
     const isCloses = sliceClosesHistory(input.closesHistory, 0, win.trainEnd);
@@ -606,6 +619,7 @@ export function runWalkForwardTest(
     const isInput: BacktestInput = {
       ...inputClean,
       closesHistory: isCloses,
+      timestampsHistory: input.timestampsHistory ? sliceTimestamps(input.timestampsHistory, 0, win.trainEnd) : undefined,
       macroHistory: isMacro,
       lookbackDays,
       rebalanceDays: cfg.rebalanceDays,
@@ -622,6 +636,7 @@ export function runWalkForwardTest(
     const oosInput: BacktestInput = {
       ...inputClean,
       closesHistory: oosCloses,
+      timestampsHistory: input.timestampsHistory ? sliceTimestamps(input.timestampsHistory, oosStart, win.testEnd) : undefined,
       macroHistory: oosMacro,
       lookbackDays,
       rebalanceDays: cfg.rebalanceDays,
