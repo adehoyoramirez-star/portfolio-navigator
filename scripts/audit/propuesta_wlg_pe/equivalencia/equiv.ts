@@ -3,8 +3,8 @@
 // ================================================================
 // Objetivo: demostrar que el cambio ESTRUCTURAL del paquete WLG (extraer las
 // curvas de WLG a constantes INYECTABLES con default = calibración APROBADA)
-// NO altera ninguna salida del detector. Compara `detectCycleTops` de HEAD
-// (copia congelada en este directorio) contra el de `src/` sobre un grid de
+// NO altera ninguna salida del detector. Compara `detectCycleTops` del commit
+// BASE pre-paquete (copia congelada en este directorio) contra el de `src/` sobre un grid de
 // inputs que cubre la ruta WLG (RSI × P/E × CAPE × shift × credit spread) y
 // TODOS los demás detectores.
 //
@@ -12,8 +12,48 @@
 //   npx tsx audit/propuesta_wlg_pe/equivalencia/equiv.ts
 // Salida: "EQUIVALENCIA OK — N casos" (exit 0) o el listado de discrepancias (exit 1).
 // ================================================================
+import { execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
 import { detectCycleTops as current } from "../../../../src/core/risk/cycleTopDetector";
 import { detectCycleTops as head } from "./head_cycleTopDetector";
+
+// ── CHECK DE INTEGRIDAD de la copia congelada (§8.2 del informe) ─────────────
+// La copia debe ser EXACTAMENTE el detector del commit BASE ANTERIOR al paquete
+// A+D — el «antes» que compara la equivalencia estructural. Detecta que la copia
+// se haya quedado obsoleta (o se haya tocado a mano) antes de dar por buena la
+// comparación.
+// NO se compara contra HEAD a propósito: HEAD se mueve en cada commit y ya
+// contiene el propio cambio A+D, así que un check contra HEAD sería falso ya en
+// el commit del paquete y no detectaría deriva real. El commit base es inmutable:
+// por eso se ancla a un SHA.
+const FROZEN_BASE = "5512770"; // = 4ab4417^ (padre del commit del paquete A+D)
+const FROZEN_SRC = "src/core/risk/cycleTopDetector.ts";
+const FROZEN_COPY = fileURLToPath(new URL("./head_cycleTopDetector.ts", import.meta.url));
+const REGEN_CMD = `git show ${FROZEN_BASE}:${FROZEN_SRC} > scripts/audit/propuesta_wlg_pe/equivalencia/head_cycleTopDetector.ts`;
+const lf = (s: string) => s.replace(/\r\n?/g, "\n"); // hash estable entre checkouts CRLF/LF
+
+let baseSrc = "";
+try {
+  baseSrc = execFileSync("git", ["show", `${FROZEN_BASE}:${FROZEN_SRC}`], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+} catch {
+  console.error(`[integridad] FALLO: no se pudo leer ${FROZEN_BASE}:${FROZEN_SRC} con git.`);
+  console.error("[integridad] ¿Estás dentro del repo y con ese commit disponible (clon no superficial)?");
+  console.error(`[integridad] Regenerar la copia: ${REGEN_CMD}`);
+  process.exit(1);
+}
+const hBase = createHash("sha256").update(lf(baseSrc)).digest("hex");
+const hCopy = createHash("sha256").update(lf(readFileSync(FROZEN_COPY, "utf8"))).digest("hex");
+if (hBase !== hCopy) {
+  console.error("[integridad] FALLO: la copia congelada NO es el detector del commit base.");
+  console.error(`[integridad]   ${FROZEN_BASE}:${FROZEN_SRC} → sha256=${hBase}`);
+  console.error(`[integridad]   ${FROZEN_COPY}`);
+  console.error(`[integridad]   → sha256=${hCopy}`);
+  console.error(`[integridad] Regenerar la copia: ${REGEN_CMD}`);
+  process.exit(1);
+}
+console.log(`[integridad] copia congelada OK — idéntica a ${FROZEN_BASE}:${FROZEN_SRC} (sha256 ${hBase.slice(0, 12)}…)`);
 
 type In = Record<string, number | undefined>;
 
@@ -80,4 +120,4 @@ for (const inp of [{ bondYield10y: 4, wlgRsiWeekly: 74.99 }, { bondYield10y: 4, 
   console.log("  " + probe(inp as In));
 
 if (mismatches > 0) { console.error("\nFALLO: el cambio estructural NO es comportamiento-neutro."); process.exit(1); }
-console.log(`\nEQUIVALENCIA OK — ${cases.length} casos, 0 discrepancias (HEAD ≡ working tree con la calibración APROBADA).`);
+console.log(`\nEQUIVALENCIA OK — ${cases.length} casos, 0 discrepancias (base ${FROZEN_BASE} ≡ working tree con la calibración APROBADA).`);
