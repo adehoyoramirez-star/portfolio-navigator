@@ -236,7 +236,6 @@ export default function BacktestPanel({
       lookbackDays,
       rebalanceDays,
       initialCapital: portfolioInitialValue > 0 ? portfolioInitialValue : 10_000,
-      transactionCostBps: 15,
       useDynamicCovariance: true,
     });
   }, [marketData, lookbackDays, rebalanceDays, currentVix, currentCreditSpread, portfolioInitialValue, currentErpValue, currentAvgCorrelation, csvData, dataSource]);
@@ -323,7 +322,7 @@ export default function BacktestPanel({
         {result.totalTransactionCosts > 0 && (
           <span style={{ color: "#f59e0b", fontSize: "0.75rem", marginLeft: "1rem" }}>
             💸 Costes transacción: −€{result.totalTransactionCosts.toFixed(0)} acum.
-            ({result.rebalanceCount} rebalanceos × {result.transactionCostBps}bps)
+            ({result.rebalanceCount} rebalanceos; ≈{result.transactionCostBps} bps medios/rebalanceo)
             · CAGR neto ya incluye estos costes
           </span>
         )}
