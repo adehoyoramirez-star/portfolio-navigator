@@ -173,21 +173,27 @@ export function buildWindows(
   totalLength: number,
   config: WFTestConfig
 ): WFWindowInfo[] {
-  const { nWindows, trainRatio, lookbackDays } = config;
+  const { nWindows, trainRatio, lookbackDays, rebalanceDays } = config;
   if (
     !Number.isInteger(nWindows) || nWindows < 1 ||
     !(trainRatio > 0 && trainRatio < 1) ||
-    !Number.isInteger(lookbackDays) || lookbackDays < 1
+    !Number.isInteger(lookbackDays) || lookbackDays < 1 ||
+    !Number.isInteger(rebalanceDays) || rebalanceDays < 1
   ) return [];
 
-  // Expanding-window WFO: primero se reserva trainRatio del timeline para IS;
-  // el 30% restante se divide en segmentos OOS consecutivos, sin huecos.
-  // El backtest OOS recibe lookbackDays previos solo como calentamiento y sus
-  // métricas empiezan en testStart; testEnd es EXCLUSIVO para todos los slices.
+  // Expanding-window WFO: reserva trainRatio para IS y divide el resto en
+  // segmentos OOS consecutivos. Cada OOS necesita al menos dos ciclos de
+  // rebalanceo; si no, runBacktest reduce automáticamente el lookback y deja
+  // de evaluar la configuración declarada. Se rechazan ventanas insuficientes.
   const initialTrainEnd = Math.floor(totalLength * trainRatio);
   const oosLength = totalLength - initialTrainEnd;
   const testSize = Math.floor(oosLength / nWindows);
-  if (initialTrainEnd <= lookbackDays || testSize < 21 || oosLength < nWindows * 21) return [];
+  const minimumOosDays = 2 * rebalanceDays;
+  if (
+    initialTrainEnd <= lookbackDays ||
+    testSize < minimumOosDays ||
+    oosLength < nWindows * minimumOosDays
+  ) return [];
 
   const windows: WFWindowInfo[] = [];
   for (let w = 0; w < nWindows; w++) {
@@ -197,7 +203,7 @@ export function buildWindows(
       ? totalLength
       : Math.min(testStart + testSize, totalLength);
 
-    if (testEnd - testStart < 21) return [];
+    if (testEnd - testStart < minimumOosDays) return [];
 
     windows.push({
       windowIndex: w,
