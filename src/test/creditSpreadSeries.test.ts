@@ -8,6 +8,8 @@ const source = [
   "2023-10-12,4.25",
   "2023-10-13,4.30",
   "2023-10-16,4.27",
+  "2023-12-22,4.40",
+  "2023-12-25,",
 ].join("\n");
 
 describe("alignObservedCreditSpread", () => {
@@ -29,8 +31,19 @@ describe("alignObservedCreditSpread", () => {
   });
 
   test("fails closed when an observation is stale beyond the allowed calendar age", () => {
-    const dates = ["2023-10-09", "2023-10-10", "2023-10-15"];
+    const dates = ["2023-10-09", "2023-10-10", "2023-10-20"];
     expect(() => alignObservedCreditSpread(dates, source)).toThrow(/stale/i);
+  });
+
+  test("ignores blank holiday observations and carries the last published value", () => {
+    const holidaySource = [
+      "observation_date,BAMLH0A0HYM2",
+      "2023-12-22,4.40",
+      "2023-12-25,",
+      "2023-12-26,4.42",
+    ].join("\\n");
+    const result = alignObservedCreditSpread(["2023-12-22", "2023-12-25", "2023-12-26"], holidaySource);
+    expect(result.values).toEqual([4.40, 4.40, 4.42]);
   });
 
   test("rejects duplicate or unsorted source observations", () => {
