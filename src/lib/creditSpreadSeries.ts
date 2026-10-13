@@ -30,10 +30,14 @@ export function alignObservedCreditSpread(
       throw new Error(`Invalid FRED OAS date: ${date}`);
     }
     if (date <= previousDate) throw new Error(`FRED OAS dates duplicated or unsorted: ${date}`);
-    if (!raw || !Number.isFinite(value) || value <= 0) {
-      throw new Error(`Invalid FRED OAS value on ${date}: ${raw}`);
+    // FRED legitimately leaves non-publication dates blank (e.g. US holidays).
+    // Preserve ordering checks, but do not treat a blank as an observed value.
+    if (raw) {
+      if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`Invalid FRED OAS value on ${date}: ${raw}`);
+      }
+      observations.set(date, value);
     }
-    observations.set(date, value);
     previousDate = date;
   }
 
