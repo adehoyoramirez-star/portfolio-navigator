@@ -1,0 +1,65 @@
+# PROPUESTA — NO APLICADA. Diff para scripts/audit/m3_rerun.ts
+# Objetivo: que el backtest canónico EJERZA la ruta de valoración de WLG
+# (hoy inactiva porque nunca se pasa wlgPERatio). Modos A (control) / B / C.
+# Universo, fechas, costes y datos IDÉNTICOS entre modos.
+#
+# NOTA: los números de línea son orientativos (harness vivo). Aplicar a mano
+# con revisión; este fichero NO se aplica automáticamente.
+
+--- a/scripts/audit/m3_rerun.ts
++++ b/scripts/audit/m3_rerun.ts
+@@ (imports)
+ import { detectCycleTops, type CycleTopInputs } from "../../src/core/risk/cycleTopDetector";
++// WLG-PE (propuesta Paso 1): serie de P/E forward + baseline rolling 10a.
++//   buildWlgForwardPeSeries es la propuesta del Paso 0 (wlg_forward_pe.ts).
++import { buildWlgForwardPeSeries } from "./propuesta_wlg_pe/wlg_forward_pe";
+@@
+@@ (junto al resto de carga de series, antes del bucle de weeks)
++// ── WLG-PE (propuesta): modos ─────────────────────────────────────────
++//   A = comportamiento actual (NO inyecta wlgPERatio) → control bit-idéntico
++//   B = inyecta wlgPERatio (P/E forward histórico) + regimeShiftPE
++//   C = B + curva suavizada (requiere sub-parche 1.4 del detector)
++const WLG_PE_MODE = (process.env.WLG_PE_MODE ?? "A") as "A" | "B" | "C";
++const WLG_PE_CSV  = process.env.WLG_PE_CSV ?? `${DATA}/wlg_forward_pe.csv`;
++const wlgPeRows = WLG_PE_MODE === "A"
++  ? []
++  : buildWlgForwardPeSeries(WLG_PE_CSV, grid);   // grid ya existe en el harness
++const wlgPeAt = new Map(wlgPeRows.map(r => [r.d, r]));
++// regimeShiftPE: si no se deriva el régimen (opción ii), queda 0 y se acota
++// la sensibilidad corriendo ±1.5 aparte.
++const WLG_REGIME_SHIFT = Number(process.env.WLG_REGIME_SHIFT ?? "0");
+@@
+@@ (bloque CycleTopInputs del grid, ~L112–125)
+     const wr = rsi14(wUrthOf, d); if (wr !== undefined) inputs.wlgRsiWeekly = wr;
++    // ── WLG-PE (propuesta): solo en modo B/C ────────────────────────────
++    if (WLG_PE_MODE !== "A") {
++      const pe = wlgPeAt.get(d)
++        ?? [...wlgPeAt.entries()].filter(([k]) => k <= d).pop()?.[1];
++      if (pe && pe.baselineReliable) {
++        inputs.wlgPERatio = pe.wlgForwardPE;
++        inputs.regimeShiftPE = WLG_REGIME_SHIFT;
++        // (si se adopta el ancla rolling, el baseline iría aquí; en la
++        //  calibración actual el ancla sigue siendo la constante 16)
++      }
++    }
+     inputs.inflationBreakeven = before(t1yie, iT1, d);
+     const out = detectCycleTops(inputs as CycleTopInputs);
+@@
+@@ (idéntico en el segundo bloque de grid, ~L367)
+     const wr2 = rsi14(wUrthOf, d); if (wr2 !== undefined) inputs.wlgRsiWeekly = wr2;
++    if (WLG_PE_MODE !== "A") {
++      const pe = wlgPeAt.get(d)
++        ?? [...wlgPeAt.entries()].filter(([k]) => k <= d).pop()?.[1];
++      if (pe && pe.baselineReliable) {
++        inputs.wlgPERatio = pe.wlgForwardPE;
++        inputs.regimeShiftPE = WLG_REGIME_SHIFT;
++      }
++    }
+
+# ── Ejecución propuesta (cuando se autorice) ────────────────────────────────
+#   Control (A):  WLG_PE_MODE=A npx tsx scripts/audit/m3_rerun.ts
+#   Variante B:   WLG_PE_MODE=B npx tsx scripts/audit/m3_rerun.ts
+#   Variante C:   WLG_PE_MODE=C npx tsx scripts/audit/m3_rerun.ts   (+ sub-parche 1.4)
+#   Sensibilidad: WLG_REGIME_SHIFT=-1.5 | 0 | +1.5
+#
+# Criterio de control: modo A debe producir salida BIT-IDÉNTICA a la actual.

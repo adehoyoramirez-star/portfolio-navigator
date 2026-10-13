@@ -1,0 +1,55 @@
+# PROPUESTA (NO APLICADA) — WLG-CLIFF-CAL
+# Aplica por DEFAULT las curvas CANDIDATAS de WLG, que eliminan el cliff de 35 pp
+# en P/E efectivo 16.00→16.01 y en RSI semanal 75.00→75.01.
+#
+# NATURALEZA DEL CAMBIO: es una CALIBRACIÓN, no una corrección inocua. Mueve el
+# trim de WLG en la banda P/E 13–16 (antes 0%, después hasta 35%) y en RSI 75–85
+# (antes 35–55%, después 0–55%). No puede hacerse "sin tocar" la calibración
+# aprobada: el cliff nace de la regla de frontera de smoothScore
+# (x <= primer ancla ⇒ 0, x = primer ancla ⇒ score del ancla). Eliminarlo exige
+# (a) añadir una ancla cero [13,0] / [75,0]  → esto es el parche de abajo, o
+# (b) cambiar smoothScore globalmente (afecta a BTC, oro, EMXC, DXY… y a sus
+#     umbrales aprobados) → recalibración global, NO un arreglo local de WLG.
+#
+# REQUISITOS ANTES DE APLICAR (no cumplidos a 13-oct-2026):
+#   1. Aprobación expresa del comité.
+#   2. Serie histórica verificable de P/E forward del MSCI World — HOY INEXISTENTE
+#      (ver PROPUESTA_WLG_PE.md). La ruta de valoración está SIN VALIDAR.
+#   3. Validación fuera de muestra (walk-forward) e impacto medido en cartera.
+#
+# CÓMO MEDIRLO EN UNA MISMA EJECUCIÓN (mismos datos y costes):
+#   WLG_RSI_TOGGLE=1 npx tsx audit/m3_rerun.ts     → sección C6
+#   Medido (13-oct-2026, curva RSI): ΔCAGR −0.08 pp (CASH0) / −0.11 pp (TBILL),
+#   ops +6, impuestos −647 €/−673 €, MaxDD 0.00 pp, exposición media 93.0%→94.5%.
+#   El default ACTUAL (curva aprobada) es comportamiento-neutro frente a HEAD:
+#   audit/propuesta_wlg_pe/equivalencia/equiv.ts (27 477 casos, 0 discrepancias).
+--- a/src/core/risk/cycleTopDetector.ts
++++ b/src/core/risk/cycleTopDetector.ts
+@@ -634,10 +634,10 @@
+ //   ANTES (TTM): P/E 19.3 → score 1.23 → CAUTION 40% (sobrestimado por TTM)
+ //   AHORA (Forward): P/E 15 → score 1.13 → CAUTION ~35% (beneficios creciendo +37.9%)
+ // ── WLG — curvas de valoración y RSI (INYECTABLES) ────────────────────
+-//   SEPARACIÓN A/B/C (Oct-2026): la calibración **APROBADA** es el DEFAULT y
+-//   NO cambia el comportamiento. Las curvas candidatas anti-cliff solo se
+-//   aplican vía inyección EXPLÍCITA (tests / harness) para comparar en una
+-//   misma ejecución. Ver scripts/audit/propuesta_wlg_pe/fix_cliff_wlg.diff.
++//   PROPUESTA WLG-CLIFF-CAL (Oct-2026): las curvas CANDIDATAS pasan a ser el
++//   DEFAULT → es un CAMBIO DE CALIBRACIÓN (no aplicado sin aprobación expresa).
++//   La curva APROBADA queda disponible por inyección para A/B en una misma
++//   ejecución. Ver scripts/audit/propuesta_wlg_pe/fix_cliff_wlg.diff.
+ //   El cliff se corrige cambiando la calibración; NO es posible eliminarlo
+ //   preservando a la vez las anclas aprobadas y el borde seco en x≤primer-ancla.
+ export type WlgCurve = [number, number][];
+@@ -656,9 +656,9 @@
+ 
+ function detectWLGTop(inputs: CycleTopInputs, curves?: WlgCurveOverrides): CycleTopSignal {
+   const { wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, wlgCAPE, regimeShiftPE, creditSpread } = inputs;
+-  const rsiCurve = curves?.rsiCurve ?? WLG_RSI_CURVE_APPROVED;
+-  const valCurve = curves?.valCurve ?? WLG_VAL_CURVE_APPROVED;
+-  const fbCurve  = curves?.fallbackCurve ?? WLG_FB_CURVE_APPROVED;
++  const rsiCurve = curves?.rsiCurve ?? WLG_RSI_CURVE_CANDIDATE;
++  const valCurve = curves?.valCurve ?? WLG_VAL_CURVE_CANDIDATE;
++  const fbCurve  = curves?.fallbackCurve ?? WLG_FB_CURVE_CANDIDATE;
+ 
+   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
+     return {

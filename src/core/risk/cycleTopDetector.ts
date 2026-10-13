@@ -633,8 +633,32 @@ function detectGoldTop(inputs: CycleTopInputs): CycleTopSignal {
 //   Con datos actuales (P/E Forward ~15 + CAPE 40.5):
 //   ANTES (TTM): P/E 19.3 → score 1.23 → CAUTION 40% (sobrestimado por TTM)
 //   AHORA (Forward): P/E 15 → score 1.13 → CAUTION ~35% (beneficios creciendo +37.9%)
-function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
+// ── WLG — curvas de valoración y RSI (INYECTABLES) ────────────────────
+//   SEPARACIÓN A/B/C (Oct-2026): la calibración **APROBADA** es el DEFAULT y
+//   NO cambia el comportamiento. Las curvas candidatas anti-cliff solo se
+//   aplican vía inyección EXPLÍCITA (tests / harness) para comparar en una
+//   misma ejecución. Ver scripts/audit/propuesta_wlg_pe/fix_cliff_wlg.diff.
+//   El cliff se corrige cambiando la calibración; NO es posible eliminarlo
+//   preservando a la vez las anclas aprobadas y el borde seco en x≤primer-ancla.
+export type WlgCurve = [number, number][];
+export const WLG_RSI_CURVE_APPROVED: WlgCurve = [[75, 1.0], [80, 1.5], [85, 2.0]];
+export const WLG_RSI_CURVE_CANDIDATE: WlgCurve = [[75, 0], [80, 1.0], [85, 2.0]];
+export const WLG_VAL_CURVE_APPROVED: WlgCurve = [[16, 1.0], [20, 1.5], [23, 2.0], [27, 2.5]];
+export const WLG_VAL_CURVE_CANDIDATE: WlgCurve = [[13, 0], [16, 1.0], [20, 1.5], [23, 2.0], [27, 2.5]];
+export const WLG_FB_CURVE_APPROVED: WlgCurve = [[14, 1.0], [18, 1.5], [21, 2.0], [25, 2.5]];
+export const WLG_FB_CURVE_CANDIDATE: WlgCurve = [[11, 0], [14, 1.0], [18, 1.5], [21, 2.0], [25, 2.5]];
+
+export interface WlgCurveOverrides {
+  rsiCurve?: WlgCurve;
+  valCurve?: WlgCurve;
+  fallbackCurve?: WlgCurve;
+}
+
+function detectWLGTop(inputs: CycleTopInputs, curves?: WlgCurveOverrides): CycleTopSignal {
   const { wlgRsiWeekly, wlgPERatio, wlgEpsGrowth, wlgCAPE, regimeShiftPE, creditSpread } = inputs;
+  const rsiCurve = curves?.rsiCurve ?? WLG_RSI_CURVE_APPROVED;
+  const valCurve = curves?.valCurve ?? WLG_VAL_CURVE_APPROVED;
+  const fbCurve  = curves?.fallbackCurve ?? WLG_FB_CURVE_APPROVED;
 
   if (!isValidReading(wlgRsiWeekly, 0, 100) && !isValidReading(wlgPERatio) && !isValidReading(wlgCAPE)) {
     return {
@@ -653,14 +677,10 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   let topSignals = 0;
   const reasons: string[] = [];
 
-  // RSI Semanal — interpolación suave (FIX-SMOOTH-THRESHOLDS)
-  // Puntos de anclaje: RSI 75→score 0, RSI 80→1.0, RSI 85→1.5 (cap en 2.0)
+  // RSI Semanal — interpolación suave. Curva APROBADA por defecto; la candidata
+  //   anti-cliff (WLG_RSI_CURVE_CANDIDATE) solo se aplica por inyección explícita.
   if (isValidReading(wlgRsiWeekly, 0, 100)) {
-    const rsiScore = smoothScore(wlgRsiWeekly, [
-      [75, 1.0],
-      [80, 1.5],
-      [85, 2.0],
-    ]);
+    const rsiScore = smoothScore(wlgRsiWeekly, rsiCurve);
     topSignals += rsiScore;
     if (rsiScore >= 2.0) reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra extrema`);
     else if (rsiScore >= 1.5) reasons.push(`RSI semanal MSCI World ${wlgRsiWeekly.toFixed(0)} — sobrecompra severa`);
@@ -695,12 +715,9 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
     //   El dashboard ya suavizó la transición (rampa en 5 sesiones).
     const peShift = regimeShiftPE ?? 0;
     const effectivePE = wlgPERatio - peShift;
-    valuationScore = smoothScore(effectivePE, [
-      [16, 1.0],
-      [20, 1.5],
-      [23, 2.0],
-      [27, 2.5],
-    ]);
+    // Valoración: curva APROBADA por defecto; la candidata anti-cliff
+    //   (WLG_VAL_CURVE_CANDIDATE) solo por inyección explícita.
+    valuationScore = smoothScore(effectivePE, valCurve);
     if (peShift !== 0 && valuationScore > 0) {
       valuationReasons.push(`P/E ajustado por régimen: ${wlgPERatio.toFixed(1)} → ${effectivePE.toFixed(1)} efectivo`);
     }
@@ -764,12 +781,8 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
   } else if (hasCAPE) {
     // FALLBACK sin P/E real — usar solo S&P 500 P/E como referencia
     //   (en este caso SÍ puntúa porque no hay dato del activo real)
-    valuationScore = smoothScore(wlgCAPE, [
-      [14, 1.0],
-      [18, 1.5],
-      [21, 2.0],
-      [25, 2.5],
-    ]);  // FALLBACK: usa 14 (P/E S&P 500 TTM, no Forward — media distinta)
+    valuationScore = smoothScore(wlgCAPE, fbCurve);
+    // FALLBACK: usa 14 (P/E S&P 500 TTM, no Forward — media distinta)
     if (valuationScore >= 2.5) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — valoración extrema [fallback: sin P/E MSCI World]`);
     else if (valuationScore >= 2.0) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — mercado muy caro [fallback: sin P/E MSCI World]`);
     else if (valuationScore >= 1.5) valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — mercado caro [fallback: sin P/E MSCI World]`);
@@ -957,13 +970,13 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
 // que contiene todas las empresas del NASDAQ 100. VVSM cubre el tilt semis.
 
 // ── FUNCIÓN PRINCIPAL ─────────────────────────────────────────────
-export function detectCycleTops(inputs: CycleTopInputs): CycleTopOutput {
+export function detectCycleTops(inputs: CycleTopInputs, wlgCurves?: WlgCurveOverrides): CycleTopOutput {
   const signals: CycleTopSignal[] = [
     detectBTCTop(inputs),
     detectUraniumTop(inputs),
     detectSemisTop(inputs),
     detectGoldTop(inputs),
-    detectWLGTop(inputs),
+    detectWLGTop(inputs, wlgCurves),
     detectEMXCTop(inputs),
   ].map(s => ({
     ...s,

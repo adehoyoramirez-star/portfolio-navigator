@@ -15,7 +15,13 @@
 // Ejecutar: npx tsx scripts/audit/m3_rerun.ts > audit/m3_output.txt 2>&1
 // ============================================================
 import { readFileSync, writeFileSync } from "fs";
-import { detectCycleTops, type CycleTopInputs } from "../../src/core/risk/cycleTopDetector";
+import {
+  detectCycleTops,
+  WLG_RSI_CURVE_CANDIDATE,
+  type CycleTopInputs,
+  type WlgCurveOverrides,
+} from "../../src/core/risk/cycleTopDetector";
+import { buildWlgForwardPeSeries, wlgPeSourceInfo } from "./wlg_forward_pe"; // WLG-PE (Paso 1, Oct-2026): opt-in
 import { runSleeve, parseCSV, type Row, type SleeveResult } from "./m3_harness";
 
 const DATA = "audit/data";
@@ -64,7 +70,11 @@ const grid = [...lastOfWeek.values()].sort();
 const hasInput = (d: string) => before(dxyRows, mk(dxyRows), d) !== undefined || before(dfii, mk(dfii), d) !== undefined;
 
 // reconstrucción del detector igual a fase2 pero marcando INPUT por semanas
-type Wk = { d: string; trims: Record<string, number>; hasInput: boolean };
+type Wk = {
+  d: string; trims: Record<string, number>; hasInput: boolean;
+  /** WLG-PE (solo modo B/C): P/E efectivo inyectado, su fecha de publicación y si la baseline era fiable. */
+  wlgPe?: number; wlgPeAsOf?: string; wlgPeReliable?: boolean;
+};
 const cmCols = readFileSync(`${DATA}/coinmetrics_btc.csv`, "utf8").trim().split("\n").slice(1)
   .map(l => l.split(",")).filter(c => Number.isFinite(+c[2]))
   .map(c => ({ d: c[0], mvrv: +c[1], cap: +c[2], real: +c[3], iss: c[4] === "" ? NaN : +c[4] }));
@@ -105,8 +115,24 @@ const rsZ = new Map<string, number>();
     const sd = Math.sqrt(win.reduce((s, x) => s + (x.r - mean) ** 2, 0) / win.length);
     if (sd > 0) rsZ.set(rs[i].d, (rs[i].r - mean) / sd); } }
 
-const weeks: Wk[] = [];
-{
+// ── WLG-PE (Paso 1, Oct-2026): inyección opt-in del P/E forward histórico ──
+//   Modo A (default) = comportamiento actual (NO inyecta) → control bit-idéntico.
+//   Modo B/C = inyecta wlgPERatio desde la serie del Paso 0 (requiere el CSV).
+const WLG_PE_CSV = process.env.WLG_PE_CSV ?? `${DATA}/wlg_forward_pe.csv`;
+const WLG_PE_MODE_RAW = process.env.WLG_PE_MODE ?? "A";
+const WLG_PE_MODE = (["A", "B", "C"].indexOf(WLG_PE_MODE_RAW) >= 0 ? WLG_PE_MODE_RAW : "A") as "A" | "B" | "C";
+if (WLG_PE_MODE_RAW !== WLG_PE_MODE) console.warn(`[WLG-PE] WLG_PE_MODE="${WLG_PE_MODE_RAW}" inválido → se usa el modo A (control).`);
+const WLG_REGIME_SHIFT = Number(process.env.WLG_REGIME_SHIFT ?? "0");
+const wlgPeSrc = WLG_PE_MODE === "A" ? undefined : wlgPeSourceInfo(WLG_PE_CSV);
+const wlgPeAt = new Map(
+  (WLG_PE_MODE === "A" ? [] : buildWlgForwardPeSeries(WLG_PE_CSV, grid)).map(r => [r.d, r] as const),
+);
+const wlgPeFor = (d: string) => wlgPeAt.get(d) ?? [...wlgPeAt.entries()].filter(([k]) => k <= d).pop()?.[1];
+
+// Semanas del backtest. `curves` permite inyectar las curvas CANDIDATAS de WLG
+//   (A/B en una misma ejecución); sin argumento = calibración APROBADA (canónico).
+function buildWeeks(curves?: WlgCurveOverrides): Wk[] {
+  const acc: Wk[] = [];
   const iDxy = mk(dxyRows), iDfii = mk(dfii), iT1 = mk(t1yie), iIrx = mk(irxR);
   for (const d of grid) {
     const inputs: CycleTopInputs & Record<string, unknown> = { bondYield10y: 4.0 };
@@ -121,14 +147,44 @@ const weeks: Wk[] = [];
     const ry = before(dfii, iDfii, d); if (ry !== undefined) inputs.realYield10y = ry;
     const dx = before(dxyRows, iDxy, d); if (dx !== undefined) inputs.dxy = dx;
     const wr = rsi14(wUrthOf, d); if (wr !== undefined) inputs.wlgRsiWeekly = wr;
+    // WLG-PE (Paso 1): solo en modo B/C — inyecta el P/E forward histórico.
+    // WLG-PE (Paso 1): solo en modo B/C — inyecta el P/E forward histórico y
+    //   deja registro del valor efectivo y de su fecha de publicación.
+    let wlgPe: number | undefined; let wlgPeAsOf: string | undefined; let wlgPeReliable: boolean | undefined;
+    if (WLG_PE_MODE !== "A") {
+      const pe = wlgPeFor(d);
+      if (pe) {
+        wlgPeReliable = pe.baselineReliable;
+        if (pe.baselineReliable) {
+          wlgPe = pe.wlgForwardPE; wlgPeAsOf = pe.asOf;
+          inputs.wlgPERatio = pe.wlgForwardPE; inputs.regimeShiftPE = WLG_REGIME_SHIFT;
+        }
+      }
+    }
     inputs.inflationBreakeven = before(t1yie, iT1, d);
-    const out = detectCycleTops(inputs as CycleTopInputs);
+    const out = detectCycleTops(inputs as CycleTopInputs, curves);
     const trims: Record<string, number> = {};
     for (const s of out.signals) trims[s.ticker] = s.trimPct / 100;
     trims["BTC-EUR"] = trims["BTC-EUR"] ?? 0;
     const hasIn = (dx !== undefined || ry !== undefined || z !== undefined || pu !== undefined || br !== undefined || rz !== undefined || sr !== undefined || wr !== undefined);
-    weeks.push({ d, trims, hasInput: hasIn });
+    acc.push({ d, trims, hasInput: hasIn, wlgPe, wlgPeAsOf, wlgPeReliable });
   }
+  return acc;
+}
+const weeks: Wk[] = buildWeeks();
+
+// ── Trazabilidad WLG-PE (solo modo B/C): qué P/E y de cuándo se aplicó ──
+if (WLG_PE_MODE !== "A") {
+  const src = wlgPeSrc!;
+  const withPe = weeks.filter(w => w.wlgPe !== undefined);
+  const unreliable = weeks.filter(w => w.wlgPeReliable === false).length;
+  console.log(`\n=== WLG-PE (modo ${WLG_PE_MODE}) — fuente: ${src.path} ===`);
+  console.log(`  CSV presente=${src.exists} · filas válidas=${src.rows} · primera publicación=${src.firstAsOf ?? "—"} · última publicación=${src.lastAsOf ?? "—"} · shift de régimen=${WLG_REGIME_SHIFT}`);
+  console.log(`  semanas con P/E efectivo inyectado: ${withPe.length}/${weeks.length} · descartadas por baseline NO fiable (<5 años de histórico): ${unreliable}`);
+  const f = withPe[0], l = withPe[withPe.length - 1];
+  if (f && l) console.log(`  primera efectiva ${f.d}: P/E ${f.wlgPe!.toFixed(1)} (publicado ${f.wlgPeAsOf}) · última efectiva ${l.d}: P/E ${l.wlgPe!.toFixed(1)} (publicado ${l.wlgPeAsOf})`);
+  if (withPe.length === 0) console.warn("  [!] NO se inyectó ningún P/E (CSV ausente o sin histórico suficiente) → el modo B/C degrada a A: la ruta de valoración queda SIN VALIDAR.");
+  else if (unreliable > 0) console.warn("  [!] Semanas sin P/E por baseline no fiable: el backtest de valoración es PARCIAL (declarado; no se inventa el dato).");
 }
 const TICKS = ["BTC-EUR", "VVSM.DE", "PPFB.DE", "EMXC.DE", "0P00000WLG.F"] as const;
 const PKS: Record<string, Row[]> = { "BTC-EUR": cmPrice, "VVSM.DE": sox, "PPFB.DE": gld, "EMXC.DE": eem, "0P00000WLG.F": urth };
@@ -138,11 +194,11 @@ const pxAt = (k: string, d: string) => before(PKS[k], pIdx[k], d);
 const irxAt = (d: string) => before(irxR, mk(irxR), d);
 
 // prices como array (string|undefined) por sleeve + trims (hasInput exigido)
-function sleeveArrays(k: string, filterInput: boolean): { prices: (string | undefined)[]; trims: number[]; dates: string[]; irx: (string | undefined)[] } {
+function sleeveArrays(k: string, filterInput: boolean, src: Wk[] = weeks): { prices: (string | undefined)[]; trims: number[]; dates: string[]; irx: (string | undefined)[] } {
   let active = false;
   const prices: (string | undefined)[] = []; const trims: number[] = []; const dates: string[] = []; const irxs: (string | undefined)[] = [];
-  for (let i = 0; i < weeks.length; i++) {
-    const w = weeks[i];
+  for (let i = 0; i < src.length; i++) {
+    const w = src[i];
     if (filterInput && !w.hasInput) { if (active) { active = false; prices.push(undefined); trims.push(0); dates.push(w.d); irxs.push(undefined); } continue; }
     if (!active) active = true;
     prices.push(pxAt(k, w.d)); trims.push(filterInput ? (w.trims[k] ?? 0) : 0); dates.push(w.d); irxs.push(irxAt(w.d) !== undefined ? irxAt(w.d) : undefined);
@@ -150,7 +206,7 @@ function sleeveArrays(k: string, filterInput: boolean): { prices: (string | unde
   return { prices, trims, dates, irx: irxs };
 }
 // para OFF usamos la MISMA ventana con trim≡0
-function sleeveOff(k: string, filterInput: boolean) { const s = sleeveArrays(k, filterInput); return runSleeve(s.prices, s.trims.map(() => 0), { dates: s.dates }); }
+function sleeveOff(k: string, filterInput: boolean, src: Wk[] = weeks) { const s = sleeveArrays(k, filterInput, src); return runSleeve(s.prices, s.trims.map(() => 0), { dates: s.dates }); }
 
 console.log("=== 0.1+0.3: ON/OFF por activo con HARNESS REPARADO (target=(1−trim)·NAV) ===");
 console.log("sleeve | caja | CAGR | vol | MaxDD | ops | impuestos€ | spreads€ | expoMedia | expo<50% | pesoCajaMedia");
@@ -359,8 +415,13 @@ const SWEEPS: Sweep[] = [
   { det: "ORO DFII10", key: "realYield10y", from: 0, to: 3.5, step: 0.01 },
   { det: "ORO Brent", key: "brentOil", from: 50, to: 150, step: 0.5 },
   { det: "URNU ratio", key: "uraniumSpotPrice", from: 0.9, to: 1.6, step: 0.01 },
+  // FIX-CLIFF-WLG (Oct-2026): WLG no estaba en el barrido → su cliff de 37 pp
+  //   (P/E 16.00→16.01) pasaba inadvertido. Se añade para cubrir la rampa de
+  //   valoración (P/E) y la de RSI semanal.
+  { det: "WLG P/E", key: "wlgPERatio", from: 10, to: 30, step: 0.01 },
+  { det: "WLG RSI-W", key: "wlgRsiWeekly", from: 60, to: 90, step: 0.05 },
 ];
-const KEYTICK: Record<string, string> = { puellMultiple: "BTC-EUR", mvrvZScore: "BTC-EUR", btcRsiWeekly: "BTC-EUR", soxSpyRelativeStrength: "VVSM.DE", soxRsiWeekly: "VVSM.DE", dxy: "EMXC.DE", emxcRsiWeekly: "EMXC.DE", realYield10y: "PPFB.DE", brentOil: "PPFB.DE", uraniumSpotPrice: "URNU.DE" };
+const KEYTICK: Record<string, string> = { puellMultiple: "BTC-EUR", mvrvZScore: "BTC-EUR", btcRsiWeekly: "BTC-EUR", soxSpyRelativeStrength: "VVSM.DE", soxRsiWeekly: "VVSM.DE", dxy: "EMXC.DE", emxcRsiWeekly: "EMXC.DE", realYield10y: "PPFB.DE", brentOil: "PPFB.DE", uraniumSpotPrice: "URNU.DE", wlgPERatio: "0P00000WLG.F", wlgRsiWeekly: "0P00000WLG.F" };
 const cliffsAll: string[] = [];
 for (const sw of SWEEPS) {
   const tk = KEYTICK[sw.key]; const trimAt = (x: number): number => {
@@ -536,6 +597,34 @@ for (const [box, costs, useTrim] of [["TBILL", true, true], ["CASH0", true, true
   const cagrExact = Math.pow(navs[navs.length - 1] / navs[0], 1 / yearsExact) - 1;
   const lbl = `${box}${useTrim ? "-ON" : "-OFF"}${costs ? "" : "-gross"}`;
   console.log(`  ${lbl.padEnd(14)} | CAGR ${(100 * cagrExact).toFixed(2)}% EXACTO (${firstD}→${lastD}, ${yearsExact.toFixed(2)} años) | vol ${(100 * sd * Math.sqrt(52)).toFixed(1)}% | MaxDD ${(100 * dd).toFixed(1)}% | ops ${ops} | impuestos€ ${taxes.toFixed(0)} | spreads€ ${spreads.toFixed(0)}`);
+}
+
+// ── C6: A/B de la curva RSI de WLG (toggle opt-in) ───────────────
+//   Compara la curva APROBADA (default del motor) contra la CANDIDATA
+//   anti-cliff con IDÉNTICOS datos, fechas y costes (mismo grid, mismos precios,
+//   mismas cajas). Solo cambia la señal de WLG: wlgRsiWeekly no alimenta ningún
+//   otro detector (verificado en src/core/risk/cycleTopDetector.ts).
+if (process.env.WLG_RSI_TOGGLE === "1") {
+  console.log("\n=== C6: A/B curva RSI WLG — aprobada vs candidata (mismos datos y costes) ===");
+  const weeksCand = buildWeeks({ rsiCurve: WLG_RSI_CURVE_CANDIDATE });
+  const k = "0P00000WLG.F";
+  const A = sleeveArrays(k, true, weeks);
+  const B = sleeveArrays(k, true, weeksCand);
+  const sameGrid = A.dates.length === B.dates.length
+    && A.dates.every((d, i) => d === B.dates[i])
+    && A.prices.every((p, i) => p === B.prices[i])
+    && A.irx.every((r, i) => r === B.irx[i]);
+  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / Math.max(1, xs.length);
+  console.log(`  grid/precios/costes idénticos: ${sameGrid ? "SÍ" : "NO"} (N=${A.dates.length}) · trim medio aprobada=${(100 * mean(A.trims)).toFixed(1)}% vs candidata=${(100 * mean(B.trims)).toFixed(1)}% · semanas trim>0: aprobada=${A.trims.filter(t => t > 0).length} vs candidata=${B.trims.filter(t => t > 0).length}`);
+  for (const box of ["CASH0", "TBILL"] as const) {
+    const opts = (s: typeof A) => ({ cashBox: box, irx: box === "TBILL" ? s.irx : undefined, dates: s.dates });
+    const ra = runSleeve(A.prices, A.trims, opts(A));
+    const rb = runSleeve(B.prices, B.trims, opts(B));
+    console.log(`  ${box.padEnd(6)} | aprobada: CAGR ${(100 * ra.cagr).toFixed(2)}% · vol ${(100 * ra.vol).toFixed(1)}% · MaxDD ${(100 * ra.maxdd).toFixed(1)}% · ops ${String(ra.ops).padStart(3)} · impuestos€ ${ra.taxes.toFixed(0).padStart(5)} · expo ${(100 * ra.meanExpo).toFixed(1)}%`);
+    console.log(`  ${box.padEnd(6)} | candidata: CAGR ${(100 * rb.cagr).toFixed(2)}% · vol ${(100 * rb.vol).toFixed(1)}% · MaxDD ${(100 * rb.maxdd).toFixed(1)}% · ops ${String(rb.ops).padStart(3)} · impuestos€ ${rb.taxes.toFixed(0).padStart(5)} · expo ${(100 * rb.meanExpo).toFixed(1)}%`);
+    console.log(`  ${box.padEnd(6)} | Δ (candidata − aprobada): CAGR ${(100 * (rb.cagr - ra.cagr)).toFixed(2)} pp · vol ${(100 * (rb.vol - ra.vol)).toFixed(2)} pp · MaxDD ${(100 * (rb.maxdd - ra.maxdd)).toFixed(2)} pp · ops ${rb.ops - ra.ops} · impuestos€ ${(rb.taxes - ra.taxes).toFixed(0)}`);
+  }
+  console.log("  (la candidata NO es el default: el motor mantiene la curva APROBADA hasta aprobación expresa)");
 }
 
 writeFileSync("audit/m3_results.json", JSON.stringify({

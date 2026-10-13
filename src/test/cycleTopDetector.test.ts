@@ -6,6 +6,9 @@ import {
   isBTCDominanceFalling,
   regimeValuationShift,
   updateEmxcDxyHysteresis,
+  WLG_RSI_CURVE_CANDIDATE,
+  WLG_VAL_CURVE_CANDIDATE,
+  WLG_FB_CURVE_CANDIDATE,
   type CycleTopInputs,
   type CycleTopSignal,
 } from "@/core/risk/cycleTopDetector";
@@ -297,6 +300,60 @@ describe("REGRESION: WLG con datos reales (bug smoothScore Jul-2026)", () => {
       bondYield10y: 4.0,
     });
     expect(r.signals.find(s => s.ticker === "0P00000WLG.F")!.zone).toBe("SAFE");
+  });
+});
+
+// SEPARACIÓN A/B/C (Oct-2026): la calibración APROBADA es el default (sin cambio
+//   de comportamiento). Las curvas CANDIDATAS anti-cliff solo se aplican por
+//   inyección explícita. Estos tests validan la candidata, NO la aplican.
+describe("WLG — calibración candidata anti-cliff (NO aplicada; solo por inyección)", () => {
+  const wlg = (r: ReturnType<typeof detectCycleTops>) =>
+    r.signals.find(s => s.ticker === "0P00000WLG.F")!;
+  const CAND = {
+    rsiCurve: WLG_RSI_CURVE_CANDIDATE,
+    valCurve: WLG_VAL_CURVE_CANDIDATE,
+    fallbackCurve: WLG_FB_CURVE_CANDIDATE,
+  };
+  const trimPE = (pe: number) =>
+    wlg(detectCycleTops({ bondYield10y: 4.0, wlgPERatio: pe }, CAND)).trimPct;
+  const trimRSI = (rsi: number) =>
+    wlg(detectCycleTops({ bondYield10y: 4.0, wlgRsiWeekly: rsi }, CAND)).trimPct;
+
+  test("valoración candidata: SIN cliff en P/E efectivo 16.00", () => {
+    expect(Math.abs(trimPE(16.0) - trimPE(15.99))).toBeLessThanOrEqual(5);
+    expect(Math.abs(trimPE(16.01) - trimPE(16.0))).toBeLessThanOrEqual(5);
+  });
+
+  test("valoración candidata: SIN cliff en el ancla cero (P/E 13)", () => {
+    expect(Math.abs(trimPE(13.0) - trimPE(12.99))).toBeLessThanOrEqual(5);
+    expect(Math.abs(trimPE(13.01) - trimPE(13.0))).toBeLessThanOrEqual(5);
+  });
+
+  test("RSI candidato: SIN cliff en 75 (punto exacto 75.01)", () => {
+    expect(Math.abs(trimRSI(75.0) - trimRSI(74.99))).toBeLessThanOrEqual(5);
+    expect(Math.abs(trimRSI(75.01) - trimRSI(75.0))).toBeLessThanOrEqual(5);
+  });
+
+  test("RSI candidato: borde derecho 85 (84.99→85.01 sin salto)", () => {
+    expect(Math.abs(trimRSI(85.01) - trimRSI(84.99))).toBeLessThanOrEqual(5);
+  });
+
+  test("monotonicidad: el trim no decrece al subir el input (candidata)", () => {
+    const pes = [13, 15, 16, 18, 20, 23, 27];
+    for (let i = 1; i < pes.length; i++) expect(trimPE(pes[i])).toBeGreaterThanOrEqual(trimPE(pes[i - 1]));
+    const rsis = [75, 78, 80, 82.5, 85, 88];
+    for (let i = 1; i < rsis.length; i++) expect(trimRSI(rsis[i])).toBeGreaterThanOrEqual(trimRSI(rsis[i - 1]));
+  });
+
+  test("DEFAULT = calibración APROBADA (sin cambios de comportamiento)", () => {
+    // Sin inyección: P/E 17.9 → 40% (aprobado).
+    expect(wlg(detectCycleTops({ bondYield10y: 4.0, wlgPERatio: 17.9 })).trimPct).toBe(40);
+    // P/E 15: el APROBADO deja SAFE (el cliff sigue SIN corregir por defecto).
+    expect(wlg(detectCycleTops({ bondYield10y: 4.0, wlgPERatio: 15 })).zone).toBe("SAFE");
+    // RSI 76: el APROBADO recorta más que la candidata (cambio de calibración, no aplicado).
+    expect(trimRSI(76)).toBeLessThan(
+      wlg(detectCycleTops({ bondYield10y: 4.0, wlgRsiWeekly: 76 })).trimPct,
+    );
   });
 });
 
