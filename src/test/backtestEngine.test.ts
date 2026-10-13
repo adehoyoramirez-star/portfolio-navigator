@@ -39,7 +39,6 @@ function syntheticBacktestInput() {
     lookbackDays: 252,
     rebalanceDays: 21,
     initialCapital: 10_000,
-    transactionCostBps: 15,
     useDynamicCovariance: false,
   };
 }
