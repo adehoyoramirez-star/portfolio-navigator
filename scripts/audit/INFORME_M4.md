@@ -352,3 +352,28 @@ Todo el trabajo vive en `scripts/audit/`. `src/` está limpio.
 ### 5.5 En lenguaje llano
 
 Arreglamos la máquina de medir: antes simulaba un activo como si fuera sólo una sexta parte de la cartera, así que "ahorraba" caja cuando en realidad no estaba protegiendo nada. Ya está arreglada y lo hemos comprobado con un segundo programa escrito aparte, que da el mismo resultado. Con la máquina buena, la conclusión no cambia y es incómoda: ninguno de los cinco detectores que se pueden medir acierta más que el azar a la hora de avisar de una caída de más del 10% en medio año. Además, el aviso llega **después** de la subida, no antes: el oro es el caso extremo, porque recorta justo cuando el oro subía. Los cuatro números que importan: la cartera con recortes rinde 16,95% al año frente a 26,48% sin ellos (se paga casi diez puntos), y a cambio el peor bache mejora sólo de −32,9% a −30,4%; en BTC la factura es aún más brutal (se paga 70,7 puntos de rentabilidad por 4,9 de protección). Por eso la decisión no es "afinar el detector", sino **bajarlo de categoría**: usarlo como seguro de cola pequeño, con topes, y no como señal de techo activo por activo. Lo que sí merece la pena son cuatro retoques de ingeniería —suavizar el escalón del dólar, esperar a que el dólar confirme para entrar y salir, poner un techo del 30% y sacar el oro del recorte— que están escritos como parches, sin aplicar, a la espera del comité.
+
+---
+
+## BLOQUE 6 — APLICACIÓN EJECUTADA (13-oct-2026)
+
+El comité autorizó y se **aplicaron los cinco parches** (P5, P1, P3, P4, P2),
+uno a uno, con commit atómico, test de aceptación y canónico reproducido tras
+cada uno: `2cf6442` (P5) → `ee4549d` (P1) → `2e42409` (P3) → `acbe4fa` (P4) →
+`2a42103` (P2).
+
+Tres de los cinco `.diff` originales requirieron correcciones al aplicarlos y
+la corrección está documentada en el parche aplicado:
+- **P3/P4**: el `.diff` acotaba el `trimPct` derivado, rompiendo el invariante
+  FIX-STRUCTURAL (detectado por `detectorInvariants.test.ts`). Se acota el
+  **multiplier** (floor 0.70 / 0.80) y `zone` se calcula antes del cap.
+- **P2**: el `.diff` era **fail-open** (campo ausente = señal DXY apagada para
+  backtest/canónico/grid). Se aplicó como **opt-in**: sin estado ⇒ comportamiento
+  por nivel; el estado lo mantiene el dashboard vía `updateEmxcDxyHysteresis()`.
+
+Evidencia final: `tsc` 0 · **643/643** tests · harness 8/8 PASS · 0 saltos ≥5 pp
+en el barrido DXY · canónico **bit-idéntico** en los cinco commits
+(MOTOR 22.92/1.332/−15.2 · cross 23.14/1.266/−15.4).
+
+Registro completo (desviaciones, justificación, criterios del preregistro y lo que
+queda abierto): **`scripts/audit/INFORME_APLICACION_M3M4.md`**.
