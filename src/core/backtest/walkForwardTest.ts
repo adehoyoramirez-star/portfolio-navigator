@@ -174,33 +174,38 @@ function buildWindows(
   config: WFTestConfig
 ): WFWindowInfo[] {
   const { nWindows, trainRatio, lookbackDays } = config;
-  const usableLength = totalLength - lookbackDays;
-  if (usableLength < nWindows * 100) return [];
+  if (
+    !Number.isInteger(nWindows) || nWindows < 1 ||
+    !(trainRatio > 0 && trainRatio < 1) ||
+    !Number.isInteger(lookbackDays) || lookbackDays < 1
+  ) return [];
 
-  // Cada ventana tiene un tamaño fijo y avanza step días
-  const windowStep = Math.floor(usableLength / (nWindows + 1));
-  const trainSize = Math.floor(windowStep * trainRatio);
-  const testSize = windowStep - trainSize;
-  if (testSize < 21) return [];
+  // Expanding-window WFO: primero se reserva trainRatio del timeline para IS;
+  // el 30% restante se divide en segmentos OOS consecutivos, sin huecos.
+  // El backtest OOS recibe lookbackDays previos solo como calentamiento y sus
+  // métricas empiezan en testStart; testEnd es EXCLUSIVO para todos los slices.
+  const initialTrainEnd = Math.floor(totalLength * trainRatio);
+  const oosLength = totalLength - initialTrainEnd;
+  const testSize = Math.floor(oosLength / nWindows);
+  if (initialTrainEnd <= lookbackDays || testSize < 21 || oosLength < nWindows * 21) return [];
 
   const windows: WFWindowInfo[] = [];
-  const lastWindowIdx = nWindows - 1;
   for (let w = 0; w < nWindows; w++) {
-    const trainEnd = lookbackDays + (w + 1) * windowStep;
-    const trainStart = Math.max(0, trainEnd - trainSize);
+    const trainEnd = initialTrainEnd + w * testSize;
     const testStart = trainEnd;
-    // La última ventana se extiende hasta el final de los datos disponibles
-    const testEnd = w === lastWindowIdx
-      ? totalLength - 1
-      : Math.min(testStart + testSize, totalLength - 1);
+    const testEnd = w === nWindows - 1
+      ? totalLength
+      : Math.min(testStart + testSize, totalLength);
 
-    if (testEnd - testStart < 10) break;
+    if (testEnd - testStart < 21) return [];
 
     windows.push({
       windowIndex: w,
-      trainStart, trainEnd,
-      testStart, testEnd,
-      trainDays: trainEnd - trainStart,
+      trainStart: 0,
+      trainEnd,
+      testStart,
+      testEnd,
+      trainDays: trainEnd,
       testDays: testEnd - testStart,
     });
   }
@@ -710,14 +715,16 @@ export function runWalkForwardTest(
 
     // ---- Equal Weight Benchmark (misma ventana OOS) ----
     // FIX-EW-COSTS: EW ahora incluye costes de transacción igual que el motor
+    // El benchmark empieza en el primer retorno OOS, no en el burn-in.
+    // testEnd es exclusivo en los slices: el último índice observado es testEnd - 1.
     const ewResult = equalWeightBenchmark(
       input.closesHistory, backtestTickers,
-      oosStart, win.testEnd, cfg.initialCapital,
+      win.testStart - 1, win.testEnd - 1, cfg.initialCapital,
       cfg.rebalanceDays, cfg.transactionCostBps
     );
 
-    // ---- Bull Market Detection ----
-    const bullCheck = isBullMarketWindow(input.closesHistory, oosStart, win.testEnd);
+    // ---- Bull Market Detection: solo el tramo OOS evaluado ----
+    const bullCheck = isBullMarketWindow(input.closesHistory, win.testStart, win.testEnd - 1);
 
     // ---- Métricas ----
     const consistencyScore = computeConsistency(isResult.metrics, oosResult.metrics);
