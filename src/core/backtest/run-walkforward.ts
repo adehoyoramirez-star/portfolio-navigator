@@ -68,6 +68,12 @@ for (let i = 0; i < dates.length; i++) {
 }
 const firstDate = dates[0];
 const lastDate = dates[dates.length - 1];
+// Explicit calendar timestamps let backtestEngine exclude forward-filled weekend
+// transitions for non-24/7 assets. Keep the same calendar for every asset series.
+const calendarTimestamps = dates.map(date => Date.parse(`${date}T00:00:00Z`));
+const timestampsHistory: Record<string, number[]> = Object.fromEntries(
+  ASSETS.map(ticker => [ticker, calendarTimestamps])
+);
 const staleDays = Math.floor((Date.now() - Date.parse(`${lastDate}T00:00:00Z`)) / 86_400_000);
 
 // ── 2. Inicializar arrays ──────────────────────
@@ -196,6 +202,7 @@ const wfConfig = {
 };
 const wfResult = runWalkForwardTest({
   closesHistory,
+  timestampsHistory,
   macroHistory: { vix, yieldSpread, creditSpread, move, dxyTrend, btcVol },
   lookbackDays: wfConfig.lookbackDays,
   rebalanceDays: wfConfig.rebalanceDays,
