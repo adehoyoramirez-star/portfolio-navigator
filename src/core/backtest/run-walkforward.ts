@@ -263,6 +263,7 @@ console.log('   DXY ABLATION — baseline vs identical WFO with dxyTrend = 0');
 console.log('='.repeat(72));
 const noDxyResult = runWalkForwardTest({
   closesHistory,
+  timestampsHistory,
   macroHistory: {
     vix, yieldSpread, creditSpread, move,
     dxyTrend: Array<number>(minLen).fill(0),
