@@ -4,11 +4,37 @@
 > independiente del detector de techo WLG (13-oct-2026). Modelo:
 > `scripts/audit/INFORME_APLICACION_M3M4.md`.
 >
-> **Estado:** paquete PREPARADO, **sin commit ni push** (pendiente de autorización
-> expresa). Aplica SOLO lo comportamiento-neutro (**A** estructural + **D**
-> instrumentación/documentación). La **calibración** (**B** RSI y **C** ancla P/E)
-> queda **NO APLICADA** y vive únicamente como propuesta en `.diff`.
-> Motor: `ENGINE_VERSION = "v5.4.6"` (`src/core/engine/olympusV3.ts:122`) — **sin bump**.
+> **Estado:** paquete A+D y documentación commiteados; regeneración y check de hash
+> cerrados en commits separados. Push autorizado por el usuario, pendiente de verificación.
+> La **calibración** (**B** RSI y **C** ancla P/E) queda **NO APLICADA** y vive únicamente
+> como propuesta en `.diff`. Motor: `ENGINE_VERSION = "v5.4.6"` — **sin bump**.
+
+## Resumen ejecutivo (1 página)
+
+**Cerrado:** check de hash de la copia congelada (§8.2), commit `5e3300c`; regeneración
+atribuida de `m3_results.json` en commit separado de un solo fichero, `c15ead5`; informe
+actualizado según las decisiones del usuario. La atribución se verificó con `git archive`
+HEAD vs working tree: **0/2441 semanas distintas**, `newBacktests` idéntico entre ambos
+frescos, y 12 filas de `cliffs` [medido en esta ejecución]. El artefacto anterior difería
+en 1310 semanas (PPFB.DE 858, EMXC.DE 561; solapamiento) [medido en esta ejecución]. Los
+backtests ON del artefacto anterior y fresco no son idénticos: el drift histórico de M3/M4
+cambia resultados de ORO y EMXC; no es validación de cartera ni efecto del paquete WLG.
+
+**No validado y no autorizado:** walk-forward OOS, serie/curva P/E y backtest de cartera.
+A5 del ticket queda **no evaluable** por falta de backtest de cartera autorizado. El arreglo
+fiscal de `runSleeve` queda **descartado** por decisión del usuario; los ΔCAGR de C6 son
+**pre-fiscales** y no describen rendimiento neto. No se tocó `src/`, no hubo bump de
+`ENGINE_VERSION` (sigue v5.4.6) ni escritura en `decision_log`.
+
+**Riesgos residuales:** sigue vigente el cliff de calibración aprobada; P/E no tiene CSV
+verificable; el harness no descuenta impuestos del NAV; el JSON fresco incorpora drift de
+M3/M4 frente al artefacto previo. No afirmar ventaja económica neta ni usar el A/B de sleeve
+como resultado de cartera.
+
+**Qué necesito del usuario:** nada adicional para cerrar el alcance ya autorizado. Para
+retomar OOS, P/E, cartera o arreglo fiscal se necesitará autorización nueva; P/E requiere
+además una serie con fuente verificable. El push final está autorizado y se verificará antes
+de cerrar.
 
 ---
 
@@ -109,20 +135,16 @@ el CAGR. Sigue sin resolver el cliff de valoración (ruta P/E sin datos).
 | **~10 €** de comisiones | 6 operaciones × spread **5 pb** × ≤ **3 500 €** de nominal por operación (trim 35 %) | ≈ 0,1 % del nocional inicial | **estimado**: `C6` no imprime spreads; los 5 pb y el nocional del recorte son del motor (`SPREAD = 0.0005`) |
 | Escalado a cartera | WLG pesa **1/6** del NAV → en una cartera de **100 000 €** el sleeve WLG ≈ **16 700 €** | 647 € × 1,67 ≈ **1 080 €** | **estimado por escalado lineal**, no medido |
 
-**Lectura fiscal correcta** — el adelanto no es una pérdida permanente:
-- El cliff **adelanta** el pago: vende antes y más a menudo, así que tributa antes el mismo
-  beneficio que, en la curva suave, se tributaría más tarde o nunca si no se vende.
-- La **pérdida permanente** es solo el coste de oportunidad del impuesto pagado antes
-  (el dinero que deja de componer). Con las cifras de `C6`: 647 € sobre un NAV terminal
-  de ≈ 50 300 € (10 000 € × 1,1159^14,7) = **1,29 % del capital final** → ≈ **0,09 pp/año**.
-- **Hecho de código que obliga a esta lectura** (`m3_harness.ts`, `runSleeve`): al vender
-  hace `cash += proc - sc` y acumula `taxes += …` en un **contador**, es decir **los
-  impuestos NO se descuentan del NAV**. Consecuencia: el ΔCAGR de `C6` (−0,08 / −0,11 pp)
-  **es pre-fiscal**; la ventaja bruta del cliff (+0,08 / +0,11 pp ≈ +536 € terminales)
-  queda compensada por su adelanto fiscal (−647 €) → **las dos curvas quedan ≈ empatadas
-  (≈ +0,015 pp/año a favor de la candidata)**. [estimado — aritmética explícita sobre cifras medidas]
-  Conclusión honesta: la razón para cambiar el cliff **no es económica**, es el riesgo de
-  trayectoria (salto de 35 pp en una semana).
+**Tratamiento fiscal y alcance de las cifras** — por decisión expresa del usuario, el
+arreglo fiscal de `runSleeve` queda **descartado** y no se modifica en esta tarea. El
+harness suma `taxes` en un contador, pero no los descuenta del NAV; por tanto, todos los
+ΔCAGR de `C6` (−0,08 / −0,11 pp) son **pre-fiscales** y no miden rendimiento neto de
+impuestos. Los +647/+673 € son impuestos reportados aparte por el harness, no una
+reducción del NAV ni una estimación validada de pérdida permanente. No se comparan como
+si fueran el coste neto de la candidata. La señal solo establece un cambio pre-fiscal
+en el sleeve WLG; no permite concluir superioridad económica neta ni efectos de cartera.
+El motivo de estudiar la rampa sigue siendo el riesgo de trayectoria (salto de 35 pp en
+una semana), no una ventaja económica demostrada.
 
 **Alcance del A/B (declarado)**: es **in-sample**, **de sleeve WLG aislado** (no cartera,
 no hay efecto de composición entre sleeves) y cubre **solo el cliff del RSI semanal** —
@@ -144,24 +166,26 @@ semanas con P/E efectivo inyectado: 0/2441 · descartadas por baseline NO fiable
 ```
 El resto del canónico queda idéntico a la corrida A (verificado con `diff`).
 
-### 3.7 ATRIBUCIÓN de la deriva de `m3_results.json` (medido 13-oct-2026 con el código de HEAD)
-Para decidir si regenerar el artefacto hay que separar *deriva ajena* de *efecto del paquete*.
-Se extrajo un árbol de HEAD con `git archive` y se corrió el harness allí con el mismo
-`tsx` y los mismos datos:
+### 3.7 ATRIBUCIÓN y regeneración de `m3_results.json` (medido 13-oct-2026)
+Se extrajo el código de `HEAD` con `git archive` y se ejecutó `m3_rerun.ts` con el mismo
+`tsx` y los datos tracked; se comparó el JSON fresco con la corrida del working tree y con
+el artefacto anterior. La regeneración se commiteó por separado en `c15ead5` (solo el JSON).
 
-| Comparación | Semanas distintas (de 2441) |
+| Comparación | Resultado |
 |---|---|
-| `m3_results.json` **committed** vs corrida **FRESH con código de HEAD** | **1310** |
-| corrida FRESH código HEAD vs corrida FRESH **working tree** | **0** |
-| `newBacktests` (5 tickers) HEAD vs working tree | **canónicamente idénticos** |
-| `cliffs` | committed 10 · HEAD-fresh 10 · **working tree 12** (+2 filas nuevas) |
+| Artefacto anterior vs JSON fresco (2441 semanas) | **1310** semanas distintas: `PPFB.DE` **858**, `EMXC.DE` **561** (hay solapamiento) |
+| JSON fresco con código de HEAD vs working tree | **0/2441** semanas distintas; `newBacktests` y `cliffs` idénticos |
+| Filas de `cliffs` | artefacto anterior **10** → JSON fresco **12** (incluye 2 barridos WLG) |
+| `newBacktests` anterior vs fresco | **NO idénticos**: cambian cajas ON de ORO y EMXC por los trims divergentes de PPFB/EMXC |
 
-**Conclusión:** las 1310 semanas divergen **sin** el paquete (el artefacto ya estaba stale
-frente a su propio código+datos). El paquete aporta **0** semanas y **+2 filas** de barrido.
-Por eso **no** se regenera: metería 1310 semanas de drift ajeno en el commit.
-`engine_returns.json` es ajeno a este paquete: `scripts/export_engine_returns.ts` corre
-`runBacktest` sobre `historical_data_daily_augmented.csv`, y `backtestEngine.ts` **no**
-importa `cycleTopDetector` (verificado por búsqueda) — sin cambio atribuible.
+Cambios ilustrativos anterior → fresco: ORO `ON-CASH0` CAGR **4,17%→8,04%**, operaciones
+**432→145**; EMXC `ON-CASH0` CAGR **9,47%→9,71%**, operaciones **34→65**. Son salidas
+históricas del harness, no resultados validados de cartera ni efectos atribuibles al paquete
+WLG A+D: el JSON fresco reproduce el código y los datos de HEAD, mientras las diferencias
+contra el artefacto previo reflejan drift M3/M4 anterior (incluidos los caps de oro/EMXC).
+**No se debe citar ni comparar `newBacktests` anterior y fresco como si fueran idénticos.**
+`engine_returns.json` es ajeno: `export_engine_returns.ts` corre `runBacktest` sobre
+`historical_data_daily_augmented.csv`, y `backtestEngine.ts` no importa `cycleTopDetector`.
 
 ### 3.8 Cuantificación del precipicio sobre URTH semanal (histórico REAL del repo)
 `cd scripts && npx tsx audit/propuesta_wlg_pe/cliff_stats.ts` (756 semanas con RSI-W,
@@ -235,7 +259,7 @@ siempre va *apilado* sobre A+D. (`git apply --check` no modifica ficheros.)
 
 ---
 
-## 4. Archivos que entrarían en el push
+## 4. Archivos incluidos en los commits del paquete
 
 **Modificados**
 | Fichero | Cambio | Riesgo |
@@ -260,7 +284,7 @@ siempre va *apilado* sobre A+D. (`git apply --check` no modifica ficheros.)
 
 | Fichero | Motivo |
 |---|---|
-| `scripts/audit/m3_results.json` | **Artefacto stale respecto a HEAD** (medido 13-oct-2026, A+D): **1 310 de 2 441 semanas** (`1980-01-04 → 2026-10-07`) no reproducen. Desglose por ticker: **`PPFB.DE` 858** y **`EMXC.DE` 561** semanas (suma > 1310 porque algunas semanas difieren en ambos). Discrepancia máxima: **`PPFB.DE` 2023-10-06: 0.82 → 0.20 (Δ 62,0 pp)**. **Causa**: el artefacto se generó **antes** de los recálculos M3/M4 ya aplicados en HEAD — cap de oro al 20 % (`FIX-RECLASS-GOLD`, P4) y caps/umbrales de EMXC (P3) —, es decir **drift de detectores anterior y ajeno** a este paquete. Regenerarlo metería ese drift en el push y haría inatribuible el diff. Se **restaura a HEAD**. Plan de regeneración separado: **§8**. |
+| `scripts/audit/m3_results.json` | **Regenerado y commiteado aparte** en `c15ead5`, solo un fichero. El artefacto anterior difería de HEAD-fresh en **1 310/2 441** semanas: `PPFB.DE` 858, `EMXC.DE` 561 (solapamiento); el JSON fresco de `git archive HEAD` y el working tree coinciden en **0/2 441**, con `newBacktests` y `cliffs` idénticos. Los `newBacktests` del artefacto anterior **no** son idénticos al fresco (cambian cajas ON de ORO/EMXC; véase §3.7). El drift se atribuye a recálculos M3/M4 anteriores, no al paquete WLG; no implica backtest de cartera validado. |
 | `engine_returns.json` | **Sí corresponde a HEAD** (verificado: `git diff --name-only -- engine_returns.json` → vacío) y **no** consume el detector: `scripts/export_engine_returns.ts` corre `runBacktest` sobre `historical_data_daily_augmented.csv` y `backtestEngine.ts` no importa `cycleTopDetector` (verificado por búsqueda). Por eso **no hay nada que regenerar** en este paquete. |
 | Calibración B (RSI) y C (ancla P/E) | **No aplicadas**: requieren aprobación expresa + OOS (B) y serie de P/E verificable (C). Solo existen como `.diff`. |
 | `scripts/audit/.base/**` (baseline de HEAD, copias temporales) | Herramienta de verificación desechable, se elimina. |
@@ -269,64 +293,54 @@ siempre va *apilado* sobre A+D. (`git apply --check` no modifica ficheros.)
 
 ## 6. Riesgo residual y pruebas pendientes
 
-1. **El cliff de 35 pp sigue vivo** en la calibración aprobada (P/E efectivo 16.00→16.01
-   y RSI 75→75.05). No es un defecto introducido aquí: es el estado aprobado. Medido
-   sobre URTH semanal real (§3.8): 59 saltos ≥30 pp y 21 whipsaws en 14,5 años. La cura
-   real es una **rampa suave bajo su propio control de cambios** — ni (a) ni (b) la dan
-   gratis: (a) es recalibración de WLG con coste medido, (b) es recalibración global.
-2. **La ruta de valoración sigue SIN VALIDAR**: sin `wlg_forward_pe.csv` no hay
-   backtest del tramo de P/E; el modo B/C degrada a A y lo declara.
-3. El A/B de §3.4 es **in-sample y a nivel de sleeve** (la curva RSI solo afecta a
-   WLG, por lo que el efecto de cartera es la composición de sleeves independientes,
-   pero no se ha corrido un backtest de cartera completo con la candidata).
-4. `equiv.ts` congela una copia de HEAD: si HEAD se mueve, la copia debe regenerarse
-   (`git show HEAD:src/core/risk/cycleTopDetector.ts`).
-5. Los scripts de `scripts/audit/` **están fuera del `tsconfig`** (`include: src, pages, api`):
-   arrastran ruido de tipos preexistente (p. ej. `prices: (string|undefined)[]` con
-   aritmética en `m3_harness.ts`/`m3_rerun.ts`). No lo introduce este paquete; el
-   loader nuevo sí es type-clean (`tsc --strict` aislado: exit 0).
-6. **Pendiente antes de producción (B/C):** walk-forward OOS, sensibilidad al ancla,
-   backtest de cartera con la candidata, y bump de `ENGINE_VERSION` + changelog.
+1. **OOS walk-forward: no validado, no autorizado.** No se ejecutó ni se considera evidencia.
+2. **P/E forward: no validado, no autorizado.** No hay `wlg_forward_pe.csv`; el modo B/C
+   degrada a A. No se inventó serie ni se hizo análisis de P/E.
+3. **Backtest de cartera: no validado, no autorizado.** El A/B de §3.4 es in-sample y de
+   sleeve WLG aislado; no se ejecutó cartera de seis sleeves.
+4. **A5 del ticket: no evaluable.** Requiere el backtest de cartera que no se autorizó.
+   A7 (fiscal neto) tampoco es evaluable: el arreglo fiscal de `runSleeve` queda descartado
+   por decisión del usuario; no se tocó el harness ni se descuentan impuestos del NAV.
+5. El ΔCAGR de §3.4 es **pre-fiscal**, no es rendimiento neto. Los impuestos impresos por
+   el harness son contadores separados; no se usan para afirmar ventaja económica neta.
+6. El cliff de 35 pp sigue en la calibración aprobada. La rampa suave solo está diseñada
+   en el ticket; no se implementó ni se promovió.
+7. `equiv.ts` valida la copia congelada frente al **commit base pre-A+D `5512770`** (padre
+   de `4ab4417`), no frente a HEAD móvil. Si se necesitara regenerar la referencia:
+   `git show 5512770:src/core/risk/cycleTopDetector.ts > scripts/audit/propuesta_wlg_pe/equivalencia/head_cycleTopDetector.ts`.
+8. Los scripts de `scripts/audit/` están fuera del `tsconfig` (`include: src, pages, api`);
+   el typecheck estándar no cubre esos scripts.
+9. No se hizo bump de `ENGINE_VERSION` (permanece v5.4.6), no se escribió `decision_log`
+   y no se modificó `src/`.
+
+**Pendientes explícitos**: walk-forward OOS, P/E y backtest de cartera permanecen **no
+validados y no autorizados**; cualquier promoción de rampa/calibración requeriría nueva
+autorización y su control de cambios propio.
 
 ## 7. Decisión
 
-- **GO** para el paquete **A + D** (comportamiento-neutro, verificado) — **committeado** en
-  `4ab4417` (local, sin push, `ENGINE_VERSION` v5.4.6 sin bump, `decision_log` intacto).
+- **GO** para el paquete **A + D** (comportamiento-neutro, verificado) — commit `4ab4417`;
+  documentación en `a2adefa`; higiene de hash `5e3300c`; artefacto regenerado aparte en
+  `c15ead5`. Sin bump (`ENGINE_VERSION` v5.4.6), sin `decision_log`, sin cambios en `src/`.
+  El informe final de estado se commitea por separado.
 - **(c) mantener** la calibración en este paquete: es lo decidido por el comité.
 - **NO-GO** para **B** (calibración RSI) y **C** (ancla P/E) hasta: aprobación
   expresa del comité · OOS walk-forward (B) · serie de P/E con fuente verificable (C).
 
-## 8. Control de cambios PENDIENTE (propuestas, NO ejecutadas)
+## 8. Control de cambios y estado
 
-### 8.1 Commit separado de regeneración de `m3_results.json`
-**Qué se regenera**: solo `scripts/audit/m3_results.json` (artefacto de auditoría; **no**
-toca código ni `engine_returns.json`).
+### 8.1 Regeneración de `m3_results.json` — CERRADA
+Se regeneró solo `scripts/audit/m3_results.json` en `c15ead5`. La atribución reproducible,
+los resultados y el drift de `newBacktests` anterior → fresco están documentados en §3.7.
+El fresco de código HEAD y el working tree son idénticos en semanas, backtests y cliffs;
+no se mezcló con cambios de motor.
 
-**Cómo se verifica la atribución** (antes de commitear):
-```bash
-REPO=$(git rev-parse --show-toplevel); cd "$REPO"
-git archive HEAD | tar -x -C /tmp/headwt             # código de HEAD, sin el artefacto
-cd /tmp/headwt/scripts && node "$REPO/node_modules/tsx/dist/cli.mjs" audit/m3_rerun.ts
-# 1) el JSON fresco de HEAD-code debe ser IDÉNTICO al de la corrida del working tree
-#    (0/2441 semanas distintas) → el artefacto es atribuible al código actual;
-# 2) debe diferir del artefacto committeado solo por el drift de PPFB.DE/EMXC.DE
-#    ya documentado (858 + 561 semanas) → ese drift entra CONSCIENTEMENTE en este commit.
-```
-**Diff esperado**: `1 file changed`, un `m3_results.json` reescrito (≈ 458 KB) con
-`weeks[].trims` distintos en 1 310 semanas + `cliffs` con las **12** filas (incluidas las 2
-de WLG). `newBacktests` **idéntico** al actual. **Commit sugerido**:
-`chore(audit): regenera m3_results.json tras los recálculos M3/M4 (PPFB/EMXC) — 1310 semanas de drift ajeno, documentado`.
-**Riesgo**: el artefacto deja de ser comparable con el anterior; hay que fechar la regeneración
-en su cabecera/commit y **no** mezclarlo con cambios de motor (control de cambios propio).
-
-### 8.2 Higiene: `head_cycleTopDetector.ts` es copia congelada (1 671 líneas)
-Propuesta (**no implementada**): un check al inicio de `equivalencia/equiv.ts` que compare
-el hash del fichero congelado con el de `HEAD:src/core/risk/cycleTopDetector.ts` y **falle
-con exit 1** si difieren, recordando el comando de regeneración
-(`git show HEAD:src/core/risk/cycleTopDetector.ts > audit/propuesta_wlg_pe/equivalencia/head_cycleTopDetector.ts`).
-Alternativa más fuerte (no propuesta para ya): que `equiv.ts` lea el fichero de HEAD en tiempo
-de ejecución en vez de llevar una copia — cuesta `git show` en runtime y rompe la
-reproducibilidad fuera de un repo git.
+### 8.2 Check de integridad de la copia — CERRADO
+`equivalencia/equiv.ts` compara SHA-256 normalizado LF/CRLF contra el detector del commit
+base inmutable `5512770` (= padre pre-A+D de `4ab4417`), **no contra HEAD**: HEAD ya contiene
+el refactor A+D y no podría ser igual a la copia pre-A+D. En mismatch imprime el comando
+regenerador y sale con exit 1. Se verificó que pasa intacto (27 477 casos, 0 discrepancias),
+falla tras alterar la copia (exit 1) y vuelve a pasar después de revertir la alteración.
 
 ### 8.3 Ticket de rampa suave (diseño)
 Ver `scripts/audit/propuesta_wlg_pe/TICKET_RAMPA_SUAVE.md` (solo diseño; **no** implementado).
