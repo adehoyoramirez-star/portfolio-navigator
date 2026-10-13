@@ -590,12 +590,15 @@ function buildRecommendation(
     windows[0]
   );
 
+  // Estas etiquetas son heurísticas descriptivas, no pruebas estadísticas ni
+  // evidencia de generalización fuera de la muestra evaluada. No deben usarse
+  // como criterio automático de aprobación de capital real.
   const gradeDescriptions: Record<string, string> = {
-    A: `Motor muy robusto (estabilidad ${(overallConsistency * 100).toFixed(0)}%). Los parámetros generalizan bien en todos los períodos históricos. Confianza alta en las señales actuales. Degradación Sharpe media: ${avgSharpeDegradation.toFixed(2)}.`,
-    B: `Robustez buena (${(overallConsistency * 100).toFixed(0)}%). La mayoría de ventanas mantienen rendimiento OOS aceptable. La ventana ${worst.window.windowIndex + 1} muestra divergencia (consistencia ${(worst.consistencyScore * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Mantener vigilancia.`,
-    C: `Robustez moderada (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe media de ${avgSharpeDegradation.toFixed(2)}. La ventana ${worst.window.windowIndex + 1} tuvo rendimiento OOS significativamente peor que IS. Considera reducir peso de momentum y aumentar value/lowVol.`,
-    D: `Riesgo de overfitting (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe de ${avgSharpeDegradation.toFixed(2)}. Varias ventanas OOS con rendimiento negativo o muy inferior al IS. Los parámetros pueden estar sobreoptimizados al período 2015-2020. Se recomienda: reducir momentum weight, aumentar lowVol, y validar con datos más recientes.`,
-    F: `Overfitting severo (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe crítica de ${avgSharpeDegradation.toFixed(2)}. El sistema NO generaliza a datos no vistos. Se recomienda FUERTEMENTE: (1) reducir número de parámetros libres, (2) añadir regularización vía Ledoit-Wolf más agresivo, (3) probar con menos activos, (4) considerar walk-forward con nWindows=3 para tener más datos OOS por ventana.`,
+    A: `Indicadores heurísticos favorables (consistencia ${(overallConsistency * 100).toFixed(0)}%). No demuestra generalización futura. Degradación Sharpe media: ${avgSharpeDegradation.toFixed(2)}.`,
+    B: `Indicadores heurísticos relativamente favorables (${(overallConsistency * 100).toFixed(0)}%). La ventana ${worst.window.windowIndex + 1} muestra menor consistencia (${(worst.consistencyScore * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Requiere validación adicional.`,
+    C: `Indicadores mixtos (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe media: ${avgSharpeDegradation.toFixed(2)}. La ventana ${worst.window.windowIndex + 1} difiere entre IS y OOS. No es una prueba de overfitting por sí sola.`,
+    D: `Indicadores heurísticos desfavorables (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Varias ventanas OOS son negativas o inferiores a IS. Investigar estabilidad, datos y especificación antes de modificar parámetros.`,
+    F: `Indicadores heurísticos muy desfavorables (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Los resultados no respaldan considerar validado el motor. Auditar datos, costes, diseño temporal y grados de libertad antes de cualquier ajuste.`,
   };
 
   const gradeDesc = gradeDescriptions[grade] ?? gradeDescriptions['C'];
@@ -605,10 +608,7 @@ function buildRecommendation(
   const benchmarkWarning = beatsEqualWeight
     ? `Benchmark OOS: Olympus supera al equal-weight (Sharpe EW ${equalWeightSharpeOosAvg.toFixed(2)}).`
     : `ALERTA DE EDGE: Olympus NO supera al equal-weight (Sharpe EW ${equalWeightSharpeOosAvg.toFixed(2)}); consistencia IS/OOS no implica rentabilidad relativa superior.`;
-  const dsrWarning = deflatedSharpeRatio <= 0
-    ? `ALERTA ESTADÍSTICA: DSR ${deflatedSharpeRatio.toFixed(2)} no aporta evidencia positiva frente al sesgo de selección.`
-    : `DSR ${deflatedSharpeRatio.toFixed(2)}; interpretar junto con tamaño muestral y número de pruebas.`;
-  return `${gradeDesc}\n${benchmarkWarning}\n${dsrWarning}\n${bestInfo}\n${worstInfo}`;
+  return `${gradeDesc}\n${benchmarkWarning}\nLas métricas DSR/PSR son provisionales y no validan significación estadística.\n${bestInfo}\n${worstInfo}`;
 }
 
 // ── Resultado por datos insuficientes ──────────────────────────────────
