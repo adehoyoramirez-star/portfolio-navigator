@@ -635,6 +635,10 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   // El backtest aplica el modelo unificado de transactionCosts.ts:
   // spread completo + coste fijo + impacto de mercado, también a benchmarks.
   let totalTransactionCosts = 0;
+  // Media de costes por rebalanceo en bps del NAV existente justo antes de operar.
+  // Evita dividir los costes acumulados por el NAV final, que sesga la métrica
+  // cuando la cartera crece o cae durante el backtest.
+  let cumulativeTransactionCostBps = 0;
   let rebalanceCount = 0;
 
   const backtestTickers = Object.fromEntries(
@@ -982,8 +986,12 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         pendingNewAllocations,
         portfolioValue,
       );
+      const navBeforeCost = portfolioValue;
       portfolioValue = Math.max(0, portfolioValue - costThisRebalance);
       totalTransactionCosts += costThisRebalance;
+      if (navBeforeCost > 0) {
+        cumulativeTransactionCostBps += (costThisRebalance / navBeforeCost) * 10_000;
+      }
 
       // Benchmark equal-weight: mismo modelo de costes que la estrategia.
       const nextBenchmarkWeights = equalWeightAllocations();
@@ -1220,9 +1228,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     regimeDays,
     daysWithProxies,
     daysWithRealData,
-    transactionCostBps: totalTransactionCosts > 0 && portfolioValue > 0 && rebalanceCount > 0
-      ? Math.round((totalTransactionCosts / (portfolioValue * rebalanceCount)) * 10000)
-      : 15,
+    transactionCostBps: rebalanceCount > 0
+      ? Math.round(cumulativeTransactionCostBps / rebalanceCount)
+      : 0,
     totalTransactionCosts,
     rebalanceCount,
     absoluteTrendGateDiagnostics: gateDiagnostics,
