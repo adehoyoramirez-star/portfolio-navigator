@@ -91,8 +91,6 @@ for (const a of ASSETS) closesHistory[a] = [];
 const vixArr: number[] = [];
 const tnxArr: number[] = [];
 const irxArr: number[] = [];
-const hygArr: number[] = [];
-const lqdArr: number[] = [];
 const moveArr: number[] = [];
 const dxyArr: number[] = [];
 const btcVolArr: number[] = [];
@@ -109,8 +107,6 @@ for (const line of dataLines) {
   vixArr.push(parseRequiredNumber(parts[headers.indexOf('^VIX')], '^VIX', date));
   tnxArr.push(parseRequiredNumber(parts[headers.indexOf('^TNX')], '^TNX', date));
   irxArr.push(parseRequiredNumber(parts[headers.indexOf('^IRX')], '^IRX', date));
-  hygArr.push(parseRequiredNumber(parts[headers.indexOf('HYG')], 'HYG', date));
-  lqdArr.push(parseRequiredNumber(parts[headers.indexOf('LQD')], 'LQD', date));
   moveArr.push(parseRequiredNumber(parts[headers.indexOf('^MOVE')], '^MOVE', date));
   dxyArr.push(parseRequiredNumber(parts[headers.indexOf('DX-Y.NYB')], 'DX-Y.NYB', date));
   btcVolArr.push(parseRequiredNumber(parts[headers.indexOf('BTC_VOL')], 'BTC_VOL', date));
@@ -120,28 +116,19 @@ for (const line of dataLines) {
 const minLen = Math.min(
   ...ASSETS.map(t => closesHistory[t].length),
   vixArr.length, tnxArr.length, irxArr.length,
-  hygArr.length, lqdArr.length, moveArr.length, dxyArr.length, btcVolArr.length
+  moveArr.length, dxyArr.length, btcVolArr.length
 );
 for (const t of ASSETS) closesHistory[t] = closesHistory[t].slice(0, minLen);
 const vix = vixArr.slice(0, minLen);
 const tnx = tnxArr.slice(0, minLen);
 const irx = irxArr.slice(0, minLen);
-const hyg = hygArr.slice(0, minLen);
-const lqd = lqdArr.slice(0, minLen);
 const move = moveArr.slice(0, minLen);
 const dxy = dxyArr.slice(0, minLen);
 const btcVol = btcVolArr.slice(0, minLen);
 
 // ── 4. Computar macro ──────────────────────────
 const yieldSpread = tnx.map((v, i) => v - irx[i]);
-const creditSpread = hyg.map((v, i) => {
-  if (v > 0 && lqd[i] > 0) {
-    const hygYield = 0.045 + (1 - v / 100) * 0.03;
-    const lqdYield = 0.035 + (1 - lqd[i] / 100) * 0.02;
-    return Math.max(1.0, Math.min(9.0, (hygYield - lqdYield) * 100));
-  }
-  return 2.5 + vix[i] / 20;
-});
+// creditSpread is observed FRED OAS (percent), aligned and coverage-checked above.
 
 // dxyTrend: 20-day rolling % change of DXY
 const dxyTrend: number[] = [];
@@ -156,7 +143,7 @@ console.log(`\n📊 Datos cargados: ${minLen} días`);
 console.log(`   Período: ${firstDate} → ${lastDate}`);
 console.log(`   Antigüedad del último dato: ${staleDays} días`);
 if (staleDays > 7) console.warn('   ADVERTENCIA: CSV histórico desactualizado; resultados solo describen el período disponible.');
-console.warn('   ADVERTENCIA METODOLÓGICA: creditSpread es un proxy sintético derivado de HYG/LQD, no un spread histórico observado.');
+console.log(`   Crédito observado FRED OAS: ${oasPath} | ${firstDate} → ${lastDate}`);
 console.warn('   COBERTURA MACRO INCOMPLETA: el WFO no carga series históricas de Brent/WTI, cbLiquidityGrowth (balances Fed+BCE) ni M2; M2 usa el fallback fijo de 2 y no aporta variación histórica.');
 console.warn('   DXY sí se incluye, pero solo como variación porcentual a 20 días; no se prueban aún ventanas 60/90 días ni una ablación que mida su contribución incremental.');
 console.warn('   Por tanto, estos resultados NO validan el bloque macro completo. No interpretar las métricas WFO como validación de petróleo, liquidez de bancos centrales o crédito observado.');
