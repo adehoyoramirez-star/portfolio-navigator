@@ -328,132 +328,13 @@ function computeAdaptiveWeights(
   }
 }
 
-// ── Métricas exploratorias DSR/PSR (NO validadas para inferencia) ────────
-// LIMITACIÓN INSTITUCIONAL ABIERTA:
-// - nWindows es el número de segmentos WFO, NO el número efectivo de trials
-//   (estrategias/parámetros/variantes) considerados durante el desarrollo.
-// - La aproximación DSR no incorpora distribución empírica de Sharpes entre
-//   trials ni skewness/kurtosis de retornos.
-// - La PSR simplificada posterior asume normalidad e independencia.
-// Por tanto, estos valores son diagnósticos exploratorios; no deben utilizarse
-// como criterio de aprobación estadística hasta implementar una metodología
-// con trials documentados y retornos OOS correctamente concatenados.
-//
-// DSR = (SR - E[max(SR)]) / σ[max(SR)]
-//
-// Donde E[max(SR)] y σ[max(SR)] son la media y desviación estándar
-// del máximo Sharpe esperado bajo la hipótesis nula (SR=0),
-// para N ventanas y T observaciones cada una.
-//
-// FIX-R2-A2 (auditoría institucional ronda 2):
-//   ANTES: sharpeOosAvg llegaba anualizado (×√365) pero expectedMaxSR usaba
-//     √(2 ln N) en escala no-anualizada → restar peras y manzanas → DSR siempre
-//     negativo (~-4.8 con Sharpe 1.5, N=5, T=226).
-//   AHORA: de-anualizamos sharpeOosAvg antes de la fórmula, y re-anualizamos
-//     expectedMaxSR expresado en escala diaria consistente. Así DSR > 0 cuando el Sharpe OOS
-//     supera lo esperado por azar. La σ[max(SR)] = √(Var[max]) = √(1/T) también
-//     se anualiza para mantener consistencia de unidades.
-//
-// REFERENCIA: Bailey, D. H., & López de Prado, M. (2014).
-//   "The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest
-//   Overfitting, and Non-Normality." Journal of Portfolio Management.
-//
-// DSR > 0: el Sharpe es mejor que lo esperado por azar
-// DSR > 1: estadísticamente significativo al 68%
-// DSR > 2: estadísticamente significativo al 95%
-
-/**
- * Calcula una aproximación exploratoria tipo DSR. NO es una implementación
- * validada del DSR de Bailey/López de Prado mientras falten el número efectivo
- * de trials y los ajustes de distribución de retornos.
- *
- * @param sharpeOosAvg - Sharpe OOS promedio ANUALIZADO (×√365, serie de días naturales)
- * @param nWindows - Número de ventanas walk-forward
- * @param avgObsPerWindow - Observaciones promedio por ventana OOS (días)
- * @returns DSR value
- */
-function deflatedSharpeRatio(
-  sharpeOosAvg: number,
-  nWindows: number,
-  avgObsPerWindow: number
-): number {
-  if (nWindows <= 1 || avgObsPerWindow < 20) return sharpeOosAvg;
-
-  // De-anualizar: el Sharpe diario es Sharpe_anual / √365
-  const sharpeDaily = sharpeOosAvg / Math.sqrt(365);
-
-  // FIX-DSR (09-Jul-2026): Expected max |SR| under null for N trials × T obs.
-  //
-  // ANTES: expectedMaxSRDaily = √(2 ln N) → daba ~1.79 para N=5, un Sharpe
-  //   diario irreal (equivalente a Sharpe anual de ~28). Con el Sharpe real
-  //   de ~0.07 diario, DSR = (0.07−1.79)/0.066 = −25.9. Inútil.
-  //
-  // AHORA: Cada ventana OOS tiene ~T observaciones. Bajo la hipótesis nula
-  //   (SR=0), cada SR diario estimado se distribuye N(0, 1/T). El máximo
-  //   esperado de N normales i.i.d. con varianza 1/T es:
-  //
-  //     E[max(SR_daily)] = √(1/T) × √(2 ln N) = √(2 ln N / T)
-  //
-  //   Bailey-López de Prado (2014) Eq. 6-7.
-  //   Con N=5, T=226: √(2 ln 5 / 226) = √(3.218/226) ≈ 0.119 diario.
-  //
-  // Var[max(SR)] ≈ 1/T  (Eq. 8)
-  const expectedMaxSRDaily = Math.sqrt(2 * Math.log(nWindows) / avgObsPerWindow);
-  const stdMaxSR = Math.sqrt(1 / avgObsPerWindow);
-
-  // DSR = (observed_daily - expected_max_daily) / std(max_daily)
-  return (sharpeDaily - expectedMaxSRDaily) / (stdMaxSR + 1e-10);
-}
-
-/**
- * Calcula una aproximación normal simplificada al PSR; no está calibrada para
- * inferencia porque omite skewness, kurtosis y dependencia temporal de retornos.
- *
- * FIX-R2-A2 (auditoría institucional ronda 2):
- *   ANTES: usaba sharpeOosAvg anualizado con √T diario → z inflado.
- *     Ej: Sharpe=1.5, T=226 → z = 1.5×√226 = 22.5 → PSR ≈ 1.0 siempre.
- *   AHORA: de-anualiza a frecuencia diaria antes de calcular z.
- *     z = (sharpeDaily - SR_benchmark) / √(1/T).
- *     Con SR_benchmark=0 (hipótesis nula): z = sharpeDaily × √T.
- *   También reemplaza la aproximación logística por la CDF normal canónica
- *   usando la función error (erf), que es más precisa en las colas.
- *
- * REFERENCIA: Bailey & López de Prado (2014), Eq. 9-11.
- *
- * @param sharpeOosAvg - Sharpe OOS promedio ANUALIZADO
- * @param avgObsPerWindow - Observaciones promedio por ventana OOS (días)
- * @returns PSR [0, 1]
- */
-function probabilisticSharpeRatio(
-  sharpeOosAvg: number,
-  avgObsPerWindow: number
-): number {
-  if (avgObsPerWindow < 20) return 0.5;
-
-  // De-anualizar: Sharpe_daily = Sharpe_anual / √365
-  const sharpeDaily = sharpeOosAvg / Math.sqrt(365);
-
-  // z = (SR_obs - SR_benchmark) / √(1/T)
-  // Under null SR_benchmark = 0, so z = SR_obs × √T
-  const z = sharpeDaily * Math.sqrt(avgObsPerWindow);
-
-  // CDF of standard normal using error function (exact, not logistic approximation)
-  // Φ(z) = 0.5 × (1 + erf(z / √2))
-  const cdf = 0.5 * (1 + erf(z / Math.SQRT2));
-  return Math.max(0, Math.min(1, cdf));
-}
-
-/**
- * Error function approximation (Abramowitz & Stegun 7.1.26).
- * Maximum error: 1.5×10⁻⁷ — suitable for PSR calculation.
- */
-function erf(x: number): number {
-  const sign = x >= 0 ? 1 : -1;
-  x = Math.abs(x);
-  const t = 1 / (1 + 0.3275911 * x);
-  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
-  return sign * y;
-}
+// ── DSR/PSR deshabilitados hasta disponer de entradas válidas ────────────
+// No se publican estimaciones numéricas: la implementación anterior usaba
+// ventanas WFO como sustituto del número de estrategias ensayadas y el Sharpe
+// medio de ventanas en lugar de una serie OOS concatenada. Tampoco modelaba
+// adecuadamente momentos no normales ni dependencia temporal.
+// Reactivar solo con: trials documentados, retornos OOS no solapados, objetivo
+// Sharpe explícito y método que trate distribución y dependencia temporal.
 
 // ── Equal Weight Backtest (quick benchmark por ventana) ─────────────────
 // FIX-EW-COSTS (09-Jul-2026): añadidos costes de transacción realistas al EW.
