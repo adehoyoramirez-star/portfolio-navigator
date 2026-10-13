@@ -144,7 +144,8 @@ console.warn('   ADVERTENCIA METODOLÓGICA: creditSpread es un proxy sintético 
 console.log(`   VIX: ${Math.min(...vix).toFixed(1)}–${Math.max(...vix).toFixed(1)}`);
 console.log(`   MOVE: ${Math.min(...move).toFixed(1)}–${Math.max(...move).toFixed(1)}`);
 console.log(`   DXY Trend: ${Math.min(...dxyTrend).toFixed(2)}%–${Math.max(...dxyTrend).toFixed(2)}%`);
-console.log(`   BTC Vol: ${Math.min(...btcVol).toFixed(1)}%–${Math.max(...btcVol).toFixed(1)}%`);
+// btcVol is annualized volatility in decimal form (0.50 = 50%), as expected by globalStress.ts.
+console.log(`   BTC Vol: ${(Math.min(...btcVol) * 100).toFixed(0)}%–${(Math.max(...btcVol) * 100).toFixed(0)}%`);
 
 // ── 5. Ejecutar walk-forward con masterRegime completo ─────────────────
 console.log('\n🚀 Ejecutando WALK-FORWARD TEST con masterRegime completo...');
