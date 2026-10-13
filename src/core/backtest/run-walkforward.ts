@@ -188,10 +188,14 @@ console.log('   Scope: isolated computeGlobalStress only; does not measure downs
 console.log('\n🚀 Ejecutando WALK-FORWARD TEST con masterRegime completo...');
 console.log(`   Ventanas: 3 | Train 70% / OOS 30% | Lookback 252d | Rebalanceo 63d\n`);
 
+// FRED OAS coverage begins on 2023-10-09, leaving 1044 calendar rows.
+ // At 70/30, three OOS windows would be ~104 days each, below the engine's
+ // minimum of two 63-day rebalance cycles (126 days). Use 60/40 explicitly
+ // rather than silently weakening the minimum-window validity check.
 const wfConfig = {
   ...DEFAULT_WF_CONFIG,
   nWindows: 3,
-  trainRatio: 0.70,
+  trainRatio: 0.60,
   lookbackDays: 252,
   rebalanceDays: 63,
   initialCapital: 10_000,
