@@ -31,7 +31,7 @@ describe("alignObservedCreditSpread", () => {
   });
 
   test("fails closed when an observation is stale beyond the allowed calendar age", () => {
-    const dates = ["2023-10-09", "2023-10-10", "2023-10-20"];
+    const dates = ["2023-10-09", "2023-10-10", "2023-10-21"];
     expect(() => alignObservedCreditSpread(dates, source)).toThrow(/stale/i);
   });
 
