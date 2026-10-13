@@ -1100,7 +1100,12 @@ const formatCurrency = (value: number): string => {
         });
       }
     } catch { /* localStorage no disponible -> no se puede afirmar nada */ }
-    return entries;
+    // FIX-STALENESS-FALSE-ALARM (Oct-2026): buildStalenessReport devuelve TODOS
+    //   los campos con timestamp (frescos incluidos); el guard SÍ los distingue
+    //   vía isStale. Sin este filtro el banner anunciaba "CADUCADOS (N)" con
+    //   campos frescos (p.ej. 0d/14d) y gritaba falsa alarma operativa. El
+    //   banner solo debe contar los que el motor realmente descarta.
+    return entries.filter(e => e.isStale);
     // cycleAsOf se refresca al editar/guardar los inputs manuales.
   }, [cycleAsOf]);  // FIX-HYST-DXY (P2, M3/M4): estado de histéresis de la señal DXY de EMXC.
   //   Entrar >103 / salir <101 (updateEmxcDxyHysteresis): un DXY oscilando
