@@ -43,6 +43,19 @@ function syntheticBacktestInput() {
   };
 }
 
+describe("transaction cost reporting", () => {
+  test("empty backtest reports zero observed transaction-cost bps", () => {
+    const input = syntheticBacktestInput();
+    for (const ticker of Object.keys(input.closesHistory)) {
+      input.closesHistory[ticker] = input.closesHistory[ticker].slice(0, 20);
+    }
+    const result = runBacktest(input);
+    expect(result.rebalanceCount).toBe(0);
+    expect(result.totalTransactionCosts).toBe(0);
+    expect(result.transactionCostBps).toBe(0);
+  });
+});
+
 describe("portfolioDrawdownOverride (FIX-ACOPLAMIENTO-SATELITE)", () => {
   test("sin override → comportamiento idéntico al baseline (DD sleeve motor)", () => {
     const input = syntheticBacktestInput();
