@@ -45,6 +45,7 @@
 
 import { runBacktest, BacktestInput, BacktestOutput, BacktestMetrics, PROXY_MAP } from './backtestEngine';
 import { ASSETS } from '../../lib/constants';
+import { computeTradeCost } from '../validation/transactionCosts';
 
 // ── Configuración ─────────────────────────────────────────────────────────
 
@@ -452,82 +453,88 @@ function equalWeightBenchmark(
   start: number,
   end: number,
   initialCapital: number = 10000,
-  rebalanceDays: number = 21,
-  transactionCostBps: number = 15,
+  rebalanceDays: number = 63,
 ): { cagr: number; sharpe: number; maxDrawdown: number; finalValue: number; dailyRets: number[] } {
   const tickers = Object.keys(backtestTickers);
   const n = tickers.length;
-  const w = 1 / n;
+  if (n === 0 || end <= start || rebalanceDays < 1) {
+    return { cagr: 0, sharpe: 0, maxDrawdown: 0, finalValue: initialCapital, dailyRets: [] };
+  }
+  const targetWeight = 1 / n;
+  const currentWeights: Record<string, number> = Object.fromEntries(tickers.map(t => [t, targetWeight]));
   const dailyRets: number[] = [];
   let value = initialCapital;
   let peak = initialCapital;
   let maxDD = 0;
-  const txCostRate = transactionCostBps / 10_000;
-  // FIX-AUDIT-T5: coste basado en turnover EXACTO como backtestEngine.ts.
-  // ANTES: value * txCostRate * 0.05 (5% fijo) → inconsistente.
-  // AHORA: calcula ∑|eqWeight - driftedWeight| (misma fórmula que backtestEngine).
-  let currentBenchWeights: Record<string, number> = Object.fromEntries(tickers.map(t => [t, w]));
-  let dayIndex = rebalanceDays;
+  let dayIndex = 0;
 
   for (let t = start + 1; t <= end; t++) {
-    let dayRet = 0;
-    for (const ticker of tickers) {
-      const bt = backtestTickers[ticker];
-      const closes = closesHistory[bt] ?? [];
-      if (t < closes.length) {
-        const c0 = closes[t - 1];
-        const c1 = closes[t];
-        if (c0 > 0 && c1 > 0 && isFinite(c0) && isFinite(c1)) {
-          dayRet += w * (c1 / c0 - 1);
-        }
-      }
-    }
-    if (isFinite(dayRet)) {
-      // FIX-AUDIT-T5: coste basado en turnover EXACTO como backtestEngine.ts.
-      // ANTES: value * txCostRate * 0.05 (5% fijo) → inconsistente.
-      // AHORA: ∑|eqWeight - driftedWeight| cada rebalanceo.
-      if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
-        let benchTurnover = 0;
-        for (const ticker of tickers) {
-          benchTurnover += Math.abs(w - (currentBenchWeights[ticker] ?? 0));
-        }
-        value -= value * txCostRate * benchTurnover;
-        currentBenchWeights = Object.fromEntries(tickers.map(t => [t, w]));
-      }
-      // Drift weights with daily returns
-      let bwSum = 0;
+    // Rebalance on the same cadence as Olympus; apply the same per-asset
+    // spread + market-impact + fixed-fee model, using the actual asset ticker.
+    if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
+      let totalCost = 0;
       for (const ticker of tickers) {
         const bt = backtestTickers[ticker];
         const closes = closesHistory[bt] ?? [];
-        if (t < closes.length) {
-          const c0 = closes[t - 1];
-          const c1 = closes[t];
-          if (c0 > 0 && c1 > 0 && isFinite(c0) && isFinite(c1)) {
-            currentBenchWeights[ticker] = (currentBenchWeights[ticker] ?? 0) * (c1 / c0);
-            bwSum += currentBenchWeights[ticker] ?? 0;
-          }
-        }
+        const price = t < closes.length ? closes[t] : 0;
+        totalCost += computeTradeCost({
+          ticker,
+          oldWeight: currentWeights[ticker] ?? 0,
+          newWeight: targetWeight,
+          portfolioValueEur: value,
+          priceEur: price > 0 && Number.isFinite(price) ? price : 100,
+        }).totalCostEur;
       }
-      if (bwSum > 0) {
-        for (const ticker of tickers) currentBenchWeights[ticker] = (currentBenchWeights[ticker] ?? 0) / bwSum;
-      } else {
-        currentBenchWeights = Object.fromEntries(tickers.map(t => [t, w]));
-      }
-      dailyRets.push(dayRet);
-      value *= (1 + dayRet);
-      if (value > peak) peak = value;
-      const dd = (value - peak) / peak;
-      if (dd < maxDD) maxDD = dd;
+      value = Math.max(0, value - totalCost);
+      for (const ticker of tickers) currentWeights[ticker] = targetWeight;
     }
+
+    const preDayValue = value;
+    let dayRet = 0;
+    const assetReturns: Record<string, number> = {};
+    for (const ticker of tickers) {
+      const bt = backtestTickers[ticker];
+      const closes = closesHistory[bt] ?? [];
+      if (t >= closes.length || t <= 0) {
+        return { cagr: 0, sharpe: 0, maxDrawdown: 0, finalValue: initialCapital, dailyRets: [] };
+      }
+      const c0 = closes[t - 1];
+      const c1 = closes[t];
+      if (!(c0 > 0 && c1 > 0 && Number.isFinite(c0) && Number.isFinite(c1))) {
+        return { cagr: 0, sharpe: 0, maxDrawdown: 0, finalValue: initialCapital, dailyRets: [] };
+      }
+      const assetRet = c1 / c0 - 1;
+      assetReturns[ticker] = assetRet;
+      dayRet += (currentWeights[ticker] ?? 0) * assetRet;
+    }
+
+    value *= 1 + dayRet;
+    // Drift portfolio weights after the realized returns.
+    const grossGrowth = 1 + dayRet;
+    if (grossGrowth > 0) {
+      for (const ticker of tickers) {
+        currentWeights[ticker] = (currentWeights[ticker] ?? 0) * (1 + assetReturns[ticker]) / grossGrowth;
+      }
+    } else {
+      for (const ticker of tickers) currentWeights[ticker] = targetWeight;
+    }
+
+    const netDailyReturn = preDayValue > 0 ? value / preDayValue - 1 : -1;
+    dailyRets.push(netDailyReturn);
+    if (value > peak) peak = value;
+    const dd = peak > 0 ? (value - peak) / peak : -1;
+    if (dd < maxDD) maxDD = dd;
     dayIndex++;
   }
 
   const years = dailyRets.length / 252;
   const totalReturn = value / initialCapital - 1;
-  const cagr = years > 0 && (1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
-  const m = dailyRets.reduce((s, r) => s + r, 0) / dailyRets.length;
-  const v = dailyRets.reduce((s, r) => s + (r - m) ** 2, 0) / (dailyRets.length - 1);
-  const sharpe = v > 0 ? (m / Math.sqrt(v)) * Math.sqrt(252) : 0;
+  const cagr = years > 0 && 1 + totalReturn > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
+  const m = dailyRets.reduce((sum, ret) => sum + ret, 0) / dailyRets.length;
+  const variance = dailyRets.length > 1
+    ? dailyRets.reduce((sum, ret) => sum + (ret - m) ** 2, 0) / (dailyRets.length - 1)
+    : 0;
+  const sharpe = variance > 0 ? (m / Math.sqrt(variance)) * Math.sqrt(252) : 0;
 
   return { cagr, sharpe, maxDrawdown: maxDD, finalValue: value, dailyRets };
 }
@@ -739,7 +746,7 @@ export function runWalkForwardTest(
     const ewResult = equalWeightBenchmark(
       input.closesHistory, backtestTickers,
       win.testStart - 1, win.testEnd - 1, cfg.initialCapital,
-      cfg.rebalanceDays, cfg.transactionCostBps
+      cfg.rebalanceDays
     );
 
     // ---- Bull Market Detection: solo el tramo OOS evaluado ----
