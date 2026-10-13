@@ -109,7 +109,6 @@ const wfResult = runWalkForwardTest({
   lookbackDays: 252,
   rebalanceDays: 63,
   initialCapital: 10_000,
-  transactionCostBps: 15,
 });
 
 // ── 6. Mostrar resultados ──────────────────────
