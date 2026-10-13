@@ -78,7 +78,6 @@ export interface BacktestInput {
   lookbackDays?: number;
   rebalanceDays?: number;
   initialCapital?: number;
-  transactionCostBps?: number;
   // FIX-AUDIT-T4: blendWeights opcionales para simular autocorrección del motor.
   // El dashboard los inyecta cuando WFO detecta overfitting.
   blendWeights?: {
