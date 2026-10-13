@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildWindows, type WFTestConfig } from "../core/backtest/walkForwardTest";
+import { buildWindows, formatWFResult, runWalkForwardTest, type WFTestConfig } from "../core/backtest/walkForwardTest";
 
 const config: WFTestConfig = {
   nWindows: 3,
@@ -40,5 +40,20 @@ describe("buildWindows — expanding walk-forward boundaries", () => {
   test("rejects invalid configuration and insufficient OOS history", () => {
     expect(buildWindows(1_000, { ...config, trainRatio: 1 })).toEqual([]);
     expect(buildWindows(300, config)).toEqual([]);
+  });
+});
+
+
+describe("statistical metrics fail closed until validated", () => {
+  test("does not publish numeric DSR/PSR when there is insufficient data", () => {
+    const result = runWalkForwardTest({ closesHistory: {} }, config);
+
+    expect(result.statisticalMetricsStatus).toBe("UNAVAILABLE_NOT_VALIDATED");
+    expect(result.deflatedSharpeRatio).toBeNull();
+    expect(result.probabilisticSharpeRatio).toBeNull();
+
+    const formatted = formatWFResult(result);
+    expect(formatted).toContain("DSR: NO DISPONIBLE");
+    expect(formatted).toContain("PSR: NO DISPONIBLE");
   });
 });
