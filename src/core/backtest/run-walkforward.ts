@@ -29,9 +29,9 @@ console.log('CSV:', csvPath);
 const csvContent = fs.readFileSync(csvPath, 'utf8');
 const lines = csvContent.split('\n');
 const headers = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim());
-const dataLines = lines.slice(1).map(line => line.trim()).filter(Boolean);
+let dataLines = lines.slice(1).map(line => line.trim()).filter(Boolean);
 const requiredColumns = [
-  'Date', ...ASSETS, '^VIX', '^TNX', '^IRX', 'HYG', 'LQD', '^MOVE', 'DX-Y.NYB', 'BTC_VOL',
+  'Date', ...ASSETS, '^VIX', '^TNX', '^IRX', '^MOVE', 'DX-Y.NYB', 'BTC_VOL',
 ];
 const missingColumns = requiredColumns.filter(column => !headers.includes(column));
 if (missingColumns.length) {
@@ -48,7 +48,7 @@ function parseRequiredNumber(raw: string, column: string, date: string): number 
 }
 
 const dateIndex = headers.indexOf('Date');
-const dates = dataLines.map(line => line.split(',')[dateIndex]?.trim() ?? '');
+let dates = dataLines.map(line => line.split(',')[dateIndex]?.trim() ?? '');
 for (let i = 0; i < dates.length; i++) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dates[i]) || Number.isNaN(Date.parse(dates[i]))) {
     throw new Error(`Fecha inválida en fila CSV ${i + 2}: ${JSON.stringify(dates[i])}`);
