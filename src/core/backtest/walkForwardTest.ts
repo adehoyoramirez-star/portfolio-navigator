@@ -169,7 +169,7 @@ export interface WFTestResult {
 
 // ── Construcción de ventanas walk-forward ────────────────────────────────
 
-function buildWindows(
+export function buildWindows(
   totalLength: number,
   config: WFTestConfig
 ): WFWindowInfo[] {
