@@ -3,7 +3,7 @@ import { loadFredManual, isFredDataFresh, fetchFredFromServer } from '@/lib/fred
 import { getManualPrice, loadManualPrices } from '@/lib/manualPrices';
 import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/lib/assetRegistry';
 import { ASSETS } from '@/lib/constants';
-import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate, priceAtCalendarDaysAgo } from '@/lib/stats';
+import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate, priceAtCalendarDaysAgo, calculateDxyTrend } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { fromManualInputs } from '@/core/macro/liquidityCycle';
 import { liquidityScore } from '@/core/macro/liquidity';
@@ -840,15 +840,8 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
   const dxy = dxyData?.currentPrice ?? 103.5;
   const dxyCloses = dxyData ? cleanCloses(dxyData.closes) : [];
   const dxyTimestamps = dxyData?.timestamps ?? [];
-  const dxyReturn20d = periodReturnByDate(dxyCloses, dxyTimestamps, 20);
-  const dxyLastTimestamp = dxyTimestamps[dxyTimestamps.length - 1] ?? 0;
-  const dxyDataAgeDays = dxyLastTimestamp > 0
-    ? (Date.now() / 1000 - dxyLastTimestamp) / 86400
-    : Number.POSITIVE_INFINITY;
   // No transformar un nivel/fallback en señal. Si historia insuficiente o stale, neutralizar.
-  const dxyTrend = dxyReturn20d !== null && dxyDataAgeDays >= 0 && dxyDataAgeDays <= 7
-    ? dxyReturn20d
-    : 0;
+  const dxyTrend = calculateDxyTrend(dxyCloses, dxyTimestamps);
 
   // ── BRENT CRUDE OIL (BZ=F) — referente europeo/global ──────────────────
   const wtiRaw = yfData['BZ=F']?.currentPrice ?? 0;
