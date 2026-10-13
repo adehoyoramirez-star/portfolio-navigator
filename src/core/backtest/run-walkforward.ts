@@ -213,3 +213,45 @@ console.log(`     Momentum: ${(wfResult.adaptiveFactorWeights.momentum * 100).to
 console.log(`     Value:    ${(wfResult.adaptiveFactorWeights.value * 100).toFixed(0)}%`);
 console.log(`     Quality:  ${(wfResult.adaptiveFactorWeights.quality * 100).toFixed(0)}%`);
 console.log(`     LowVol:   ${(wfResult.adaptiveFactorWeights.lowVol * 100).toFixed(0)}%`);
+
+/*
+ * PAIRED ABLATION — DXY
+ * Same prices, windows, rebalance schedule, covariance, and transaction costs.
+ * Only dxyTrend is neutralized. This is diagnostic, not a parameter optimization.
+ */
+console.log('\n' + '='.repeat(72));
+console.log('   DXY ABLATION — baseline vs identical WFO with dxyTrend = 0');
+console.log('='.repeat(72));
+const noDxyResult = runWalkForwardTest({
+  closesHistory,
+  macroHistory: {
+    vix, yieldSpread, creditSpread, move,
+    dxyTrend: Array<number>(minLen).fill(0),
+    btcVol,
+  },
+  lookbackDays: wfConfig.lookbackDays,
+  rebalanceDays: wfConfig.rebalanceDays,
+  initialCapital: wfConfig.initialCapital,
+}, wfConfig);
+if (noDxyResult.windows.length !== wfConfig.nWindows ||
+    noDxyResult.windows.length !== wfResult.windows.length) {
+  throw new Error('DXY ablation inválida: el número de ventanas no coincide.');
+}
+console.log('Δ = DXY activo − DXY neutral | mismo dataset y costes');
+console.log('Ventana | Sharpe OOS ON/OFF/Δ | CAGR OOS ON/OFF/Δ | MaxDD ON/OFF/Δ');
+for (let i = 0; i < wfResult.windows.length; i++) {
+  const on = wfResult.windows[i].outOfSample.metrics;
+  const off = noDxyResult.windows[i].outOfSample.metrics;
+  console.log(
+    `V${i + 1} | ${on.sharpe.toFixed(3)} / ${off.sharpe.toFixed(3)} / ${(on.sharpe - off.sharpe).toFixed(3)} | ` +
+    `${(on.cagr * 100).toFixed(2)}% / ${(off.cagr * 100).toFixed(2)}% / ${((on.cagr - off.cagr) * 100).toFixed(2)} pp | ` +
+    `${(on.maxDrawdown * 100).toFixed(2)}% / ${(off.maxDrawdown * 100).toFixed(2)}% / ${((on.maxDrawdown - off.maxDrawdown) * 100).toFixed(2)} pp`
+  );
+}
+const onMeanSharpe = wfResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.sharpe, 0) / wfResult.windows.length;
+const offMeanSharpe = noDxyResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.sharpe, 0) / noDxyResult.windows.length;
+const onMeanCagr = wfResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.cagr, 0) / wfResult.windows.length;
+const offMeanCagr = noDxyResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.cagr, 0) / noDxyResult.windows.length;
+console.log(`Media ventanas OOS — Sharpe: ${onMeanSharpe.toFixed(3)} vs ${offMeanSharpe.toFixed(3)} (Δ ${(onMeanSharpe - offMeanSharpe).toFixed(3)})`);
+console.log(`Media ventanas OOS — CAGR: ${(onMeanCagr * 100).toFixed(2)}% vs ${(offMeanCagr * 100).toFixed(2)}% (Δ ${((onMeanCagr - offMeanCagr) * 100).toFixed(2)} pp)`);
+console.log('NOTA: una sola configuración histórica no prueba causalidad ni valida el motor completo.');
