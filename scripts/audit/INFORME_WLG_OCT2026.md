@@ -5,7 +5,7 @@
 > `scripts/audit/INFORME_APLICACION_M3M4.md`.
 >
 > **Estado:** paquete A+D y documentación commiteados; regeneración y check de hash
-> cerrados en commits separados. Push autorizado por el usuario, pendiente de verificación.
+> cerrados en commits separados. Push autorizado y verificado en `origin/main`.
 > La **calibración** (**B** RSI y **C** ancla P/E) queda **NO APLICADA** y vive únicamente
 > como propuesta en `.diff`. Motor: `ENGINE_VERSION = "v5.4.6"` — **sin bump**.
 
@@ -33,8 +33,8 @@ como resultado de cartera.
 
 **Qué necesito del usuario:** nada adicional para cerrar el alcance ya autorizado. Para
 retomar OOS, P/E, cartera o arreglo fiscal se necesitará autorización nueva; P/E requiere
-además una serie con fuente verificable. El push final está autorizado y se verificará antes
-de cerrar.
+además una serie con fuente verificable. El push de los commits de cierre quedó verificado
+contra `origin/main`.
 
 ---
 
