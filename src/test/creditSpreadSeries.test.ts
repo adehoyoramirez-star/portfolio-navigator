@@ -41,7 +41,7 @@ describe("alignObservedCreditSpread", () => {
       "2023-12-22,4.40",
       "2023-12-25,",
       "2023-12-26,4.42",
-    ].join("\\n");
+    ].join("\n");
     const result = alignObservedCreditSpread(["2023-12-22", "2023-12-25", "2023-12-26"], holidaySource);
     expect(result.values).toEqual([4.40, 4.40, 4.42]);
   });
