@@ -168,6 +168,11 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
   dxy?: number;              // DXY spot — índice del dólar USA. #1 factor de riesgo EM (BIS).
                               //   DXY > 106 = estrés, > 110 = crisis EM.
                               //   Solo se considera válido si dxy > 50 (guarda sanitario contra 0 = fetch fallido).
+  emxcDxyActive?: boolean;   // FIX-HYST-DXY (P2, M3/M4): estado de histéresis de la señal DXY de
+                              //   EMXC (entrar >103 / salir <101). Lo gestiona el dashboard vía
+                              //   updateEmxcDxyHysteresis(). SIN FAIL-OPEN: si no llega
+                              //   (backtest, runner canónico, tests) el comportamiento es el de
+                              //   nivel (FIX-CLIFF-DXY/P1) — el estado es opt-in.
 
   // P1.2: CREDIT-SPREAD (Jul 2026, Comité) — amplificador/atenuador de valoración
   //   Spreads estrechos (<1.5%): complacencia de crédito → confirma euforia → amplifica trim.
@@ -813,6 +818,31 @@ function detectWLGTop(inputs: CycleTopInputs): CycleTopSignal {
 //   3. Comprime los márgenes de exportadores EM (commodities nominados en USD)
 // NOTA (M4): el DXY se SUMA como score, NO se multiplica por 1.5. El P/E de EMXC
 // fue ELIMINADO del scoring de techo (Jul-2026). El comentario anterior era obsoleto.
+// ============================================================
+// FIX-HYST-DXY (P2, M3/M4): histéresis sobre la ENTRADA de la señal DXY de EMXC.
+//   Los escalones de 103 (corregidos a rampa por FIX-CLIFF-DXY/P1) dejaban un
+//   residuo: un DXY oscilando alrededor de 103 encendía/apagaba el panel entre
+//   ejecuciones (parpadeo SAFE↔CAUTION en cada refresh del spot). Máquina de
+//   estados:
+//     - Arranque (prev === undefined): se arma si dxy > 103 (nivel).
+//     - Activo: permanece activo hasta dxy < 101 (banda de 2 pt).
+//     - Inactivo: solo se arma de nuevo si dxy > 103.
+//   Lecturas inválidas (NaN/undefined/≤50) NO mueven el estado: no se decide
+//   con basura (misma guarda sanitaria isValidReading(dxy, 50) del detector).
+//   ¿Por qué aquí y no dentro del detector? El detector es puro; este estado
+//   pertenece al caller (dashboard), que observa lecturas sucesivas. El
+//   backtest/runner canónico no pasa el campo → camino bit-idéntico.
+// ============================================================
+export function updateEmxcDxyHysteresis(
+  prevActive: boolean | undefined,
+  dxy: number | undefined,
+): boolean | undefined {
+  if (dxy === undefined || !Number.isFinite(dxy) || dxy <= 50) return prevActive;
+  if (prevActive === undefined) return dxy > 103;
+  if (prevActive) return dxy >= 101;
+  return dxy > 103;
+}
+
 function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   const { emxcRsiWeekly, emxcPERatio, dxy } = inputs;
   const emxcRsi = clampRSI(emxcRsiWeekly); // FIX-RSI-CLAMP: [0,100]
@@ -849,7 +879,14 @@ function detectEMXCTop(inputs: CycleTopInputs): CycleTopSignal {
   //   en DXY=103 (mismo punto que el escalon) y conserva los niveles de trim
   //   30/45/65/73% repartidos en 103-118. Elimina el salto de 30 pp a cambio de
   //   retrasar el primer tramo (ver m4_cliffs.ts: 4 cliffs -> 0).
-  if (isValidReading(dxy, 50)) {
+  // FIX-HYST-DXY (P2, M3/M4): histéresis sobre la ENTRADA (opt-in, sin fail-open).
+  //   Si el caller no pasa emxcDxyActive, la señal se evalúa por nivel (P1)
+  //   — es el camino del backtest, del runner canónico y de los tests del grid.
+  //   Con estado, una señal ya armada SOLO se desarma bajo 101 (ver
+  //   updateEmxcDxyHysteresis): un DXY oscilando entre 101 y 103 no hace
+  //   parpadear el trim entre ejecuciones.
+  const emxcDxyArmed = inputs.emxcDxyActive ?? true;
+  if (isValidReading(dxy, 50) && emxcDxyArmed) {
     const dxyScore = smoothScore(dxy, [
       [103, 0],
       [106, 0.75],

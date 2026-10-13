@@ -27,6 +27,14 @@ const INPUT_GRID: CycleTopInputs[] = [
   { bondYield10y: 4.0, wlgRsiWeekly: 85, wlgPERatio: 25, wlgEpsGrowth: 3, creditSpread: 4.0 },
   { bondYield10y: 4.0, emxcRsiWeekly: 78, emxcPERatio: 15, dxy: 104 },
   { bondYield10y: 4.0, emxcRsiWeekly: 88, emxcPERatio: 22, dxy: 116 },
+  // P2 (FIX-HYST-DXY): el grid cubre también el camino CON estado, en ambos
+  //  brazos — activo en banda 101–103 (armado, sin recorte de rampa) e
+  //  inactivo con DXY alto (la señal DXY no apaga el resto de inputs).
+  { bondYield10y: 4.0, emxcRsiWeekly: 80, emxcPERatio: 18, dxy: 102, emxcDxyActive: true },
+  { bondYield10y: 4.0, emxcRsiWeekly: 80, emxcPERatio: 18, dxy: 110.5, emxcDxyActive: false },
+  { bondYield10y: 4.0, emxcRsiWeekly: 78, emxcPERatio: 15, dxy: 104, emxcDxyActive: true },
+  { bondYield10y: 4.0, emxcRsiWeekly: 88, emxcPERatio: 22, dxy: 116, emxcDxyActive: true },
+  { bondYield10y: 4.0, emxcRsiWeekly: 88, emxcPERatio: 22, dxy: 116, emxcDxyActive: false },
   { bondYield10y: 4.0, inflationBreakeven: 2.0, brentOil: 83, goldCbPurchases: 450 },
   { bondYield10y: 4.0, inflationBreakeven: 1.5, brentOil: 100, goldCbPurchases: 1100 },
   // Edge cases

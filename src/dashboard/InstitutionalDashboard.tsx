@@ -96,6 +96,7 @@ import {
   detectCycleBottoms,
   isBTCDominanceFalling,
   regimeValuationShift,
+  updateEmxcDxyHysteresis,
   type CycleTopInputs,
   type CycleTopSignal,
   type CycleTopOutput,
@@ -1101,7 +1102,16 @@ const formatCurrency = (value: number): string => {
     } catch { /* localStorage no disponible -> no se puede afirmar nada */ }
     return entries;
     // cycleAsOf se refresca al editar/guardar los inputs manuales.
-  }, [cycleAsOf]);
+  }, [cycleAsOf]);  // FIX-HYST-DXY (P2, M3/M4): estado de histéresis de la señal DXY de EMXC.
+  //   Entrar >103 / salir <101 (updateEmxcDxyHysteresis): un DXY oscilando
+  //   alrededor de 103 no hace parpadear el panel entre ejecuciones. El estado
+  //   vive aquí (caller) porque el detector es puro; si no se pasa, el detector
+  //   usa nivel puro (sin fail-open, camino bit-idéntico del backtest).
+  const [emxcDxyActive, setEmxcDxyActive] = useState<boolean | undefined>(undefined);
+  useEffect(() => {
+    // Funcional: la actualización no depende de otros estados del ciclo.
+    setEmxcDxyActive(prev => updateEmxcDxyHysteresis(prev, dxy));
+  }, [dxy]);
 
   const cycleTopResult = useMemo(() => {
     const cycleInputs: CycleTopInputs = {
@@ -1126,6 +1136,7 @@ soxRsiWeekly,
       emxcRsiWeekly,
       emxcPERatio,
       dxy,
+      emxcDxyActive: emxcDxyActive,
       regimeShiftPE: smoothedShiftPE,
       regimeShiftBTC: smoothedShiftBTC,
       creditSpread,
@@ -1134,7 +1145,7 @@ soxRsiWeekly,
     return detectCycleTops(cycleInputs);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, manualRealYield10y, wtiOil,        wlgRsiWeekly, wlgPERatio,
         emxcRsiWeekly, emxcPERatio,
-        wlgEpsGrowth, marketData?.per, dxy, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
+        wlgEpsGrowth, marketData?.per, dxy, emxcDxyActive, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
 
   // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
   // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.

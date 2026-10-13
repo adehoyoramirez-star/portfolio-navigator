@@ -5,6 +5,7 @@ import {
   detectCycleBottoms,
   isBTCDominanceFalling,
   regimeValuationShift,
+  updateEmxcDxyHysteresis,
   type CycleTopInputs,
   type CycleTopSignal,
 } from "@/core/risk/cycleTopDetector";
@@ -721,5 +722,69 @@ describe("cycleTopDetector — P4 oro con tope 20% (M3/M4)", () => {
     const g = gold({ realYield10y: 5 });
     expect(g.zone).toBe("DANGER");
     expect(g.trimPct).toBe(20);
+  });
+});
+
+// ── M3/M4 · P2 — histéresis sobre la ENTRADA DXY de EMXC (FIX-HYST-DXY) ──
+// ANTES: el DXY oscilando alrededor de 103 (o de cualquier ancla de la rampa)
+// hacía parpadear el panel entre ejecuciones: trim 0% ↔ 30% a cada refresh.
+// AHORA: la señal se arma con estado en el caller (entrar >103 / salir <101)
+// y SIN FAIL-OPEN: sin el campo, el comportamiento es el de nivel (P1) — es el
+// camino del backtest, del runner canónico y del grid de invariantes.
+describe("cycleTopDetector — P2 histéresis DXY EMXC (M3/M4)", () => {
+  const emxc = (inputs: Partial<CycleTopInputs>) =>
+    detectCycleTops({ bondYield10y: 4.0, ...inputs }).signals.find(s => s.ticker === "EMXC.DE")!;
+
+  test("updateEmxcDxyHysteresis: armado, banda de 2 pt y desarme", () => {
+    // Arranque: se arma si dxy > 103 (nivel).
+    expect(updateEmxcDxyHysteresis(undefined, 103.01)).toBe(true);
+    expect(updateEmxcDxyHysteresis(undefined, 102.99)).toBe(false);
+    // Activo: se mantiene hasta 101 inclusive (la señal no parpadea en 101–103).
+    expect(updateEmxcDxyHysteresis(true, 102)).toBe(true);
+    expect(updateEmxcDxyHysteresis(true, 101.00)).toBe(true);
+    expect(updateEmxcDxyHysteresis(true, 100.99)).toBe(false);
+    // Inactivo: solo se re-arma por encima de 103.
+    expect(updateEmxcDxyHysteresis(false, 101.5)).toBe(false);
+    expect(updateEmxcDxyHysteresis(false, 103.01)).toBe(true);
+  });
+
+  test("updateEmxcDxyHysteresis: lecturas inválidas no mueven el estado", () => {
+    // No se decide con basura (misma guarda isValidReading(dxy, 50)).
+    expect(updateEmxcDxyHysteresis(true, NaN)).toBe(true);
+    expect(updateEmxcDxyHysteresis(false, undefined)).toBe(false);
+    expect(updateEmxcDxyHysteresis(undefined, 0)).toBe(undefined);
+    expect(updateEmxcDxyHysteresis(true, 40)).toBe(true);
+  });
+
+  test("sin fail-open: sin el campo el detector se comporta por nivel (bit-idéntico)", () => {
+    // El backtest, el runner canónico y el grid de invariantes NO pasan
+    // emxcDxyActive — la salida debe ser idéntica a pasarla activa.
+    const sinEstado = emxc({ dxy: 110 });
+    const conEstado = emxc({ dxy: 110, emxcDxyActive: true });
+    expect(conEstado).toEqual(sinEstado);
+  });
+
+  test("con estado INACTIVO el DXY no puntúa, pero el resto de inputs sí", () => {
+    // Solo DXY: sin estado, dxy=110 recorta (rampa P1); inactivo, no recorta.
+    expect(emxc({ dxy: 110 }).trimPct).toBeGreaterThan(0);
+    expect(emxc({ dxy: 110, emxcDxyActive: false }).trimPct).toBe(0);
+
+    // Con RSI de sobrecompra la señal vive: desarmar el DXY NO la apaga.
+    const conRsi = emxc({ dxy: 110, emxcRsiWeekly: 90, emxcDxyActive: false });
+    expect(conRsi.trimPct).toBeGreaterThan(0);
+    // Y la histéresis no rompe derivación de trimPct ni el cap P3.
+    expect(conRsi.trimPct).toBe(Math.round((1 - conRsi.allocationMultiplier) * 100));
+    expect(conRsi.trimPct).toBeLessThanOrEqual(30);
+  });
+
+  test("con estado activo en banda 101–103 el trim se mantiene (no parpadea)", () => {
+    // dxy=102 no dispara la rampa (score 0), pero la señal sigue ARMADA:
+    // al volver a 103.5 el panel no va de 0% a 30% con un refresco.
+    expect(emxc({ dxy: 102, emxcDxyActive: true }).trimPct).toBe(0);
+    // El desarme explícito sí apaga el recorte aunque el dxy sea alto:
+    // el caller desarmó la señal (dxy cruzó 101 a la baja) y ahora sube a 103.5
+    // antes de re-armar — sin histéresis eso habría sido trim 30% de nuevo.
+    expect(emxc({ dxy: 103.5, emxcDxyActive: false }).trimPct).toBe(0);
+    expect(emxc({ dxy: 103.5, emxcDxyActive: true }).trimPct).toBeGreaterThan(0);
   });
 });
