@@ -334,11 +334,11 @@ function computeAdaptiveWeights(
 // para N ventanas y T observaciones cada una.
 //
 // FIX-R2-A2 (auditoría institucional ronda 2):
-//   ANTES: sharpeOosAvg llegaba anualizado (×√252) pero expectedMaxSR usaba
+//   ANTES: sharpeOosAvg llegaba anualizado (×√365) pero expectedMaxSR usaba
 //     √(2 ln N) en escala no-anualizada → restar peras y manzanas → DSR siempre
 //     negativo (~-4.8 con Sharpe 1.5, N=5, T=226).
 //   AHORA: de-anualizamos sharpeOosAvg antes de la fórmula, y re-anualizamos
-//     expectedMaxSR multiplicando por √252. Así DSR > 0 cuando el Sharpe OOS
+//     expectedMaxSR expresado en escala diaria consistente. Así DSR > 0 cuando el Sharpe OOS
 //     supera lo esperado por azar. La σ[max(SR)] = √(Var[max]) = √(1/T) también
 //     se anualiza para mantener consistencia de unidades.
 //
@@ -365,7 +365,7 @@ function deflatedSharpeRatio(
 ): number {
   if (nWindows <= 1 || avgObsPerWindow < 20) return sharpeOosAvg;
 
-  // De-anualizar: el Sharpe diario es Sharpe_anual / √252
+  // De-anualizar: el Sharpe diario es Sharpe_anual / √365
   const sharpeDaily = sharpeOosAvg / Math.sqrt(365);
 
   // FIX-DSR (09-Jul-2026): Expected max |SR| under null for N trials × T obs.
@@ -416,8 +416,8 @@ function probabilisticSharpeRatio(
 ): number {
   if (avgObsPerWindow < 20) return 0.5;
 
-  // De-anualizar: Sharpe_daily = Sharpe_anual / √252
-  const sharpeDaily = sharpeOosAvg / Math.sqrt(252);
+  // De-anualizar: Sharpe_daily = Sharpe_anual / √365
+  const sharpeDaily = sharpeOosAvg / Math.sqrt(365);
 
   // z = (SR_obs - SR_benchmark) / √(1/T)
   // Under null SR_benchmark = 0, so z = SR_obs × √T
