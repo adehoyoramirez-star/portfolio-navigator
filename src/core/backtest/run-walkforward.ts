@@ -9,6 +9,7 @@ import path from 'path';
 import { runWalkForwardTest, formatWFResult, DEFAULT_WF_CONFIG } from './walkForwardTest';
 import { ASSETS } from '../../lib/constants';
 import { computeGlobalStress } from '../macro/globalStress';
+import { alignObservedCreditSpread } from '../../lib/creditSpreadSeries';
 
 // ── 1. Cargar CSV augmentado ──────────────────────
 // El archivo de public/ es la serie diaria canónica versionada para la app.
