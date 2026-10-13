@@ -67,6 +67,14 @@ for (let i = 0; i < dates.length; i++) {
     }
   }
 }
+const oasPath = path.join(process.cwd(), 'scripts', 'audit', 'data', 'fred_BAMLH0A0HYM2.csv');
+if (!fs.existsSync(oasPath)) throw new Error(`Missing observed FRED OAS series: ${oasPath}`);
+const alignedOas = alignObservedCreditSpread(dates, fs.readFileSync(oasPath, 'utf8'));
+// Keep prices, dates and macro arrays on the observed credit-spread coverage only.
+// Do not synthesize a credit-spread history before FRED observations begin.
+dataLines = dataLines.slice(alignedOas.startIndex);
+dates = dates.slice(alignedOas.startIndex);
+const creditSpread = alignedOas.values;
 const firstDate = dates[0];
 const lastDate = dates[dates.length - 1];
 // Explicit calendar timestamps let backtestEngine exclude forward-filled weekend
