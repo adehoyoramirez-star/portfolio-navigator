@@ -469,6 +469,7 @@ function equalWeightBenchmark(
   let dayIndex = 0;
 
   for (let t = start + 1; t <= end; t++) {
+    const preDayValue = value; // before any rebalance cost: daily return must include costs
     // Rebalance on the same cadence as Olympus; apply the same per-asset
     // spread + market-impact + fixed-fee model, using the actual asset ticker.
     if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
@@ -489,7 +490,6 @@ function equalWeightBenchmark(
       for (const ticker of tickers) currentWeights[ticker] = targetWeight;
     }
 
-    const preDayValue = value;
     let dayRet = 0;
     const assetReturns: Record<string, number> = {};
     for (const ticker of tickers) {
