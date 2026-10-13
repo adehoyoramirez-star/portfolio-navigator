@@ -1,0 +1,349 @@
+     [control ratchet]  trim 0.5 constante → expoMedia=0.505 (igual, porque sin ratchet el rgimen es estable)
+=== TESTS 0.2 — HARNESS REPARADO (m3_harness.ts) ===
+  PASS  a) trim≡0 → ON≡OFF — ops=0 expoMedia=1.000000 CAGR=5.865%
+  PASS  b) trim 50% → expo 50%±banda y vol≈0.5×vol OFF — expoMedia=0.505 volRatio=0.505 (esperado≈0.50)
+  PASS  c) sin ratchet (target sobre NAV actual) — expoMedia=0.506 ops=9 — el ratchet dejaría expo ≪0.5 tras 520 sem (ratchet alternativo: vecina con trim 0.5 en 100-101)
+  PASS  d) re-entra en la MISMA semana al bajar trim (compra +1 vs sin corte) — ops corte=8 vs sin corte=7 · expo=0.606 vs 0.605 — recompra TOTAL limitada por caja sin rendimiento (es matemática, ver nota en código)
+  PASS  e) TBILL − CASH0 ≈ pesoCaja × rTBILL — Δpp=1.2 vs aprox=1.2 (naive, no compuesto — tolerancia 50pp)
+  PASS  f) vol ON ≥ (1−0.3)×vol OFF — volON=0.0441 vs cota=0.0341 expoMedia=0.90
+  PASS  f) vol ON ≥ (1−0.5)×vol OFF — volON=0.0418 vs cota=0.0243 expoMedia=0.83
+  PASS  f) vol ON ≥ (1−0.9)×vol OFF — volON=0.0394 vs cota=0.0049 expoMedia=0.70
+RESUMEN: 8/8 PASS, 0 FAIL
+=== 0.1+0.3: ON/OFF por activo con HARNESS REPARADO (target=(1−trim)·NAV) ===
+sleeve | caja | CAGR | vol | MaxDD | ops | impuestos€ | spreads€ | expoMedia | expo<50% | pesoCajaMedia
+BTC    | OFF      |  138.14% | 103.5% |  -91.2% | 0 | €      0 | €     0 |  100.0% |    0.0% |    0.0%
+BTC    | ON-CASH0 |   67.28% |  75.3% |  -86.3% | 177 | €16749789 | €236285 |   87.0% |   14.9% |   13.0%
+BTC    | ON-TBILL |   67.43% |  75.3% |  -86.3% | 177 | €16880077 | €234207 |   87.0% |   14.9% |   13.0%
+SEMIS  | OFF      |   15.57% |  35.2% |  -86.5% | 0 | €      0 | €     0 |  100.0% |    0.0% |    0.0%
+SEMIS  | ON-CASH0 |   11.94% |  31.2% |  -81.6% | 455 | € 108804 | €  3436 |   82.1% |   14.1% |   17.9%
+SEMIS  | ON-TBILL |   12.43% |  31.2% |  -81.4% | 455 | € 121128 | €  3677 |   82.1% |   14.5% |   17.9%
+ORO    | OFF      |   10.16% |  17.3% |  -44.7% | 0 | €      0 | €     0 |  100.0% |    0.0% |    0.0%
+ORO    | ON-CASH0 |    8.04% |  14.8% |  -43.0% | 145 | €   4862 | €    93 |   85.1% |    0.0% |   14.9%
+ORO    | ON-TBILL |    8.41% |  14.8% |  -43.0% | 145 | €   4944 | €    95 |   85.2% |    0.0% |   14.8%
+EMXC   | OFF      |    9.81% |  23.2% |  -62.6% | 0 | €      0 | €     0 |  100.0% |    0.0% |    0.0%
+EMXC   | ON-CASH0 |    9.71% |  23.0% |  -62.6% | 65 | €  10334 | €   111 |   98.0% |    0.0% |    2.0%
+EMXC   | ON-TBILL |    9.80% |  23.0% |  -62.6% | 65 | €  10314 | €   108 |   98.0% |    0.0% |    2.0%
+WLG    | OFF      |   12.15% |  15.6% |  -32.7% | 0 | €      0 | €     0 |  100.0% |    0.0% |    0.0%
+WLG    | ON-CASH0 |   11.59% |  15.3% |  -32.7% | 96 | €   9264 | €   302 |   93.0% |    6.9% |    7.0%
+WLG    | ON-TBILL |   11.73% |  15.3% |  -32.7% | 96 | €   9346 | €   319 |   93.0% |    7.2% |    7.0%
+
+=== COTA DE VOL (0.2f en datos REALES): volON ≥ (1−trimMax)·volOFF ===
+BTC    trimMax= 90%  volOFF=103.5%  cota= 10.3%  volON= 75.3%  OK
+SEMIS  trimMax= 83%  volOFF= 35.2%  cota=  6.0%  volON= 31.2%  OK
+ORO    trimMax= 20%  volOFF= 17.3%  cota= 13.8%  volON= 14.8%  OK
+EMXC   trimMax= 30%  volOFF= 23.2%  cota= 16.3%  volON= 23.0%  OK
+WLG    trimMax= 55%  volOFF= 15.6%  cota=  7.0%  volON= 15.3%  OK
+
+=== 0.4: EMXC 2007-01→2009-06 — DXY / score / trim / exposición semanal ===
+semana | DXY | score | trim | expo
+2007-01-05 | DXY 84.63 | score 0.00 | trim 0 | expo 100%
+2007-01-12 | DXY 85.03 | score 0.00 | trim   0% | expo 100.0%
+2007-01-19 | DXY 84.86 | score 0.00 | trim   0% | expo 100.0%
+2007-01-26 | DXY 85.28 | score 0.00 | trim   0% | expo 100.0%
+2007-02-02 | DXY 84.96 | score 0.00 | trim   0% | expo 100.0%
+2007-02-09 | DXY 84.87 | score 0.00 | trim   0% | expo 100.0%
+2007-02-16 | DXY 84.09 | score 0.00 | trim   0% | expo 100.0%
+2007-02-23 | DXY 84.07 | score 0.00 | trim   0% | expo 100.0%
+2007-03-02 | DXY 83.74 | score 0.00 | trim   0% | expo 100.0%
+2007-03-09 | DXY 84.24 | score 0.00 | trim   0% | expo 100.0%
+2007-03-16 | DXY 83.23 | score 0.00 | trim   0% | expo 100.0%
+2007-03-23 | DXY 83.28 | score 0.00 | trim   0% | expo 100.0%
+2007-03-30 | DXY 82.93 | score 0.00 | trim   0% | expo 100.0%
+2007-04-05 | DXY 82.68 | score 0.00 | trim   0% | expo 100.0%
+2007-04-13 | DXY 82.13 | score 0.00 | trim   0% | expo 100.0%
+2007-04-20 | DXY 81.64 | score 0.00 | trim   0% | expo 100.0%
+2007-04-27 | DXY 81.53 | score 0.00 | trim   0% | expo 100.0%
+2007-05-04 | DXY 81.74 | score 0.00 | trim   0% | expo 100.0%
+2007-05-11 | DXY 82.12 | score 0.00 | trim   0% | expo 100.0%
+2007-05-18 | DXY 82.20 | score 0.00 | trim   0% | expo 100.0%
+2007-05-25 | DXY 82.33 | score 0.00 | trim   0% | expo 100.0%
+2007-06-01 | DXY 82.32 | score 0.00 | trim   0% | expo 100.0%
+2007-06-08 | DXY 82.69 | score 0.00 | trim   0% | expo 100.0%
+2007-06-15 | DXY 82.85 | score 0.00 | trim   0% | expo 100.0%
+2007-06-22 | DXY 82.34 | score 0.00 | trim   0% | expo 100.0%
+2007-06-29 | DXY 81.92 | score 0.00 | trim   0% | expo 100.0%
+2007-07-06 | DXY 81.46 | score 0.00 | trim   0% | expo 100.0%
+2007-07-13 | DXY 80.58 | score 0.00 | trim   0% | expo 100.0%
+2007-07-20 | DXY 80.29 | score 0.00 | trim   0% | expo 100.0%
+2007-07-27 | DXY 80.95 | score 0.00 | trim   0% | expo 100.0%
+2007-08-03 | DXY 80.18 | score 0.00 | trim   0% | expo 100.0%
+2007-08-10 | DXY 80.68 | score 0.00 | trim   0% | expo 100.0%
+2007-08-17 | DXY 81.43 | score 0.00 | trim   0% | expo 100.0%
+2007-08-24 | DXY 80.67 | score 0.00 | trim   0% | expo 100.0%
+2007-08-31 | DXY 80.79 | score 0.00 | trim   0% | expo 100.0%
+2007-09-07 | DXY 79.96 | score 0.00 | trim   0% | expo 100.0%
+2007-09-14 | DXY 79.62 | score 0.00 | trim   0% | expo 100.0%
+2007-09-21 | DXY 78.60 | score 0.00 | trim   0% | expo 100.0%
+2007-09-28 | DXY 77.72 | score 0.00 | trim   0% | expo 100.0%
+2007-10-05 | DXY 78.31 | score 0.00 | trim   0% | expo 100.0%
+2007-10-12 | DXY 78.22 | score 0.00 | trim   0% | expo 100.0%
+2007-10-19 | DXY 77.41 | score 0.00 | trim   0% | expo 100.0%
+2007-10-26 | DXY 77.03 | score 0.00 | trim   0% | expo 100.0%
+2007-11-02 | DXY 76.34 | score 0.00 | trim   0% | expo 100.0%
+2007-11-09 | DXY 75.40 | score 0.00 | trim   0% | expo 100.0%
+2007-11-16 | DXY 75.83 | score 0.00 | trim   0% | expo 100.0%
+2007-11-23 | DXY 75.05 | score 0.00 | trim   0% | expo 100.0%
+2007-11-30 | DXY 76.15 | score 0.00 | trim   0% | expo 100.0%
+2007-12-07 | DXY 76.29 | score 0.00 | trim   0% | expo 100.0%
+2007-12-14 | DXY 77.44 | score 0.00 | trim   0% | expo 100.0%
+2007-12-21 | DXY 77.72 | score 0.00 | trim   0% | expo 100.0%
+2007-12-28 | DXY 76.22 | score 0.00 | trim   0% | expo 100.0%
+2008-01-04 | DXY 75.79 | score 0.00 | trim   0% | expo 100.0%
+2008-01-11 | DXY 75.98 | score 0.00 | trim   0% | expo 100.0%
+2008-01-18 | DXY 76.38 | score 0.00 | trim   0% | expo 100.0%
+2008-01-25 | DXY 75.97 | score 0.00 | trim   0% | expo 100.0%
+2008-02-01 | DXY 75.45 | score 0.00 | trim   0% | expo 100.0%
+2008-02-08 | DXY 76.67 | score 0.00 | trim   0% | expo 100.0%
+2008-02-15 | DXY 76.10 | score 0.00 | trim   0% | expo 100.0%
+2008-02-22 | DXY 75.52 | score 0.00 | trim   0% | expo 100.0%
+2008-02-29 | DXY 73.71 | score 0.00 | trim   0% | expo 100.0%
+2008-03-07 | DXY 73.03 | score 0.00 | trim   0% | expo 100.0%
+2008-03-14 | DXY 71.66 | score 0.00 | trim   0% | expo 100.0%
+2008-03-20 | DXY 72.75 | score 0.00 | trim   0% | expo 100.0%
+2008-03-28 | DXY 71.68 | score 0.00 | trim   0% | expo 100.0%
+2008-04-04 | DXY 72.02 | score 0.00 | trim   0% | expo 100.0%
+2008-04-11 | DXY 71.81 | score 0.00 | trim   0% | expo 100.0%
+2008-04-18 | DXY 72.01 | score 0.00 | trim   0% | expo 100.0%
+2008-04-25 | DXY 72.79 | score 0.00 | trim   0% | expo 100.0%
+2008-05-02 | DXY 73.50 | score 0.00 | trim   0% | expo 100.0%
+2008-05-09 | DXY 73.05 | score 0.00 | trim   0% | expo 100.0%
+2008-05-16 | DXY 72.84 | score 0.00 | trim   0% | expo 100.0%
+2008-05-23 | DXY 71.89 | score 0.00 | trim   0% | expo 100.0%
+2008-05-30 | DXY 72.88 | score 0.00 | trim   0% | expo 100.0%
+2008-06-06 | DXY 72.39 | score 0.00 | trim   0% | expo 100.0%
+2008-06-13 | DXY 74.15 | score 0.00 | trim   0% | expo 100.0%
+2008-06-20 | DXY 73.03 | score 0.00 | trim   0% | expo 100.0%
+2008-06-27 | DXY 72.36 | score 0.00 | trim   0% | expo 100.0%
+2008-07-03 | DXY 72.74 | score 0.00 | trim   0% | expo 100.0%
+2008-07-11 | DXY 72.10 | score 0.00 | trim   0% | expo 100.0%
+2008-07-18 | DXY 72.19 | score 0.00 | trim   0% | expo 100.0%
+2008-07-25 | DXY 72.86 | score 0.00 | trim   0% | expo 100.0%
+2008-08-01 | DXY 73.42 | score 0.00 | trim   0% | expo 100.0%
+2008-08-08 | DXY 75.85 | score 0.00 | trim   0% | expo 100.0%
+2008-08-15 | DXY 77.18 | score 0.00 | trim   0% | expo 100.0%
+2008-08-22 | DXY 76.81 | score 0.00 | trim   0% | expo 100.0%
+2008-08-29 | DXY 77.38 | score 0.00 | trim   0% | expo 100.0%
+2008-09-05 | DXY 78.93 | score 0.00 | trim   0% | expo 100.0%
+2008-09-12 | DXY 78.97 | score 0.00 | trim   0% | expo 100.0%
+2008-09-19 | DXY 77.68 | score 0.00 | trim   0% | expo 100.0%
+2008-09-26 | DXY 76.95 | score 0.00 | trim   0% | expo 100.0%
+2008-10-03 | DXY 80.31 | score 0.00 | trim   0% | expo 100.0%
+2008-10-10 | DXY 83.00 | score 0.00 | trim   0% | expo 100.0%
+2008-10-17 | DXY 82.41 | score 0.00 | trim   0% | expo 100.0%
+2008-10-24 | DXY 86.44 | score 0.00 | trim   0% | expo 100.0%
+2008-10-31 | DXY 85.63 | score 0.00 | trim   0% | expo 100.0%
+2008-11-07 | DXY 85.91 | score 0.00 | trim   0% | expo 100.0%
+2008-11-14 | DXY 86.36 | score 0.00 | trim   0% | expo 100.0%
+2008-11-21 | DXY 88.19 | score 0.00 | trim   0% | expo 100.0%
+2008-11-28 | DXY 86.52 | score 0.00 | trim   0% | expo 100.0%
+2008-12-05 | DXY 87.12 | score 0.00 | trim   0% | expo 100.0%
+2008-12-12 | DXY 83.64 | score 0.00 | trim   0% | expo 100.0%
+2008-12-19 | DXY 81.30 | score 0.00 | trim   0% | expo 100.0%
+2008-12-26 | DXY 80.89 | score 0.00 | trim   0% | expo 100.0%
+2009-01-02 | DXY 81.84 | score 0.00 | trim   0% | expo 100.0%
+2009-01-09 | DXY 82.66 | score 0.00 | trim   0% | expo 100.0%
+2009-01-16 | DXY 84.21 | score 0.00 | trim   0% | expo 100.0%
+2009-01-23 | DXY 85.61 | score 0.00 | trim   0% | expo 100.0%
+2009-01-30 | DXY 86.00 | score 0.00 | trim   0% | expo 100.0%
+2009-02-06 | DXY 85.35 | score 0.00 | trim   0% | expo 100.0%
+2009-02-13 | DXY 86.04 | score 0.00 | trim   0% | expo 100.0%
+2009-02-20 | DXY 86.49 | score 0.00 | trim   0% | expo 100.0%
+2009-02-27 | DXY 88.01 | score 0.00 | trim   0% | expo 100.0%
+2009-03-06 | DXY 88.51 | score 0.00 | trim   0% | expo 100.0%
+2009-03-13 | DXY 87.43 | score 0.00 | trim   0% | expo 100.0%
+2009-03-20 | DXY 83.84 | score 0.00 | trim   0% | expo 100.0%
+2009-03-27 | DXY 85.11 | score 0.00 | trim   0% | expo 100.0%
+2009-04-03 | DXY 84.17 | score 0.00 | trim   0% | expo 100.0%
+2009-04-09 | DXY 85.79 | score 0.00 | trim   0% | expo 100.0%
+2009-04-17 | DXY 85.98 | score 0.00 | trim   0% | expo 100.0%
+2009-04-24 | DXY 84.71 | score 0.00 | trim   0% | expo 100.0%
+2009-05-01 | DXY 84.55 | score 0.00 | trim   0% | expo 100.0%
+2009-05-08 | DXY 82.53 | score 0.00 | trim   0% | expo 100.0%
+2009-05-15 | DXY 83.02 | score 0.00 | trim   0% | expo 100.0%
+2009-05-22 | DXY 79.96 | score 0.00 | trim   0% | expo 100.0%
+2009-05-29 | DXY 80.43 | score 0.00 | trim   0% | expo 100.0%
+2009-06-05 | DXY 80.67 | score 0.00 | trim   0% | expo 100.0%
+2009-06-12 | DXY 80.14 | score 0.00 | trim   0% | expo 100.0%
+2009-06-19 | DXY 80.26 | score 0.00 | trim   0% | expo 100.0%
+2009-06-26 | DXY 79.88 | score 0.00 | trim   0% | expo 100.0%
+EMXC 2007-01→2009-06 · MaxDD ON (reparado) = -62.6%
+EMXC 2007-01→2009-06 · MaxDD OFF = -62.6%
+
+=== A1: episodios con separación 26 y 52 semanas ===
+BTC    gap=26  N=8 · duración (est) · aciertos 1/8 (12.5%) · fwd6m medio 219.2%
+BTC    gap=52  N=6 · duración (est) · aciertos 1/6 (16.7%) · fwd6m medio 272.9%
+SEMIS  gap=26  N=16 · duración (est) · aciertos 5/16 (31.3%) · fwd6m medio 15.3%
+SEMIS  gap=52  N=9 · duración (est) · aciertos 2/9 (22.2%) · fwd6m medio 28.1%
+ORO    gap=26  N=2 · duración (est) · aciertos 1/2 (50.0%) · fwd6m medio -10.4%
+ORO    gap=52  N=2 · duración (est) · aciertos 1/2 (50.0%) · fwd6m medio -10.4%
+EMXC   gap=26  N=1 · duración (est) · aciertos 1/1 (100.0%) · fwd6m medio -10.8%
+EMXC   gap=52  N=1 · duración (est) · aciertos 1/1 (100.0%) · fwd6m medio -10.8%
+WLG    gap=26  N=8 · duración (est) · aciertos 1/8 (12.5%) · fwd6m medio 3.9%
+WLG    gap=52  N=5 · duración (est) · aciertos 0/5 (0.0%) · fwd6m medio 3.2%
+
+=== A2: señal vs tasa base (decl>10% en 26 sem) con IC bootstrap por bloques (26 sem, 5000 rep) ===
+BTC    señal=1/8 (12.5%) · tasa base=54.9% (n=821) · Δ=-42.4pp · IC90 del Δ=[-54.9, 45.1]pp → señal NO DISCRIMINA
+SEMIS  señal=5/16 (31.3%) · tasa base=42.0% (n=1667) · Δ=-10.7pp · IC90 del Δ=[-42.0, 58.0]pp → señal NO DISCRIMINA
+ORO    señal=1/2 (50.0%) · tasa base=17.2% (n=1117) · Δ=32.8pp · IC90 del Δ=[-17.2, 62.8]pp → señal NO DISCRIMINA
+EMXC   señal=1/1 (100.0%) · tasa base=31.9% (n=1200) · Δ=68.1pp · IC90 del Δ=[-31.9, 68.1]pp → señal NO DISCRIMINA
+WLG    señal=1/8 (12.5%) · tasa base=17.7% (n=744) · Δ=-5.2pp · IC90 del Δ=[-17.7, 44.8]pp → señal NO DISCRIMINA
+
+=== A3: fwd 3/6/12 meses tras activación vs incondicional (bootstrap por bloques, 5000 rep, bloque 26 sem) ===
+BTC    fwd3m tras activar=91.7% vs incond=62.0% · Δ=29.7pp · IC90 incond=[-35%,314%] → dentro del azar
+BTC    fwd6m tras activar=219.2% vs incond=178.0% · Δ=41.1pp · IC90 incond=[-49%,1081%] → dentro del azar
+BTC    fwd12m tras activar=2440.2% vs incond=519.8% · Δ=1920.4pp · IC90 incond=[-60%,1965%] → MEJOR que 90% del azar
+SEMIS  fwd3m tras activar=3.6% vs incond=5.2% · Δ=-1.6pp · IC90 incond=[-17%,26%] → dentro del azar
+SEMIS  fwd6m tras activar=15.3% vs incond=10.7% · Δ=4.5pp · IC90 incond=[-23%,53%] → dentro del azar
+SEMIS  fwd12m tras activar=22.7% vs incond=21.8% · Δ=0.9pp · IC90 incond=[-37%,109%] → dentro del azar
+ORO    fwd3m tras activar=-2.5% vs incond=2.9% · Δ=-5.4pp · IC90 incond=[-9%,17%] → dentro del azar
+ORO    fwd6m tras activar=-10.4% vs incond=6.0% · Δ=-16.4pp · IC90 incond=[-12%,26%] → dentro del azar
+ORO    fwd12m tras activar=2.8% vs incond=12.8% · Δ=-10.0pp · IC90 incond=[-14%,44%] → dentro del azar
+EMXC   fwd3m tras activar=-1.3% vs incond=2.9% · Δ=-4.2pp · IC90 incond=[-15%,20%] → dentro del azar
+EMXC   fwd6m tras activar=-10.8% vs incond=5.9% · Δ=-16.7pp · IC90 incond=[-17%,33%] → dentro del azar
+EMXC   fwd12m tras activar=-1.5% vs incond=11.0% · Δ=-12.5pp · IC90 incond=[-24%,54%] → dentro del azar
+WLG    fwd3m tras activar=2.2% vs incond=3.0% · Δ=-0.8pp · IC90 incond=[-7%,11%] → dentro del azar
+WLG    fwd6m tras activar=3.9% vs incond=6.2% · Δ=-2.3pp · IC90 incond=[-8%,20%] → dentro del azar
+WLG    fwd12m tras activar=11.7% vs incond=12.6% · Δ=-1.0pp · IC90 incond=[-9%,31%] → dentro del azar
+
+=== A3b: BTC excluyendo 2010-2013 (ventana 2014+ con CM) ===
+BTC 2014+: N=6 · fwd6m tras activar=63.1% vs incond=46.0% · Δ=17.1pp
+BTC 2014+ aciertos: 1/6
+
+=== A4: ORO 2008 — fwd 3/6/12m desde cada semana con trim>35% ===
+semanas 2008 con trim ORO>35%: 0
+
+=== A4b: ORO — fwd desde cada episodio de DFII10>2.5% desde 2003 ===
+  2006-06-16: fwd3m=-0.5% · fwd6m=5.8% · fwd12m=12.4% (fwd de las 4sem previas ND)
+  2007-06-01: fwd3m=0.1% · fwd6m=16.4% · fwd12m=31.6% (fwd de las 4sem previas ND)
+  2007-08-10: fwd3m=23.4% · fwd6m=36.7% · fwd12m=26.8% (fwd de las 4sem previas ND)
+  2008-10-10: fwd3m=0.8% · fwd6m=3.7% · fwd12m=23.6% (fwd de las 4sem previas ND)
+  2026-09-11: fwd3m=-5.7% · fwd6m=-5.7% · fwd12m=-5.7% (fwd de las 4sem previas ND)
+
+=== B3: picos locales BTC — Z/Puell/trim del detector real 0/30/60/90d antes ===
+pico 2013 2013-04-09 · P=    231 · t0: trim= 60% (Z 4.92 P4.78) · 30d: trim= 90% (Z 6.59 P2.91) · 60d: trim= 55% (Z 4.79 P1.45) · 90d: trim=  0% (Z 2.62 P0.72)
+pico 2013 2013-11-29 · P=   1129 · t0: trim= 90% (Z 12.23 P9.29) · 30d: trim= 73% (Z 4.97 P2.97) · 60d: trim=  0% (Z 3.00 P1.93) · 90d: trim= 35% (Z 3.28 P2.53)
+pico 2017 2017-12-07 · P=  17032 · t0: trim= 90% (Z 13.24 P5.44) · 30d: trim= 60% (Z 6.62 P2.20) · 60d: trim= 19% (Z 5.39 P2.46) · 90d: trim= 64% (Z 6.23 P3.15)
+pico 2017 2017-12-15 · P=  17702 · t0: trim= 90% (Z 11.83 P5.75) · 30d: trim= 87% (Z 7.59 P3.44) · 60d: trim= 86% (Z 7.42 P2.59) · 90d: trim= 35% (Z 4.60 P2.63)
+pico 2021 2021-01-08 · P=  40775 · t0: trim= 90% (Z 11.86 P2.85) · 30d: trim=  4% (Z 5.07 P1.26) · 60d: trim=  0% (Z 4.79 P1.23) · 90d: trim=  0% (Z 2.68 P0.79)
+pico 2021 2021-04-16 · P=  61571 · t0: trim= 79% (Z 7.40 P1.87) · 30d: trim= 90% (Z 8.66 P2.99) · 60d: trim= 90% (Z 10.06 P2.83) · 90d: trim= 90% (Z 9.23 P2.62)
+pico 2021 2021-11-10 · P=  64756 · t0: trim=  3% (Z 5.07 P1.45) · 30d: trim= 19% (Z 5.38 P1.53) · 60d: trim=  0% (Z 3.42 P1.18) · 90d: trim=  0% (Z 4.10 P1.44)
+pico 2024-25 2025-01-21 · P= 105988 · t0: trim= 10% (Z 5.20 P1.20) · 30d: trim=  0% (Z 4.68 P1.23) · 60d: trim= 33% (Z 5.91 P1.19) · 90d: trim=  0% (Z 3.28 P0.86)
+pico 2024-25 2025-10-03 · P= 122348 · t0: trim=  0% (Z 4.36 P1.01) · 30d: trim=  0% (Z 3.80 P1.16) · 60d: trim=  0% (Z 4.24 P1.33) · 90d: trim= 32% (Z 4.36 P1.35)
+
+=== C1: barrido sintético (detector real) — max Δtrim contiguo + lista de cliffs ===
+BTC Puell      puellMultiple            [0,6] paso 0.01: max Δtrim=35.0pp en 2.50→2.51 · cliffs≥5pp=3
+    x=2.51: 0%→35% (Δ35pp)
+    x=3.51: 35%→55% (Δ20pp)
+    x=5.01: 55%→73% (Δ18pp)
+BTC Z          mvrvZScore               [0,9] paso 0.01: max Δtrim=1.0pp en 5.13→5.14 · cliffs≥5pp=0
+BTC RSI-W      btcRsiWeekly             [70,90] paso 0.05: max Δtrim=1.0pp en 80.30→80.35 · cliffs≥5pp=0
+SEMIS RS Z     soxSpyRelativeStrength   [0,3] paso 0.01: max Δtrim=30.0pp en 0.99→1.00 · cliffs≥5pp=3
+    x=1.00: 0%→30% (Δ30pp)
+    x=1.50: 30%→45% (Δ15pp)
+    x=2.00: 45%→55% (Δ10pp)
+SEMIS RSI-W    soxRsiWeekly             [70,90] paso 0.05: max Δtrim=35.0pp en 80.00→80.05 · cliffs≥5pp=2
+    x=80.05: 0%→35% (Δ35pp)
+    x=85.05: 35%→55% (Δ20pp)
+EMXC DXY       dxy                      [100,120] paso 0.01: max Δtrim=1.0pp en 103.51→103.52 · cliffs≥5pp=0
+EMXC RSI-W     emxcRsiWeekly            [70,90] paso 0.05: max Δtrim=25.0pp en 75.00→75.05 · cliffs≥5pp=1
+    x=75.05: 0%→25% (Δ25pp)
+ORO DFII10     realYield10y             [0,3.5] paso 0.01: max Δtrim=1.0pp en 0.10→0.11 · cliffs≥5pp=0
+ORO Brent      brentOil                 [50,150] paso 0.5: max Δtrim=0.0pp en  · cliffs≥5pp=0
+URNU ratio     uraniumSpotPrice         [0.9,1.6] paso 0.01: max Δtrim=0.0pp en  · cliffs≥5pp=0
+
+=== D2: trim agregado PONDERADO (peso igual 1/6 por sleeve) en 2008 / mar-2020 / 2022 ===
+  GFC 2008-09:
+    2008-01-04: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-02-01: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-03-07: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-04-04: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-05-02: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-06-06: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-07-03: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-08-01: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-09-05: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-10-03: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-11-07: trimPonderado=20.0pp × w=1/6 → 0.033
+    2008-12-05: trimPonderado=20.0pp × w=1/6 → 0.033
+    2009-01-02: trimPonderado=20.0pp × w=1/6 → 0.033
+    2009-02-06: trimPonderado=20.0pp × w=1/6 → 0.033
+    2009-03-06: trimPonderado=50.0pp × w=1/6 → 0.083
+    media GFC 2008-09: trim ponderado medio=3.7pp · máx individual=45% ( SEMIS en 2009-03-27 )
+  COVID mar-2020:
+    2020-03-06: trimPonderado=30.0pp × w=1/6 → 0.050
+    2020-04-03: trimPonderado=30.0pp × w=1/6 → 0.050
+    media COVID mar-2020: trim ponderado medio=4.0pp · máx individual=30% ( SEMIS en 2020-02-21 )
+  2022:
+    2022-01-07: trimPonderado=30.0pp × w=1/6 → 0.050
+    2022-02-04: trimPonderado=0.0pp × w=1/6 → 0.000
+    2022-03-04: trimPonderado=0.0pp × w=1/6 → 0.000
+    2022-04-01: trimPonderado=0.0pp × w=1/6 → 0.000
+    2022-05-06: trimPonderado=24.0pp × w=1/6 → 0.040
+    2022-06-03: trimPonderado=13.0pp × w=1/6 → 0.022
+    2022-07-01: trimPonderado=46.0pp × w=1/6 → 0.077
+    2022-08-05: trimPonderado=50.0pp × w=1/6 → 0.083
+    2022-09-02: trimPonderado=50.0pp × w=1/6 → 0.083
+    2022-10-07: trimPonderado=50.0pp × w=1/6 → 0.083
+    2022-11-04: trimPonderado=50.0pp × w=1/6 → 0.083
+    2022-12-02: trimPonderado=39.0pp × w=1/6 → 0.065
+    media 2022: trim ponderado medio=4.9pp · máx individual=45% ( SEMIS en 2022-01-14 )
+
+=== D3: correlación de activaciones CON N de semanas solapadas ===
+  BTC    vs SEMIS : r=0.16 · N solapadas=2441 · media activo=0.08/0.27
+  BTC    vs ORO   : r=0.16 · N solapadas=2441 · media activo=0.08/0.42
+  BTC    vs EMXC  : r=-0.12 · N solapadas=2441 · media activo=0.08/0.23
+  BTC    vs WLG   : r=0.30 · N solapadas=2441 · media activo=0.08/0.05
+  SEMIS  vs ORO   : r=0.28 · N solapadas=2441 · media activo=0.27/0.42
+  SEMIS  vs EMXC  : r=-0.19 · N solapadas=2441 · media activo=0.27/0.23
+  SEMIS  vs WLG   : r=0.24 · N solapadas=2441 · media activo=0.27/0.05
+  ORO    vs EMXC  : r=-0.24 · N solapadas=2441 · media activo=0.42/0.23
+  ORO    vs WLG   : r=0.14 · N solapadas=2441 · media activo=0.42/0.05
+  EMXC   vs WLG   : r=-0.07 · N solapadas=2441 · media activo=0.23/0.05
+
+=== C2: rampa NEUTRA (trim=0 en el mismo punto que el escalón) vs vieja ===
+DXY | trim real (step) | rampa ANTES (98→0) | rampa NEUTRA (103→0)
+   102.90 |        0% |        26% |         0%
+   103.00 |        0% |        27% |         0%
+   103.01 |       30% |        27% |         0%
+   104.00 |       30% |        29% |        13%
+   105.00 |       30% |        32% |        25%
+   106.00 |       30% |        36% |        30%
+   108.00 |       45% |        45% |        38%
+   110.00 |       45% |        54% |        45%
+   112.00 |       65% |        63% |        53%
+   115.00 |       65% |        68% |        65%
+   117.00 |       73% |        71% |        70%
+
+=== C3: histéresis sobre ENTRADA (DXY entrar 103/salir 101) — ops/impuestos/fricción con harness reparado ===
+  raw (step)     CAGR   9.71% · MaxDD  -62.6% · ops 65 · impuestos€   10334 · spreads€   111 · expoMedia 98.0%
+  +hyst ENTRADA  CAGR   9.52% · MaxDD  -62.6% · ops 26 · impuestos€   10271 · spreads€   101 · expoMedia 95.9%
+
+=== C4: topes 30/40% por familia con motor reparado (turnover/impuestos primaria) ===
+ORO: 
+  raw        ops=145 · impuestos€   4862 · spreads€   93 · CAGR   8.04% · MaxDD -43.0%
+  cap30      ops=145 · impuestos€   4862 · spreads€   93 · CAGR   8.04% · MaxDD -43.0%
+  cap40      ops=145 · impuestos€   4862 · spreads€   93 · CAGR   8.04% · MaxDD -43.0%
+EMXC: 
+  raw        ops=65 · impuestos€  10334 · spreads€  111 · CAGR   9.71% · MaxDD -62.6%
+  cap30      ops=65 · impuestos€  10334 · spreads€  111 · CAGR   9.71% · MaxDD -62.6%
+  cap40      ops=65 · impuestos€  10334 · spreads€  111 · CAGR   9.71% · MaxDD -62.6%
+SEMIS: 
+  raw        ops=455 · impuestos€ 108804 · spreads€ 3436 · CAGR  11.94% · MaxDD -81.6%
+  cap30      ops=213 · impuestos€ 114846 · spreads€ 1612 · CAGR  13.08% · MaxDD -82.8%
+  cap40      ops=336 · impuestos€ 109466 · spreads€ 2336 · CAGR  12.55% · MaxDD -82.4%
+BTC: 
+  raw        ops=177 · impuestos€ 16749789 · spreads€ 236285 · CAGR  67.28% · MaxDD -86.3%
+  cap30      ops=155 · impuestos€ 504368974 · spreads€ 4338330 · CAGR 111.13% · MaxDD -88.5%
+  cap40      ops=173 · impuestos€ 271773945 · spreads€ 2684266 · CAGR 101.61% · MaxDD -87.8%
+
+=== C5: WLG hoy — P/E forward del repo (20) y trim que el detector real daría ===
+  con P/E fwd=20 y sin RSI: trim hoy = 45% · razón: P/E MSCI World 20.0 — mercado caro
+
+=== D1: CARTERA 6-sleeve = motor real: w_s=NAV/6·(1−trim_s), banda 2% — dos cajas ===
+  TBILL-ON       | CAGR 17.59% EXACTO (2012-01-13→2026-10-07, 14.73 años) | vol 14.1% | MaxDD -30.8% | ops 554 | impuestos€ 22092 | spreads€ 482
+  CASH0-ON       | CAGR 16.97% EXACTO (2012-01-13→2026-10-07, 14.73 años) | vol 14.0% | MaxDD -31.1% | ops 552 | impuestos€ 21238 | spreads€ 466
+  TBILL-ON-gross | CAGR 17.64% EXACTO (2012-01-13→2026-10-07, 14.73 años) | vol 14.1% | MaxDD -30.8% | ops 553 | impuestos€ 0 | spreads€ 0
+  TBILL-OFF      | CAGR 26.48% EXACTO (2012-01-13→2026-10-07, 14.73 años) | vol 17.5% | MaxDD -32.9% | ops 274 | impuestos€ 44666 | spreads€ 308
+  CASH0-OFF      | CAGR 25.99% EXACTO (2012-01-13→2026-10-07, 14.73 años) | vol 17.5% | MaxDD -33.1% | ops 270 | impuestos€ 43629 | spreads€ 295
+
+[saved] audit/m3_results_post.json

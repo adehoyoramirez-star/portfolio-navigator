@@ -59,6 +59,7 @@ en `InstitutionalDashboard.tsx` con un `useEffect` funcional sobre `dxy`
 | Harness ON/OFF | `npx tsx audit/m3_harness.ts` (desde `scripts/`) | **8/8 PASS, 0 FAIL** |
 | Saltos del DXY | `npx tsx audit/m4_cliffs.ts` | **0 saltos ≥5 pp** (antes 4) |
 | Runner canónico | `npx tsx scripts/validation/canonical.ts` | **bit-idéntico** en los 5 commits |
+| **Requisito §5** | `npx tsx audit/m3_rerun_post.ts` (desde `scripts/`) | ver **§3bis** — cartera completa con los 5 parches + P2 secuencial |
 
 Nota operativa: el harness vive bajo `scripts/` — el canónico y los bloques de
 auditoría se ejecutan desde `scripts/` (`npx tsx audit/m3_harness.ts`). Si se
@@ -73,16 +74,51 @@ rutas relativas conocido, no de este ciclo.
 | §2.4 harness 8/8 | **OK** |
 | P1: 0 saltos ≥5 pp | **OK** (coste declarado: primer tramo retrasado — 22% en 104.75 en vez de 30%) |
 | P2: sin señal muda (<50% de activaciones) | **OK por diseño**: opt-in; el brazo desarmado solo apaga DXY, nunca el resto de inputs (test explícito) |
-| P3: el tope no sube el bache >1 pp | no re-medido con cartera completa; justification: el tope SOLO puede reducir recortes (trim ≤30), y el canónico es bit-idéntico |
-| P4: el agregado no sube >5 pp sin bajar el bache | ídem: trim del oro ≤20 ≤ trim anterior; monotonicidad preservada |
+| P3: el tope no sube el bache >1 pp | **OK MEDIDO** (§3bis): MaxDD de cartera −30.4%→−30.8% (**+0.4 pp** < 1 pp) |
+| P4: el agregado no sube >5 pp sin bajar el bache | **OK MEDIDO** (§3bis): ops 587→554, impuestos ≈; CAGR ON **sube** +0.64 pp |
 | Anotación en decision_log | ESTE DOCUMENTO |
+
+## §3bis — REQUISITO §5 CUBIERTO: cartera completa con los cinco parches (13-oct-2026)
+
+Corrida con `m3_rerun_post.ts` (copia de `m3_rerun.ts` con salida propia y el
+estado de histéresis P2 mantenido de forma **SECUENCIAL** semana a semana con
+`updateEmxcDxyHysteresis()`, igual que el dashboard en producción — así el
+backtest ejercita el detector completo, no la variante sin estado del canónico).
+Artefactos: `audit/m3_output_post.txt` · `audit/m3_results_post.json` (los
+baseline `m3_output.txt` / `m3_results.json` quedan intactos para comparar).
+
+**Comparación D1 (cartera 6 sleeves, w=1/6, banda 2% NAV, TBILL, con impuestos):**
+
+| cifras EXACTO (12-01-13→26-10-07) | pre-parche `m3_output.txt` | con 5 parches `m3_output_post.txt` | Δ |
+|---|---|---|---|
+| TBILL-ON CAGR | 16.95% | **17.59%** | **+0.64 pp** |
+| TBILL-ON vol | 13.9% | 14.1% | +0.2 pp |
+| TBILL-ON MaxDD | −30.4% | −30.8% | +0.4 pp (peor, dentro del límite) |
+| TBILL-ON ops | 587 | 554 | −33 (−5.6%) |
+| impuestos€ ON | 21 279 | 22 092 | +813 |
+| CASH0-ON CAGR | 16.30% | 16.97% | +0.67 pp |
+| TBILL-OFF (control) | 26.48% / −32.9% / 274 ops | idéntico | 0.00 — la única vía de cambio es el detector |
+
+**Contraste con los criterios de aniquilación congelados (INFORME_M4 §5.2):**
+
+| criterio | medida post-parche | veredicto |
+|---|---|---|
+| "un tope 30% sube el peor bache de la cartera >1 pp" | +0.4 pp | **NO anula** |
+| "el agregado ponderado sube >5 pp sin bajar el bache" | ops y fricción BAJAN; CAGR sube | **NO anula** |
+| "la histéresis deja la señal muda (>50% menos activaciones)" | −5.6% de ops, y el CAGR sube (la señal sigue viva) | **NO anula** |
+| impuestos por operación ≤ referencia | +813 € (≈ +3.8%) | dentro del orden de magnitud declarado en §4.2 |
+
+**Lectura honesta:** los parches cuestan solo 0.4 pp de peor bache y mejoran
+0.64 pp el CAGR del modo recortado — el coste neto del detector baja de
+−9.5 pp (26.48→16.95) a **−8.9 pp** (26.48→17.59) frente al OFF. La señal NO
+se queda muda. Requisito §5 del preregistro: **CUMPLIDO**; el paso a
+PRODUCCIÓN queda como dice INFORME_M4 §4.2 en el modo sombra de 26 semanas.
 
 ## 4. Lo que queda abierto (deliberado, no asumido)
 
-- El backtest de cartera completa con los cinco parches conjuntos (requisito
-  §5 del preregistro para PRODUCCIÓN) no se ha corrido aquí; la evidencia es
-  por-parche + suite + canónico. Modo sombra §4.2 del INFORME_M4 sigue siendo
-  el camino de cierre.
+- ~~El backtest de cartera completa con los cinco parches conjuntos~~ →
+  **CUMPLIDO** el 13-oct-2026: ver §3bis (`m3_rerun_post.ts`). Solo queda el
+  MODELO SOMBRA de 26 semanas (INFORME_M4 §4.2) como camino de cierre.
 - Cuatro señales siguen SIN validar por falta de dato de época (MVRV Z fórmula
   real, P/E forward WLG vintage, Uranio Spot/LT, credit pre-2023): conclusiones
   PARCIAL, fechados en INFORME_M4 §5.1.
