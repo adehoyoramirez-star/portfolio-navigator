@@ -19,9 +19,10 @@ describe("tradingDayReturns calendar filtering", () => {
 
     const returns = tradingDayReturns(closes, dates.map(epoch));
 
-    expect(returns).toHaveLength(2);
-    expect(returns[0]).toBeCloseTo(0.1, 10);
-    expect(returns[1]).toBeCloseTo(120 / 121 - 1, 10);
+    expect(returns).toHaveLength(3);
+    expect(returns[0]).toBeCloseTo(0.1, 10); // Thursday → Friday
+    expect(returns[1]).toBeCloseTo(0.1, 10); // Friday → Monday (Sunday price is forward-filled)
+    expect(returns[2]).toBeCloseTo(120 / 121 - 1, 10); // Monday → Tuesday
   });
 
   test("rejects mismatched close and timestamp lengths", () => {
