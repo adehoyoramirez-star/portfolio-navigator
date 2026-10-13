@@ -252,7 +252,7 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
     institutionalBenchmarkMetrics: emptyMetrics(initialCapital),
     regimeConditional: { EXPANSION: emptyRM, CONTRACTION: emptyRM, CRISIS: emptyRM },
     regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
-    transactionCostBps: 15,
+    transactionCostBps: 0,
     totalTransactionCosts: 0,
     rebalanceCount: 0,
     absoluteTrendGateDiagnostics: {
