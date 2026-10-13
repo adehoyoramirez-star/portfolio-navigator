@@ -110,22 +110,10 @@ export interface TradeCostOutput {
 }
 
 export function computeTradeCost(input: TradeCostInput): TradeCostOutput {
-  const params = ASSET_COST_PARAMS[input.ticker];
-  if (!params) {
-    // Fallback: usar coste fijo de 10bps
-    const turnoverEur = Math.abs(input.newWeight - input.oldWeight) * input.portfolioValueEur;
-    return {
-      ticker: input.ticker,
-      turnoverEur,
-      totalCostEur: turnoverEur * 0.0010 + FIXED_COST_EUR,
-      costBps: 10,
-      breakdown: { fixedCost: FIXED_COST_EUR, spreadCost: turnoverEur * 0.0010, impactCost: 0 },
-    };
-  }
-
   const turnoverWeight = Math.abs(input.newWeight - input.oldWeight);
-  
-  // Si no hay cambio, no hay coste
+
+  // Sin cambio de peso no existe una operación, tampoco para activos sin
+  // parámetros específicos. Evita cobrar la comisión mínima por un no-trade.
   if (turnoverWeight < 1e-6) {
     return {
       ticker: input.ticker,
@@ -137,6 +125,22 @@ export function computeTradeCost(input: TradeCostInput): TradeCostOutput {
   }
 
   const turnoverEur = turnoverWeight * input.portfolioValueEur;
+  const params = ASSET_COST_PARAMS[input.ticker];
+  if (!params) {
+    // Fallback: spread/slippage del 10bps más comisión fija.
+    const spreadCost = turnoverEur * 0.0010;
+    const totalCostEur = spreadCost + FIXED_COST_EUR;
+    const costBps = input.portfolioValueEur > 0
+      ? (totalCostEur / input.portfolioValueEur) * 10_000
+      : 0;
+    return {
+      ticker: input.ticker,
+      turnoverEur,
+      totalCostEur,
+      costBps,
+      breakdown: { fixedCost: FIXED_COST_EUR, spreadCost, impactCost: 0 },
+    };
+  }
 
   // ── 1. Fixed cost ───────────────────────────────────────────────────
   const fixedCost = FIXED_COST_EUR;
