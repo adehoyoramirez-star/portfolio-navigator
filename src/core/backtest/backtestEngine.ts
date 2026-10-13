@@ -685,7 +685,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
   // FIX-BENCH-EQ-REBAL: Equal Weight with periodic rebalancing (same frequency as engine).
   // Weights drift with prices between rebalancing events.
-  // At each rebalanceDay, reset to 1/N and apply turnover costs (same txCostRate as engine).
+  // At each rebalanceDay, reset to 1/N and apply the shared per-asset transaction-cost model.
   // This is a true equal-weight benchmark, not a buy-and-hold (which gets dominated by BTC).
   const eqWeight = 1 / ASSETS.length;
   let benchmarkWeights: Record<string, number> = equalWeightAllocations();
@@ -900,10 +900,17 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         const immediateCost = (allocations: Record<string, number>): number => {
           let cost = 0;
           for (const ticker of ASSETS) {
-            const assetTurnover = Math.abs((allocations[ticker] ?? 0) - (currentAllocations[ticker] ?? 0));
-            if (assetTurnover > 1e-6) {
-              cost += portfolioValue * getAssetSpreadCost(ticker) * assetTurnover + 1.0;
-            }
+            const oldWeight = currentAllocations[ticker] ?? 0;
+            const newWeight = allocations[ticker] ?? 0;
+            if (Math.abs(newWeight - oldWeight) < 1e-6) continue;
+            const closes = closesHistory[backtestTickers[ticker]] ?? [];
+            cost += computeTradeCost({
+              ticker,
+              oldWeight,
+              newWeight,
+              portfolioValueEur: portfolioValue,
+              priceEur: closes[t] ?? 0,
+            }).totalCostEur;
           }
           return cost;
         };
