@@ -6,7 +6,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { runWalkForwardTest, formatWFResult } from './walkForwardTest';
+import { runWalkForwardTest, formatWFResult, DEFAULT_WF_CONFIG } from './walkForwardTest';
 import { ASSETS } from '../../lib/constants';
 
 // ── 1. Cargar CSV augmentado ──────────────────────
@@ -135,15 +135,28 @@ console.log(`   BTC Vol: ${Math.min(...btcVol).toFixed(1)}%–${Math.max(...btcV
 
 // ── 5. Ejecutar walk-forward con masterRegime completo ─────────────────
 console.log('\n🚀 Ejecutando WALK-FORWARD TEST con masterRegime completo...');
-console.log(`   Ventanas: 5 | Train 70% / OOS 30% | Lookback 252d\n`);
+console.log(`   Ventanas: 3 | Train 70% / OOS 30% | Lookback 252d | Rebalanceo 63d\n`);
 
-const wfResult = runWalkForwardTest({
-  closesHistory,
-  macroHistory: { vix, yieldSpread, creditSpread, move, dxyTrend, btcVol },
+const wfConfig = {
+  ...DEFAULT_WF_CONFIG,
+  nWindows: 3,
+  trainRatio: 0.70,
   lookbackDays: 252,
   rebalanceDays: 63,
   initialCapital: 10_000,
-});
+};
+const wfResult = runWalkForwardTest({
+  closesHistory,
+  macroHistory: { vix, yieldSpread, creditSpread, move, dxyTrend, btcVol },
+  lookbackDays: wfConfig.lookbackDays,
+  rebalanceDays: wfConfig.rebalanceDays,
+  initialCapital: wfConfig.initialCapital,
+}, wfConfig);
+if (wfResult.windows.length !== wfConfig.nWindows) {
+  throw new Error(
+    `WFO inválido: se esperaban ${wfConfig.nWindows} ventanas OOS y se obtuvieron ${wfResult.windows.length}. No se publicarán métricas parciales.`
+  );
+}
 
 // ── 6. Mostrar resultados ──────────────────────
 console.log(formatWFResult(wfResult));
