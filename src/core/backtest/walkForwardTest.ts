@@ -628,13 +628,23 @@ export function runWalkForwardTest(
   const cfg: WFTestConfig = { ...DEFAULT_WF_CONFIG, ...config };
   const { nWindows, lookbackDays } = cfg;
 
-  // ── Determinar longitud total de datos ──────────────────────────────
+  // ── Resolver ticker y longitud con la misma regla que runBacktest ───
+  // Usar el proxy solo si existe y tiene más historia que el activo real.
+  // El runner CSV puede contener únicamente tickers reales; forzar el proxy
+  // dejaba al benchmark Equal Weight leyendo arrays vacíos.
+  const backtestTickers: Record<string, string> = {};
   const lengths = ASSETS.map(t => {
-    const bticker = PROXY_MAP[t] ?? t;
-    return (input.closesHistory[bticker] ?? []).length;
+    const proxy = PROXY_MAP[t] ?? t;
+    const proxyLen = (input.closesHistory[proxy] ?? []).length;
+    const realLen = (input.closesHistory[t] ?? []).length;
+    const selected = proxyLen > realLen ? proxy : t;
+    backtestTickers[t] = selected;
+    return (input.closesHistory[selected] ?? []).length;
   });
-  const totalDataDays = Math.max(...lengths);
-  if (totalDataDays < lookbackDays + nWindows * 63) {
+  // Todos los activos deben existir y compartir un timeline utilizable.
+  // Math.max ocultaba series ausentes/desalineadas y podía indexar fuera de rango.
+  const totalDataDays = lengths.length ? Math.min(...lengths) : 0;
+  if (lengths.some(length => length === 0) || totalDataDays < lookbackDays + nWindows * 63) {
     return insufficientDataResult(cfg, totalDataDays);
   }
 
@@ -646,13 +656,6 @@ export function runWalkForwardTest(
 
   // ── Ejecutar walk-forward por ventana ──────────────────────────────
   const results: WFWindowResult[] = [];
-
-  // ── Backtest tickers (con proxy) ──
-  // Usar PROXY_MAP como runBacktest para que el EW benchmark compare justo
-  const backtestTickers: Record<string, string> = {};
-  for (const ticker of ASSETS) {
-    backtestTickers[ticker] = PROXY_MAP[ticker] ?? ticker;
-  }
 
   // Helper para slicear macroHistory incluyendo campos opcionales
   function sliceMacro(macro: NonNullable<typeof input.macroHistory>, start: number, end: number) {
