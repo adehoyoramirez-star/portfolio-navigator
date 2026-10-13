@@ -157,15 +157,15 @@ export interface WFTestResult {
   };
   // FIX-AUDIT-R11: Deflated Sharpe Ratio (López de Prado 2014)
   /** Deflated Sharpe Ratio — corrige por múltiples comparaciones */
-  deflatedSharpeRatio: number;
+  deflatedSharpeRatio: number | null;
   /** Probabilistic Sharpe Ratio: estimación exploratoria, no inferencia calibrada. */
-  probabilisticSharpeRatio: number;
+  probabilisticSharpeRatio: number | null;
   /**
    * Estas métricas no se consideran evidencia estadística validada:
    * DSR usa ventanas WFO como proxy de trials y PSR omite momentos no normales/
    * dependencia temporal. Mantener explícito el estado evita sobreinterpretación.
    */
-  statisticalMetricsStatus: 'PROVISIONAL_NOT_VALIDATED';
+  statisticalMetricsStatus: 'UNAVAILABLE_NOT_VALIDATED';
   /** Benchmark Equal Weight Sharpe promedio OOS */
   equalWeightSharpeOosAvg: number;
   /** ¿El motor bate al Equal Weight en OOS? */
@@ -579,7 +579,7 @@ function buildRecommendation(
   windows: WFWindowResult[],
   beatsEqualWeight: boolean,
   equalWeightSharpeOosAvg: number,
-  deflatedSharpeRatio: number
+  _deflatedSharpeRatio: number | null
 ): string {
   const worst = windows.reduce((prev, w) =>
     w.consistencyScore < prev.consistencyScore ? w : prev,
@@ -635,9 +635,9 @@ function insufficientDataResult(
     pctWindowsPositiveCagr: 0,
     recommendation: `Datos insuficientes para walk-forward. Se necesitan al menos ${config.nWindows * 100 + config.lookbackDays} días de datos; se tienen ${totalDataDays}.`,
     adaptiveFactorWeights: { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 },
-    deflatedSharpeRatio: 0,
-    probabilisticSharpeRatio: 0.5,
-    statisticalMetricsStatus: 'PROVISIONAL_NOT_VALIDATED',
+    deflatedSharpeRatio: null,
+    probabilisticSharpeRatio: null,
+    statisticalMetricsStatus: 'UNAVAILABLE_NOT_VALIDATED',
     equalWeightSharpeOosAvg: 0,
     beatsEqualWeight: false,
     pctBullMarketWindows: 0,
@@ -867,8 +867,11 @@ export function runWalkForwardTest(
   const avgObsPerWindow = results.length > 0
     ? results.reduce((s, r) => s + r.window.testDays, 0) / results.length
     : 252;
-  const dsr = deflatedSharpeRatio(sharpeOosAvg, results.length, avgObsPerWindow);
-  const psr = probabilisticSharpeRatio(sharpeOosAvg, avgObsPerWindow);
+  // Fail closed: these approximations lack the inputs required for calibrated
+  // inference (effective trial count, concatenated OOS return series, moments,
+  // and treatment of serial dependence). Do not publish a numeric pseudo-result.
+  const dsr: number | null = null;
+  const psr: number | null = null;
   const pctBullWindows = results.filter(r => r.bullMarketWindow).length / results.length;
 
   const { robustnessGrade, overfittingRisk } = gradeResults(
@@ -898,7 +901,7 @@ export function runWalkForwardTest(
     adaptiveFactorWeights: computeAdaptiveWeights(overfittingRisk),
     deflatedSharpeRatio: dsr,
     probabilisticSharpeRatio: psr,
-    statisticalMetricsStatus: 'PROVISIONAL_NOT_VALIDATED',
+    statisticalMetricsStatus: 'UNAVAILABLE_NOT_VALIDATED',
     equalWeightSharpeOosAvg: ewSharpeOosAvg,
     beatsEqualWeight: beatsEW,
     pctBullMarketWindows: pctBullWindows,
@@ -948,8 +951,8 @@ export function formatWFResult(result: WFTestResult): string {
     '',
     '─── MÉTRICAS ESTADÍSTICAS (PROVISIONALES; NO VALIDADAS) ───',
     `  Estado: ${result.statisticalMetricsStatus}`,
-    `  DSR exploratorio: ${result.deflatedSharpeRatio.toFixed(3)} (no interpretar como significación calibrada)`,
-    `  PSR aproximado:   ${(result.probabilisticSharpeRatio * 100).toFixed(1)}% (no interpretar como probabilidad calibrada)`,
+    `  DSR: ${result.deflatedSharpeRatio === null ? 'NO DISPONIBLE — metodología no validada' : result.deflatedSharpeRatio.toFixed(3)}`,
+    `  PSR: ${result.probabilisticSharpeRatio === null ? 'NO DISPONIBLE — metodología no validada' : (result.probabilisticSharpeRatio * 100).toFixed(1) + '%'}`,
     `  EW OOS: Sharpe ${result.equalWeightSharpeOosAvg.toFixed(3)} — Motor ${result.beatsEqualWeight ? '🟢 BATE' : '🔴 PIERDE'} vs Equal Weight`,
     `  Bull:   ${(result.pctBullMarketWindows * 100).toFixed(0)}% ventanas en bull market BTC (>100%)`,
     '',
