@@ -288,13 +288,14 @@ function gradeResults(
   const negativeCagrWindows = windows.filter(w => w.outOfSample.metrics.cagr <= 0).length;
   const severeDegradationWindows = windows.filter(w => w.sharpeDegradation > 1.0).length;
   const ratioBad = negativeCagrWindows / Math.max(1, windows.length);
+  const ratioSevere = severeDegradationWindows / Math.max(1, windows.length);
 
   let overfittingRisk: WFTestResult['overfittingRisk'];
   if (overallConsistency >= 0.80 && avgSharpeDegradation < 0.3 && ratioBad < 0.2) {
     overfittingRisk = 'LOW';
   } else if (overallConsistency >= 0.60 && avgSharpeDegradation < 0.6 && ratioBad < 0.4) {
     overfittingRisk = 'MODERATE';
-  } else if (overallConsistency >= 0.40 || avgSharpeDegradation < 1.5) {
+  } else if (overallConsistency >= 0.40 && avgSharpeDegradation < 1.5 && ratioBad < 0.6 && ratioSevere < 0.6) {
     overfittingRisk = 'HIGH';
   } else {
     overfittingRisk = 'CRITICAL';
@@ -553,7 +554,10 @@ function buildRecommendation(
   overallConsistency: number,
   avgSharpeDegradation: number,
   grade: WFTestResult['robustnessGrade'],
-  windows: WFWindowResult[]
+  windows: WFWindowResult[],
+  beatsEqualWeight: boolean,
+  equalWeightSharpeOosAvg: number,
+  deflatedSharpeRatio: number
 ): string {
   const worst = windows.reduce((prev, w) =>
     w.consistencyScore < prev.consistencyScore ? w : prev,
@@ -576,7 +580,13 @@ function buildRecommendation(
   const bestInfo = `Mejor ventana: ${best.window.windowIndex + 1} (IS Sharpe ${best.inSample.metrics.sharpe.toFixed(2)} → OOS ${best.outOfSample.metrics.sharpe.toFixed(2)})`;
   const worstInfo = `Peor ventana: ${worst.window.windowIndex + 1} (IS Sharpe ${worst.inSample.metrics.sharpe.toFixed(2)} → OOS ${worst.outOfSample.metrics.sharpe.toFixed(2)})`;
 
-  return `${gradeDesc}\n${bestInfo}\n${worstInfo}`;
+  const benchmarkWarning = beatsEqualWeight
+    ? `Benchmark OOS: Olympus supera al equal-weight (Sharpe EW ${equalWeightSharpeOosAvg.toFixed(2)}).`
+    : `ALERTA DE EDGE: Olympus NO supera al equal-weight (Sharpe EW ${equalWeightSharpeOosAvg.toFixed(2)}); consistencia IS/OOS no implica rentabilidad relativa superior.`;
+  const dsrWarning = deflatedSharpeRatio <= 0
+    ? `ALERTA ESTADÍSTICA: DSR ${deflatedSharpeRatio.toFixed(2)} no aporta evidencia positiva frente al sesgo de selección.`
+    : `DSR ${deflatedSharpeRatio.toFixed(2)}; interpretar junto con tamaño muestral y número de pruebas.`;
+  return `${gradeDesc}\n${benchmarkWarning}\n${dsrWarning}\n${bestInfo}\n${worstInfo}`;
 }
 
 // ── Resultado por datos insuficientes ──────────────────────────────────
@@ -859,7 +869,8 @@ export function runWalkForwardTest(
     pctWindowsPositiveSharpe,
     pctWindowsPositiveCagr,
     recommendation: buildRecommendation(
-      overallConsistency, avgSharpeDegradation, robustnessGrade, results
+      overallConsistency, avgSharpeDegradation, robustnessGrade, results,
+      beatsEW, ewSharpeOosAvg, dsr
     ),
     adaptiveFactorWeights: computeAdaptiveWeights(overfittingRisk),
     deflatedSharpeRatio: dsr,
