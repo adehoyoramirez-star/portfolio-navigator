@@ -366,7 +366,7 @@ function deflatedSharpeRatio(
   if (nWindows <= 1 || avgObsPerWindow < 20) return sharpeOosAvg;
 
   // De-anualizar: el Sharpe diario es Sharpe_anual / √252
-  const sharpeDaily = sharpeOosAvg / Math.sqrt(252);
+  const sharpeDaily = sharpeOosAvg / Math.sqrt(365);
 
   // FIX-DSR (09-Jul-2026): Expected max |SR| under null for N trials × T obs.
   //
@@ -445,8 +445,9 @@ function erf(x: number): number {
 // FIX-EW-COSTS (09-Jul-2026): añadidos costes de transacción realistas al EW.
 // ANTES: EW era un benchmark gratuito (0 bps) mientras el motor pagaba 15bps
 //   por rebalanceo → comparación injusta que favorecía al EW.
-// AHORA: EW rebalancea mensualmente (cada 21 días) con 15bps de coste.
-//   Esto refleja el coste real de mantener una cartera equal-weight.
+// AHORA: EW rebalancea con la misma cadencia y modelo de costes por activo que Olympus.
+// La serie contiene días naturales, así que CAGR y Sharpe se anualizan sobre 365 días,
+// igual que las métricas del motor. No mezclar bases de 252 y 365 días.
 function equalWeightBenchmark(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
@@ -527,14 +528,14 @@ function equalWeightBenchmark(
     dayIndex++;
   }
 
-  const years = dailyRets.length / 252;
+  const years = dailyRets.length / 365;
   const totalReturn = value / initialCapital - 1;
   const cagr = years > 0 && 1 + totalReturn > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
   const m = dailyRets.reduce((sum, ret) => sum + ret, 0) / dailyRets.length;
   const variance = dailyRets.length > 1
     ? dailyRets.reduce((sum, ret) => sum + (ret - m) ** 2, 0) / (dailyRets.length - 1)
     : 0;
-  const sharpe = variance > 0 ? (m / Math.sqrt(variance)) * Math.sqrt(252) : 0;
+  const sharpe = variance > 0 ? (m / Math.sqrt(variance)) * Math.sqrt(365) : 0;
 
   return { cagr, sharpe, maxDrawdown: maxDD, finalValue: value, dailyRets };
 }
