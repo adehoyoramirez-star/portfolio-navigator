@@ -10,7 +10,16 @@ import { runWalkForwardTest, formatWFResult } from './walkForwardTest';
 import { ASSETS } from '../../lib/constants';
 
 // ── 1. Cargar CSV augmentado ──────────────────────
-const csvPath = path.join(process.cwd(), 'historical_data_daily_augmented.csv');
+const csvCandidates = [
+  path.join(process.cwd(), 'historical_data_daily_augmented.csv'),
+  path.join(process.cwd(), 'public', 'historical_data_daily_augmented.csv'),
+];
+const csvPath = csvCandidates.find(candidate => fs.existsSync(candidate));
+if (!csvPath) {
+  throw new Error(
+    `No se encontró historical_data_daily_augmented.csv. Rutas comprobadas:\n${csvCandidates.join('\n')}`
+  );
+}
 console.log('CSV:', csvPath);
 const csvContent = fs.readFileSync(csvPath, 'utf8');
 const lines = csvContent.split('\n');
@@ -60,7 +69,7 @@ for (let i = 1; i < lines.length; i++) {
 const minLen = Math.min(
   ...ASSETS.map(t => closesHistory[t].length),
   vixArr.length, tnxArr.length, irxArr.length,
-  moveArr.length, dxyArr.length, btcVolArr.length
+  hygArr.length, lqdArr.length, moveArr.length, dxyArr.length, btcVolArr.length
 );
 for (const t of ASSETS) closesHistory[t] = closesHistory[t].slice(0, minLen);
 const vix = vixArr.slice(0, minLen);
