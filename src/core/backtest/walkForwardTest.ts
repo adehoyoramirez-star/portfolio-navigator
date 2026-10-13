@@ -353,7 +353,7 @@ function computeAdaptiveWeights(
 /**
  * Calcula el Deflated Sharpe Ratio (López de Prado 2014).
  *
- * @param sharpeOosAvg - Sharpe OOS promedio ANUALIZADO (×√252)
+ * @param sharpeOosAvg - Sharpe OOS promedio ANUALIZADO (×√365, serie de días naturales)
  * @param nWindows - Número de ventanas walk-forward
  * @param avgObsPerWindow - Observaciones promedio por ventana OOS (días)
  * @returns DSR value
