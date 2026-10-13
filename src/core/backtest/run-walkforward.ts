@@ -23,7 +23,38 @@ if (!csvPath) {
 console.log('CSV:', csvPath);
 const csvContent = fs.readFileSync(csvPath, 'utf8');
 const lines = csvContent.split('\n');
-const headers = lines[0].split(',');
+const headers = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim());
+const dataLines = lines.slice(1).map(line => line.trim()).filter(Boolean);
+const requiredColumns = [
+  'Date', ...ASSETS, '^VIX', '^TNX', '^IRX', 'HYG', 'LQD', '^MOVE', 'DX-Y.NYB', 'BTC_VOL',
+];
+const missingColumns = requiredColumns.filter(column => !headers.includes(column));
+if (missingColumns.length) {
+  throw new Error(`CSV sin columnas obligatorias: ${missingColumns.join(', ')}`);
+}
+if (dataLines.length === 0) throw new Error('CSV sin filas históricas.');
+
+function parseRequiredNumber(raw: string, column: string, date: string): number {
+  const value = Number(raw);
+  if (!raw.trim() || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`Dato inválido para ${column} en ${date}: ${JSON.stringify(raw)}`);
+  }
+  return value;
+}
+
+const dateIndex = headers.indexOf('Date');
+const dates = dataLines.map(line => line.split(',')[dateIndex]?.trim() ?? '');
+for (let i = 0; i < dates.length; i++) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dates[i]) || Number.isNaN(Date.parse(dates[i]))) {
+    throw new Error(`Fecha inválida en fila CSV ${i + 2}: ${JSON.stringify(dates[i])}`);
+  }
+  if (i > 0 && dates[i] <= dates[i - 1]) {
+    throw new Error(`Fechas duplicadas o no ordenadas: ${dates[i - 1]} → ${dates[i]}`);
+  }
+}
+const firstDate = dates[0];
+const lastDate = dates[dates.length - 1];
+const staleDays = Math.floor((Date.now() - Date.parse(`${lastDate}T00:00:00Z`)) / 86_400_000);
 
 // ── 2. Inicializar arrays ──────────────────────
 const closesHistory: Record<string, number[]> = {};
@@ -37,32 +68,23 @@ const moveArr: number[] = [];
 const dxyArr: number[] = [];
 const btcVolArr: number[] = [];
 
-for (let i = 1; i < lines.length; i++) {
-  const line = lines[i].trim();
-  if (!line) continue;
+for (const line of dataLines) {
   const parts = line.split(',');
-  if (parts.length < headers.length) continue;
-
-  for (const ticker of ASSETS) {
-    const idx = headers.indexOf(ticker);
-    if (idx !== -1) closesHistory[ticker].push(parseFloat(parts[idx]) || 0);
+  if (parts.length !== headers.length) {
+    throw new Error(`Número de columnas incorrecto en ${parts[dateIndex] ?? 'fecha desconocida'}: ${parts.length} frente a ${headers.length}`);
   }
-  const vi = headers.indexOf('^VIX');
-  if (vi !== -1) vixArr.push(parseFloat(parts[vi]) || 0);
-  const ti = headers.indexOf('^TNX');
-  if (ti !== -1) tnxArr.push(parseFloat(parts[ti]) || 0);
-  const ii = headers.indexOf('^IRX');
-  if (ii !== -1) irxArr.push(parseFloat(parts[ii]) || 0);
-  const hi = headers.indexOf('HYG');
-  if (hi !== -1) hygArr.push(parseFloat(parts[hi]) || 0);
-  const li = headers.indexOf('LQD');
-  if (li !== -1) lqdArr.push(parseFloat(parts[li]) || 0);
-  const mi = headers.indexOf('^MOVE');
-  if (mi !== -1) moveArr.push(parseFloat(parts[mi]) || 95);
-  const di = headers.indexOf('DX-Y.NYB');
-  if (di !== -1) dxyArr.push(parseFloat(parts[di]) || 103);
-  const bi = headers.indexOf('BTC_VOL');
-  if (bi !== -1) btcVolArr.push(parseFloat(parts[bi]) || 30);
+  const date = parts[dateIndex].trim();
+  for (const ticker of ASSETS) {
+    closesHistory[ticker].push(parseRequiredNumber(parts[headers.indexOf(ticker)], ticker, date));
+  }
+  vixArr.push(parseRequiredNumber(parts[headers.indexOf('^VIX')], '^VIX', date));
+  tnxArr.push(parseRequiredNumber(parts[headers.indexOf('^TNX')], '^TNX', date));
+  irxArr.push(parseRequiredNumber(parts[headers.indexOf('^IRX')], '^IRX', date));
+  hygArr.push(parseRequiredNumber(parts[headers.indexOf('HYG')], 'HYG', date));
+  lqdArr.push(parseRequiredNumber(parts[headers.indexOf('LQD')], 'LQD', date));
+  moveArr.push(parseRequiredNumber(parts[headers.indexOf('^MOVE')], '^MOVE', date));
+  dxyArr.push(parseRequiredNumber(parts[headers.indexOf('DX-Y.NYB')], 'DX-Y.NYB', date));
+  btcVolArr.push(parseRequiredNumber(parts[headers.indexOf('BTC_VOL')], 'BTC_VOL', date));
 }
 
 // ── 3. Recortar a longitud común ───────────────
@@ -102,7 +124,10 @@ for (let i = 0; i < minLen; i++) {
 }
 
 console.log(`\n📊 Datos cargados: ${minLen} días`);
-console.log(`   Período: ${lines[1]?.split(',')[0]} → ${lines[lines.length-1]?.split(',')[0]}`);
+console.log(`   Período: ${firstDate} → ${lastDate}`);
+console.log(`   Antigüedad del último dato: ${staleDays} días`);
+if (staleDays > 7) console.warn('   ADVERTENCIA: CSV histórico desactualizado; resultados solo describen el período disponible.');
+console.warn('   ADVERTENCIA METODOLÓGICA: creditSpread es un proxy sintético derivado de HYG/LQD, no un spread histórico observado.');
 console.log(`   VIX: ${Math.min(...vix).toFixed(1)}–${Math.max(...vix).toFixed(1)}`);
 console.log(`   MOVE: ${Math.min(...move).toFixed(1)}–${Math.max(...move).toFixed(1)}`);
 console.log(`   DXY Trend: ${Math.min(...dxyTrend).toFixed(2)}%–${Math.max(...dxyTrend).toFixed(2)}%`);
