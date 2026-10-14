@@ -105,3 +105,17 @@ Tests assert the diagnostic values on a deterministic fixture. This closes a nar
 - [ ] Partial-input WFO output is visibly labelled and cannot be mistaken for production validation.
 - [ ] Signal-level paired tests cover scores, regime/penalty, target weights, turnover and costs.
 - [ ] No parameter optimization is performed against the same OOS windows used for evaluation.
+
+## Implementation update — historical CSV temporal integrity diagnostic
+
+Added `scripts/audit/audit-historical-data.ts`, exposed as `npm run audit:historical-data`, and wired it into the walk-forward GitHub Actions workflow before the WFO run.
+
+The diagnostic checks:
+- ISO calendar dates, duplicate/unsorted dates, missing calendar dates, duplicate headers and inconsistent row widths;
+- blank and non-numeric cells;
+- per-series unchanged values across consecutive rows, split into weekend-related transitions and weekday-only transitions.
+
+Unchanged values are reported as **diagnostic evidence only**. They are not automatically classified as forward-filled because legitimate flat prices can occur; the CSV currently has no per-cell source timestamp or fill-provenance field. Structural date/row errors and non-numeric nonblank values fail the audit step; blank cells are counted for review and are not silently rewritten.
+
+This is an initial integrity gate, not yet a complete stale-price detector. The next follow-up is to inspect the generated per-series counts and, where data provenance supports it, distinguish legitimate market closures from stale observations using exchange calendars and source observation timestamps. No strategy thresholds or portfolio allocations were changed.
+
