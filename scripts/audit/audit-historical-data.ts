@@ -61,6 +61,15 @@ for (let i = 1; i < rows.length; i++) {
 }
 
 const series = headers.filter((header) => header !== "Date");
+const latestDate = rows.at(-1)?.date;
+const todayUtc = new Date().toISOString().slice(0, 10);
+const latestTimestamp = latestDate ? Date.parse(`${latestDate}T00:00:00Z`) : Number.NaN;
+const todayTimestamp = Date.parse(`${todayUtc}T00:00:00Z`);
+const historicalAgeDays = Number.isFinite(latestTimestamp) ? Math.floor((todayTimestamp - latestTimestamp) / 86_400_000) : null;
+const maxHistoricalAgeDays = Number(process.env.MAX_HISTORICAL_AGE_DAYS ?? "7");
+if (!Number.isInteger(maxHistoricalAgeDays) || maxHistoricalAgeDays < 0) {
+  throw new Error("MAX_HISTORICAL_AGE_DAYS must be a non-negative integer.");
+}
 const stats = series.map((column) => {
   const index = headers.indexOf(column);
   let unchangedTransitions = 0;
@@ -98,6 +107,7 @@ console.log("HISTORICAL CSV TEMPORAL INTEGRITY AUDIT");
 console.log(`File: ${path.relative(process.cwd(), csvPath)}`);
 console.log(`Rows: ${rows.length}; columns: ${headers.length}; period: ${rows[0]?.date ?? "n/a"} -> ${rows.at(-1)?.date ?? "n/a"}`);
 console.log(`Structural errors: ${structuralErrors.length}; blank cells: ${blankCells}; non-numeric cells: ${invalidNumericCells}`);
+console.log(`Freshness: latest=${latestDate ?? "n/a"}; UTC today=${todayUtc}; age=${historicalAgeDays ?? "n/a"} days; maximum allowed=${maxHistoricalAgeDays} days`);
 console.log("Identical consecutive values (diagnostic only; not proof of forward-fill):");
 for (const item of stats) {
   console.log(`- ${item.column}: ${item.unchangedTransitions}/${item.observedTransitions} unchanged (${item.unchangedPct ?? "n/a"}%); weekend-related=${item.unchangedWeekendTransitions}; weekday-only=${item.unchangedWeekdayTransitions}`);
