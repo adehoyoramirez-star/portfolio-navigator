@@ -63,8 +63,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Explain skipped preview check when Vercel credentials are unavailable
+        if: ${{ secrets.VERCEL_TOKEN == '' || secrets.VERCEL_PROJECT_ID == '' }}
+        run: |
+          echo "::warning::G5 preview smoke test skipped: configure VERCEL_TOKEN and VERCEL_PROJECT_ID in repository Actions secrets to enable it."
+          echo "G1 static/build/test gates remain active; preview deployment has not been verified."
+
       - name: Wait for Vercel preview deployment
         id: vercel-wait
+        if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_PROJECT_ID != '' }}
         uses: tj-actions/vercel-wait@v1
         with:
           project-id: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -74,6 +81,7 @@ jobs:
           timeout: '600'
 
       - name: Smoke test — HTTP 200 + React root
+        if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_PROJECT_ID != '' }}
         run: |
           URL="${{ steps.vercel-wait.outputs.deployment-url }}"
           if [ -z "$URL" ]; then
