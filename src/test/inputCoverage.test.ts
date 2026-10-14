@@ -51,6 +51,49 @@ describe("backtest historical-input coverage contract", () => {
     expect(manifest.missingRequired).toEqual([]);
   });
 
+
+  it("preserves provenance and quality fields without inventing unknown values", () => {
+    const manifest = createBacktestCoverageManifest({
+      mode: "partial-input",
+      start: "2023-10-09",
+      end: "2026-08-17",
+      observations: 1044,
+      source: "test",
+      observed: ["asset_prices"],
+      unavailable: ["m2_growth"],
+      fallback: ["m2_growth"],
+      seriesMetadata: [
+        {
+          family: "asset_prices",
+          source: "versioned daily prices",
+          units: "ticker-native",
+          timestampConvention: "daily date; publication time unknown",
+          freshnessThresholdDays: 7,
+          carryForwardRule: "weekend rows may be forward-filled",
+          missingCount: 0,
+          fallbackCount: 0,
+        },
+        {
+          family: "m2_growth",
+          source: "constant compatibility fallback",
+          units: "unknown",
+          timestampConvention: "not a dated observation",
+          freshnessThresholdDays: null,
+          carryForwardRule: "constant fallback",
+          missingCount: null,
+          fallbackCount: 1044,
+        },
+      ],
+    });
+
+    expect(manifest.schemaVersion).toBe(2);
+    expect(manifest.seriesMetadata[0].units).toBe("ticker-native");
+    expect(manifest.seriesMetadata[0].missingCount).toBe(0);
+    expect(manifest.seriesMetadata[1].freshnessThresholdDays).toBeNull();
+    expect(manifest.seriesMetadata[1].missingCount).toBeNull();
+    expect(manifest.seriesMetadata[1].fallbackCount).toBe(1044);
+  });
+
   it("does not let fallback values count as observed historical data", () => {
     expect(() => createBacktestCoverageManifest({
       mode: "full-parity",
