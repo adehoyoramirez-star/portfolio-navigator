@@ -15,6 +15,7 @@
     "evidence:paired": "tsx scripts/bear-veto-evidence.ts paired1326",
     "evidence:paired:wide": "tsx scripts/bear-veto-evidence.ts pairedwide",
     "evidence:breadth": "tsx scripts/bear-veto-evidence.ts breadth1326",
+    "audit:historical-data": "tsx scripts/audit/audit-historical-data.ts",
     "gates": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
