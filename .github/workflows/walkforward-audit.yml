@@ -8,6 +8,7 @@ on:
       - "src/lib/assetRegistry.ts"
       - "src/lib/constants.ts"
       - "public/historical_data_daily_augmented.csv"
+      - "scripts/audit/audit-historical-data.ts"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/walkforward-audit.yml"
@@ -33,6 +34,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit historical CSV temporal integrity
+        run: npm run audit:historical-data
 
       - name: Run walk-forward and capture full report
         shell: bash
