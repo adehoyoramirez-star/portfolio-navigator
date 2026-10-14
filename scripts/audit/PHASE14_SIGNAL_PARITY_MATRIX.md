@@ -119,3 +119,11 @@ Unchanged values are reported as **diagnostic evidence only**. They are not auto
 
 This is an initial integrity gate, not yet a complete stale-price detector. The next follow-up is to inspect the generated per-series counts and, where data provenance supports it, distinguish legitimate market closures from stale observations using exchange calendars and source observation timestamps. No strategy thresholds or portfolio allocations were changed.
 
+## Implementation update — fail-closed freshness gate
+
+The temporal-integrity diagnostic now calculates the age of the last date in the canonical CSV against the current UTC date. By default, it fails when the dataset is older than **7 calendar days**; this threshold can be adjusted explicitly with `MAX_HISTORICAL_AGE_DAYS` for controlled research runs. Invalid future-dated data also fails.
+
+The CI walk-forward workflow runs this check before WFO, so a stale dataset blocks the new WFO result rather than merely printing a warning. On the last observed run, the canonical CSV ended on 2026-08-17 while the runner date was 2026-10-14 (58 days old); that dataset is not suitable for current validation. This gate does not update the data automatically and does not make stale history fresh. The next required action is a controlled data refresh using the real instrument tickers, followed by re-running the integrity audit and checking source/market-date provenance.
+
+Important limitation: the CSV stores a calendar-daily grid with carried-forward values but does not preserve per-cell source dates. The unchanged-value statistics are clues, not a definitive forward-fill classification. No portfolio allocation, signal threshold, or execution rule was changed.
+
