@@ -186,7 +186,7 @@ console.log('   Scope: isolated computeGlobalStress only; does not measure downs
 
 // ── 5. Ejecutar walk-forward con masterRegime completo ─────────────────
 console.log('\n🚀 Ejecutando WALK-FORWARD TEST con masterRegime completo...');
-console.log(`   Ventanas: 3 | Train 70% / OOS 30% | Lookback 252d | Rebalanceo 63d\n`);
+console.log(`   Ventanas: 3 | Train 60% / OOS 40% (ajustado por cobertura OAS) | Lookback 252d | Rebalanceo 63d\n`);
 
 // FRED OAS coverage begins on 2023-10-09, leaving 1044 calendar rows.
  // At 70/30, three OOS windows would be ~104 days each, below the engine's
