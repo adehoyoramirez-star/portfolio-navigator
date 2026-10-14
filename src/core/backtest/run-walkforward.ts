@@ -217,6 +217,11 @@ const coverageManifest = createBacktestCoverageManifest({
       carryForwardRule: 'Alignment behavior is delegated to alignObservedCreditSpread; inspect helper before interpreting individual carried observations',
       missingCount: 0,
       fallbackCount: 0,
+      sourceRowCount: alignedOas.diagnostics.sourceRows,
+      observedCount: alignedOas.diagnostics.observedSourceRows,
+      blankSourceRows: alignedOas.diagnostics.blankSourceRows,
+      carriedForwardCount: alignedOas.diagnostics.carriedForwardRows,
+      maxObservedAgeDays: alignedOas.diagnostics.maxObservedAgeDays,
     },
     {
       family: 'move',
