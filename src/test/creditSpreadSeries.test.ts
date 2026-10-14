@@ -28,6 +28,17 @@ describe("alignObservedCreditSpread", () => {
     const result = alignObservedCreditSpread(dates, source);
     expect(result.startIndex).toBe(1);
     expect(result.values).toEqual([4.34, 4.26, 4.26, 4.25, 4.30, 4.30, 4.30, 4.27]);
+    expect(result.diagnostics).toMatchObject({
+      sourceRows: 7,
+      observedSourceRows: 6,
+      blankSourceRows: 1,
+      alignedCalendarRows: 8,
+      carriedForwardRows: 3,
+      maxObservedAgeDays: 3,
+      maxAllowedAgeDays: 4,
+      firstObservationDate: "2023-10-09",
+      lastObservationDate: "2023-12-22",
+    });
   });
 
   test("fails closed when an observation is stale beyond the allowed calendar age", () => {
