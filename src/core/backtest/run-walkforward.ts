@@ -10,6 +10,7 @@ import { runWalkForwardTest, formatWFResult, DEFAULT_WF_CONFIG } from './walkFor
 import { ASSETS } from '../../lib/constants';
 import { computeGlobalStress } from '../macro/globalStress';
 import { alignObservedCreditSpread } from '../../lib/creditSpreadSeries';
+import { createBacktestCoverageManifest } from './inputCoverage';
 
 // ── 1. Cargar CSV augmentado ──────────────────────
 // El archivo de public/ es la serie diaria canónica versionada para la app.
@@ -152,6 +153,39 @@ console.log(`   MOVE: ${Math.min(...move).toFixed(1)}–${Math.max(...move).toFi
 console.log(`   DXY Trend (20d): ${(Math.min(...dxyTrend) * 100).toFixed(2)}%–${(Math.max(...dxyTrend) * 100).toFixed(2)}%`);
 // btcVol is annualized volatility in decimal form (0.50 = 50%), as expected by globalStress.ts.
 console.log(`   BTC Vol: ${(Math.min(...btcVol) * 100).toFixed(0)}%–${(Math.max(...btcVol) * 100).toFixed(0)}%`);
+
+// ── 4a. Manifiesto de cobertura histórica — explícito y fail-closed ────────────
+// El modo predeterminado es diagnóstico parcial. OLYMPUS_BACKTEST_MODE=full-parity
+// debe fallar antes del WFO mientras falte cualquier familia de señales requerida.
+const coverageMode = process.env.OLYMPUS_BACKTEST_MODE === 'full-parity'
+  ? 'full-parity'
+  : 'partial-input';
+const coverageManifest = createBacktestCoverageManifest({
+  mode: coverageMode,
+  start: firstDate,
+  end: lastDate,
+  observations: minLen,
+  source: 'public/historical_data_daily_augmented.csv + scripts/audit/data/fred_BAMLH0A0HYM2.csv',
+  observed: [
+    'asset_prices', 'vix', 'yield_spread', 'credit_spread',
+    'move', 'dxy_trend', 'btc_volatility',
+  ],
+  unavailable: [
+    'oil', 'central_bank_liquidity', 'erp', 'average_correlation',
+    'btc_on_chain', 'cycle_top', 'sox_rsi', 'inflation_breakeven',
+    'asset_valuation',
+  ],
+  // M2 is not observed in the WFO history; engine compatibility fallback is 2.
+  fallback: ['m2_growth'],
+});
+console.log('\n📋 BACKTEST INPUT COVERAGE MANIFEST');
+console.log(JSON.stringify(coverageManifest, null, 2));
+if (!coverageManifest.fullParityEligible) {
+  console.warn(
+    `   PARITY STATUS: PARTIAL INPUT — ${coverageManifest.missingRequired.length} required signal families missing. ` +
+    'This WFO is diagnostic only and is not full production-engine validation.',
+  );
+}
 
 // ── 4b. Diagnóstico causal intermedio del DXY ─────────────────────────
 // Separa tres cosas: días que activan el umbral, cambio en stress score y
