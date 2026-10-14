@@ -84,7 +84,7 @@ jobs:
           timeout: '600'
 
       - name: Smoke test — HTTP 200 + React root
-        if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_PROJECT_ID != '' }}
+        if: ${{ env.VERCEL_TOKEN != '' && env.VERCEL_PROJECT_ID != '' }}
         run: |
           URL="${{ steps.vercel-wait.outputs.deployment-url }}"
           if [ -z "$URL" ]; then
