@@ -9,6 +9,8 @@ on:
       - "src/lib/constants.ts"
       - "public/historical_data_daily_augmented.csv"
       - "scripts/audit/audit-historical-data.ts"
+      - "scripts/download_data.py"
+      - "scripts/rebuild_history.mjs"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/walkforward-audit.yml"
