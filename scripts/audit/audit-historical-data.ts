@@ -121,3 +121,7 @@ if (invalidNumericCells > 0) {
   console.error(`Found ${invalidNumericCells} non-numeric nonblank cells.`);
   process.exitCode = 1;
 }
+if (historicalAgeDays === null || historicalAgeDays < 0 || historicalAgeDays > maxHistoricalAgeDays) {
+  console.error(`Historical dataset is stale or has an invalid future date: age=${historicalAgeDays ?? "unknown"} days, allowed=${maxHistoricalAgeDays}.`);
+  process.exitCode = 1;
+}
