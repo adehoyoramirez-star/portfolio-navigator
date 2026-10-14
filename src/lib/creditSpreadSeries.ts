@@ -4,11 +4,23 @@
  * strict four-calendar-day maximum age. Dates before source coverage are not
  * synthesized: the caller must trim all series to startIndex.
  */
+export interface CreditSpreadAlignmentDiagnostics {
+  sourceRows: number;
+  observedSourceRows: number;
+  blankSourceRows: number;
+  alignedCalendarRows: number;
+  carriedForwardRows: number;
+  maxObservedAgeDays: number;
+  maxAllowedAgeDays: number;
+  firstObservationDate: string;
+  lastObservationDate: string;
+}
+
 export function alignObservedCreditSpread(
   calendarDates: string[],
   csvContent: string,
   maxObservationAgeDays = 4
-): { startIndex: number; values: number[] } {
+): { startIndex: number; values: number[]; diagnostics: CreditSpreadAlignmentDiagnostics } {
   const rows = csvContent.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
   if (rows.length < 2) throw new Error("FRED OAS CSV has no observations.");
   const header = rows[0].split(",").map(value => value.trim());
@@ -19,6 +31,7 @@ export function alignObservedCreditSpread(
   }
 
   const observations = new Map<string, number>();
+  let blankSourceRows = 0;
   let previousDate = "";
   for (const row of rows.slice(1)) {
     if (!row.trim()) continue;
@@ -37,6 +50,8 @@ export function alignObservedCreditSpread(
         throw new Error(`Invalid FRED OAS value on ${date}: ${raw}`);
       }
       observations.set(date, value);
+    } else {
+      blankSourceRows++;
     }
     previousDate = date;
   }
@@ -51,6 +66,8 @@ export function alignObservedCreditSpread(
   let lastDate = "";
   let lastValue = 0;
   const values: number[] = [];
+  let carriedForwardRows = 0;
+  let maxObservedAgeDays = 0;
   for (const date of calendarDates.slice(startIndex)) {
     while (cursor < observationDates.length && observationDates[cursor] <= date) {
       lastDate = observationDates[cursor];
@@ -64,7 +81,23 @@ export function alignObservedCreditSpread(
     if (ageDays < 0 || ageDays > maxObservationAgeDays) {
       throw new Error(`FRED OAS observation stale on ${date}: last ${lastDate} (${ageDays} days).`);
     }
+    if (ageDays > 0) carriedForwardRows++;
+    maxObservedAgeDays = Math.max(maxObservedAgeDays, ageDays);
     values.push(lastValue);
   }
-  return { startIndex, values };
+  return {
+    startIndex,
+    values,
+    diagnostics: {
+      sourceRows: rows.length - 1,
+      observedSourceRows: observations.size,
+      blankSourceRows,
+      alignedCalendarRows: values.length,
+      carriedForwardRows,
+      maxObservedAgeDays,
+      maxAllowedAgeDays: maxObservationAgeDays,
+      firstObservationDate,
+      lastObservationDate: observationDates[observationDates.length - 1],
+    },
+  };
 }
