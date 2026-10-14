@@ -127,3 +127,11 @@ The CI walk-forward workflow runs this check before WFO, so a stale dataset bloc
 
 Important limitation: the CSV stores a calendar-daily grid with carried-forward values but does not preserve per-cell source dates. The unchanged-value statistics are clues, not a definitive forward-fill classification. No portfolio allocation, signal threshold, or execution rule was changed.
 
+## Implementation update — legacy downloader no longer creates proxy-contaminated history
+
+Corrected `scripts/download_data.py` to use the actual instrument symbols used by the audited universe (including `BTC-EUR`, `EMXC.DE`, `0P00000WLG.F`, `PPFB.DE`, `URNU.DE`, `VVSM.DE` and `XNAS.DE`) rather than labelling US proxies such as BTC-USD, EEM, GLD, URA, SMH and QQQ as European assets.
+
+The script no longer calls `bfill()`. It only forward-fills after each series has a real first observation, drops the leading interval without full common coverage, and aborts if any required ticker is missing instead of silently omitting it. Its output is observed trading dates, not the canonical calendar-daily augmented file; do not copy it into production without running the separate canonical-history build and integrity checks.
+
+The workflow now also triggers when either the legacy downloader or canonical-history builder changes. The freshness gate remains intentionally fail-closed: the current canonical CSV is known to be stale, so a current WFO run must not be presented as a validated result until the data is refreshed and audited.
+
