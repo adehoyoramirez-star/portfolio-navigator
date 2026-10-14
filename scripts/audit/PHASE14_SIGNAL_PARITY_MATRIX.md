@@ -83,6 +83,19 @@ A second layer has been added to the coverage manifest (schema version 2):
 
 Important limitation: the current 7-day value is an explicit audit threshold, not a claim that every row is point-in-time fresh. The daily CSV has calendar dates but does not encode publication timestamps or per-cell forward-fill provenance. Before full parity, data ingestion must preserve observation timestamps and per-series missing/stale/fill counts at the actual decision time.
 
+
+## Implementation update — observed credit-spread alignment diagnostics (next milestone)
+
+The FRED OAS alignment helper now returns explicit diagnostics alongside aligned values:
+
+- source row count, observed nonblank source rows and blank source rows;
+- number of aligned calendar rows and rows carried forward from an earlier observation;
+- maximum observed age in calendar days, the enforced maximum age, and first/last valid observation dates.
+
+The WFO manifest now reports these measured diagnostics for the OAS series. The metadata freshness threshold is set to the helper's enforced 4-calendar-day maximum, not the generic 7-day threshold used for daily CSV families. Existing fail-closed behavior remains: a row is rejected when the last published OAS value is more than four calendar days old.
+
+Tests assert the diagnostic values on a deterministic fixture. This closes a narrow but important provenance gap for credit spread; it does not yet establish point-in-time publication timestamps for the price/macro CSV or make the other missing signal families available.
+
 ## Acceptance criteria
 
 - [ ] Every live engine input is classified as historical, account-state, static configuration, or unavailable.
