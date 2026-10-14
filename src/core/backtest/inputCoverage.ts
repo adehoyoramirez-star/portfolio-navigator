@@ -34,6 +34,11 @@ export interface BacktestSeriesMetadata {
   carryForwardRule: string;
   missingCount: number | null;
   fallbackCount: number;
+  sourceRowCount?: number | null;
+  observedCount?: number | null;
+  blankSourceRows?: number | null;
+  carriedForwardCount?: number | null;
+  maxObservedAgeDays?: number | null;
 }
 
 export interface BacktestCoverageManifest {
@@ -119,6 +124,21 @@ export function createBacktestCoverageManifest(input: {
       fallbackCount: Number.isFinite(item.fallbackCount) && item.fallbackCount >= 0
         ? item.fallbackCount
         : 0,
+      sourceRowCount: Number.isFinite(item.sourceRowCount) && item.sourceRowCount! >= 0
+        ? item.sourceRowCount
+        : null,
+      observedCount: Number.isFinite(item.observedCount) && item.observedCount! >= 0
+        ? item.observedCount
+        : null,
+      blankSourceRows: Number.isFinite(item.blankSourceRows) && item.blankSourceRows! >= 0
+        ? item.blankSourceRows
+        : null,
+      carriedForwardCount: Number.isFinite(item.carriedForwardCount) && item.carriedForwardCount! >= 0
+        ? item.carriedForwardCount
+        : null,
+      maxObservedAgeDays: Number.isFinite(item.maxObservedAgeDays) && item.maxObservedAgeDays! >= 0
+        ? item.maxObservedAgeDays
+        : null,
     })),
   };
 
