@@ -34,7 +34,7 @@ describe("alignObservedCreditSpread", () => {
       blankSourceRows: 1,
       alignedCalendarRows: 8,
       carriedForwardRows: 3,
-      maxObservedAgeDays: 3,
+      maxObservedAgeDays: 2,
       maxAllowedAgeDays: 4,
       firstObservationDate: "2023-10-09",
       lastObservationDate: "2023-12-22",
