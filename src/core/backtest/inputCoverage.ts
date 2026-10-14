@@ -25,8 +25,19 @@ export type BacktestSignalFamily =
   | "inflation_breakeven"
   | "asset_valuation";
 
+export interface BacktestSeriesMetadata {
+  family: BacktestSignalFamily;
+  source: string;
+  units: string;
+  timestampConvention: string;
+  freshnessThresholdDays: number | null;
+  carryForwardRule: string;
+  missingCount: number | null;
+  fallbackCount: number;
+}
+
 export interface BacktestCoverageManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: BacktestCoverageMode;
   generatedAt: string;
   period: { start: string; end: string; observations: number };
@@ -37,6 +48,7 @@ export interface BacktestCoverageManifest {
   requiredForFullParity: BacktestSignalFamily[];
   missingRequired: BacktestSignalFamily[];
   fullParityEligible: boolean;
+  seriesMetadata: BacktestSeriesMetadata[];
 }
 
 export const FULL_PARITY_REQUIRED_FAMILIES: readonly BacktestSignalFamily[] = [
@@ -68,6 +80,7 @@ export function createBacktestCoverageManifest(input: {
   observed: BacktestSignalFamily[];
   unavailable: BacktestSignalFamily[];
   fallback?: BacktestSignalFamily[];
+  seriesMetadata?: BacktestSeriesMetadata[];
 }): BacktestCoverageManifest {
   const observed = [...new Set(input.observed)];
   const unavailable = [...new Set(input.unavailable)];
@@ -77,7 +90,7 @@ export function createBacktestCoverageManifest(input: {
     family => !observedSet.has(family),
   );
   const manifest: BacktestCoverageManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: input.mode,
     generatedAt: new Date().toISOString(),
     period: {
@@ -92,6 +105,21 @@ export function createBacktestCoverageManifest(input: {
     requiredForFullParity: [...FULL_PARITY_REQUIRED_FAMILIES],
     missingRequired: [...missingRequired],
     fullParityEligible: missingRequired.length === 0,
+    // Unknown metadata stays explicit; never infer provenance or quality.
+    seriesMetadata: (input.seriesMetadata ?? []).map(item => ({
+      ...item,
+      freshnessThresholdDays:
+        Number.isFinite(item.freshnessThresholdDays) && item.freshnessThresholdDays! >= 0
+          ? item.freshnessThresholdDays
+          : null,
+      missingCount:
+        Number.isFinite(item.missingCount) && item.missingCount! >= 0
+          ? item.missingCount
+          : null,
+      fallbackCount: Number.isFinite(item.fallbackCount) && item.fallbackCount >= 0
+        ? item.fallbackCount
+        : 0,
+    })),
   };
 
   if (input.mode === "full-parity" && !manifest.fullParityEligible) {
