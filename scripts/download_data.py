@@ -83,7 +83,7 @@ def main() -> None:
         raise RuntimeError("No queda un periodo común con observaciones reales para todos los tickers.")
 
     # Basic numeric sanity: all required series must be positive and finite.
-    invalid = (~closes.applymap(lambda value: pd.notna(value) and value > 0)).any()
+    invalid = (~(closes.notna() & closes.gt(0))).any()
     if invalid.any():
         raise RuntimeError(f"Valores no positivos o inválidos en: {', '.join(invalid[invalid].index)}")
 
