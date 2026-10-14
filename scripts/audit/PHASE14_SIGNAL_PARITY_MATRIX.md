@@ -50,15 +50,25 @@ The backtest call substitutes `m2Growth ?? 2`, `move ?? (vix * 4.5 + 20)`, `dxyT
 
 The current WFO's identical ON/OFF portfolio metrics do not, by themselves, prove the DXY path is inert. The audit must compare, on the same dates: input value → global stress score → regime label/penalty → raw engine allocations → final target weights → turnover and cost. If weights are identical, document the first layer at which the input stops affecting output.
 
+## Implementation update — coverage contract added
+
+Implemented on the audit branch:
+
+- `src/core/backtest/inputCoverage.ts` defines the required signal-family contract and a machine-readable manifest.
+- `src/test/inputCoverage.test.ts` covers partial mode, missing-family rejection, complete coverage, and the rule that fallbacks do not count as observed history.
+- `src/core/backtest/run-walkforward.ts` prints the manifest and labels the current WFO `partial-input`.
+- Set `OLYMPUS_BACKTEST_MODE=full-parity` to request strict mode. The runner will stop before publishing WFO metrics while any required family is not observed historically.
+
+The current dataset is intentionally partial: missing families include M2, oil, central-bank liquidity, ERP, average correlation, BTC on-chain, cycle-top, SOX RSI, inflation breakeven and asset valuation. M2 is separately tagged as a fallback, never as observed history.
+
 ## Next implementation step
 
-Do not alter investment thresholds or add synthetic historical values to make the engine appear complete. Implement a **parity manifest and fail-closed test** first:
+Do not alter investment thresholds or add synthetic historical values to make the engine appear complete.
 
-1. Add a typed list of required historical inputs for a run labelled `full-parity`; keep current partial WFO explicitly labelled `partial-input`.
-2. Make the runner emit a machine-readable coverage manifest: source, units, timestamp convention, start/end, missing count, fallback count, and freshness.
-3. Add tests proving that `full-parity` refuses to run when any required signal family is absent; `partial-input` may run but must retain its limitation in output.
-4. Only after point-in-time historical feeds exist, add paired signal/target-weight tests for each signal family.
-5. Re-run CI and the WFO; do not merge until findings are reviewed.
+1. Confirm CI passes on the exact latest commit.
+2. Expand the manifest with per-series units, point-in-time timestamp convention, freshness threshold, carry-forward rule and missing/fallback counts.
+3. Only after point-in-time historical feeds exist, add paired signal/target-weight tests for each signal family.
+4. Re-run WFO with the same windows/costs; do not merge until findings are reviewed.
 
 ## Acceptance criteria
 
