@@ -70,6 +70,19 @@ Do not alter investment thresholds or add synthetic historical values to make th
 3. Only after point-in-time historical feeds exist, add paired signal/target-weight tests for each signal family.
 4. Re-run WFO with the same windows/costs; do not merge until findings are reviewed.
 
+
+## Implementation update — per-series provenance and quality metadata
+
+A second layer has been added to the coverage manifest (schema version 2):
+
+- For the seven historical families currently supplied, the WFO now records source/column, units, timestamp convention, a 7-day freshness threshold, carry-forward caveats, missing count, and fallback count.
+- M2 is explicitly identified as a constant engine fallback with `fallbackCount = observations`; it is not represented as dated historical data.
+- Families with no historical series have `missingCount: null` rather than a fabricated count. The manifest says the series is unavailable, not that every calendar row was individually observed missing.
+- Unknown publication timestamps, units, and fill provenance remain labelled as unknown or not independently represented. This is a provenance inventory, not proof that the series meets its freshness threshold.
+- A unit test checks that unknown values remain unknown and that fallback counts are retained.
+
+Important limitation: the current 7-day value is an explicit audit threshold, not a claim that every row is point-in-time fresh. The daily CSV has calendar dates but does not encode publication timestamps or per-cell forward-fill provenance. Before full parity, data ingestion must preserve observation timestamps and per-series missing/stale/fill counts at the actual decision time.
+
 ## Acceptance criteria
 
 - [ ] Every live engine input is classified as historical, account-state, static configuration, or unavailable.
