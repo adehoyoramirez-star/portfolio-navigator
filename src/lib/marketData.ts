@@ -3,7 +3,7 @@ import { loadFredManual, isFredDataFresh, fetchFredFromServer } from '@/lib/fred
 import { getManualPrice, loadManualPrices } from '@/lib/manualPrices';
 import { getProxyUS, getLongRunPrior, getEarningsYield, isAssetCrypto } from '@/lib/assetRegistry';
 import { ASSETS } from '@/lib/constants';
-import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate, priceAtCalendarDaysAgo } from '@/lib/stats';
+import { cleanCloses, dailyReturns, tradingDayReturns, mean, std, percentile, periodReturnByDate, priceAtCalendarDaysAgo, calculateDxyTrend } from '@/lib/stats';
 import type { CEWSDataPoint } from '@/core/macro/crisisEarlyWarning';
 import { fromManualInputs } from '@/core/macro/liquidityCycle';
 import { liquidityScore } from '@/core/macro/liquidity';
@@ -83,6 +83,7 @@ export interface MarketData {
   sp500Momentum12m: number;  // retorno últimos 12m (menos 1m)
   sp500Momentum3m: number;   // retorno últimos 3m
   dxy: number;               // índice del dólar (DX-Y.NYB)
+  dxyTrend: number;          // retorno DXY a 20 días naturales, decimal (0.02 = +2%)
   // PER S&P 500 — Shiller CAPE de FRED
   per: number;
   perSource: "FRED" | "manual";
@@ -834,8 +835,13 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
     ? (sp500Last / sp500_3m_start) - 1
     : 0.05;
 
-  // ── DXY ───────────────────────────────────────────────────────────────────
-  const dxy = yfData['DX-Y.NYB']?.currentPrice ?? 103.5;
+  // ── DXY: nivel actual y retorno histórico a 20 días naturales ──────────────
+  const dxyData = yfData['DX-Y.NYB'];
+  const dxy = dxyData?.currentPrice ?? 103.5;
+  const dxyCloses = dxyData ? cleanCloses(dxyData.closes) : [];
+  const dxyTimestamps = dxyData?.timestamps ?? [];
+  // No transformar un nivel/fallback en señal. Si historia insuficiente o stale, neutralizar.
+  const dxyTrend = calculateDxyTrend(dxyCloses, dxyTimestamps);
 
   // ── BRENT CRUDE OIL (BZ=F) — referente europeo/global ──────────────────
   const wtiRaw = yfData['BZ=F']?.currentPrice ?? 0;
@@ -1058,6 +1064,7 @@ export async function fetchRealMarketData(): Promise<{ marketData: MarketData; f
       sp500Momentum12m,
       sp500Momentum3m,
       dxy,
+      dxyTrend,
       btcVolRealized,
       jumpIntensity: jumpParams.intensity,
       jumpMean:      jumpParams.mean,

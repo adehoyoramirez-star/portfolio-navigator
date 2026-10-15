@@ -110,6 +110,23 @@ export function priceAtCalendarDaysAgo(
   return p;
 }
 
+// DXY stress input contract: 20 calendar-day return, decimal units.
+// Returns neutral (0) rather than inventing a trend when history is insufficient or stale.
+export function calculateDxyTrend(
+  closes: number[],
+  timestamps: number[],
+  nowTimestampSeconds: number = Date.now() / 1000,
+  maxAgeDays = 7
+): number {
+  if (closes.length !== timestamps.length || closes.length < 2) return 0;
+  const lastTimestamp = timestamps[timestamps.length - 1];
+  if (!isFinite(lastTimestamp) || lastTimestamp <= 0) return 0;
+  const ageDays = (nowTimestampSeconds - lastTimestamp) / 86400;
+  if (!isFinite(ageDays) || ageDays < 0 || ageDays > maxAgeDays) return 0;
+  const result = periodReturnByDate(closes, timestamps, 20);
+  return result !== null && isFinite(result) ? result : 0;
+}
+
 export function periodReturnByDate(
   closes: number[],
   timestamps: number[],

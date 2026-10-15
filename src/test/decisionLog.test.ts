@@ -202,6 +202,31 @@ describe("buildDecisionRecord — procedencia y data quality", () => {
     expect(legacy.path).toBe("legacy");
     expect(core.path).toBe("core");
   });
+
+  it("incluye las asignaciones CORE sombra en el registro encadenado", () => {
+    const result = mockEngine();
+    (result.meta as unknown as { coreShadow: unknown }).coreShadow = {
+      engineVersion: "v5.4.6-core",
+      regime: "EXPANSION",
+      totalInvested: 0.72,
+      allocations: [
+        { name: "Bitcoin", ticker: "BTC-EUR", finalAllocation: 0.42 },
+        { name: "World", ticker: "0P00000WLG.F", finalAllocation: 0.30 },
+      ],
+    };
+
+    const rec = buildDecisionRecord({ engineResult: result, macro: MACRO, capturedAt: AS_OF });
+    const breadth = rec.breadth as Record<string, unknown>;
+    expect(breadth.core_shadow).toEqual({
+      engine_version: "v5.4.6-core",
+      regime: "EXPANSION",
+      total_invested: 0.72,
+      allocations: [
+        { name: "Bitcoin", ticker: "BTC-EUR", final_allocation: 0.42 },
+        { name: "World", ticker: "0P00000WLG.F", final_allocation: 0.3 },
+      ],
+    });
+  });
 });
 
 // ── 3. Cadena de hashes: enlace y detección de manipulación ────────────────

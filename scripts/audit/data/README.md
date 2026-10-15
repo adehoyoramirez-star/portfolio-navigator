@@ -19,3 +19,7 @@ Descargado: 2026-10-08T11:19:27.845Z · comando: `npx tsx scripts/audit/fase1_da
 | coinmetrics_btc.csv | Coin Metrics Community API | CapMVRVCur, CapMrktCurUSD, CapRealUSD, IssTotUSD | desde 2010-07 |
 
 Sin rellenado hacia atrás: cada serie empieza en su primera barra real.
+
+
+
+Actualización de validación local (2026-10-15): fred_BAMLH0A0HYM2.csv se renovó desde https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2&cosd=1996-01-01. Los CSV canónicos se regeneraron con node scripts/rebuild_history.mjs; URNU.DE usa el proxy URA en USD convertido a EUR con EURUSD=X, autorizado para esta auditoría. Ventana común: 2021-10-17 a 2026-10-13. El histórico URNU proxy no equivale al instrumento real.

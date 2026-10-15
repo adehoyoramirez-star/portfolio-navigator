@@ -19,7 +19,7 @@ import { covarianceMatrix } from "../../lib/marketData";
 // FIX-R2-A3: DCC-GARCH integration for backtest-live alignment
 import { getDynamicCovMatrix } from "../risk/dccGarch";
 import { detectCrisis } from "../macro/crisis";
-import { ASSET_COST_PARAMS } from "../validation/transactionCosts";
+import { computeTradeCost } from "../validation/transactionCosts";
 import { computeGlobalStress } from "../macro/globalStress";
 import { CEWSDataPoint } from "../macro/crisisEarlyWarning";
 import { runOlympusEngine } from "../engine/olympusV3";
@@ -78,6 +78,7 @@ export interface BacktestInput {
   lookbackDays?: number;
   rebalanceDays?: number;
   initialCapital?: number;
+  /** @deprecated Ignorado por runBacktest: se usa el modelo de costes por activo de transactionCosts.ts. */
   transactionCostBps?: number;
   // FIX-AUDIT-T4: blendWeights opcionales para simular autocorrección del motor.
   // El dashboard los inyecta cuando WFO detecta overfitting.
@@ -195,6 +196,12 @@ export interface RegimeConditionalMetrics {
 
 export interface BacktestOutput {
   dailyRecords: DailyRecord[];
+  /** Close-to-close strategy returns after all execution costs for the day. */
+  dailyNetReturns: number[];
+  /** Close-to-close equal-weight benchmark returns after execution costs. */
+  benchmarkNetReturns: number[];
+  /** Close-to-close institutional benchmark returns after execution costs. */
+  institutionalBenchmarkNetReturns: number[];
   metrics: BacktestMetrics;
   benchmarkMetrics: BacktestMetrics;
   institutionalBenchmarkMetrics: BacktestMetrics;
@@ -235,6 +242,57 @@ function periodReturn(closes: number[], t: number, days: number): number {
   return isFinite(r) ? r : 0;
 }
 
+/** Returns the daily trend-gate multiplier when enough valid price history exists. */
+export function dailyTrendReductionMultiplier(closes: number[], t: number): 0.5 | 0.65 | null {
+  if (t < 50 || !Number.isFinite(closes[t]) || !Number.isFinite(closes[t - 50]) || closes[t] <= 0 || closes[t - 50] <= 0) {
+    return null;
+  }
+
+  const ret50d = periodReturn(closes, t, 50);
+  const has200d = t >= 200 && Number.isFinite(closes[t - 200]) && closes[t - 200] > 0;
+  const ret200d = has200d ? periodReturn(closes, t, 200) : null;
+
+  if (ret50d < -0.15 || (ret200d !== null && ret200d < -0.25)) return 0.5;
+  if (ret200d !== null && ret200d < -0.10) return 0.65;
+  return null;
+}
+
+function cashWeightForAllocations(allocations: Record<string, number>): number {
+  const invested = ASSETS.reduce((sum, ticker) => sum + (allocations[ticker] ?? 0), 0);
+  return Math.max(0, 1 - invested);
+}
+
+export function deductTransactionCost(navAfterMarketReturn: number, costEur: number): number {
+  return Math.max(0, navAfterMarketReturn - Math.max(0, costEur));
+}
+
+export function netDailyReturnFromNav(previousNav: number, currentNav: number): number {
+  return previousNav > 0 ? currentNav / previousNav - 1 : 0;
+}
+
+export function driftPortfolioWeights(
+  allocations: Record<string, number>,
+  cash: number,
+  assetReturns: Record<string, number>,
+): { allocations: Record<string, number>; cash: number } {
+  const grossReturn = ASSETS.reduce(
+    (sum, ticker) => sum + (allocations[ticker] ?? 0) * (assetReturns[ticker] ?? 0),
+    0,
+  );
+  const growthFactor = 1 + grossReturn;
+  if (!(growthFactor > 0)) {
+    return { allocations: Object.fromEntries(ASSETS.map(ticker => [ticker, 0])), cash: 1 };
+  }
+
+  return {
+    allocations: Object.fromEntries(ASSETS.map(ticker => [
+      ticker,
+      ((allocations[ticker] ?? 0) * (1 + (assetReturns[ticker] ?? 0))) / growthFactor,
+    ])),
+    cash: cash / growthFactor,
+  };
+}
+
 // Nota: dailyReturns, mean, variance importados desde @/lib/stats.ts
 
 function equalWeightAllocations(): Record<string, number> {
@@ -246,12 +304,15 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
   const emptyRM: RegimeMetrics = { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 };
   return {
     dailyRecords: [], daysWithProxies: 0, daysWithRealData: 0,
+    dailyNetReturns: [],
+    benchmarkNetReturns: [],
+    institutionalBenchmarkNetReturns: [],
     metrics: emptyMetrics(initialCapital),
     benchmarkMetrics: emptyMetrics(initialCapital),
     institutionalBenchmarkMetrics: emptyMetrics(initialCapital),
     regimeConditional: { EXPANSION: emptyRM, CONTRACTION: emptyRM, CRISIS: emptyRM },
     regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
-    transactionCostBps: 15,
+    transactionCostBps: 0,
     totalTransactionCosts: 0,
     rebalanceCount: 0,
     absoluteTrendGateDiagnostics: {
@@ -630,18 +691,14 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     lookbackDays = 252,
     rebalanceDays = 21,
     initialCapital = 10_000,
-    transactionCostBps = 15,
   } = input;
-  // FIX-AUDIT-INST-02: Costes realistas por activo (spread + fixed cost).
-  // ANTES: 15bps flat para todos los activos, ignorando diferencias de liquidez.
-  // AHORA: usa ASSET_COST_PARAMS de transactionCosts.ts con half-spread por activo.
-  // BTC-EUR paga ~30bps efectivos, PPFB paga ~6bps. Benchmark sigue usando flat 15bps.
-  const txCostRate = transactionCostBps / 10_000;
-  const getAssetSpreadCost = (ticker: string): number => {
-    const params = ASSET_COST_PARAMS[ticker];
-    return params ? (params.halfSpreadBps * 2) / 10_000 : txCostRate;
-  };
+  // El backtest aplica el modelo unificado de transactionCosts.ts:
+  // spread completo + coste fijo + impacto de mercado, también a benchmarks.
   let totalTransactionCosts = 0;
+  // Media de costes por rebalanceo en bps del NAV existente justo antes de operar.
+  // Evita dividir los costes acumulados por el NAV final, que sesga la métrica
+  // cuando la cartera crece o cae durante el backtest.
+  let cumulativeTransactionCostBps = 0;
   let rebalanceCount = 0;
 
   const backtestTickers = Object.fromEntries(
@@ -693,7 +750,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
   // FIX-BENCH-EQ-REBAL: Equal Weight with periodic rebalancing (same frequency as engine).
   // Weights drift with prices between rebalancing events.
-  // At each rebalanceDay, reset to 1/N and apply turnover costs (same txCostRate as engine).
+  // At each rebalanceDay, reset to 1/N and apply the shared per-asset transaction-cost model.
   // This is a true equal-weight benchmark, not a buy-and-hold (which gets dominated by BTC).
   const eqWeight = 1 / ASSETS.length;
   let benchmarkWeights: Record<string, number> = equalWeightAllocations();
@@ -776,6 +833,30 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   const btcVolArray = macroHistory.btcVol?.length ? ensureLength(macroHistory.btcVol, maxLen) : undefined;
   const wtiOilArray = macroHistory.wtiOil?.length ? ensureLength(macroHistory.wtiOil, maxLen) : undefined;
 
+  const calculateRebalanceCost = (
+    oldWeights: Record<string, number>,
+    newWeights: Record<string, number>,
+    navEur: number,
+    day: number,
+  ): number => {
+    if (!(navEur > 0)) return 0;
+    let totalCost = 0;
+    for (const ticker of ASSETS) {
+      const oldWeight = oldWeights[ticker] ?? 0;
+      const newWeight = newWeights[ticker] ?? 0;
+      if (Math.abs(newWeight - oldWeight) < 1e-6) continue;
+      const closes = closesHistory[backtestTickers[ticker]] ?? [];
+      totalCost += computeTradeCost({
+        ticker,
+        oldWeight,
+        newWeight,
+        portfolioValueEur: navEur,
+        priceEur: closes[day] ?? 0,
+      }).totalCostEur;
+    }
+    return totalCost;
+  };
+
   for (let t = backtestStart; t < backtestEnd; t++) {
     const dayIndex = t - backtestStart;
     const breadthNegativeCount = computeBreadthNegativeCount(closesHistory, backtestTickers, t);
@@ -810,6 +891,12 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       instBenchmarkWeights = pendingInstBenchmarkWeights;
       pendingInstBenchmarkWeights = null;
     }
+
+    // The close-to-close return below belongs to the holdings entering this day.
+    // Any target chosen from close[t] is traded after that return and starts at t+1.
+    const navAtStartOfDay = portfolioValue;
+    const benchmarkNavAtStartOfDay = benchmarkValue;
+    const institutionalNavAtStartOfDay = instBenchmarkValue;
 
     if (dayIndex % rebalanceDays === 0) {
       const vix = vixArray[t];
@@ -908,10 +995,17 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         const immediateCost = (allocations: Record<string, number>): number => {
           let cost = 0;
           for (const ticker of ASSETS) {
-            const assetTurnover = Math.abs((allocations[ticker] ?? 0) - (currentAllocations[ticker] ?? 0));
-            if (assetTurnover > 1e-6) {
-              cost += portfolioValue * getAssetSpreadCost(ticker) * assetTurnover + 1.0;
-            }
+            const oldWeight = currentAllocations[ticker] ?? 0;
+            const newWeight = allocations[ticker] ?? 0;
+            if (Math.abs(newWeight - oldWeight) < 1e-6) continue;
+            const closes = closesHistory[backtestTickers[ticker]] ?? [];
+            cost += computeTradeCost({
+              ticker,
+              oldWeight,
+              newWeight,
+              portfolioValueEur: portfolioValue,
+              priceEur: closes[t] ?? 0,
+            }).totalCostEur;
           }
           return cost;
         };
@@ -937,7 +1031,6 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       // FIX-BT-1: guardar allocations como PENDIENTES (siguiente día).
       // El día de rebalanceo (t) sigue usando las allocations del rebalanceo
       // anterior para calcular su retorno.
-      const oldAllocations = { ...currentAllocations };
       pendingNewAllocations = result.allocations;
       pendingNewRegime = result.regime;
       pendingNewCash = result.cash;
@@ -950,51 +1043,15 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         pendingNewRegime = 'EXPANSION';
       }
 
-      // Costes de transacción: se aplican en el momento del rebalanceo
-      // (cuando se decide girar la cartera), no en el día siguiente.
-      let turnover = 0;
-      for (const ticker of ASSETS) {
-        const newWeight = pendingNewAllocations[ticker] ?? 0;
-        const oldWeight = oldAllocations[ticker] ?? 0;
-        turnover += Math.abs(newWeight - oldWeight);
-      }
-      // FIX-AUDIT-INST-02: Coste por activo con spread real + coste fijo €1/operación.
-      // Suma el half-spread × 2 (compra + venta implícito) × turnover weight × portfolio value.
-      let costThisRebalance = 0;
-      for (const ticker of ASSETS) {
-        const newWeight = pendingNewAllocations[ticker] ?? 0;
-        const oldWeight = oldAllocations[ticker] ?? 0;
-        const assetTurnover = Math.abs(newWeight - oldWeight);
-        if (assetTurnover > 1e-6) {
-          const spread = getAssetSpreadCost(ticker);
-          costThisRebalance += portfolioValue * spread * assetTurnover;
-          costThisRebalance += 1.0; // €1 fixed cost per traded asset
-        }
-      }
-      portfolioValue -= costThisRebalance;
-      totalTransactionCosts += costThisRebalance;
+      // Benchmark equal-weight: el objetivo se ejecuta al cierre después del
+      // retorno de hoy; sus costes se descuentan del NAV de cierre más abajo.
+      const nextBenchmarkWeights = equalWeightAllocations();
+      // FIX-AUDIT-B3: guardar pesos como PENDIENTES (se aplican al día siguiente).
+      pendingBenchmarkWeights = nextBenchmarkWeights;
 
-      // ── Benchmark rebalance ──
-      // Reset to equal weights. Apply the same transaction costs for fair comparison.
-      let benchTurnover = 0;
-      for (const ticker of ASSETS) {
-        benchTurnover += Math.abs(eqWeight - (benchmarkWeights[ticker] ?? 0));
-      }
-      const benchCost = benchmarkValue * txCostRate * benchTurnover;
-      benchmarkValue -= benchCost;
-      // FIX-AUDIT-B3: guardar pesos como PENDIENTES (se aplican al día siguiente),
-      // igual que pendingNewAllocations para la estrategia.
-      pendingBenchmarkWeights = equalWeightAllocations();
-
-      // ── Institutional Benchmark rebalance ──
-      // Reset to assetRegistry weights (BTC 10%, WLG 35%, PPFB 20%, etc.).
-      let instBenchTurnover = 0;
-      for (const ticker of ASSETS) {
-        instBenchTurnover += Math.abs((INSTITUTIONAL_BENCHMARK_WEIGHTS[ticker] ?? 0) - (instBenchmarkWeights[ticker] ?? 0));
-      }
-      const instBenchCost = instBenchmarkValue * txCostRate * instBenchTurnover;
-      instBenchmarkValue -= instBenchCost;
-      pendingInstBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
+      // Benchmark institucional: mismo modelo de costes que la estrategia.
+      const nextInstBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
+      pendingInstBenchmarkWeights = nextInstBenchmarkWeights;
 
       // Reset trend filter state for the new rebalance cycle
       trendReduced.clear();
@@ -1006,6 +1063,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     let portfolioReturn = 0;
     let benchmarkReturn = 0;
     let activeWeight = 0;
+    const assetDailyReturns: Record<string, number> = {};
 
     // FIX-USINGPROXY (22-Jun-2026): documentado. Esta fórmula clasifica días
     // donde al menos un activo depende de su proxy americano (ej: URTH para WLG).
@@ -1024,15 +1082,16 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       const closes = closesHistory[bticker] ?? [];
       const c0 = closes[t];
       const c1 = closes[t - 1];
+      let dailyRet = 0;
       if (c0 != null && c1 != null && isFinite(c0) && isFinite(c1) && c1 > 0 && c0 > 0) {
-        const dailyRet = c0 / c1 - 1;
-        if (isFinite(dailyRet)) {
-          portfolioReturn += (currentAllocations[ticker] ?? 0) * dailyRet;
-          activeWeight += (currentAllocations[ticker] ?? 0);
-          benchmarkReturn += (benchmarkWeights[ticker] ?? 0) * dailyRet;
-          instBenchmarkReturn += (instBenchmarkWeights[ticker] ?? 0) * dailyRet;
-        }
+        const observedReturn = c0 / c1 - 1;
+        dailyRet = isFinite(observedReturn) ? observedReturn : 0;
       }
+      assetDailyReturns[ticker] = dailyRet;
+      portfolioReturn += (currentAllocations[ticker] ?? 0) * dailyRet;
+      activeWeight += (currentAllocations[ticker] ?? 0);
+      benchmarkReturn += (benchmarkWeights[ticker] ?? 0) * dailyRet;
+      instBenchmarkReturn += (instBenchmarkWeights[ticker] ?? 0) * dailyRet;
     }
 
     // Añadir retorno del efectivo (0%)
@@ -1046,14 +1105,16 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     benchmarkValue *= (1 + benchmarkReturn);
     instBenchmarkValue *= (1 + instBenchmarkReturn);
 
+    // Holdings drift with market moves between trades. Cash is a zero-yield
+    // position in this model and therefore drifts against the portfolio NAV.
+    const driftedStrategy = driftPortfolioWeights(currentAllocations, currentCash, assetDailyReturns);
+    currentAllocations = driftedStrategy.allocations;
+    currentCash = driftedStrategy.cash;
+
     // Benchmark weight drift (between rebalances): each weight evolves with its asset return
     let bwSum = 0;
     for (const ticker of ASSETS) {
-      const bticker = backtestTickers[ticker];
-      const closes = closesHistory[bticker] ?? [];
-      const c0 = closes[t], c1 = closes[t - 1];
-      const dailyRet = (c0 != null && c1 != null && isFinite(c0) && isFinite(c1) && c1 > 0 && c0 > 0)
-        ? c0 / c1 - 1 : 0;
+      const dailyRet = assetDailyReturns[ticker] ?? 0;
       benchmarkWeights[ticker] = (benchmarkWeights[ticker] ?? 0) * (1 + dailyRet);
       bwSum += benchmarkWeights[ticker] ?? 0;
     }
@@ -1066,11 +1127,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     // Institutional Benchmark weight drift (same pattern)
     let ibwSum = 0;
     for (const ticker of ASSETS) {
-      const bticker = backtestTickers[ticker];
-      const closes = closesHistory[bticker] ?? [];
-      const c0 = closes[t], c1 = closes[t - 1];
-      const dailyRet = (c0 != null && c1 != null && isFinite(c0) && isFinite(c1) && c1 > 0 && c0 > 0)
-        ? c0 / c1 - 1 : 0;
+      const dailyRet = assetDailyReturns[ticker] ?? 0;
       instBenchmarkWeights[ticker] = (instBenchmarkWeights[ticker] ?? 0) * (1 + dailyRet);
       ibwSum += instBenchmarkWeights[ticker] ?? 0;
     }
@@ -1079,13 +1136,6 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     } else {
       instBenchmarkWeights = { ...INSTITUTIONAL_BENCHMARK_WEIGHTS };
     }
-
-    if (portfolioValue > peakValue) peakValue = portfolioValue;
-    const dd = (portfolioValue - peakValue) / peakValue;
-
-    strategyDailyReturns.push(portfolioReturn);
-    benchmarkDailyReturns.push(benchmarkReturn);
-    instBenchmarkDailyReturns.push(instBenchmarkReturn);
 
     // FIX-CRISIS-TRACKING: actualizar régimen CADA DÍA, no solo en rebalanceos.
     // ANTES: currentRegime solo cambiaba en rebalanceDays (cada 63-126 días).
@@ -1118,9 +1168,6 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       }
     }
 
-    regimeReturns[currentRegime].push(portfolioReturn);
-    regimeDays[currentRegime]++;
-
     // ── TREND FILTER: proteccion diaria contra downtrends (entre rebalanceos) ──
     // El motor rebalancea cada 126 dias. Si BTC cae 50% en 2 semanas, el motor
     // no reacciona hasta el dia 126. Este filtro actua CADA DIA: si un activo
@@ -1130,26 +1177,76 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     //   retorno 200d < -25%  → tendencia bajista severa → reducir peso al 50%
     //   retorno 50d  < -15%  → acelerando caida       → reducir peso al 50%
     //   retorno 200d < -10%  → tendencia bajista leve  → reducir peso al 65%
+    const allocationsToFilter = pendingNewAllocations ?? currentAllocations;
+    const allocationsAtCloseBeforeTrade = { ...currentAllocations };
     for (const ticker of ASSETS) {
       if (trendReduced.has(ticker)) continue; // ya reducido en este ciclo
       const bticker = backtestTickers[ticker];
       const closes = closesHistory[bticker] ?? [];
-      if (t < 200 || closes[t] <= 0 || closes[t - 200] <= 0) continue;
-      const ret200d = periodReturn(closes, t, 200);
-      const ret50d  = periodReturn(closes, t, 50);
-      const currentW = currentAllocations[ticker] ?? 0;
+      const multiplier = dailyTrendReductionMultiplier(closes, t);
+      if (multiplier === null) continue;
+      const currentW = allocationsToFilter[ticker] ?? 0;
       if (currentW <= 0) continue;
-
-      if (ret200d < -0.25 || ret50d < -0.15) {
-        // Downtrend severo: cortar posicion a la mitad (una sola vez)
-        currentAllocations[ticker] = currentW * 0.50;
-        trendReduced.add(ticker);
-      } else if (ret200d < -0.10) {
-        // Downtrend leve: reducir al 65% (una sola vez)
-        currentAllocations[ticker] = currentW * 0.65;
-        trendReduced.add(ticker);
-      }
+      // Apply the gate to the close[t] target; the reduced weight is active
+      // from t+1, after the close-to-close return has already been earned.
+      allocationsToFilter[ticker] = currentW * multiplier;
+      trendReduced.add(ticker);
     }
+
+    if (pendingNewAllocations) {
+      pendingNewCash = cashWeightForAllocations(pendingNewAllocations);
+    } else {
+      currentCash = cashWeightForAllocations(currentAllocations);
+    }
+
+    // Execute close[t] trades only after earning the t-1 → t market return.
+    // Deduct every strategy/benchmark cost from the corresponding close NAV,
+    // then expose exactly those net returns to computeMetrics and the records.
+    const strategyTargetAtClose = pendingNewAllocations ?? currentAllocations;
+    const hasEngineRebalanceAtClose = pendingNewAllocations !== null;
+    const strategyCost = calculateRebalanceCost(
+      allocationsAtCloseBeforeTrade,
+      strategyTargetAtClose,
+      portfolioValue,
+      t,
+    );
+    const navBeforeStrategyCost = portfolioValue;
+    portfolioValue = deductTransactionCost(portfolioValue, strategyCost);
+    totalTransactionCosts += strategyCost;
+    if (hasEngineRebalanceAtClose && navBeforeStrategyCost > 0) {
+      cumulativeTransactionCostBps += (strategyCost / navBeforeStrategyCost) * 10_000;
+    }
+
+    if (pendingBenchmarkWeights) {
+      const benchmarkCost = calculateRebalanceCost(
+        benchmarkWeights,
+        pendingBenchmarkWeights,
+        benchmarkValue,
+        t,
+      );
+      benchmarkValue = deductTransactionCost(benchmarkValue, benchmarkCost);
+    }
+    if (pendingInstBenchmarkWeights) {
+      const institutionalCost = calculateRebalanceCost(
+        instBenchmarkWeights,
+        pendingInstBenchmarkWeights,
+        instBenchmarkValue,
+        t,
+      );
+      instBenchmarkValue = deductTransactionCost(instBenchmarkValue, institutionalCost);
+    }
+
+    portfolioReturn = netDailyReturnFromNav(navAtStartOfDay, portfolioValue);
+    benchmarkReturn = netDailyReturnFromNav(benchmarkNavAtStartOfDay, benchmarkValue);
+    instBenchmarkReturn = netDailyReturnFromNav(institutionalNavAtStartOfDay, instBenchmarkValue);
+    strategyDailyReturns.push(portfolioReturn);
+    benchmarkDailyReturns.push(benchmarkReturn);
+    instBenchmarkDailyReturns.push(instBenchmarkReturn);
+    regimeReturns[currentRegime].push(portfolioReturn);
+    regimeDays[currentRegime]++;
+
+    if (portfolioValue > peakValue) peakValue = portfolioValue;
+    const dd = peakValue > 0 ? (portfolioValue - peakValue) / peakValue : -1;
 
     let rolling252Sharpe: number | null = null;
     if (strategyDailyReturns.length >= 252) {
@@ -1161,10 +1258,10 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       day: dayIndex,
       portfolioValue,
       drawdown: dd,
-      allocations: { ...currentAllocations },
+      allocations: { ...(pendingNewAllocations ?? currentAllocations) },
       regime: currentRegime,
       rolling252Sharpe,
-      cash: currentCash,
+      cash: pendingNewAllocations ? pendingNewCash : currentCash,
     });
   }
 
@@ -1203,6 +1300,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
 
   return {
     dailyRecords,
+    dailyNetReturns: strategyDailyReturns,
+    benchmarkNetReturns: benchmarkDailyReturns,
+    institutionalBenchmarkNetReturns: instBenchmarkDailyReturns,
     metrics:          strategyMetrics,
     benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue),
     institutionalBenchmarkMetrics: computeMetrics(instBenchmarkDailyReturns, initialCapital, instBenchmarkValue),
@@ -1210,9 +1310,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     regimeDays,
     daysWithProxies,
     daysWithRealData,
-    transactionCostBps: totalTransactionCosts > 0 && portfolioValue > 0 && rebalanceCount > 0
-      ? Math.round((totalTransactionCosts / (portfolioValue * rebalanceCount)) * 10000)
-      : 15,
+    transactionCostBps: rebalanceCount > 0
+      ? Math.round(cumulativeTransactionCostBps / rebalanceCount)
+      : 0,
     totalTransactionCosts,
     rebalanceCount,
     absoluteTrendGateDiagnostics: gateDiagnostics,
@@ -1243,7 +1343,9 @@ export function computeMetrics(dailyRets: number[], initialCapital: number, fina
   const clean = dailyRets.filter(r => isFinite(r));
   if (clean.length === 0) return emptyMetrics(initialCapital);
   const years = clean.length / 365;
-  const totalReturn = isFinite(finalValue) && finalValue > 0 ? finalValue / initialCapital - 1 : 0;
+  const totalReturn = isFinite(finalValue) && finalValue >= 0 && initialCapital > 0
+    ? finalValue / initialCapital - 1
+    : 0;
   const cagr = years > 0 ? ((1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
   const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 365);

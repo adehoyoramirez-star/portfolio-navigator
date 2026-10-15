@@ -6,15 +6,85 @@
 
 import fs from 'fs';
 import path from 'path';
-import { runWalkForwardTest, formatWFResult } from './walkForwardTest';
+import { runWalkForwardTest, formatWFResult, DEFAULT_WF_CONFIG } from './walkForwardTest';
 import { ASSETS } from '../../lib/constants';
+import { computeGlobalStress } from '../macro/globalStress';
+import { alignObservedCreditSpread } from '../../lib/creditSpreadSeries';
+import { createBacktestCoverageManifest } from './inputCoverage';
 
 // ── 1. Cargar CSV augmentado ──────────────────────
-const csvPath = path.join(process.cwd(), 'historical_data_daily_augmented.csv');
+// El archivo de public/ es la serie diaria canónica versionada para la app.
+ // En la raíz existe una copia de trabajo con actualizaciones parciales y huecos;
+ // no debe prevalecer sobre la fuente canónica aunque tenga fechas más recientes.
+const csvCandidates = [
+  path.join(process.cwd(), 'public', 'historical_data_daily_augmented.csv'),
+  path.join(process.cwd(), 'historical_data_daily_augmented.csv'),
+];
+const csvPath = csvCandidates.find(candidate => fs.existsSync(candidate));
+if (!csvPath) {
+  throw new Error(
+    `No se encontró historical_data_daily_augmented.csv. Rutas comprobadas:\n${csvCandidates.join('\n')}`
+  );
+}
 console.log('CSV:', csvPath);
 const csvContent = fs.readFileSync(csvPath, 'utf8');
 const lines = csvContent.split('\n');
-const headers = lines[0].split(',');
+const headers = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim());
+let dataLines = lines.slice(1).map(line => line.trim()).filter(Boolean);
+const requiredColumns = [
+  'Date', ...ASSETS, '^VIX', '^TNX', '^IRX', '^MOVE', 'DX-Y.NYB', 'BTC_VOL',
+];
+const missingColumns = requiredColumns.filter(column => !headers.includes(column));
+if (missingColumns.length) {
+  throw new Error(`CSV sin columnas obligatorias: ${missingColumns.join(', ')}`);
+}
+if (dataLines.length === 0) throw new Error('CSV sin filas históricas.');
+
+function parseRequiredNumber(raw: string, column: string, date: string): number {
+  const value = Number(raw);
+  if (!raw.trim() || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`Dato inválido para ${column} en ${date}: ${JSON.stringify(raw)}`);
+  }
+  return value;
+}
+
+const dateIndex = headers.indexOf('Date');
+let dates = dataLines.map(line => line.split(',')[dateIndex]?.trim() ?? '');
+for (let i = 0; i < dates.length; i++) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dates[i]) || Number.isNaN(Date.parse(dates[i]))) {
+    throw new Error(`Fecha inválida en fila CSV ${i + 2}: ${JSON.stringify(dates[i])}`);
+  }
+  if (i > 0 && dates[i] <= dates[i - 1]) {
+    throw new Error(`Fechas duplicadas o no ordenadas: ${dates[i - 1]} → ${dates[i]}`);
+  }
+  if (i > 0) {
+    const previousDay = Date.parse(`${dates[i - 1]}T00:00:00Z`);
+    const currentDay = Date.parse(`${dates[i]}T00:00:00Z`);
+    const gapDays = Math.round((currentDay - previousDay) / 86_400_000);
+    // El dataset conserva filas diarias (incluidos fines de semana forward-filled).
+    // Un hueco de calendario implica que no podemos tratar índices como días consecutivos.
+    if (gapDays !== 1) {
+      throw new Error(`Hueco temporal en CSV: ${dates[i - 1]} → ${dates[i]} (${gapDays} días). Repara/recupera las fechas ausentes antes del WFO.`);
+    }
+  }
+}
+const oasPath = path.join(process.cwd(), 'scripts', 'audit', 'data', 'fred_BAMLH0A0HYM2.csv');
+if (!fs.existsSync(oasPath)) throw new Error(`Missing observed FRED OAS series: ${oasPath}`);
+const alignedOas = alignObservedCreditSpread(dates, fs.readFileSync(oasPath, 'utf8'));
+// Keep prices, dates and macro arrays on the observed credit-spread coverage only.
+// Do not synthesize a credit-spread history before FRED observations begin.
+dataLines = dataLines.slice(alignedOas.startIndex);
+dates = dates.slice(alignedOas.startIndex);
+const creditSpread = alignedOas.values;
+const firstDate = dates[0];
+const lastDate = dates[dates.length - 1];
+// Explicit calendar timestamps let backtestEngine exclude forward-filled weekend
+// transitions for non-24/7 assets. Keep the same calendar for every asset series.
+const calendarTimestamps = dates.map(date => Math.floor(Date.parse(`${date}T00:00:00Z`) / 1000));
+const timestampsHistory: Record<string, number[]> = Object.fromEntries(
+  ASSETS.map(ticker => [ticker, calendarTimestamps])
+);
+const staleDays = Math.floor((Date.now() - Date.parse(`${lastDate}T00:00:00Z`)) / 86_400_000);
 
 // ── 2. Inicializar arrays ──────────────────────
 const closesHistory: Record<string, number[]> = {};
@@ -22,38 +92,25 @@ for (const a of ASSETS) closesHistory[a] = [];
 const vixArr: number[] = [];
 const tnxArr: number[] = [];
 const irxArr: number[] = [];
-const hygArr: number[] = [];
-const lqdArr: number[] = [];
 const moveArr: number[] = [];
 const dxyArr: number[] = [];
 const btcVolArr: number[] = [];
 
-for (let i = 1; i < lines.length; i++) {
-  const line = lines[i].trim();
-  if (!line) continue;
+for (const line of dataLines) {
   const parts = line.split(',');
-  if (parts.length < headers.length) continue;
-
-  for (const ticker of ASSETS) {
-    const idx = headers.indexOf(ticker);
-    if (idx !== -1) closesHistory[ticker].push(parseFloat(parts[idx]) || 0);
+  if (parts.length !== headers.length) {
+    throw new Error(`Número de columnas incorrecto en ${parts[dateIndex] ?? 'fecha desconocida'}: ${parts.length} frente a ${headers.length}`);
   }
-  const vi = headers.indexOf('^VIX');
-  if (vi !== -1) vixArr.push(parseFloat(parts[vi]) || 0);
-  const ti = headers.indexOf('^TNX');
-  if (ti !== -1) tnxArr.push(parseFloat(parts[ti]) || 0);
-  const ii = headers.indexOf('^IRX');
-  if (ii !== -1) irxArr.push(parseFloat(parts[ii]) || 0);
-  const hi = headers.indexOf('HYG');
-  if (hi !== -1) hygArr.push(parseFloat(parts[hi]) || 0);
-  const li = headers.indexOf('LQD');
-  if (li !== -1) lqdArr.push(parseFloat(parts[li]) || 0);
-  const mi = headers.indexOf('^MOVE');
-  if (mi !== -1) moveArr.push(parseFloat(parts[mi]) || 95);
-  const di = headers.indexOf('DX-Y.NYB');
-  if (di !== -1) dxyArr.push(parseFloat(parts[di]) || 103);
-  const bi = headers.indexOf('BTC_VOL');
-  if (bi !== -1) btcVolArr.push(parseFloat(parts[bi]) || 30);
+  const date = parts[dateIndex].trim();
+  for (const ticker of ASSETS) {
+    closesHistory[ticker].push(parseRequiredNumber(parts[headers.indexOf(ticker)], ticker, date));
+  }
+  vixArr.push(parseRequiredNumber(parts[headers.indexOf('^VIX')], '^VIX', date));
+  tnxArr.push(parseRequiredNumber(parts[headers.indexOf('^TNX')], '^TNX', date));
+  irxArr.push(parseRequiredNumber(parts[headers.indexOf('^IRX')], '^IRX', date));
+  moveArr.push(parseRequiredNumber(parts[headers.indexOf('^MOVE')], '^MOVE', date));
+  dxyArr.push(parseRequiredNumber(parts[headers.indexOf('DX-Y.NYB')], 'DX-Y.NYB', date));
+  btcVolArr.push(parseRequiredNumber(parts[headers.indexOf('BTC_VOL')], 'BTC_VOL', date));
 }
 
 // ── 3. Recortar a longitud común ───────────────
@@ -66,22 +123,13 @@ for (const t of ASSETS) closesHistory[t] = closesHistory[t].slice(0, minLen);
 const vix = vixArr.slice(0, minLen);
 const tnx = tnxArr.slice(0, minLen);
 const irx = irxArr.slice(0, minLen);
-const hyg = hygArr.slice(0, minLen);
-const lqd = lqdArr.slice(0, minLen);
 const move = moveArr.slice(0, minLen);
 const dxy = dxyArr.slice(0, minLen);
 const btcVol = btcVolArr.slice(0, minLen);
 
 // ── 4. Computar macro ──────────────────────────
 const yieldSpread = tnx.map((v, i) => v - irx[i]);
-const creditSpread = hyg.map((v, i) => {
-  if (v > 0 && lqd[i] > 0) {
-    const hygYield = 0.045 + (1 - v / 100) * 0.03;
-    const lqdYield = 0.035 + (1 - lqd[i] / 100) * 0.02;
-    return Math.max(1.0, Math.min(9.0, (hygYield - lqdYield) * 100));
-  }
-  return 2.5 + vix[i] / 20;
-});
+// creditSpread is observed FRED OAS (percent), aligned and coverage-checked above.
 
 // dxyTrend: 20-day rolling % change of DXY
 const dxyTrend: number[] = [];
@@ -89,28 +137,223 @@ for (let i = 0; i < minLen; i++) {
   if (i < 20) { dxyTrend.push(0); continue; }
   const prev = dxy[i - 20];
   const curr = dxy[i];
-  dxyTrend.push(prev > 0 ? ((curr - prev) / prev) * 100 : 0);
+  dxyTrend.push(prev > 0 ? (curr - prev) / prev : 0); // decimal return: 0.02 = +2%, contract with globalStress.ts
 }
 
 console.log(`\n📊 Datos cargados: ${minLen} días`);
-console.log(`   Período: ${lines[1]?.split(',')[0]} → ${lines[lines.length-1]?.split(',')[0]}`);
+console.log(`   Período: ${firstDate} → ${lastDate}`);
+console.log(`   Antigüedad del último dato: ${staleDays} días`);
+if (staleDays > 7) console.warn('   ADVERTENCIA: CSV histórico desactualizado; resultados solo describen el período disponible.');
+console.log(`   Crédito observado FRED OAS: ${oasPath} | ${firstDate} → ${lastDate}`);
+console.warn('   COBERTURA MACRO INCOMPLETA: el WFO no carga series históricas de Brent/WTI, cbLiquidityGrowth (balances Fed+BCE) ni M2; M2 usa el fallback fijo de 2 y no aporta variación histórica.');
+console.warn('   DXY sí se incluye, pero solo como variación porcentual a 20 días; no se prueban aún ventanas 60/90 días ni una ablación que mida su contribución incremental.');
+console.warn('   Por tanto, estos resultados NO validan el bloque macro completo. No interpretar las métricas WFO como validación de petróleo, liquidez de bancos centrales o crédito observado.');
 console.log(`   VIX: ${Math.min(...vix).toFixed(1)}–${Math.max(...vix).toFixed(1)}`);
 console.log(`   MOVE: ${Math.min(...move).toFixed(1)}–${Math.max(...move).toFixed(1)}`);
-console.log(`   DXY Trend: ${Math.min(...dxyTrend).toFixed(2)}%–${Math.max(...dxyTrend).toFixed(2)}%`);
-console.log(`   BTC Vol: ${Math.min(...btcVol).toFixed(1)}%–${Math.max(...btcVol).toFixed(1)}%`);
+console.log(`   DXY Trend (20d): ${(Math.min(...dxyTrend) * 100).toFixed(2)}%–${(Math.max(...dxyTrend) * 100).toFixed(2)}%`);
+// btcVol is annualized volatility in decimal form (0.50 = 50%), as expected by globalStress.ts.
+console.log(`   BTC Vol: ${(Math.min(...btcVol) * 100).toFixed(0)}%–${(Math.max(...btcVol) * 100).toFixed(0)}%`);
+
+// ── 4a. Manifiesto de cobertura histórica — explícito y fail-closed ────────────
+// El modo predeterminado es diagnóstico parcial. OLYMPUS_BACKTEST_MODE=full-parity
+// debe fallar antes del WFO mientras falte cualquier familia de señales requerida.
+const coverageMode = process.env.OLYMPUS_BACKTEST_MODE === 'full-parity'
+  ? 'full-parity'
+  : 'partial-input';
+const coverageManifest = createBacktestCoverageManifest({
+  mode: coverageMode,
+  start: firstDate,
+  end: lastDate,
+  observations: minLen,
+  source: 'public/historical_data_daily_augmented.csv + scripts/audit/data/fred_BAMLH0A0HYM2.csv',
+  observed: [
+    'asset_prices', 'vix', 'yield_spread', 'credit_spread',
+    'move', 'dxy_trend', 'btc_volatility',
+  ],
+  unavailable: [
+    'oil', 'central_bank_liquidity', 'erp', 'average_correlation',
+    'btc_on_chain', 'cycle_top', 'sox_rsi', 'inflation_breakeven',
+    'asset_valuation',
+  ],
+  // M2 is not observed in the WFO history; engine compatibility fallback is 2.
+  fallback: ['m2_growth'],
+  seriesMetadata: [
+    {
+      family: 'asset_prices',
+      source: 'public/historical_data_daily_augmented.csv',
+      units: 'ticker-native price units; currency/unit varies by asset',
+      timestampConvention: 'daily calendar date at 00:00 UTC; decision-time availability is not independently timestamped',
+      freshnessThresholdDays: 7,
+      carryForwardRule: 'CSV includes calendar rows and may forward-fill non-24/7 market prices on weekends; no per-cell provenance marker',
+      missingCount: 0,
+      fallbackCount: 0,
+    },
+    {
+      family: 'vix',
+      source: 'public/historical_data_daily_augmented.csv column ^VIX',
+      units: 'index points',
+      timestampConvention: 'daily calendar date at 00:00 UTC; observation publication time is not represented',
+      freshnessThresholdDays: 7,
+      carryForwardRule: 'CSV calendar rows; source-level forward-fill status is not marked per observation',
+      missingCount: 0,
+      fallbackCount: 0,
+    },
+    {
+      family: 'yield_spread',
+      source: 'public/historical_data_daily_augmented.csv columns ^TNX minus ^IRX',
+      units: 'percentage points (source yields expressed in percent)',
+      timestampConvention: 'daily calendar date at 00:00 UTC; observation publication time is not represented',
+      freshnessThresholdDays: 7,
+      carryForwardRule: 'Derived from CSV calendar rows; source-level forward-fill status is not marked per observation',
+      missingCount: 0,
+      fallbackCount: 0,
+    },
+    {
+      family: 'credit_spread',
+      source: 'scripts/audit/data/fred_BAMLH0A0HYM2.csv aligned with alignObservedCreditSpread',
+      units: 'percent units as stored by the FRED OAS series',
+      timestampConvention: 'FRED observation date; aligned by the existing helper to the daily calendar',
+      freshnessThresholdDays: 4,
+      carryForwardRule: 'Last published FRED value carried forward; alignment rejects observations older than 4 calendar days',
+      missingCount: 0,
+      fallbackCount: 0,
+      sourceRowCount: alignedOas.diagnostics.sourceRows,
+      observedCount: alignedOas.diagnostics.observedSourceRows,
+      blankSourceRows: alignedOas.diagnostics.blankSourceRows,
+      carriedForwardCount: alignedOas.diagnostics.carriedForwardRows,
+      maxObservedAgeDays: alignedOas.diagnostics.maxObservedAgeDays,
+    },
+    {
+      family: 'move',
+      source: 'public/historical_data_daily_augmented.csv column ^MOVE',
+      units: 'index points',
+      timestampConvention: 'daily calendar date at 00:00 UTC; observation publication time is not represented',
+      freshnessThresholdDays: 7,
+      carryForwardRule: 'CSV calendar rows; source-level forward-fill status is not marked per observation',
+      missingCount: 0,
+      fallbackCount: 0,
+    },
+    {
+      family: 'dxy_trend',
+      source: 'DX-Y.NYB in public/historical_data_daily_augmented.csv; calculated as 20-row percentage change',
+      units: 'decimal return (0.02 = +2%)',
+      timestampConvention: 'daily calendar date at 00:00 UTC; 20 CSV rows, not guaranteed to be 20 trading sessions',
+      freshnessThresholdDays: 7,
+      carryForwardRule: 'Uses source DXY values at current row and 20 rows earlier; source-level forward-fill status is not marked',
+      missingCount: 0,
+      fallbackCount: 0,
+    },
+    {
+      family: 'btc_volatility',
+      source: 'public/historical_data_daily_augmented.csv column BTC_VOL',
+      units: 'annualized volatility in decimal form (0.50 = 50%)',
+      timestampConvention: 'daily calendar date at 00:00 UTC; source calculation timestamp is not independently represented',
+      freshnessThresholdDays: 7,
+      carryForwardRule: 'CSV calendar rows; source calculation and fill policy are not independently recorded',
+      missingCount: 0,
+      fallbackCount: 0,
+    },
+    {
+      family: 'm2_growth',
+      source: 'engine compatibility fallback; no historical M2 series in this WFO input',
+      units: 'unknown for the fallback contract; numeric fallback value is 2',
+      timestampConvention: 'constant fallback, not a dated observation',
+      freshnessThresholdDays: null,
+      carryForwardRule: 'No carry-forward; constant fallback is applied by the engine',
+      missingCount: null,
+      fallbackCount: minLen,
+    },
+    ...([
+      ['oil', 'WTI/Brent historical series not supplied to WFO'],
+      ['central_bank_liquidity', 'Historical Fed/ECB balance-sheet liquidity growth not supplied to WFO'],
+      ['erp', 'Historical equity risk premium series not supplied to WFO'],
+      ['average_correlation', 'Historical average-correlation series not supplied to WFO'],
+      ['btc_on_chain', 'Historical BTC on-chain series not supplied to WFO'],
+      ['cycle_top', 'Historical cycle-top signal series not supplied to WFO'],
+      ['sox_rsi', 'Historical SOX RSI series not supplied to WFO'],
+      ['inflation_breakeven', 'Historical inflation breakeven series not supplied to WFO'],
+      ['asset_valuation', 'Historical per-asset valuation series not supplied to WFO'],
+    ] as const).map(([family, detail]) => ({
+      family,
+      source: detail,
+      units: 'unknown — series unavailable',
+      timestampConvention: 'not available',
+      freshnessThresholdDays: null,
+      carryForwardRule: 'not applicable; no historical series supplied',
+      missingCount: null,
+      fallbackCount: 0,
+    })),
+  ],
+});
+console.log('\n📋 BACKTEST INPUT COVERAGE MANIFEST');
+console.log(JSON.stringify(coverageManifest, null, 2));
+if (!coverageManifest.fullParityEligible) {
+  console.warn(
+    `   PARITY STATUS: PARTIAL INPUT — ${coverageManifest.missingRequired.length} required signal families missing. ` +
+    'This WFO is diagnostic only and is not full production-engine validation.',
+  );
+}
+
+// ── 4b. Diagnóstico causal intermedio del DXY ─────────────────────────
+// Separa tres cosas: días que activan el umbral, cambio en stress score y
+// cambio de etiqueta NORMAL/HIGH_RISK/CRISIS. No presume impacto en allocations.
+let dxyThresholdDays = 0;
+let dxyStressScoreChangedDays = 0;
+let dxyStressRegimeChangedDays = 0;
+let dxyTotalScoreDelta = 0;
+for (let i = 0; i < minLen; i++) {
+  const commonStressInputs = {
+    vix: vix[i],
+    creditSpread: creditSpread[i],
+    move: move[i],
+    btcVol: btcVol[i],
+  };
+  const withDxy = computeGlobalStress({ ...commonStressInputs, dxyTrend: dxyTrend[i] });
+  const withoutDxy = computeGlobalStress({ ...commonStressInputs, dxyTrend: 0 });
+  if (dxyTrend[i] > 0.02) dxyThresholdDays++;
+  if (withDxy.score !== withoutDxy.score) {
+    dxyStressScoreChangedDays++;
+    dxyTotalScoreDelta += withDxy.score - withoutDxy.score;
+  }
+  if (withDxy.regime !== withoutDxy.regime) dxyStressRegimeChangedDays++;
+}
+console.log('\n🔬 DXY EFFECT DIAGNOSTICS — stress-score layer only');
+console.log(`   DXY > +2% over 20d: ${dxyThresholdDays}/${minLen} days (${(100 * dxyThresholdDays / minLen).toFixed(2)}%)`);
+console.log(`   Stress score changed vs DXY=0: ${dxyStressScoreChangedDays}/${minLen} days`);
+console.log(`   Stress regime label changed: ${dxyStressRegimeChangedDays}/${minLen} days`);
+console.log(`   Sum of daily score deltas: ${dxyTotalScoreDelta.toFixed(2)}`);
+console.log('   Scope: isolated computeGlobalStress only; does not measure downstream allocation changes.');
+
 
 // ── 5. Ejecutar walk-forward con masterRegime completo ─────────────────
-console.log('\n🚀 Ejecutando WALK-FORWARD TEST con masterRegime completo...');
-console.log(`   Ventanas: 5 | Train 70% / OOS 30% | Lookback 252d\n`);
+console.log('\n🚀 Ejecutando WALK-FORWARD TEST con cobertura macro parcial (OAS observado)...');
+console.log(`   Ventanas: 3 | Train 60% / OOS 40% (ajustado por cobertura OAS) | Lookback 252d | Rebalanceo 63d\n`);
 
-const wfResult = runWalkForwardTest({
-  closesHistory,
-  macroHistory: { vix, yieldSpread, creditSpread, move, dxyTrend, btcVol },
+// FRED OAS coverage begins on 2023-10-09, leaving 1044 calendar rows.
+ // At 70/30, three OOS windows would be ~104 days each, below the engine's
+ // minimum of two 63-day rebalance cycles (126 days). Use 60/40 explicitly
+ // rather than silently weakening the minimum-window validity check.
+const wfConfig = {
+  ...DEFAULT_WF_CONFIG,
+  nWindows: 3,
+  trainRatio: 0.60,
   lookbackDays: 252,
   rebalanceDays: 63,
   initialCapital: 10_000,
-  transactionCostBps: 15,
-});
+};
+const wfResult = runWalkForwardTest({
+  closesHistory,
+  timestampsHistory,
+  macroHistory: { vix, yieldSpread, creditSpread, move, dxyTrend, btcVol },
+  lookbackDays: wfConfig.lookbackDays,
+  rebalanceDays: wfConfig.rebalanceDays,
+  initialCapital: wfConfig.initialCapital,
+}, wfConfig);
+if (wfResult.windows.length !== wfConfig.nWindows) {
+  throw new Error(
+    `WFO inválido: se esperaban ${wfConfig.nWindows} ventanas OOS y se obtuvieron ${wfResult.windows.length}. No se publicarán métricas parciales.`
+  );
+}
 
 // ── 6. Mostrar resultados ──────────────────────
 console.log(formatWFResult(wfResult));
@@ -150,3 +393,46 @@ console.log(`     Momentum: ${(wfResult.adaptiveFactorWeights.momentum * 100).to
 console.log(`     Value:    ${(wfResult.adaptiveFactorWeights.value * 100).toFixed(0)}%`);
 console.log(`     Quality:  ${(wfResult.adaptiveFactorWeights.quality * 100).toFixed(0)}%`);
 console.log(`     LowVol:   ${(wfResult.adaptiveFactorWeights.lowVol * 100).toFixed(0)}%`);
+
+/*
+ * PAIRED ABLATION — DXY
+ * Same prices, windows, rebalance schedule, covariance, and transaction costs.
+ * Only dxyTrend is neutralized. This is diagnostic, not a parameter optimization.
+ */
+console.log('\n' + '='.repeat(72));
+console.log('   DXY ABLATION — baseline vs identical WFO with dxyTrend = 0');
+console.log('='.repeat(72));
+const noDxyResult = runWalkForwardTest({
+  closesHistory,
+  timestampsHistory,
+  macroHistory: {
+    vix, yieldSpread, creditSpread, move,
+    dxyTrend: Array<number>(minLen).fill(0),
+    btcVol,
+  },
+  lookbackDays: wfConfig.lookbackDays,
+  rebalanceDays: wfConfig.rebalanceDays,
+  initialCapital: wfConfig.initialCapital,
+}, wfConfig);
+if (noDxyResult.windows.length !== wfConfig.nWindows ||
+    noDxyResult.windows.length !== wfResult.windows.length) {
+  throw new Error('DXY ablation inválida: el número de ventanas no coincide.');
+}
+console.log('Δ = DXY activo − DXY neutral | mismo dataset y costes');
+console.log('Ventana | Sharpe OOS ON/OFF/Δ | CAGR OOS ON/OFF/Δ | MaxDD ON/OFF/Δ');
+for (let i = 0; i < wfResult.windows.length; i++) {
+  const on = wfResult.windows[i].outOfSample.metrics;
+  const off = noDxyResult.windows[i].outOfSample.metrics;
+  console.log(
+    `V${i + 1} | ${on.sharpe.toFixed(3)} / ${off.sharpe.toFixed(3)} / ${(on.sharpe - off.sharpe).toFixed(3)} | ` +
+    `${(on.cagr * 100).toFixed(2)}% / ${(off.cagr * 100).toFixed(2)}% / ${((on.cagr - off.cagr) * 100).toFixed(2)} pp | ` +
+    `${(on.maxDrawdown * 100).toFixed(2)}% / ${(off.maxDrawdown * 100).toFixed(2)}% / ${((on.maxDrawdown - off.maxDrawdown) * 100).toFixed(2)} pp`
+  );
+}
+const onMeanSharpe = wfResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.sharpe, 0) / wfResult.windows.length;
+const offMeanSharpe = noDxyResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.sharpe, 0) / noDxyResult.windows.length;
+const onMeanCagr = wfResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.cagr, 0) / wfResult.windows.length;
+const offMeanCagr = noDxyResult.windows.reduce((sum, w) => sum + w.outOfSample.metrics.cagr, 0) / noDxyResult.windows.length;
+console.log(`Media ventanas OOS — Sharpe: ${onMeanSharpe.toFixed(3)} vs ${offMeanSharpe.toFixed(3)} (Δ ${(onMeanSharpe - offMeanSharpe).toFixed(3)})`);
+console.log(`Media ventanas OOS — CAGR: ${(onMeanCagr * 100).toFixed(2)}% vs ${(offMeanCagr * 100).toFixed(2)}% (Δ ${((onMeanCagr - offMeanCagr) * 100).toFixed(2)} pp)`);
+console.log('NOTA: una sola configuración histórica no prueba causalidad ni valida el motor completo.');

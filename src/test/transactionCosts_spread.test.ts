@@ -33,6 +33,34 @@ describe("CORRECCIÓN 1 — spread completo en computeTradeCost", () => {
     expect(o.breakdown.spreadCost).toBe(0);
   });
 
+  test("activo sin parámetros y sin cambio de peso → no cobra comisión mínima", () => {
+    const out = computeTradeCost({
+      ticker: "UNKNOWN.ASSET",
+      oldWeight: 0.10,
+      newWeight: 0.10,
+      portfolioValueEur: 100_000,
+      priceEur: 100,
+    });
+    expect(out.turnoverEur).toBe(0);
+    expect(out.totalCostEur).toBe(0);
+    expect(out.costBps).toBe(0);
+    expect(out.breakdown.fixedCost).toBe(0);
+  });
+
+  test("fallback de activo desconocido informa bps efectivos sobre NAV", () => {
+    const out = computeTradeCost({
+      ticker: "UNKNOWN.ASSET",
+      oldWeight: 0,
+      newWeight: 0.10,
+      portfolioValueEur: 100_000,
+      priceEur: 100,
+    });
+    // 10 bps sobre €10.000 negociados (€10) + €1 fijo = €11;
+    // sobre un NAV de €100.000 equivale a 1,1 bps.
+    expect(out.totalCostEur).toBeCloseTo(11, 8);
+    expect(out.costBps).toBeCloseTo(1.1, 8);
+  });
+
   test("computeRebalanceCost usa el spread completo", () => {
     const out = computeRebalanceCost({
       oldAllocations: { "VVSM.DE": 0 },

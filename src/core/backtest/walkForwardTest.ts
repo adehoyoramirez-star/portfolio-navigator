@@ -45,6 +45,7 @@
 
 import { runBacktest, BacktestInput, BacktestOutput, BacktestMetrics, PROXY_MAP } from './backtestEngine';
 import { ASSETS } from '../../lib/constants';
+import { computeTradeCost } from '../validation/transactionCosts';
 
 // ── Configuración ─────────────────────────────────────────────────────────
 
@@ -156,9 +157,15 @@ export interface WFTestResult {
   };
   // FIX-AUDIT-R11: Deflated Sharpe Ratio (López de Prado 2014)
   /** Deflated Sharpe Ratio — corrige por múltiples comparaciones */
-  deflatedSharpeRatio: number;
-  /** Probabilistic Sharpe Ratio — P(SR > 0 | datos) */
-  probabilisticSharpeRatio: number;
+  deflatedSharpeRatio: number | null;
+  /** Probabilistic Sharpe Ratio: estimación exploratoria, no inferencia calibrada. */
+  probabilisticSharpeRatio: number | null;
+  /**
+   * Estas métricas no se consideran evidencia estadística validada:
+   * DSR usa ventanas WFO como proxy de trials y PSR omite momentos no normales/
+   * dependencia temporal. Mantener explícito el estado evita sobreinterpretación.
+   */
+  statisticalMetricsStatus: 'UNAVAILABLE_NOT_VALIDATED';
   /** Benchmark Equal Weight Sharpe promedio OOS */
   equalWeightSharpeOosAvg: number;
   /** ¿El motor bate al Equal Weight en OOS? */
@@ -169,38 +176,49 @@ export interface WFTestResult {
 
 // ── Construcción de ventanas walk-forward ────────────────────────────────
 
-function buildWindows(
+export function buildWindows(
   totalLength: number,
   config: WFTestConfig
 ): WFWindowInfo[] {
-  const { nWindows, trainRatio, lookbackDays } = config;
-  const usableLength = totalLength - lookbackDays;
-  if (usableLength < nWindows * 100) return [];
+  const { nWindows, trainRatio, lookbackDays, rebalanceDays } = config;
+  if (
+    !Number.isInteger(nWindows) || nWindows < 1 ||
+    !(trainRatio > 0 && trainRatio < 1) ||
+    !Number.isInteger(lookbackDays) || lookbackDays < 1 ||
+    !Number.isInteger(rebalanceDays) || rebalanceDays < 1
+  ) return [];
 
-  // Cada ventana tiene un tamaño fijo y avanza step días
-  const windowStep = Math.floor(usableLength / (nWindows + 1));
-  const trainSize = Math.floor(windowStep * trainRatio);
-  const testSize = windowStep - trainSize;
-  if (testSize < 21) return [];
+  // Expanding-window WFO: reserva trainRatio para IS y divide el resto en
+  // segmentos OOS consecutivos. Cada OOS necesita al menos dos ciclos de
+  // rebalanceo; si no, runBacktest reduce automáticamente el lookback y deja
+  // de evaluar la configuración declarada. Se rechazan ventanas insuficientes.
+  const initialTrainEnd = Math.floor(totalLength * trainRatio);
+  const oosLength = totalLength - initialTrainEnd;
+  const testSize = Math.floor(oosLength / nWindows);
+  const minimumOosDays = 2 * rebalanceDays;
+  if (
+    initialTrainEnd <= lookbackDays ||
+    testSize < minimumOosDays ||
+    oosLength < nWindows * minimumOosDays
+  ) return [];
 
   const windows: WFWindowInfo[] = [];
-  const lastWindowIdx = nWindows - 1;
   for (let w = 0; w < nWindows; w++) {
-    const trainEnd = lookbackDays + (w + 1) * windowStep;
-    const trainStart = Math.max(0, trainEnd - trainSize);
+    const trainEnd = initialTrainEnd + w * testSize;
     const testStart = trainEnd;
-    // La última ventana se extiende hasta el final de los datos disponibles
-    const testEnd = w === lastWindowIdx
-      ? totalLength - 1
-      : Math.min(testStart + testSize, totalLength - 1);
+    const testEnd = w === nWindows - 1
+      ? totalLength
+      : Math.min(testStart + testSize, totalLength);
 
-    if (testEnd - testStart < 10) break;
+    if (testEnd - testStart < minimumOosDays) return [];
 
     windows.push({
       windowIndex: w,
-      trainStart, trainEnd,
-      testStart, testEnd,
-      trainDays: trainEnd - trainStart,
+      trainStart: 0,
+      trainEnd,
+      testStart,
+      testEnd,
+      trainDays: trainEnd,
       testDays: testEnd - testStart,
     });
   }
@@ -277,13 +295,14 @@ function gradeResults(
   const negativeCagrWindows = windows.filter(w => w.outOfSample.metrics.cagr <= 0).length;
   const severeDegradationWindows = windows.filter(w => w.sharpeDegradation > 1.0).length;
   const ratioBad = negativeCagrWindows / Math.max(1, windows.length);
+  const ratioSevere = severeDegradationWindows / Math.max(1, windows.length);
 
   let overfittingRisk: WFTestResult['overfittingRisk'];
   if (overallConsistency >= 0.80 && avgSharpeDegradation < 0.3 && ratioBad < 0.2) {
     overfittingRisk = 'LOW';
   } else if (overallConsistency >= 0.60 && avgSharpeDegradation < 0.6 && ratioBad < 0.4) {
     overfittingRisk = 'MODERATE';
-  } else if (overallConsistency >= 0.40 || avgSharpeDegradation < 1.5) {
+  } else if (overallConsistency >= 0.40 && avgSharpeDegradation < 1.5 && ratioBad < 0.6 && ratioSevere < 0.6) {
     overfittingRisk = 'HIGH';
   } else {
     overfittingRisk = 'CRITICAL';
@@ -309,213 +328,109 @@ function computeAdaptiveWeights(
   }
 }
 
-// ── Deflated Sharpe Ratio (López de Prado 2014) ──────────────────────────
-// Corrige el Sharpe por el número de pruebas/ventanas.
-// Cuantas más ventanas evaluamos, más probable es encontrar una
-// con Sharpe alto por puro azar (sesgo de selección múltiple).
-//
-// DSR = (SR - E[max(SR)]) / σ[max(SR)]
-//
-// Donde E[max(SR)] y σ[max(SR)] son la media y desviación estándar
-// del máximo Sharpe esperado bajo la hipótesis nula (SR=0),
-// para N ventanas y T observaciones cada una.
-//
-// FIX-R2-A2 (auditoría institucional ronda 2):
-//   ANTES: sharpeOosAvg llegaba anualizado (×√252) pero expectedMaxSR usaba
-//     √(2 ln N) en escala no-anualizada → restar peras y manzanas → DSR siempre
-//     negativo (~-4.8 con Sharpe 1.5, N=5, T=226).
-//   AHORA: de-anualizamos sharpeOosAvg antes de la fórmula, y re-anualizamos
-//     expectedMaxSR multiplicando por √252. Así DSR > 0 cuando el Sharpe OOS
-//     supera lo esperado por azar. La σ[max(SR)] = √(Var[max]) = √(1/T) también
-//     se anualiza para mantener consistencia de unidades.
-//
-// REFERENCIA: Bailey, D. H., & López de Prado, M. (2014).
-//   "The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest
-//   Overfitting, and Non-Normality." Journal of Portfolio Management.
-//
-// DSR > 0: el Sharpe es mejor que lo esperado por azar
-// DSR > 1: estadísticamente significativo al 68%
-// DSR > 2: estadísticamente significativo al 95%
-
-/**
- * Calcula el Deflated Sharpe Ratio (López de Prado 2014).
- *
- * @param sharpeOosAvg - Sharpe OOS promedio ANUALIZADO (×√252)
- * @param nWindows - Número de ventanas walk-forward
- * @param avgObsPerWindow - Observaciones promedio por ventana OOS (días)
- * @returns DSR value
- */
-function deflatedSharpeRatio(
-  sharpeOosAvg: number,
-  nWindows: number,
-  avgObsPerWindow: number
-): number {
-  if (nWindows <= 1 || avgObsPerWindow < 20) return sharpeOosAvg;
-
-  // De-anualizar: el Sharpe diario es Sharpe_anual / √252
-  const sharpeDaily = sharpeOosAvg / Math.sqrt(252);
-
-  // FIX-DSR (09-Jul-2026): Expected max |SR| under null for N trials × T obs.
-  //
-  // ANTES: expectedMaxSRDaily = √(2 ln N) → daba ~1.79 para N=5, un Sharpe
-  //   diario irreal (equivalente a Sharpe anual de ~28). Con el Sharpe real
-  //   de ~0.07 diario, DSR = (0.07−1.79)/0.066 = −25.9. Inútil.
-  //
-  // AHORA: Cada ventana OOS tiene ~T observaciones. Bajo la hipótesis nula
-  //   (SR=0), cada SR diario estimado se distribuye N(0, 1/T). El máximo
-  //   esperado de N normales i.i.d. con varianza 1/T es:
-  //
-  //     E[max(SR_daily)] = √(1/T) × √(2 ln N) = √(2 ln N / T)
-  //
-  //   Bailey-López de Prado (2014) Eq. 6-7.
-  //   Con N=5, T=226: √(2 ln 5 / 226) = √(3.218/226) ≈ 0.119 diario.
-  //
-  // Var[max(SR)] ≈ 1/T  (Eq. 8)
-  const expectedMaxSRDaily = Math.sqrt(2 * Math.log(nWindows) / avgObsPerWindow);
-  const stdMaxSR = Math.sqrt(1 / avgObsPerWindow);
-
-  // DSR = (observed_daily - expected_max_daily) / std(max_daily)
-  return (sharpeDaily - expectedMaxSRDaily) / (stdMaxSR + 1e-10);
-}
-
-/**
- * Calcula el Probabilistic Sharpe Ratio (PSR).
- * PSR = probabilidad de que el Sharpe real sea > 0 dado el Sharpe observado.
- *
- * FIX-R2-A2 (auditoría institucional ronda 2):
- *   ANTES: usaba sharpeOosAvg anualizado con √T diario → z inflado.
- *     Ej: Sharpe=1.5, T=226 → z = 1.5×√226 = 22.5 → PSR ≈ 1.0 siempre.
- *   AHORA: de-anualiza a frecuencia diaria antes de calcular z.
- *     z = (sharpeDaily - SR_benchmark) / √(1/T).
- *     Con SR_benchmark=0 (hipótesis nula): z = sharpeDaily × √T.
- *   También reemplaza la aproximación logística por la CDF normal canónica
- *   usando la función error (erf), que es más precisa en las colas.
- *
- * REFERENCIA: Bailey & López de Prado (2014), Eq. 9-11.
- *
- * @param sharpeOosAvg - Sharpe OOS promedio ANUALIZADO
- * @param avgObsPerWindow - Observaciones promedio por ventana OOS (días)
- * @returns PSR [0, 1]
- */
-function probabilisticSharpeRatio(
-  sharpeOosAvg: number,
-  avgObsPerWindow: number
-): number {
-  if (avgObsPerWindow < 20) return 0.5;
-
-  // De-anualizar: Sharpe_daily = Sharpe_anual / √252
-  const sharpeDaily = sharpeOosAvg / Math.sqrt(252);
-
-  // z = (SR_obs - SR_benchmark) / √(1/T)
-  // Under null SR_benchmark = 0, so z = SR_obs × √T
-  const z = sharpeDaily * Math.sqrt(avgObsPerWindow);
-
-  // CDF of standard normal using error function (exact, not logistic approximation)
-  // Φ(z) = 0.5 × (1 + erf(z / √2))
-  const cdf = 0.5 * (1 + erf(z / Math.SQRT2));
-  return Math.max(0, Math.min(1, cdf));
-}
-
-/**
- * Error function approximation (Abramowitz & Stegun 7.1.26).
- * Maximum error: 1.5×10⁻⁷ — suitable for PSR calculation.
- */
-function erf(x: number): number {
-  const sign = x >= 0 ? 1 : -1;
-  x = Math.abs(x);
-  const t = 1 / (1 + 0.3275911 * x);
-  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
-  return sign * y;
-}
+// ── DSR/PSR deshabilitados hasta disponer de entradas válidas ────────────
+// No se publican estimaciones numéricas: la implementación anterior usaba
+// ventanas WFO como sustituto del número de estrategias ensayadas y el Sharpe
+// medio de ventanas en lugar de una serie OOS concatenada. Tampoco modelaba
+// adecuadamente momentos no normales ni dependencia temporal.
+// Reactivar solo con: trials documentados, retornos OOS no solapados, objetivo
+// Sharpe explícito y método que trate distribución y dependencia temporal.
 
 // ── Equal Weight Backtest (quick benchmark por ventana) ─────────────────
 // FIX-EW-COSTS (09-Jul-2026): añadidos costes de transacción realistas al EW.
 // ANTES: EW era un benchmark gratuito (0 bps) mientras el motor pagaba 15bps
 //   por rebalanceo → comparación injusta que favorecía al EW.
-// AHORA: EW rebalancea mensualmente (cada 21 días) con 15bps de coste.
-//   Esto refleja el coste real de mantener una cartera equal-weight.
+// AHORA: EW rebalancea con la misma cadencia y modelo de costes por activo que Olympus.
+// La serie contiene días naturales, así que CAGR y Sharpe se anualizan sobre 365 días,
+// igual que las métricas del motor. No mezclar bases de 252 y 365 días.
 function equalWeightBenchmark(
   closesHistory: Record<string, number[]>,
   backtestTickers: Record<string, string>,
   start: number,
   end: number,
   initialCapital: number = 10000,
-  rebalanceDays: number = 21,
-  transactionCostBps: number = 15,
+  rebalanceDays: number = 63,
 ): { cagr: number; sharpe: number; maxDrawdown: number; finalValue: number; dailyRets: number[] } {
   const tickers = Object.keys(backtestTickers);
   const n = tickers.length;
-  const w = 1 / n;
+  if (n === 0 || end <= start || rebalanceDays < 1) {
+    return { cagr: 0, sharpe: 0, maxDrawdown: 0, finalValue: initialCapital, dailyRets: [] };
+  }
+  const targetWeight = 1 / n;
+  const currentWeights: Record<string, number> = Object.fromEntries(tickers.map(t => [t, targetWeight]));
   const dailyRets: number[] = [];
   let value = initialCapital;
   let peak = initialCapital;
   let maxDD = 0;
-  const txCostRate = transactionCostBps / 10_000;
-  // FIX-AUDIT-T5: coste basado en turnover EXACTO como backtestEngine.ts.
-  // ANTES: value * txCostRate * 0.05 (5% fijo) → inconsistente.
-  // AHORA: calcula ∑|eqWeight - driftedWeight| (misma fórmula que backtestEngine).
-  let currentBenchWeights: Record<string, number> = Object.fromEntries(tickers.map(t => [t, w]));
-  let dayIndex = rebalanceDays;
+  let dayIndex = 0;
 
   for (let t = start + 1; t <= end; t++) {
-    let dayRet = 0;
-    for (const ticker of tickers) {
-      const bt = backtestTickers[ticker];
-      const closes = closesHistory[bt] ?? [];
-      if (t < closes.length) {
-        const c0 = closes[t - 1];
-        const c1 = closes[t];
-        if (c0 > 0 && c1 > 0 && isFinite(c0) && isFinite(c1)) {
-          dayRet += w * (c1 / c0 - 1);
-        }
-      }
-    }
-    if (isFinite(dayRet)) {
-      // FIX-AUDIT-T5: coste basado en turnover EXACTO como backtestEngine.ts.
-      // ANTES: value * txCostRate * 0.05 (5% fijo) → inconsistente.
-      // AHORA: ∑|eqWeight - driftedWeight| cada rebalanceo.
-      if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
-        let benchTurnover = 0;
-        for (const ticker of tickers) {
-          benchTurnover += Math.abs(w - (currentBenchWeights[ticker] ?? 0));
-        }
-        value -= value * txCostRate * benchTurnover;
-        currentBenchWeights = Object.fromEntries(tickers.map(t => [t, w]));
-      }
-      // Drift weights with daily returns
-      let bwSum = 0;
+    const preDayValue = value; // before any rebalance cost: daily return must include costs
+    // Rebalance on the same cadence as Olympus; apply the same per-asset
+    // spread + market-impact + fixed-fee model, using the actual asset ticker.
+    if (dayIndex > 0 && dayIndex % rebalanceDays === 0) {
+      let totalCost = 0;
       for (const ticker of tickers) {
         const bt = backtestTickers[ticker];
         const closes = closesHistory[bt] ?? [];
-        if (t < closes.length) {
-          const c0 = closes[t - 1];
-          const c1 = closes[t];
-          if (c0 > 0 && c1 > 0 && isFinite(c0) && isFinite(c1)) {
-            currentBenchWeights[ticker] = (currentBenchWeights[ticker] ?? 0) * (c1 / c0);
-            bwSum += currentBenchWeights[ticker] ?? 0;
-          }
-        }
+        const price = t < closes.length ? closes[t] : 0;
+        totalCost += computeTradeCost({
+          ticker,
+          oldWeight: currentWeights[ticker] ?? 0,
+          newWeight: targetWeight,
+          portfolioValueEur: value,
+          priceEur: price > 0 && Number.isFinite(price) ? price : 100,
+        }).totalCostEur;
       }
-      if (bwSum > 0) {
-        for (const ticker of tickers) currentBenchWeights[ticker] = (currentBenchWeights[ticker] ?? 0) / bwSum;
-      } else {
-        currentBenchWeights = Object.fromEntries(tickers.map(t => [t, w]));
-      }
-      dailyRets.push(dayRet);
-      value *= (1 + dayRet);
-      if (value > peak) peak = value;
-      const dd = (value - peak) / peak;
-      if (dd < maxDD) maxDD = dd;
+      value = Math.max(0, value - totalCost);
+      for (const ticker of tickers) currentWeights[ticker] = targetWeight;
     }
+
+    let dayRet = 0;
+    const assetReturns: Record<string, number> = {};
+    for (const ticker of tickers) {
+      const bt = backtestTickers[ticker];
+      const closes = closesHistory[bt] ?? [];
+      if (t >= closes.length || t <= 0) {
+        return { cagr: 0, sharpe: 0, maxDrawdown: 0, finalValue: initialCapital, dailyRets: [] };
+      }
+      const c0 = closes[t - 1];
+      const c1 = closes[t];
+      if (!(c0 > 0 && c1 > 0 && Number.isFinite(c0) && Number.isFinite(c1))) {
+        return { cagr: 0, sharpe: 0, maxDrawdown: 0, finalValue: initialCapital, dailyRets: [] };
+      }
+      const assetRet = c1 / c0 - 1;
+      assetReturns[ticker] = assetRet;
+      dayRet += (currentWeights[ticker] ?? 0) * assetRet;
+    }
+
+    value *= 1 + dayRet;
+    // Drift portfolio weights after the realized returns.
+    const grossGrowth = 1 + dayRet;
+    if (grossGrowth > 0) {
+      for (const ticker of tickers) {
+        currentWeights[ticker] = (currentWeights[ticker] ?? 0) * (1 + assetReturns[ticker]) / grossGrowth;
+      }
+    } else {
+      for (const ticker of tickers) currentWeights[ticker] = targetWeight;
+    }
+
+    const netDailyReturn = preDayValue > 0 ? value / preDayValue - 1 : -1;
+    dailyRets.push(netDailyReturn);
+    if (value > peak) peak = value;
+    const dd = peak > 0 ? (value - peak) / peak : -1;
+    if (dd < maxDD) maxDD = dd;
     dayIndex++;
   }
 
-  const years = dailyRets.length / 252;
+  const years = dailyRets.length / 365;
   const totalReturn = value / initialCapital - 1;
-  const cagr = years > 0 && (1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
-  const m = dailyRets.reduce((s, r) => s + r, 0) / dailyRets.length;
-  const v = dailyRets.reduce((s, r) => s + (r - m) ** 2, 0) / (dailyRets.length - 1);
-  const sharpe = v > 0 ? (m / Math.sqrt(v)) * Math.sqrt(252) : 0;
+  const cagr = years > 0 && 1 + totalReturn > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
+  const m = dailyRets.reduce((sum, ret) => sum + ret, 0) / dailyRets.length;
+  const variance = dailyRets.length > 1
+    ? dailyRets.reduce((sum, ret) => sum + (ret - m) ** 2, 0) / (dailyRets.length - 1)
+    : 0;
+  const sharpe = variance > 0 ? (m / Math.sqrt(variance)) * Math.sqrt(365) : 0;
 
   return { cagr, sharpe, maxDrawdown: maxDD, finalValue: value, dailyRets };
 }
@@ -542,7 +457,10 @@ function buildRecommendation(
   overallConsistency: number,
   avgSharpeDegradation: number,
   grade: WFTestResult['robustnessGrade'],
-  windows: WFWindowResult[]
+  windows: WFWindowResult[],
+  beatsEqualWeight: boolean,
+  equalWeightSharpeOosAvg: number,
+  _deflatedSharpeRatio: number | null
 ): string {
   const worst = windows.reduce((prev, w) =>
     w.consistencyScore < prev.consistencyScore ? w : prev,
@@ -553,19 +471,25 @@ function buildRecommendation(
     windows[0]
   );
 
+  // Estas etiquetas son heurísticas descriptivas, no pruebas estadísticas ni
+  // evidencia de generalización fuera de la muestra evaluada. No deben usarse
+  // como criterio automático de aprobación de capital real.
   const gradeDescriptions: Record<string, string> = {
-    A: `Motor muy robusto (estabilidad ${(overallConsistency * 100).toFixed(0)}%). Los parámetros generalizan bien en todos los períodos históricos. Confianza alta en las señales actuales. Degradación Sharpe media: ${avgSharpeDegradation.toFixed(2)}.`,
-    B: `Robustez buena (${(overallConsistency * 100).toFixed(0)}%). La mayoría de ventanas mantienen rendimiento OOS aceptable. La ventana ${worst.window.windowIndex + 1} muestra divergencia (consistencia ${(worst.consistencyScore * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Mantener vigilancia.`,
-    C: `Robustez moderada (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe media de ${avgSharpeDegradation.toFixed(2)}. La ventana ${worst.window.windowIndex + 1} tuvo rendimiento OOS significativamente peor que IS. Considera reducir peso de momentum y aumentar value/lowVol.`,
-    D: `Riesgo de overfitting (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe de ${avgSharpeDegradation.toFixed(2)}. Varias ventanas OOS con rendimiento negativo o muy inferior al IS. Los parámetros pueden estar sobreoptimizados al período 2015-2020. Se recomienda: reducir momentum weight, aumentar lowVol, y validar con datos más recientes.`,
-    F: `Overfitting severo (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe crítica de ${avgSharpeDegradation.toFixed(2)}. El sistema NO generaliza a datos no vistos. Se recomienda FUERTEMENTE: (1) reducir número de parámetros libres, (2) añadir regularización vía Ledoit-Wolf más agresivo, (3) probar con menos activos, (4) considerar walk-forward con nWindows=3 para tener más datos OOS por ventana.`,
+    A: `Indicadores heurísticos favorables (consistencia ${(overallConsistency * 100).toFixed(0)}%). No demuestra generalización futura. Degradación Sharpe media: ${avgSharpeDegradation.toFixed(2)}.`,
+    B: `Indicadores heurísticos relativamente favorables (${(overallConsistency * 100).toFixed(0)}%). La ventana ${worst.window.windowIndex + 1} muestra menor consistencia (${(worst.consistencyScore * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Requiere validación adicional.`,
+    C: `Indicadores mixtos (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe media: ${avgSharpeDegradation.toFixed(2)}. La ventana ${worst.window.windowIndex + 1} difiere entre IS y OOS. No es una prueba de overfitting por sí sola.`,
+    D: `Indicadores heurísticos desfavorables (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Varias ventanas OOS son negativas o inferiores a IS. Investigar estabilidad, datos y especificación antes de modificar parámetros.`,
+    F: `Indicadores heurísticos muy desfavorables (${(overallConsistency * 100).toFixed(0)}%). Degradación Sharpe: ${avgSharpeDegradation.toFixed(2)}. Los resultados no respaldan considerar validado el motor. Auditar datos, costes, diseño temporal y grados de libertad antes de cualquier ajuste.`,
   };
 
   const gradeDesc = gradeDescriptions[grade] ?? gradeDescriptions['C'];
   const bestInfo = `Mejor ventana: ${best.window.windowIndex + 1} (IS Sharpe ${best.inSample.metrics.sharpe.toFixed(2)} → OOS ${best.outOfSample.metrics.sharpe.toFixed(2)})`;
   const worstInfo = `Peor ventana: ${worst.window.windowIndex + 1} (IS Sharpe ${worst.inSample.metrics.sharpe.toFixed(2)} → OOS ${worst.outOfSample.metrics.sharpe.toFixed(2)})`;
 
-  return `${gradeDesc}\n${bestInfo}\n${worstInfo}`;
+  const benchmarkWarning = beatsEqualWeight
+    ? `Benchmark OOS: Olympus supera al equal-weight (Sharpe EW ${equalWeightSharpeOosAvg.toFixed(2)}).`
+    : `ALERTA DE EDGE: Olympus NO supera al equal-weight (Sharpe EW ${equalWeightSharpeOosAvg.toFixed(2)}); consistencia IS/OOS no implica rentabilidad relativa superior.`;
+  return `${gradeDesc}\n${benchmarkWarning}\nLas métricas DSR/PSR son provisionales y no validan significación estadística.\n${bestInfo}\n${worstInfo}`;
 }
 
 // ── Resultado por datos insuficientes ──────────────────────────────────
@@ -592,8 +516,9 @@ function insufficientDataResult(
     pctWindowsPositiveCagr: 0,
     recommendation: `Datos insuficientes para walk-forward. Se necesitan al menos ${config.nWindows * 100 + config.lookbackDays} días de datos; se tienen ${totalDataDays}.`,
     adaptiveFactorWeights: { momentum: 0.40, value: 0.25, quality: 0.20, lowVol: 0.15 },
-    deflatedSharpeRatio: 0,
-    probabilisticSharpeRatio: 0.5,
+    deflatedSharpeRatio: null,
+    probabilisticSharpeRatio: null,
+    statisticalMetricsStatus: 'UNAVAILABLE_NOT_VALIDATED',
     equalWeightSharpeOosAvg: 0,
     beatsEqualWeight: false,
     pctBullMarketWindows: 0,
@@ -623,13 +548,23 @@ export function runWalkForwardTest(
   const cfg: WFTestConfig = { ...DEFAULT_WF_CONFIG, ...config };
   const { nWindows, lookbackDays } = cfg;
 
-  // ── Determinar longitud total de datos ──────────────────────────────
+  // ── Resolver ticker y longitud con la misma regla que runBacktest ───
+  // Usar el proxy solo si existe y tiene más historia que el activo real.
+  // El runner CSV puede contener únicamente tickers reales; forzar el proxy
+  // dejaba al benchmark Equal Weight leyendo arrays vacíos.
+  const backtestTickers: Record<string, string> = {};
   const lengths = ASSETS.map(t => {
-    const bticker = PROXY_MAP[t] ?? t;
-    return (input.closesHistory[bticker] ?? []).length;
+    const proxy = PROXY_MAP[t] ?? t;
+    const proxyLen = (input.closesHistory[proxy] ?? []).length;
+    const realLen = (input.closesHistory[t] ?? []).length;
+    const selected = proxyLen > realLen ? proxy : t;
+    backtestTickers[t] = selected;
+    return (input.closesHistory[selected] ?? []).length;
   });
-  const totalDataDays = Math.max(...lengths);
-  if (totalDataDays < lookbackDays + nWindows * 63) {
+  // Todos los activos deben existir y compartir un timeline utilizable.
+  // Math.max ocultaba series ausentes/desalineadas y podía indexar fuera de rango.
+  const totalDataDays = lengths.length ? Math.min(...lengths) : 0;
+  if (lengths.some(length => length === 0) || totalDataDays < lookbackDays + nWindows * 63) {
     return insufficientDataResult(cfg, totalDataDays);
   }
 
@@ -641,13 +576,6 @@ export function runWalkForwardTest(
 
   // ── Ejecutar walk-forward por ventana ──────────────────────────────
   const results: WFWindowResult[] = [];
-
-  // ── Backtest tickers (con proxy) ──
-  // Usar PROXY_MAP como runBacktest para que el EW benchmark compare justo
-  const backtestTickers: Record<string, string> = {};
-  for (const ticker of ASSETS) {
-    backtestTickers[ticker] = PROXY_MAP[ticker] ?? ticker;
-  }
 
   // Helper para slicear macroHistory incluyendo campos opcionales
   function sliceMacro(macro: NonNullable<typeof input.macroHistory>, start: number, end: number) {
@@ -665,6 +593,19 @@ export function runWalkForwardTest(
     };
   }
 
+  // Keep timestamps on the exact same local index range as the corresponding
+  // close series. Passing full-history timestamps beside sliced prices silently
+  // misaligns calendar filters and covariance calculations in WFO.
+  function sliceTimestamps(
+    timestamps: NonNullable<BacktestInput['timestampsHistory']>,
+    start: number,
+    end: number
+  ): NonNullable<BacktestInput['timestampsHistory']> {
+    return Object.fromEntries(
+      Object.entries(timestamps).map(([ticker, values]) => [ticker, values.slice(start, end)])
+    );
+  }
+
   for (const win of windows) {
     // ---- IN-SAMPLE: datos desde 0 hasta trainEnd ----
     const isCloses = sliceClosesHistory(input.closesHistory, 0, win.trainEnd);
@@ -678,6 +619,7 @@ export function runWalkForwardTest(
     const isInput: BacktestInput = {
       ...inputClean,
       closesHistory: isCloses,
+      timestampsHistory: input.timestampsHistory ? sliceTimestamps(input.timestampsHistory, 0, win.trainEnd) : undefined,
       macroHistory: isMacro,
       lookbackDays,
       rebalanceDays: cfg.rebalanceDays,
@@ -694,6 +636,7 @@ export function runWalkForwardTest(
     const oosInput: BacktestInput = {
       ...inputClean,
       closesHistory: oosCloses,
+      timestampsHistory: input.timestampsHistory ? sliceTimestamps(input.timestampsHistory, oosStart, win.testEnd) : undefined,
       macroHistory: oosMacro,
       lookbackDays,
       rebalanceDays: cfg.rebalanceDays,
@@ -710,14 +653,16 @@ export function runWalkForwardTest(
 
     // ---- Equal Weight Benchmark (misma ventana OOS) ----
     // FIX-EW-COSTS: EW ahora incluye costes de transacción igual que el motor
+    // El benchmark empieza en el primer retorno OOS, no en el burn-in.
+    // testEnd es exclusivo en los slices: el último índice observado es testEnd - 1.
     const ewResult = equalWeightBenchmark(
       input.closesHistory, backtestTickers,
-      oosStart, win.testEnd, cfg.initialCapital,
-      cfg.rebalanceDays, cfg.transactionCostBps
+      win.testStart - 1, win.testEnd - 1, cfg.initialCapital,
+      cfg.rebalanceDays
     );
 
-    // ---- Bull Market Detection ----
-    const bullCheck = isBullMarketWindow(input.closesHistory, oosStart, win.testEnd);
+    // ---- Bull Market Detection: solo el tramo OOS evaluado ----
+    const bullCheck = isBullMarketWindow(input.closesHistory, win.testStart, win.testEnd - 1);
 
     // ---- Métricas ----
     const consistencyScore = computeConsistency(isResult.metrics, oosResult.metrics);
@@ -750,6 +695,9 @@ export function runWalkForwardTest(
           hhi: 0,
         },
         dailyRecords: [],
+        dailyNetReturns: [],
+        benchmarkNetReturns: [],
+        institutionalBenchmarkNetReturns: [],
         benchmarkMetrics: { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, profitFactor: 0, maxWinStreak: 0, maxLossStreak: 0, periods: 0, volatility: 0, finalValue: 0, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 },
         institutionalBenchmarkMetrics: { cagr: 0, sharpe: 0, sortino: 0, maxDrawdown: 0, calmar: 0, totalReturn: 0, winRate: 0, profitFactor: 0, maxWinStreak: 0, maxLossStreak: 0, periods: 0, volatility: 0, finalValue: 0, betaVsBenchmark: 1, alphaVsBenchmark: 0, hhi: 0 },
         regimeConditional: { EXPANSION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CONTRACTION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CRISIS: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 } },
@@ -818,8 +766,11 @@ export function runWalkForwardTest(
   const avgObsPerWindow = results.length > 0
     ? results.reduce((s, r) => s + r.window.testDays, 0) / results.length
     : 252;
-  const dsr = deflatedSharpeRatio(sharpeOosAvg, results.length, avgObsPerWindow);
-  const psr = probabilisticSharpeRatio(sharpeOosAvg, avgObsPerWindow);
+  // Fail closed: these approximations lack the inputs required for calibrated
+  // inference (effective trial count, concatenated OOS return series, moments,
+  // and treatment of serial dependence). Do not publish a numeric pseudo-result.
+  const dsr: number | null = null;
+  const psr: number | null = null;
   const pctBullWindows = results.filter(r => r.bullMarketWindow).length / results.length;
 
   const { robustnessGrade, overfittingRisk } = gradeResults(
@@ -843,11 +794,13 @@ export function runWalkForwardTest(
     pctWindowsPositiveSharpe,
     pctWindowsPositiveCagr,
     recommendation: buildRecommendation(
-      overallConsistency, avgSharpeDegradation, robustnessGrade, results
+      overallConsistency, avgSharpeDegradation, robustnessGrade, results,
+      beatsEW, ewSharpeOosAvg, dsr
     ),
     adaptiveFactorWeights: computeAdaptiveWeights(overfittingRisk),
     deflatedSharpeRatio: dsr,
     probabilisticSharpeRatio: psr,
+    statisticalMetricsStatus: 'UNAVAILABLE_NOT_VALIDATED',
     equalWeightSharpeOosAvg: ewSharpeOosAvg,
     beatsEqualWeight: beatsEW,
     pctBullMarketWindows: pctBullWindows,
@@ -895,9 +848,10 @@ export function formatWFResult(result: WFTestResult): string {
       return `  V${i + 1}: Sharpe ${w.inSample.metrics.sharpe.toFixed(2)}→${w.outOfSample.metrics.sharpe.toFixed(2)} | CAGR ${(w.inSample.metrics.cagr * 100).toFixed(1)}%→${(w.outOfSample.metrics.cagr * 100).toFixed(1)}% | ${emoji} ${(w.consistencyScore * 100).toFixed(0)}% | ${ewTag}${bullTag}`;
     }),
     '',
-    '─── DSR (Deflated Sharpe Ratio) ───',
-    `  DSR:   ${result.deflatedSharpeRatio.toFixed(3)} ${result.deflatedSharpeRatio > 1 ? '🟢 p<0.32' : result.deflatedSharpeRatio > 0 ? '🟡' : '🔴'}`,
-    `  PSR:   ${(result.probabilisticSharpeRatio * 100).toFixed(1)}% probabilidad de Sharpe > 0`,
+    '─── MÉTRICAS ESTADÍSTICAS (PROVISIONALES; NO VALIDADAS) ───',
+    `  Estado: ${result.statisticalMetricsStatus}`,
+    `  DSR: ${result.deflatedSharpeRatio === null ? 'NO DISPONIBLE — metodología no validada' : result.deflatedSharpeRatio.toFixed(3)}`,
+    `  PSR: ${result.probabilisticSharpeRatio === null ? 'NO DISPONIBLE — metodología no validada' : (result.probabilisticSharpeRatio * 100).toFixed(1) + '%'}`,
     `  EW OOS: Sharpe ${result.equalWeightSharpeOosAvg.toFixed(3)} — Motor ${result.beatsEqualWeight ? '🟢 BATE' : '🔴 PIERDE'} vs Equal Weight`,
     `  Bull:   ${(result.pctBullMarketWindows * 100).toFixed(0)}% ventanas en bull market BTC (>100%)`,
     '',

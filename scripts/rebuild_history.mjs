@@ -1,6 +1,6 @@
 // ============================================================
 // scripts/rebuild_history.mjs — VÍA 1 (auditoría forense Ronda 8)
-// Reconstruye el histórico con TICKERS EUR REALES desde Yahoo.
+// Reconstruye el histórico con tickers EUR reales y el proxy URA autorizado.
 //
 // PROBLEMA QUE RESUELVE:
 //   El CSV antiguo (2015-2026) usaba proxies americanos en USD
@@ -9,9 +9,11 @@
 //   PPFB.DE, URNU.DE). Esto corrompía TODA la serie de activos.
 //
 // SOLUCIÓN:
-//   Ventana = max(inception de los tickers EUR reales) = 2022-04-17
-//   (URNU.DE) → hoy. Activos: tickers EUR reales de Yahoo
-//   (range=5y, interval=1d). Macro: Yahoo donde hay serie
+//   URNU.DE solo tiene histórico desde 2025. Para la validación WFO,
+//   URA (uranium miners) se usa como proxy autorizado y se convierte a EUR
+//   con EURUSD=X. Los demás activos usan sus tickers reales en EUR.
+//   Ventana = intersección observada de todas las series → hoy.
+//   Macro: Yahoo donde hay serie
 //   (^VIX, HYG, LQD, ^MOVE, DX-Y.NYB); ^TNX/^IRX solo existen el
 //   último mes en Yahoo → se heredan del CSV actual, con
 //   carry-forward DOCUMENTADO en el hueco 2026-04-10→2026-07-22.
@@ -41,9 +43,9 @@ const CSV_AUG = path.join(ROOT, 'historical_data_daily_augmented.csv');
 const LEGACY_AUG = CSV_AUG;
 
 const ASSET_TICKERS = ['BTC-EUR', 'EMXC.DE', '0P00000WLG.F', 'PPFB.DE', 'URNU.DE', 'VVSM.DE', 'XNAS.DE'];
+const ASSET_SOURCE_TICKERS = { 'URNU.DE': 'URA' };
+const FX_TICKER = 'EURUSD=X';
 const MACRO_FROM_YAHOO = ['^VIX', 'HYG', 'LQD', '^MOVE', 'DX-Y.NYB'];
-const TNX_IRX_FROM_LEGACY_CUTOFF = '2026-07-23';
-
 const RANGE = '5y';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -143,20 +145,27 @@ function readLegacyTnxIrx() {
 }
 
 async function main() {
-  console.log('OLYMPUS VÍA 1 — Reconstrucción con tickers EUR reales');
+  console.log('OLYMPUS — Reconstrucción con activos reales y proxy URA autorizado en EUR');
   console.log('='.repeat(60));
 
   const assetSeries = {};
   for (const t of ASSET_TICKERS) {
-    process.stdout.write('  fetch ' + t + '... ');
-    const s = await fetchSeries(t);
+    const sourceTicker = ASSET_SOURCE_TICKERS[t] ?? t;
+    process.stdout.write('  fetch ' + t + (sourceTicker !== t ? ' [' + sourceTicker + ']' : '') + '... ');
+    const s = await fetchSeries(sourceTicker);
     if (s) {
       console.log(s.dates.length + ' pts (' + s.dates[0] + ' → ' + s.dates[s.dates.length - 1] + ')');
     } else {
       console.log('FALLÓ');
     }
-    assetSeries[t] = s;
+    assetSeries[t] = s ? { ...s, sourceTicker } : null;
     await sleep(300);
+  }
+
+  const fxSeries = await fetchSeries(FX_TICKER);
+  if (!fxSeries) {
+    console.error('ERROR: no hay serie EURUSD=X para convertir URA a EUR. Aborto.');
+    process.exit(1);
   }
 
   const macroSeries = {};
@@ -171,6 +180,10 @@ async function main() {
     macroSeries[t] = s;
     await sleep(300);
   }
+  if (MACRO_FROM_YAHOO.some(t => !macroSeries[t])) {
+    console.error('ERROR: falta una serie macro Yahoo obligatoria. Aborto para no crear columnas vacías.');
+    process.exit(1);
+  }
 
   const tnxY = await fetchSeries('^TNX');
   await sleep(300);
@@ -179,9 +192,9 @@ async function main() {
   const legacy = readLegacyTnxIrx();
   console.log('  ^TNX Yahoo: ' + (tnxY ? tnxY.dates.length : 0) + ' pts | ^IRX Yahoo: ' + (irxY ? irxY.dates.length : 0) + ' pts | legacy: ' + legacy.dates.length + ' pts');
 
-  const allStarts = Object.values(assetSeries).filter(Boolean).map((s) => s.dates[0]);
-  const allEnds = Object.values(assetSeries).filter(Boolean).map((s) => s.dates[s.dates.length - 1]);
-  if (allStarts.length < ASSET_TICKERS.length) {
+  const allStarts = [...Object.values(assetSeries).filter(Boolean).map((s) => s.dates[0]), fxSeries.dates[0]];
+  const allEnds = [...Object.values(assetSeries).filter(Boolean).map((s) => s.dates[s.dates.length - 1]), fxSeries.dates[fxSeries.dates.length - 1]];
+  if (Object.values(assetSeries).filter(Boolean).length < ASSET_TICKERS.length) {
     console.error('ERROR: no todas las series de activos están disponibles. Aborto.');
     process.exit(1);
   }
@@ -193,7 +206,13 @@ async function main() {
   console.log('Grilla: ' + calendar.length + ' días de calendario');
 
   const filled = {};
-  for (const t of ASSET_TICKERS) filled[t] = ffillOntoCalendar(assetSeries[t], calendar);
+  const fxFilled = ffillOntoCalendar(fxSeries, calendar);
+  for (const t of ASSET_TICKERS) {
+    const sourcePrices = ffillOntoCalendar(assetSeries[t], calendar);
+    filled[t] = t === 'URNU.DE'
+      ? sourcePrices.map((usdPrice, i) => usdPrice !== null && fxFilled[i] > 0 ? usdPrice / fxFilled[i] : null)
+      : sourcePrices;
+  }
   for (const t of MACRO_FROM_YAHOO) {
     if (macroSeries[t]) filled[t] = ffillOntoCalendar(macroSeries[t], calendar);
   }
@@ -212,8 +231,8 @@ async function main() {
   const tnxArr = [];
   const irxArr = [];
   for (const d of calendar) {
-    let tv = d < TNX_IRX_FROM_LEGACY_CUTOFF ? (tnxLegacyMap.get(d) ?? null) : (tnxYMap.get(d) ?? null);
-    let iv = d < TNX_IRX_FROM_LEGACY_CUTOFF ? (irxLegacyMap.get(d) ?? null) : (irxYMap.get(d) ?? null);
+    let tv = tnxYMap.get(d) ?? tnxLegacyMap.get(d) ?? null;
+    let iv = irxYMap.get(d) ?? irxLegacyMap.get(d) ?? null;
     if (tv === null && tnxArr.length > 0) tv = tnxArr[tnxArr.length - 1];
     if (iv === null && irxArr.length > 0) iv = irxArr[irxArr.length - 1];
     tnxArr.push(tv);
@@ -224,6 +243,19 @@ async function main() {
 
   const btcVol = computeBtcVolDecimal(filled['BTC-EUR']);
   filled['BTC_VOL'] = btcVol;
+
+  const requiredColumns = [...ASSET_TICKERS, ...MACRO_FROM_YAHOO, '^TNX', '^IRX', 'BTC_VOL'];
+  const firstCompleteIndex = calendar.findIndex((_, i) =>
+    requiredColumns.every(column => Number.isFinite(filled[column][i]) && filled[column][i] > 0)
+  );
+  if (firstCompleteIndex < 0) {
+    console.error('ERROR: las series requeridas no tienen una fecha común con datos válidos. Aborto.');
+    process.exit(1);
+  }
+  if (firstCompleteIndex > 0) {
+    calendar.splice(0, firstCompleteIndex);
+    for (const column of requiredColumns) filled[column] = filled[column].slice(firstCompleteIndex);
+  }
 
   console.log('\n── COBERTURA ──');
   for (const col of [...ASSET_TICKERS, ...MACRO_FROM_YAHOO, '^TNX', '^IRX', 'BTC_VOL']) {
