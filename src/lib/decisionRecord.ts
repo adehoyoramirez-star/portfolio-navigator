@@ -277,6 +277,21 @@ export function buildDecisionRecord(input: DecisionRecordInput): Omit<DecisionRe
       effective_multiplier: round(meta.breadthEffectiveMultiplier, 6),
       effective_source: meta.breadthEffectiveSource,
       institutional_shadow: meta.institutionalBreadthShadow ?? null,
+      // La sombra CORE se conserva dentro del payload ya encadenado. El
+      // snapshot de localStorage solo guarda divergencia agregada y no basta
+      // para reconstruir la asignación candidata en cada observación.
+      core_shadow: meta.coreShadow
+        ? {
+            engine_version: meta.coreShadow.engineVersion,
+            regime: meta.coreShadow.regime,
+            total_invested: round(meta.coreShadow.totalInvested, 6),
+            allocations: meta.coreShadow.allocations.map(a => ({
+              name: a.name,
+              ticker: a.ticker ?? null,
+              final_allocation: round(a.finalAllocation, 6),
+            })),
+          }
+        : null,
       regime_breadth_divergence: meta.regimeBreadthDivergence === true,
     },
     allocations_before:
