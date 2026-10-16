@@ -85,26 +85,45 @@ añaden, en una versión nueva con su propio preregistro.
 ## 5. Evidencia en histórico largo (fase separada, mismos umbrales)
 
 Se evalúan los **mismos** umbrales de §3, sin reoptimizarlos, sobre el histórico completo
-de `^VIX3M`, `^VVIX` y `^SKEW` disponible, usando `scripts/validation/data_long.ts` como
-base de datos.
+disponible de `^VIX3M`, `^VVIX` y `^SKEW` (descarga desde 2006-01-01; cada serie empieza en
+su primera barra real). Implementación: `scripts/validation/opt_shadow_backtest.ts`.
+Las filas se calculan con el mismo módulo `optionsVolShadow.ts` que el modo sombra.
 
-- **Evento E**: el máximo drawdown close-to-close de `^GSPC` en los 20 días hábiles
-  siguientes a *t* (ventana que empieza en *t*+1) es ≤ −7%.
+**Definiciones operativas (fijadas antes de ver ningún resultado):**
+
+- Calendario: el de `^GSPC` (jornadas bursátiles). Solo se evalúan filas con estado
+  CALM/WATCH/CONFIRM (no `NO_DATA` ni `INSUFFICIENT_HISTORY`).
+- **Evento E en t**: `min_{k=1..20} (S_{t+k} / S_t − 1) ≤ −7%`, con `S` el cierre de
+  `^GSPC` y `k` en jornadas bursátiles. Los días *t* sin 20 jornadas posteriores
+  disponibles quedan fuera de la muestra.
+- **Episodio CONFIRM**: racha de filas consecutivas en estado CONFIRM. Un episodio es
+  **falso positivo** si E(t₀) es falso, con t₀ su primer día.
+- **Cruce de L1** en la cartera de referencia (`engine_returns.json`, `engineValues`):
+  primer día con drawdown ≥ 12% (`TAIL_RISK_CONFIG.KILL_SWITCH.L1.threshold`) desde el
+  último máximo; el detector se rearma solo cuando la cartera marca un nuevo máximo.
+- **Adelanto** de un cruce: jornadas entre el **primer día CONFIRM** dentro de las 20
+  jornadas anteriores al cruce (incluido el día del cruce) y el cruce. Sin ningún CONFIRM
+  en esa ventana: “sin aviso”, adelanto = 0.
+
+**Criterios:**
+
 - **A1 Elevación**: `P(E | CONFIRM) / P(E)` ≥ 1,5 con límite inferior del IC95 > 1,0.
 - **A2 Valor incremental sobre el VIX en nivel** (el criterio que importa, porque el VIX
   en nivel ya cuenta en `regimeProbabilistic`, `tailRisk` y `globalStress`):
   `P(E | CONFIRM ∧ VIX < 25)` frente a `P(E | VIX < 25)`; mismo umbral que A1.
-- **A3 Falsos positivos**: proporción de episodios CONFIRM (días consecutivos agrupados)
-  sin E en los 20 días siguientes ≤ 60%.
-- **A4 Adelanto frente al Kill Switch**: en los episodios de drawdown de la cartera de
-  referencia (`engine_returns.json`) que alcancen el umbral L1, mediana del adelanto
-  (días entre el primer CONFIRM previo y el cruce de L1) > 0. Se reporta también
-  el *n* de episodios; con *n* < 5 el resultado es solo descriptivo.
-- **Inferencia**: bootstrap por bloques (longitud 20 días) por solape de ventanas.
-  Cada flag individual es exploratorio y se contrasta a α = 0,05 / 5 (Bonferroni, 5
-  hipótesis: composite + 4 flags). El composite CONFIRM es la única hipótesis primaria.
-- BTC: DVOL solo existe desde 2021; cualquier conclusión sobre BTC se etiqueta
-  **de muestra corta** y no puede sostener una promoción por sí sola.
+- **A3 Falsos positivos**: proporción de episodios CONFIRM falsos positivos ≤ 60%.
+- **A4 Adelanto frente al Kill Switch**: mediana del adelanto de los cruces de L1 > 0
+  (los “sin aviso” cuentan 0). Con *n* < 5 cruces el resultado es solo descriptivo.
+- **Guardia de potencia**: si el número de episodios CONFIRM es < 5, A1–A3 se declaran
+  **NO CONCLUYENTES** (no aprobados ni suspendidos) y K1/K2 no se activan.
+- **Inferencia**: bootstrap por bloques móviles (bloque de 20 jornadas, 2.000 réplicas,
+  semilla fija 20261016) por el solape de ventanas. Cada flag individual es exploratorio
+  y se contrasta a α = 0,05 / 5 (Bonferroni, 5 hipótesis: composite + 4 flags), es decir,
+  IC99 para los individuales. El composite CONFIRM es la única hipótesis primaria. Se
+  reporta además, como exploratorio, CONFIRM sin `SKEW_Z` (ver §8).
+- BTC: DVOL solo existe desde 2021; el backtest de renta variable no incluye BTC y
+  cualquier conclusión sobre BTC se etiqueta **de muestra corta** y no puede sostener una
+  promoción por sí sola.
 
 ## 6. Criterios de abandono (kill)
 

@@ -262,6 +262,7 @@ describe("I1 aislamiento del motor", () => {
     MODULE,
     path.join(SRC, "test/optionsVolShadow.test.ts"),
     path.join(SRC, "test/optionsShadowParsers.test.ts"),
+    path.join(SRC, "test/optShadowStats.test.ts"),
   ]);
 
   function walk(dir: string, out: string[] = []): string[] {
