@@ -131,7 +131,7 @@ export function simulateAccount(opts: { startOffset?: number; costScale?: number
     const prevVal = values.length ? values[values.length - 1] : CFG.initialCapital;
     const pv = cash + ASSETS.reduce((s, a) => s + shares[a] * px(a), 0);
     const alloc = rcs[k].allocations as Record<string, number>;
-    let dcaCommitted: Record<string, number> = {};
+    const dcaCommitted: Record<string, number> = {};
 
     if (k % 7 === 0 && k > 0) {
       const bi = btcIndicators(di);

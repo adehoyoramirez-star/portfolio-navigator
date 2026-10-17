@@ -92,7 +92,7 @@ async function buildDataset(): Promise<LongDataset> {
   const cal = [...charts['URTH'].map.keys()].sort();
   const get = (c: Chart, d: string, maxBack = 5): number | null => {
     if (c.map.has(d)) return c.map.get(d)!;
-    let k = new Date(d + 'T00:00:00Z').getTime();
+    const k = new Date(d + 'T00:00:00Z').getTime();
     for (let i = 1; i <= maxBack; i++) {
       const prev = new Date(k - i * 86400000).toISOString().slice(0, 10);
       if (c.map.has(prev)) return c.map.get(prev)!;

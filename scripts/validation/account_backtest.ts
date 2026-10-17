@@ -142,7 +142,7 @@ for (let k = 0; k < recs.length; k++) {
   const isRebDay = k % 30 === 0;
   if (k > 0) { isDcaDay && 0; }
 
-  let dcaCommitted: Record<string, number> = {};
+  const dcaCommitted: Record<string, number> = {};
 
   if (isDcaDay && k > 0) {
     const allocRec = rec.allocations as Record<string, number>;

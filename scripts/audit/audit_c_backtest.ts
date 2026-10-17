@@ -101,7 +101,7 @@ function simulate(variant: Variant) {
   const values: number[] = [];
   const trimsByTicker: Record<string, number[]> = {};
   let cash = 10000;
-  let invested = 0;
+  const invested = 0;
   for (const tick of TICKERS) trimsByTicker[tick] = [];
   for (const t of WEEKLY) {
     const p = TICKERS.map(k => closes[k][t]);
