@@ -256,19 +256,6 @@ export const TAIL_RISK_CONFIG = {
   MIN_ALLOCATION: 0.05,
 } as const;
 
-// ── RISK BUDGET POR SECTOR ─────────────────────────────────────────────────
-export const SECTOR_RISK_BUDGET: Record<string, number> = {
-  crypto:      0.6,
-  emerging:    1.0,
-  equity:      1.0,
-  gold:        1.0,
-  uranium:     0.9,
-  semis:       1.0,
-  real_estate: 1.0,
-  technology:  1.0,
-  energy:      0.9,
-} as const;
-
 // ── CORE SIGNAL WEIGHTS (FIX-AUDIT-C8) ────────────────────────────────────
 // Pesos del core signal score que combina régimen, BTC cycle, y risk.
 // Antes hardcodeados en olympusV3.ts (0.55, 0.20, 0.25).
@@ -297,15 +284,6 @@ export const BTC_CAPS_BY_REGIME: Record<string, number> = {
   CONTRACTION:  0.20,
   CRISIS:       0.10,
 } as const;
-
-// ── BOND YIELD REFERENCE (FIX-AUDIT-C4, C10) ───────────────────────────────
-// Yield del bono a 10 años de referencia en NOTACIÓN PORCENTAJE (no decimal).
-// Ej: 4.25 = 4.25%. El ciclo top detector lo espera en esta unidad para
-// calcular realRate = bondYield10y - inflationBreakeven (ambos en %).
-// Antes hardcodeado como 4.25 en olympusV3.ts.
-// NOTA: esto difiere de RISK_FREE_RATE_ANNUAL que usa decimal (0.04).
-// Ambos son correctos en sus respectivos contextos de consumo.
-export const BOND_YIELD_10Y = 4.25; // 4.25% en notación porcentaje
 
 // ── FACTOR CALIBRATION (primas AQR) ───────────────────────────────────────
 export const FACTOR_CONFIG = {
@@ -404,22 +382,6 @@ export function getFactorWeightsByRegime(regime: string): {
   return { ...FACTOR_CONFIG.DEFAULT_WEIGHTS };
 }
 
-// ── BLACK-LITTERMAN ───────────────────────────────────────────────────────
-export const BL_CONFIG = {
-  RISK_AVERSION: 2.5,
-  TAU: 0.05,
-  OMEGA_MIN: 1e-6,
-} as const;
-
-// ── DURATION ADJUSTMENT ────────────────────────────────────────────────────
-export const DURATION_CONFIG = {
-  CRISIS_YOUNG_PENALTY: -0.10,
-  CRISIS_MATURE_PENALTY: -0.05,
-  CRISIS_OLD_BONUS: 0.08,
-  YOUNG_THRESHOLD: 4,
-  OLD_THRESHOLD: 12,
-} as const;
-
 // ── OLYMPUS CORE v1.0 — perfil canónico de la auditoría forense ──────────
 // Evidencia: Phases 9-12 (ablaciones 64 runs, bootstrap pareado bloque 21d,
 // autopsia de 9 episodios del Trend Gate). Ver OLYMPUS_CORE_v1.0_SPEC.md.
@@ -481,19 +443,6 @@ export const STORAGE_KEYS = {
   DECISION_LOG:   "olympus_decision_log_v1",
 } as const;
 
-// ── API LIMITS ─────────────────────────────────────────────────────────────
-export const API_CONFIG = {
-  YAHOO: {
-    RATE_LIMIT_PER_MINUTE: 60,
-    MAX_RETRIES: 3,
-    RETRY_DELAY_MS: 1000,
-  },
-  FRED: {
-    RATE_LIMIT_PER_MINUTE: 30,
-    MAX_RETRIES: 3,
-  },
-} as const;
-
 // ── NOTA: IS3Q y XNAS ELIMINADOS del portfolio (redundantes con WLG) ─────
 // 0P00000WLG.F = Vanguard Global Stock Index Fund (ISIN: IE00B03HD191)
 //   Selección: ROE alto, deuda baja, beneficios estables
@@ -508,7 +457,7 @@ export const API_CONFIG = {
 //
 // Son complementarios: Quality defiende en correcciones, Momentum acelera en tendencias.
 // Si se añade IS3R al portfolio, reducir proporcionalmente VVSM.DE o WLG
-// para no superar el SECTOR_CAP de tecnología/equity del 35%.
+// para no concentrar demasiado en tecnología/equity (el motor no aplica un tope sectorial fijo).
 // ─────────────────────────────────────────────────────────────────────────
 
 // ── ORDER GUARD (FIX-CLIFF-CREDIT-01 · Fase 4/5 del plan de corrección) ──
@@ -537,3 +486,23 @@ export const ORDER_GUARD_CONFIG = {
   /** Valor máximo por orden individual en € (2.500€ por sesión). */
   MAX_ORDER_VALUE: 2500,
 } as const;
+
+// ── VETO DE COMPRA POR TECHO DE CICLO (Oct-2026) ─────────────────────────
+// PROBLEMA: la señal de techo de ciclo actuaba DOS veces sobre la misma compra:
+//   1) el motor ya multiplica el peso OBJETIVO del activo por allocationMultiplier;
+//   2) el rebalanceador y el Smart DCA vetaban además cualquier compra con
+//      shouldTrim=true (= recorte > 0 %, basta P/E 16,1 o RSI 75,1).
+// Resultado: un fondo global (World) quedaba congelado aunque estuviera
+// infraponderado respecto a SU objetivo ya reducido. Viola AGENTS.md
+// ("una señal, una capa").
+// REGLA: el objetivo ya lleva la señal; el veto duro solo se conserva en las zonas
+// de peligro explícito (DANGER/EXTREME, multiplicador ≤ 0,35). En CAUTION se compra
+// hasta el objetivo reducido (compra proporcional, no prohibida). Los SELL de
+// recorte no cambian.
+export const CYCLE_TOP_BUY_POLICY = {
+  vetoZones: ["DANGER", "EXTREME"] as readonly string[],
+} as const;
+
+export function isCycleTopBuyVeto(signal?: { shouldTrim: boolean; zone: string } | null): boolean {
+  return !!signal && signal.shouldTrim && CYCLE_TOP_BUY_POLICY.vetoZones.includes(signal.zone);
+}

@@ -287,7 +287,7 @@ describe("BTC-Only Attack (≥4 señales, < 2 macro)", () => {
       btcDominance: 60,
       mvrvRatio: 1.4,
       cycleTopSignals: [
-        { ticker: "BTC-EUR", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "BTC-EUR", shouldTrim: true, zone: "DANGER" },
       ],
     }));
 
@@ -401,7 +401,7 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
       cewsOutput: cewsRecovering(),
       cewsPreviousLevel: "ALERT",
       cycleTopSignals: [
-        { ticker: "PPFB.DE", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "PPFB.DE", shouldTrim: true, zone: "DANGER" },
       ],
     }));
 
@@ -581,12 +581,12 @@ describe("Edge Cases", () => {
   test("Todos los activos con cycleTopSignal → 0 compras (cash no se invierte)", () => {
     const result = computeSmartDCA(baseInput({
       cycleTopSignals: [
-        { ticker: "BTC-EUR", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "BTC-EUR", shouldTrim: true, zone: "DANGER" },
         { ticker: "0P00000WLG.F", shouldTrim: true, zone: "DANGER" },
-        { ticker: "VVSM.DE", shouldTrim: true, zone: "CAUTION" },
-        { ticker: "PPFB.DE", shouldTrim: true, zone: "CAUTION" },
-        { ticker: "URNU.DE", shouldTrim: true, zone: "CAUTION" },
-        { ticker: "EMXC.DE", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "VVSM.DE", shouldTrim: true, zone: "DANGER" },
+        { ticker: "PPFB.DE", shouldTrim: true, zone: "DANGER" },
+        { ticker: "URNU.DE", shouldTrim: true, zone: "DANGER" },
+        { ticker: "EMXC.DE", shouldTrim: true, zone: "DANGER" },
         { ticker: "VVSM.DE", shouldTrim: true, zone: "EXTREME" },
       ],
     }));
@@ -748,7 +748,7 @@ describe("Edge Cases", () => {
       btcDominance: 60,
       mvrvRatio: 1.4,
       cycleTopSignals: [
-        { ticker: "BTC-EUR", shouldTrim: true, zone: "CAUTION" },
+        { ticker: "BTC-EUR", shouldTrim: true, zone: "DANGER" },
       ],
       currentAllocations: [
         { ticker: "BTC-EUR", name: "Bitcoin", currentWeight: 0.10 },

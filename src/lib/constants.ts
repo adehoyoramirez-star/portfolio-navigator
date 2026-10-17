@@ -38,8 +38,6 @@ export const SECTOR_MAP: Record<Asset, string> = {
   "0P00000WLG.F": "equity",
 };
 
-// Cap máximo por sector — si VVSM (semis) + WLG (equity) superan 50%, el motor limita.
-export const SECTOR_CAP = 0.50;
 export const TARGET_GOAL = 150000;
 export const DEFAULT_MONTHLY = 400;
 export const STRUCTURAL_RESERVE_PCT = 0.04;  // FIX-CASH-LEAN: reducido de 8%→4% — menos cash inmovilizado

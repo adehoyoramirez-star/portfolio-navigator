@@ -27,7 +27,7 @@
 //     La exclusión mutua depende del ESTADO (pesos + cash), que se actualiza al
 //     confirmar cada ejecución — nunca de una sugerencia.
 
-import { ORDER_GUARD_CONFIG } from "../config/engineConfig";
+import { ORDER_GUARD_CONFIG, isCycleTopBuyVeto } from "../config/engineConfig";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FASE 3B · CORRECCIÓN 2 — EVENTO DE DE-RISKING (fuera de cadencia)
@@ -328,9 +328,10 @@ export function computeRebalanceSuggestions(
   if (cashForBuys > 0) {
     const underweight = withDrift
       .filter(a => {
-        // Capa 1: señal de techo de ciclo → nunca comprar
-        if (a.cycleSignal?.shouldTrim) return false;
-        if (a.cycleSignal && a.cycleSignal.allocationMultiplier < 0.6) return false;
+        // Capa 1: techo de ciclo en zona de peligro (DANGER/EXTREME) → no comprar.
+        // En CAUTION el objetivo ya viene reducido por el motor: se compra hasta él
+        // (ver CYCLE_TOP_BUY_POLICY en engineConfig.ts).
+        if (isCycleTopBuyVeto(a.cycleSignal)) return false;
         // Capa 2: failsafe — si YA se va a vender este ticker (o un alias), no comprar
         if (soldTickers.has(a.ticker.split('.')[0])) return false;
         return a.drift < -driftThreshold && a.deficitValue > 0 && a.price > 0;
@@ -402,7 +403,7 @@ export function computeRebalanceSuggestions(
   const totalProceeds    = sellSuggestions.reduce((s, r) => s + r.proceedsIfSold, 0);
   const spentCash        = buySuggestions.reduce((s, r) => s + r.cost, 0);
   const underweightForCoverage = withDrift.filter(a =>
-    a.drift < -driftThreshold && !a.cycleSignal?.shouldTrim
+    a.drift < -driftThreshold && !isCycleTopBuyVeto(a.cycleSignal)
   );
   const idealCost       = underweightForCoverage.reduce((s, a) => s + Math.min(a.deficitValue, cashForBuys), 0);
   const coverageRatio   = idealCost > 0 ? totalCost / idealCost : 1;

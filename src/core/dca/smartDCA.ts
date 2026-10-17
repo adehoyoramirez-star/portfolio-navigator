@@ -9,6 +9,7 @@
 //   - Graduación Kelly-inspired: Tramo 1 (4/7) 50% Oly + 33% Táct, Tramo 2 (5/7) 75% Oly + 66% Táct, Tramo 3 (6-7/7) 100% ambos.
 
 import type { CEWSOutput, CEWSLevel } from "../macro/crisisEarlyWarning";
+import { isCycleTopBuyVeto } from "../config/engineConfig";
 
 // ── CONFIGURACIÓN CENTRALIZADA (auditoría Jul-2026) ─────────────────────
 // Todos los magic numbers extraídos a este objeto para tuning consistente.
@@ -527,7 +528,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   });
   const cycleTopTickers = new Set<string>(
     (input.cycleTopSignals ?? [])
-      .filter(s => s.shouldTrim && s.zone !== "SAFE")
+      .filter(s => isCycleTopBuyVeto(s)) // solo DANGER/EXTREME: el objetivo ya lleva la señal
       .map(s => s.ticker)
   );
 
