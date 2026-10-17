@@ -93,6 +93,8 @@ export interface BacktestInput {
   // OLYMPUS CORE v1.0 (Phase 12): pass-through del perfil Core y del overlay
   // Trend Gate opcional hacia runOlympusEngine. Default undefined = v5.3 intacto.
   coreMode?: boolean;
+  // CORE-DEF (PREREGISTRO_CORE_DEF.md): reactiva vol target / Kill Switch dentro del CORE. Opt-in.
+  coreDefensive?: { volTarget?: boolean; killSwitch?: boolean };
   coreTrendGate?: boolean;
   coreTrendGateState?: CoreTrendGateState;
   // FIX-ACOPLAMIENTO-SATELITE (Ago-2026): override del drawdown que alimenta
@@ -516,6 +518,7 @@ function computeAllocationsWithRegime(
   coreMode?: boolean,
   coreTrendGate?: boolean,
   coreTrendGateState?: CoreTrendGateState,
+  coreDefensive?: { volTarget?: boolean; killSwitch?: boolean },
 ): {
   allocations: Record<string, number>;
   regime: BacktestRegime;
@@ -595,6 +598,7 @@ function computeAllocationsWithRegime(
     absoluteTrendGateOverride,
     institutionalBreadthShadow: institutionalBreadthCandidate,
     coreMode,
+    coreDefensive,
     coreTrendGate,
     coreTrendGateState,
     // Perf: en backtest la sombra CORE se descartaría → no computarla.
@@ -856,6 +860,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         input.coreMode,
         input.coreTrendGate,
         input.coreTrendGateState,
+        input.coreDefensive,
       );
       if (input.institutionalBreadthCandidate?.enabled === true && result.institutionalBreadthShadow) {
         institutionalBreadthState = result.institutionalBreadthShadow.state;

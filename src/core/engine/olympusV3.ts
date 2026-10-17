@@ -463,6 +463,13 @@ export interface OlympusEngineInput {
   // perfil canónico opt-in — blend HRP puro, stack defensivo OFF, caps BTC OFF.
   // Default undefined → comportamiento v5.3 completo (cero cambios en producción).
   coreMode?: boolean;
+  // CORE-DEF (preregistro PREREGISTRO_CORE_DEF.md, 17-oct-2026): perfil intermedio OPT-IN.
+  // Solo actúa junto con coreMode: reactiva vol target y/o Kill Switch dentro del CORE.
+  // Default undefined (o ambos false) → coreMode bit-idéntico al actual.
+  //   volTarget:  vol target con volatilidad completa y regimePenalty 1.0 (como la ablación V3);
+  //               además deshabilita Alpha-Boost (no formaba parte de V3/V4).
+  //   killSwitch: computeTailRiskOverlay con stressScore 0 (como la ablación V4).
+  coreDefensive?: { volTarget?: boolean; killSwitch?: boolean };
   // Modo sombra: ejecuta la cartera v5.3 legacy en paralelo (misma matemática
   // exacta, sin tocar el resultado principal). Cero estado y cero coste de
   // riesgo: es SOLO observabilidad (comparativa CORE vs v5.3, plan de cutover).
@@ -1199,22 +1206,26 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   - Vol Target: coste -0.64pp con MaxDD idéntico (nunca binding en decisiones).
   // El stack completo (VT con régimen + KS L1-L5 + crisis sistémica + correlación)
   // queda intacto al ejecutar sin coreMode.
-  const volTarget = coreMode
+  // CORE-DEF: solo si coreMode Y coreDefensive.volTarget === true (opt-in explícito).
+  const coreVolTargetOn = coreMode && input.coreDefensive?.volTarget === true;
+  const coreKillSwitchOn = coreMode && input.coreDefensive?.killSwitch === true;
+  const volTarget = coreMode && !coreVolTargetOn
     ? { multiplier: 1.0, effectiveVol: coreRealizedVol, isScaledDown: false, isScaledUp: false }
     : computeVolTargetMultiplier({
         targetVol:     input.targetVol ?? VOLATILITY_CONFIG.DEFAULT_TARGET_VOL,
-        realizedVol:   coreRealizedVol,  // ← usa vol del CORE (ex-BTC)
-        regimePenalty: adjustedRegimePenalty,
+        // legacy: vol del CORE (ex-BTC). CORE-DEF: vol completa (como la ablación V3).
+        realizedVol:   coreVolTargetOn ? realizedVol : coreRealizedVol,
+        regimePenalty: coreVolTargetOn ? 1.0 : adjustedRegimePenalty,
       });
 
   // ====== CAPA 8: TAIL RISK ======
-  const tailRisk = coreMode
+  const tailRisk = coreMode && !coreKillSwitchOn
     ? { overlay: 1.0, isActive: false, triggerReason: 'CORE v1.0: Kill Switch OFF (evidencia Phase 11: coste robusto sin reducción de MaxDD)', killSwitchLevel: 0 as const, killSwitchName: 'CORE_KILLSWITCH_OFF', exposureReduction: 0, drawdownOverlay: 1.0, volatilityReduction: 0, correlationPenalty: 0, maxBtcWeightActive: false }
     : computeTailRiskOverlay({
         drawdown:           input.portfolioDrawdown ?? 0,
         vix:                macro.vix,
         creditSpread:       macro.creditSpread,
-        stressScore:        masterRegime.stressDetail.score,
+        stressScore:        coreKillSwitchOn ? 0 : masterRegime.stressDetail.score,  // CORE-DEF: 0 (como la ablación V4)
         portfolioVolatility: realizedVol,  // ← vol FULL (incluye BTC) para la red de seguridad
         avgCorrelation:     input.avgCorrelation,
       });
@@ -1243,7 +1254,8 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     masterRegime.regime === 'EXPANSION' &&
     btcCycle.signal === 'STRONG_BUY' &&
     (input.liquidityGrowth ?? 0) > 0 &&
-    tailRisk.killSwitchLevel === 0   // FIX-ALPHA-01: Kill Switch activo → Alpha-Boost deshabilitado
+    tailRisk.killSwitchLevel === 0 &&   // FIX-ALPHA-01: Kill Switch activo → Alpha-Boost deshabilitado
+    !coreVolTargetOn                    // CORE-DEF: el vol target no se anula con una señal de BTC
   );
   const totalInvested_alpha = isAlphaMode ? Math.max(totalInvested_raw, ALPHA_BOOST_CONFIG.EXPOSURE) : totalInvested_raw;  // FIX-AUDIT-C9: antes 0.95 hardcodeado
 
