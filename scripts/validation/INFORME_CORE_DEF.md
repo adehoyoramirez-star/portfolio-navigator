@@ -64,10 +64,38 @@ días de modo sombra forward y la aprobación por escrito (§18). Por tanto:
 
 ## 6. Siguientes pasos que el resultado sugiere
 
-1. **Entender por qué CORE degrada 0,82 IS→OOS** (frente a 0,35): es el verdadero bloqueo, no el
-   Kill Switch.
+1. ~~Entender por qué CORE degrada 0,82 IS→OOS~~ → diagnosticado en §7 (el WFA mide otra covarianza).
 2. **Paso 3 del plan:** el VIX aparece en 7 módulos de régimen y riesgo (`regimeProbabilistic`,
    `globalStress`, `crisis`, `crisisEarlyWarning`, `masterRegime`, `hmmRegime`, `tailRisk`) y
    `AGENTS.md` fija un máximo de dos capas por variable. No todos son capas independientes
    (alguno puede solo encaminar el dato), pero hay que auditarlo antes de añadir nada.
 3. Extender el modo sombra a CORE-DEF y acumular los 90 días antes de cualquier decisión.
+
+## 7. Diagnóstico del bloqueo WFA (17-oct-2026, exploratorio, `wfa_cov_mismatch.ts`)
+
+Hipótesis y regla fijadas en la cabecera del script antes de ejecutarlo. La réplica del bucle IS/OOS
+reproduce el WFA nativo a 1e-9 en los tres perfiles (sin eso no se concluía nada).
+
+**Hecho:** `runWalkForwardTest` fuerza `useDynamicCovariance: true` (DCC-GARCH) en todas las ventanas.
+El perfil CORE validado (y CORE-DEF) usa la covarianza por defecto (Ledoit-Wolf). El WFA **no está
+gradando el perfil que se validó**, sino "CORE con DCC", la variante que el criterio preregistrado ya rechazó.
+
+| Perfil | Degradación IS→OOS con DCC (lo que grada el WFA) | Con covarianza del perfil |
+|---|---|---|
+| LEGACY | 0,345 | 0,313 |
+| CORE | 0,819 | **0,229** |
+| CORE-DEF | 0,824 | **0,238** |
+
+- Con la covarianza del perfil, la degradación de CORE y CORE-DEF cae por debajo de 0,6 (umbral MODERATE)
+  y de 0,8. El grado completo no se recalcula (la consistencia no está exportada): solo se reporta la degradación.
+- Corrida completa: CORE con DCC da 31,5% CAGR / Sharpe 1,81 / DD −17,1% frente a 24,6% / 1,71 / −14,9% por defecto:
+  DCC infla el resultado de muestra y empeora el drawdown, coherente con haberlo descartado.
+- Un script contrastado aparte (`wfa_degradation_null.ts`, procedencia no verificada, sin commitear) apunta
+  en la misma dirección: estrategias sin parámetros degradan ≈0,5 en esta muestra. Su regla es laxa y no se usa como evidencia.
+
+**Qué NO significa:** no se ha promovido nada ni se declara cumplido el criterio del preregistro §6; cambiar
+el WFA para que mida la covarianza del perfil es un cambio de criterio tras ver datos y requiere aprobación §18.
+Con 5 ventanas OOS de ~67 días el ruido de cada Sharpe es ≈ ±2,3: es un diagnóstico, no una prueba.
+
+**Siguiente paso:** añadir a `runWalkForwardTest` una opción `useDynamicCovariance` (por defecto sin cambios),
+aprobarla por §18 y repetir el WFA con el perfil real; más los ≥ 90 días de sombra forward.
