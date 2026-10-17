@@ -118,6 +118,11 @@ export interface ShadowSnapshot {
   aligned: boolean;
   legacyTop: string;
   coreTop: string;
+  /** Sombra CORE-DEF (opcional: las observaciones anteriores no la tienen). */
+  coreDefL1Pp?: number;
+  coreDefInvestedPct?: number;
+  /** Multiplicador efectivo de exposición del Kill Switch (1 = sin acción). */
+  coreDefOverlay?: number;
 }
 
 export const SHADOW_HISTORY_MAX_ENTRIES = 180; // ~6 meses de sesiones

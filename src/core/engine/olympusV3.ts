@@ -298,6 +298,13 @@ export interface CoreShadowResult {
   totalInvested: number;
 }
 
+// Sombra del perfil CORE-DEF (CORE + vol target + Kill Switch). Misma regla: solo observabilidad.
+export interface CoreDefShadowResult extends CoreShadowResult {
+  volTargetMultiplier: number;
+  tailRiskOverlay: number;
+  killSwitchLevel: number;
+}
+
 export interface EngineOutput {
   allocations: OlympusOutput[];
   regime: PortfolioRegime;
@@ -347,6 +354,8 @@ export interface EngineOutput {
     coreTrendGateMultiplier: number;
     coreTrendGateReason: string;
     coreShadow?: CoreShadowResult | null;
+    /** Sombra CORE-DEF (opt-in) — evidencia forward previa a cualquier promoción (preregistro CORE-DEF §6). */
+    coreDefShadow?: CoreDefShadowResult | null;
     // FIX-AUDIT-R10: transparencia del overlay discrecional
     allocationProvenance: {
       quantWeight: number;
@@ -1531,6 +1540,35 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
           }
         })();
 
+  // Sombra CORE-DEF: mismas garantías que la sombra CORE (sin estado, sin efectos, try/catch → null).
+  // Solo se calcula desde el motor v5.3 (default): con coreMode o en la propia sombra no se anida.
+  const coreDefShadow: CoreDefShadowResult | null = input.coreShadowMode === true || coreMode
+    ? null
+    : (() => {
+        try {
+          const shadow = runOlympusEngine({
+            ...input,
+            covMatrix: input.coreCovMatrix ?? input.covMatrix,
+            coreMode: true,
+            coreDefensive: { volTarget: true, killSwitch: true },
+            coreTrendGate: false,
+            coreTrendGateState: undefined,
+            coreShadowMode: true,
+          });
+          return {
+            engineVersion: shadow.engineVersion + "+core-def",
+            regime: shadow.regime as string,
+            allocations: shadow.allocations.map(a => ({ name: a.name, finalAllocation: a.finalAllocation })),
+            totalInvested: shadow.totalInvested,
+            volTargetMultiplier: shadow.volTargetMultiplier,
+            tailRiskOverlay: shadow.tailRiskOverlay,
+            killSwitchLevel: shadow.killSwitchLevel,
+          };
+        } catch {
+          return null;
+        }
+      })();
+
   const result: EngineOutput = {
     allocations,
     regime:              masterRegime.regime,
@@ -1646,6 +1684,7 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
     result.totalInvested = result.totalAllocation;
   }
   if (coreShadow) result.meta.coreShadow = coreShadow;
+  if (coreDefShadow) result.meta.coreDefShadow = coreDefShadow;
   return result;
 }
 

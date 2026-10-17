@@ -270,7 +270,12 @@ function minimumVarianceBL(
   }
   // R4.2 obs: warn cuando el loop corto temprano (<50 iters) → probable premature convergence.
   // weights devueltos pueden ser subóptimos; conviene revisar la cov matrix manualmente.
-  if (iterUsed < 50) {
+  // Auditoría 18-oct-2026: converger en 1 iteración con activos IDÉNTICOS (gradiente igual en todos,
+  // la proyección al simplex lo anula) es CORRECTO y devuelve 1/n; solo es sospechoso si los pesos
+  // ya se han separado. Con covarianza realista el bucle llega al óptimo en ~500 iteraciones y 200
+  // dejan los pesos a ≤0,5 pp de él. Se avisa únicamente cuando hay dispersión real.
+  const spread = Math.max(...weights) - Math.min(...weights);
+  if (iterUsed < 50 && spread > 1e-3) {
     console.warn(`[R4.2 obs] minimumVarianceBL convergio en ${iterUsed}/${iterations} iters (posible premature convergence)`);
   }
 

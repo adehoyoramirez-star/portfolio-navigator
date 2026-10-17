@@ -1335,6 +1335,19 @@ soxRsiWeekly,
       : null,
     [engineResult],
   );
+  // Sombra CORE-DEF (CORE + vol target + Kill Switch): misma comparativa, solo lectura.
+  const coreDefDivergence = useMemo(
+    () => engineResult?.meta.coreDefShadow
+      ? computeShadowDivergence(
+          {
+            allocations: engineResult.allocations.map(a => ({ name: a.name, finalAllocation: a.finalAllocation })),
+            totalInvested: engineResult.totalInvested,
+          },
+          engineResult.meta.coreDefShadow,
+        )
+      : null,
+    [engineResult],
+  );
   const processedShadowObservationRef = useRef<string | null>(null);
   // Persistencia: un snapshot por observación de mercado (misma clave que el
   // breadth shadow), siempre la última del día. Sin estado del motor — es solo registro.
@@ -1350,8 +1363,13 @@ soxRsiWeekly,
       aligned: shadowDivergence.aligned,
       legacyTop: shadowDivergence.legacyTop,
       coreTop: shadowDivergence.coreTop,
+      ...(engineResult.meta.coreDefShadow && coreDefDivergence ? {
+        coreDefL1Pp: Math.round(coreDefDivergence.l1Pp * 10) / 10,
+        coreDefInvestedPct: Math.round(engineResult.meta.coreDefShadow.totalInvested * 1000) / 10,
+        coreDefOverlay: Math.round(engineResult.meta.coreDefShadow.tailRiskOverlay * engineResult.meta.coreDefShadow.volTargetMultiplier * 1000) / 1000,
+      } : {}),
     }));
-  }, [breadthShadowObservationKey, shadowDivergence, engineResult]);
+  }, [breadthShadowObservationKey, shadowDivergence, coreDefDivergence, engineResult]);
   useEffect(() => {
     try {
       localStorage.setItem(SHADOW_HISTORY_KEY, JSON.stringify(shadowHistory));
@@ -3508,6 +3526,16 @@ soxRsiWeekly,
                         L1 {shadowDivergence.l1Pp.toFixed(1)}pp
                       </td>
                     </tr>
+                    {engineResult.meta.coreDefShadow && coreDefDivergence && (
+                      <tr style={{ borderTop: "1px solid #374151" }}>
+                        <td style={{ padding: "0.3rem 0", color: "#9ca3af" }}>CORE-DEF (sombra)</td>
+                        <td style={{ textAlign: "right", color: "#9ca3af" }}>
+                          KS {engineResult.meta.coreDefShadow.killSwitchLevel} · ×{(engineResult.meta.coreDefShadow.tailRiskOverlay * engineResult.meta.coreDefShadow.volTargetMultiplier).toFixed(2)}
+                        </td>
+                        <td style={{ textAlign: "right", color: "#10b981" }}>{(engineResult.meta.coreDefShadow.totalInvested * 100).toFixed(1)}%</td>
+                        <td style={{ textAlign: "right", color: "#9ca3af" }}>L1 {coreDefDivergence.l1Pp.toFixed(1)}pp</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
