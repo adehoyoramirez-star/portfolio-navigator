@@ -99,3 +99,16 @@ Con 5 ventanas OOS de ~67 días el ruido de cada Sharpe es ≈ ±2,3: es un diag
 
 **Siguiente paso:** añadir a `runWalkForwardTest` una opción `useDynamicCovariance` (por defecto sin cambios),
 aprobarla por §18 y repetir el WFA con el perfil real; más los ≥ 90 días de sombra forward.
+
+## 8. ¿La penalización de régimen (×0,739) la anula el vol target (×1,50)? (18-oct-2026)
+
+Verificado en `volatilityTarget.ts` + `olympusV3.ts`: el régimen NO multiplica la exposición; solo rebaja el
+objetivo de vol (`regimeFactor = 0,60 + (pen − 0,4)·0,667`; pen 0,739 → 0,826). El multiplicador resultante
+se recorta a ≤ 1,0 en `totalInvested`, así que el vol target solo puede REDUCIR exposición.
+Con targetVol 20 %: exposición con pen 0,739 = 100 % para vol realizada ≤ ~16 %, 82,6 % a 20 %, 66 % a 25 %.
+**Conclusión:** con la vol típica de la cartera (~10-12 %) la penalización de régimen es inerte sobre la
+exposición (no es "anulada por ×1,50": simplemente nunca llega a morder). Solo actúa en estrés de vol.
+Coherente con `macro_ablation.ts` (el macro no cambia pesos ni Sharpe en backtest).
+**Decisión pendiente (requiere §18):** o se acepta que el régimen es una capa de estrés (documentarlo así),
+o se baja `targetVol`/se cambia la fórmula. No se toca el motor sin aprobación.
+Test de caracterización: `src/test/volTargetRegimeInert.test.ts`.
