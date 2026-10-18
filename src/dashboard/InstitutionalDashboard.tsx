@@ -2363,12 +2363,15 @@ soxRsiWeekly,
   const histogramData = useMemo(() => {
     if (simulations.length === 0) return [];
     const numBins = 20;
-    const min = Math.min(...simulations);
-    const max = Math.max(...simulations);
-    const binWidth = (max - min) / numBins;
+    // Rango p0,5–p99,5: la cola extrema estiraba los 20 bins y casi todo caía en los 2 primeros.
+    const sorted = [...simulations].sort((a, b) => a - b);
+    const q = (p: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
+    const min = q(0.005);
+    const max = q(0.995);
+    const binWidth = (max - min) / numBins || 1;
     const bins = Array(numBins).fill(0);
     simulations.forEach(v => {
-      const index = Math.min(numBins - 1, Math.floor((v - min) / binWidth));
+      const index = Math.max(0, Math.min(numBins - 1, Math.floor((v - min) / binWidth)));
       bins[index]++;
     });
     return bins.map((count, i) => ({
@@ -2687,7 +2690,7 @@ soxRsiWeekly,
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ fontSize: '0.75rem', color: '#475569' }}>€</span>
                 <input
-                  type="number" value={cashReserve} min={0} step={10}
+                  type="number" value={Math.round(cashReserve * 100) / 100} min={0} step={10}
                   readOnly
                   title="Solo transferencias atómicas — usa los botones 'Def' / 'Cash' o ejecuta operaciones"
                   style={{ width: '100px', background: '#0f172a', border: '1px solid #475569', color: '#fbbf24', borderRadius: '4px', padding: '4px 8px', fontSize: '0.85rem', cursor: 'not-allowed', opacity: 0.85 }}
@@ -3529,11 +3532,9 @@ soxRsiWeekly,
                     {engineResult.meta.coreDefShadow && coreDefDivergence && (
                       <tr style={{ borderTop: "1px solid #374151" }}>
                         <td style={{ padding: "0.3rem 0", color: "#9ca3af" }}>CORE-DEF (sombra)</td>
-                        <td style={{ textAlign: "right", color: "#9ca3af" }}>
-                          KS {engineResult.meta.coreDefShadow.killSwitchLevel} · ×{(engineResult.meta.coreDefShadow.tailRiskOverlay * engineResult.meta.coreDefShadow.volTargetMultiplier).toFixed(2)}
-                        </td>
+                        <td style={{ textAlign: "right", color: "#6b7280" }}>—</td>
                         <td style={{ textAlign: "right", color: "#10b981" }}>{(engineResult.meta.coreDefShadow.totalInvested * 100).toFixed(1)}%</td>
-                        <td style={{ textAlign: "right", color: "#9ca3af" }}>L1 {coreDefDivergence.l1Pp.toFixed(1)}pp</td>
+                        <td style={{ textAlign: "right", color: "#9ca3af" }}>KS {engineResult.meta.coreDefShadow.killSwitchLevel} · L1 {coreDefDivergence.l1Pp.toFixed(1)}pp</td>
                       </tr>
                     )}
                   </tbody>
@@ -3973,7 +3974,7 @@ soxRsiWeekly,
                 <span style={{ color: "#f59e0b" }}>{formatCurrency(cvarResult.cvar95Abs)}</span>
               </p>
               <p style={{ margin: 0, fontSize: "0.75rem", color: "#9ca3af" }}>
-                Pérdida esperada vs capital invertido:{" "}
+                Resultado esperado del peor 5% vs capital invertido:{" "}
                 <span style={{ color: cvarResult.loss95 > 0 ? "#ef4444" : "#10b981" }}>
                   {cvarResult.loss95 > 0 ? "−" : "+"}{formatCurrency(Math.abs(cvarResult.loss95))}
                 </span>
@@ -4009,7 +4010,7 @@ soxRsiWeekly,
         <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", marginBottom: "1.2rem" }}>
           <div>
             <label htmlFor="cashReserve" style={styles.label}>Caja de reserva (€)</label>
-            <input id="cashReserve" name="cashReserve" type="number" value={cashReserve}
+            <input id="cashReserve" name="cashReserve" type="number" value={Math.round(cashReserve * 100) / 100}
               readOnly title="Usa los botones de transferencia o ejecuta operaciones" style={{ ...styles.input, cursor: 'not-allowed', opacity: 0.85 }} />
             <p style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: "3px", maxWidth: "200px" }}>🔒 Solo lectura — usa transferencias atómicas</p>
           </div>
@@ -4043,7 +4044,7 @@ soxRsiWeekly,
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <span style={{ color: "#6b7280", fontSize: "0.85rem" }}>EUR</span>
               <input
-                type="number" value={cashReserve} min={0} step={100}
+                type="number" value={Math.round(cashReserve * 100) / 100} min={0} step={100}
                 readOnly
                 title="Solo transferencias atómicas o ejecución de operaciones"
                 style={{ width: "130px", background: "#0f172a", border: "1px solid #475569", color: "#60a5fa", borderRadius: "6px", padding: "6px 10px", fontSize: "0.95rem", fontWeight: "bold", cursor: 'not-allowed', opacity: 0.85 }}
@@ -4370,6 +4371,7 @@ soxRsiWeekly,
       <RealTimeMonitorPanel
         totalPortfolioValue={totalPortfolioValue}
         availableCash={availableCash}
+        positions={portfolio.assets.map(a => ({ ticker: a.ticker, shares: a.shares, avgPrice: a.avgPrice, price: a.price }))}
         onManualRefresh={() => refreshMarketData(true)}
         loading={loading}
       />
@@ -4697,7 +4699,7 @@ soxRsiWeekly,
                     background: s.zone === "EXTREME" ? "#7f1d1d" : s.zone === "DANGER" ? "#7f1d1d" : "#78350f",
                     color: s.zone === "EXTREME" || s.zone === "DANGER" ? "#ef4444" : "#f59e0b",
                     padding: "0.1rem 0.5rem", borderRadius: 4, fontSize: "0.75rem", fontWeight: "bold",
-                  }}>{s.zone}{s.shouldTrim ? ` · REDUCIR ${s.trimPct}%` : ""}</span>
+                  }}>{s.zone}{s.shouldTrim ? ` · OBJETIVO −${s.trimPct}%` : ""}</span>
                 </div>
                 <p style={{ color: "#9ca3af", fontSize: "0.8rem", margin: 0 }}>{s.indicatorValue}</p>
                 <p style={{ color: "#d1d5db", fontSize: "0.78rem", marginTop: "0.2rem", marginBottom: 0 }}>{s.reason}</p>

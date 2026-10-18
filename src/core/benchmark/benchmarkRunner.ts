@@ -337,7 +337,8 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   const cleanBenchmarkCagr = isFinite(benchmarkCagr3m) ? benchmarkCagr3m : 0;
 
   const outperformance = cleanEngineCagr - cleanBenchmarkCagr;
-  const underperformanceAlert = outperformance < -UNDERPERFORM_THRESHOLD;
+  // Sin datos suficientes (<30 días) la comparación no es fiable: no se alerta (antes saltaba con 6 días).
+  const underperformanceAlert = hasEnoughData && outperformance < -UNDERPERFORM_THRESHOLD;
 
   // ── Sharpe ratio rolling (risk-free = 4% anual) ──────────────
   // Usar effectiveYears (misma corrección que CAGR) para evitar
@@ -376,7 +377,9 @@ export function getBenchmarkStatus(): BenchmarkStatus {
   // ── Mensaje legible ──────────────────────────────────────────
   const periodLabel = hasEnoughData ? "anualizado en rolling 3m" : `retorno simple (${Math.round(actualYears * 365)} días de datos)`;
   let message: string;
-  if (underperformanceAlert) {
+  if (!hasEnoughData) {
+    message = `⚪ Datos insuficientes (${Math.round(actualYears * 365)} días): comparación con el 60/40 no fiable hasta tener ≥30 días.`;
+  } else if (underperformanceAlert) {
     message = `🔴 ALERTA: Motor underperformando benchmark 60/40 por ${Math.abs(outperformance * 100).toFixed(2)}% ${periodLabel}. Revisar configuraciones.`;
   } else if (outperformance > 0.02) {
     message = `🟢 Motor superando benchmark 60/40 por ${(outperformance * 100).toFixed(2)}% ${periodLabel}.`;

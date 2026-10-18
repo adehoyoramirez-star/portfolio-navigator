@@ -227,3 +227,18 @@ describe("clearBenchmarkHistory", () => {
     expect(getBenchmarkHistory()).toEqual([]);
   });
 });
+
+describe("getBenchmarkStatus — sin datos suficientes no se alerta (18-oct-2026)", () => {
+  it("motor muy por debajo del 60/40 con solo unos segundos de datos → SIN alerta de underperformance", () => {
+    // Antes: con 6 días de datos saltaba "Motor underperformando benchmark 60/40 por 144%".
+    for (let i = 0; i < 70; i++) { // ≥63 snapshots (rolling 3m) pero todos en el mismo instante: <30 días reales
+      const prices: Record<string, number> = { ...TEST_PRICES_1 };
+      Object.keys(prices).forEach((t) => { prices[t] *= 1 + i * 0.05; }); // el benchmark sube con fuerza
+      recordBenchmarkSnapshot({ portfolioValue: 100000 * (1 - i * 0.005), totalInvested: 0.85, regime: "EXPANSION", prices }); // el motor cae
+    }
+    const status = getBenchmarkStatus();
+    expect(status.dataPoints).toBeGreaterThanOrEqual(2);
+    expect(status.underperformanceAlert).toBe(false);
+    expect(status.message).toContain("Datos insuficientes");
+  });
+});

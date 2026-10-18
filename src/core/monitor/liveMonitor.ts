@@ -445,6 +445,8 @@ export class OlympusLiveMonitor {
   private listeners: Set<(state: LiveMonitorState) => void> = new Set();
 
   private prevDayPrices: Record<string, number> = {};
+  /** True tras la primera sincronización con la cartera REAL (antes solo hay posiciones por defecto). */
+  private portfolioSynced = false;
 
   constructor() {
     this.state = buildInitialState();
@@ -708,6 +710,62 @@ export class OlympusLiveMonitor {
       }, MONITOR_CONFIG.CIRCUIT_BREAKER_RESET_MS);
     }
 
+    this.emit();
+  }
+
+  // ── SINCRONIZACIÓN CON LA CARTERA REAL ──────────────────────
+  // Antes el monitor usaba DEFAULT_POSITIONS (cartera inicial obsoleta) y un pico fijo de 6.622 €:
+  // con la cartera real (≈12.100 €) mostraba "Drawdown crítico −36,5%" que no existía.
+  // En la PRIMERA sincronización se reinician equity, pico y curva (los anteriores eran de datos
+  // falsos); en las siguientes solo se actualizan posiciones y el pico solo sube.
+  syncPortfolio(input: {
+    positions: { ticker: string; shares: number; avgPrice: number; price: number }[];
+    cash: number;
+  }): void {
+    const prev = new Map(this.state.positions.map(p => [p.ticker, p]));
+    const positions = input.positions
+      .filter(p => p.shares > 0)
+      .map(p => {
+        const old = prev.get(p.ticker);
+        const livePrice = old && old.priceSource === 'YAHOO' ? old.livePrice : (p.price > 0 ? p.price : p.avgPrice);
+        return computePositionPnL({
+          ticker: p.ticker, shares: p.shares, avgPrice: p.avgPrice, livePrice,
+          marketValue: 0, weight: 0, unrealizedPnL: 0, unrealizedPct: 0,
+          dailyChange: old?.dailyChange ?? 0,
+          lastUpdate: old?.lastUpdate ?? Date.now(),
+          priceSource: old?.priceSource ?? 'STALE',
+        });
+      });
+    const cash = Number.isFinite(input.cash) ? Math.max(0, input.cash) : 0;
+    const equity = positions.reduce((s, p) => s + p.marketValue, 0) + cash;
+    const firstSync = !this.portfolioSynced;
+    this.portfolioSynced = true;
+
+    let drawdown = this.state.drawdown;
+    let equityCurve = this.state.equityCurve;
+    let dailyReturns = this.state.dailyReturns;
+    let alerts = this.state.alerts;
+    if (firstSync) {
+      drawdown = {
+        currentDrawdown: 0, peakEquity: equity, troughEquity: equity,
+        maxDrawdown: 0, drawdownDays: 0, recoveryTarget: equity,
+      };
+      equityCurve = [{ timestamp: Date.now(), equity }];
+      dailyReturns = [];
+      alerts = alerts.filter(a => !a.message.startsWith('Drawdown'));
+    }
+    this.state = {
+      ...this.state,
+      positions: positions.map(p => ({ ...p, weight: equity > 0 ? p.marketValue / equity : 0 })),
+      cashBalance: cash,
+      totalEquity: equity,
+      totalUnrealizedPnL: positions.reduce((s, p) => s + p.unrealizedPnL, 0),
+      drawdown: firstSync ? drawdown : this.computeDrawdown(equity),
+      equityCurve,
+      dailyReturns,
+      alerts,
+      lastUpdate: Date.now(),
+    };
     this.emit();
   }
 

@@ -23,6 +23,8 @@ export interface MonitorPanelProps {
   totalPortfolioValue: number;
   availableCash: number;
   prices?: Record<string, number>;
+  /** Cartera real (para que el monitor no use posiciones por defecto obsoletas). */
+  positions?: { ticker: string; shares: number; avgPrice: number; price: number }[];
   onManualRefresh?: () => void;
   loading?: boolean;
   compact?: boolean;
@@ -65,6 +67,7 @@ export default function RealTimeMonitorPanel({
   onManualRefresh,
   loading,
   compact,
+  positions: portfolioPositions,
 }: MonitorPanelProps) {
   const [monitorState, setMonitorState] = useState<LiveMonitorState | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -80,6 +83,14 @@ export default function RealTimeMonitorPanel({
     const unsub = monitor.subscribe(setMonitorState);
     return () => unsub();
   }, []);
+
+  const positionsSignature = (portfolioPositions ?? []).map(p => `${p.ticker}:${p.shares}:${p.avgPrice}`).join("|") + `|${availableCash}`;
+  useEffect(() => {
+    if (portfolioPositions && portfolioPositions.length > 0) {
+      getLiveMonitor().syncPortfolio({ positions: portfolioPositions, cash: availableCash });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionsSignature]);
 
   useEffect(() => {
     const interval = setInterval(() => setElapsed((e) => e + 1), 1000);

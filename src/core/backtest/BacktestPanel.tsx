@@ -342,7 +342,7 @@ export default function BacktestPanel({
       )}
       {totalDays >= 1260 && (
         <div style={{ ...styles.alert, borderColor: "#10b981", backgroundColor: "#064e3b" }}>
-          ✅ {totalDays} días ({years} años) — estadísticamente robusto.
+          ℹ️ {totalDays} días ({years} años) — muestra suficiente para métricas descriptivas; no prueba robustez (mirar el intervalo de confianza del Sharpe).
         </div>
       )}
 
