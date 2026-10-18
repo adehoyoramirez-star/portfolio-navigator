@@ -412,3 +412,34 @@ describe("registro persistido — la procedencia llega al almacén", () => {
     expect(chain.reason).toContain("record_hash");
   });
 });
+
+describe("sombras CORE / CORE-DEF dentro del registro (evidencia forward persistida)", () => {
+  const shadow = { engineVersion: "v5.4.6", regime: "EXPANSION", totalInvested: 1, allocations: [{ name: "BTC", finalAllocation: 0.4 }, { name: "Oro", finalAllocation: 0.6 }] };
+
+  it("guarda las sombras en breadth con los pesos redondeados", () => {
+    const e = mockEngine();
+    (e.meta as unknown as Record<string, unknown>).coreShadow = shadow;
+    (e.meta as unknown as Record<string, unknown>).coreDefShadow = { ...shadow, volTargetMultiplier: 0.8, tailRiskOverlay: 1, killSwitchLevel: 1 };
+    const r = buildDecisionRecord({ engineResult: e, macro: MACRO, capturedAt: AS_OF });
+    const b = r.breadth as Record<string, { weights?: Record<string, number>; kill_switch_level?: number; vol_target_multiplier?: number }>;
+    expect(b.core_shadow.weights).toEqual({ BTC: 0.4, Oro: 0.6 });
+    expect(b.core_def_shadow.kill_switch_level).toBe(1);
+    expect(b.core_def_shadow.vol_target_multiplier).toBe(0.8);
+  });
+
+  it("sin sombra el registro NO cambia (el hash anterior sigue válido)", async () => {
+    const r = buildDecisionRecord({ engineResult: mockEngine(), macro: MACRO, capturedAt: AS_OF });
+    expect("core_shadow" in (r.breadth as object)).toBe(false);
+    expect("core_def_shadow" in (r.breadth as object)).toBe(false);
+  });
+
+  it("la sombra entra en el hash: alterarla se detecta", async () => {
+    const e = mockEngine();
+    (e.meta as unknown as Record<string, unknown>).coreShadow = shadow;
+    const r = await chainDecisionRecord(buildDecisionRecord({ engineResult: e, macro: MACRO, capturedAt: AS_OF }), null);
+    expect((await verifyDecisionRecord(r, null)).ok).toBe(true);
+    const tampered = JSON.parse(JSON.stringify(r));
+    tampered.breadth.core_shadow.weights.Oro = 0.1;
+    expect((await verifyDecisionRecord(tampered, null)).ok).toBe(false);
+  });
+});

@@ -106,6 +106,16 @@ function round(v: number | undefined | null, digits = 6): number | null {
   return Math.round(n * f) / f;
 }
 
+// Forma compacta y determinista de una sombra: pesos por nombre, ordenados por el canonicalizador.
+function shadowRecord(sh: { engineVersion: string; regime: string; totalInvested: number; allocations: { name: string; finalAllocation: number }[] }) {
+  return {
+    engine_version: sh.engineVersion,
+    regime: sh.regime,
+    total_invested: round(sh.totalInvested, 6),
+    weights: Object.fromEntries(sh.allocations.map(a => [a.name, round(a.finalAllocation, 6)])),
+  };
+}
+
 // ============================================================
 // CANONICALIZACIÓN
 // ============================================================
@@ -278,6 +288,20 @@ export function buildDecisionRecord(input: DecisionRecordInput): Omit<DecisionRe
       effective_source: meta.breadthEffectiveSource,
       institutional_shadow: meta.institutionalBreadthShadow ?? null,
       regime_breadth_divergence: meta.regimeBreadthDivergence === true,
+      // Sombras CORE / CORE-DEF (solo observabilidad): quedan DENTRO del registro hasheado y
+      // append-only, así la evidencia forward de ≥90 días no depende del localStorage del navegador.
+      // Se omiten si no existen (undefined no se serializa → los hashes anteriores no cambian).
+      ...(meta.coreShadow ? { core_shadow: shadowRecord(meta.coreShadow) } : {}),
+      ...(meta.coreDefShadow
+        ? {
+            core_def_shadow: {
+              ...shadowRecord(meta.coreDefShadow),
+              vol_target_multiplier: round(meta.coreDefShadow.volTargetMultiplier, 6),
+              tail_risk_overlay: round(meta.coreDefShadow.tailRiskOverlay, 6),
+              kill_switch_level: meta.coreDefShadow.killSwitchLevel,
+            },
+          }
+        : {}),
     },
     allocations_before:
       allocationsBefore?.map(a => ({
