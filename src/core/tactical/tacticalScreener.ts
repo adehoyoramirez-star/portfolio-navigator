@@ -683,33 +683,22 @@ export async function scanTacticalUniverse(
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);
 
-  // Paso 7b: Macro Event Signal (calendario económico)
-  // Si hay eventos macro relevantes (FOMC, CPI, NFP) en los próximos
-  // 14 días, penaliza la calidad de todos los activos (incertidumbre).
+  // Paso 7b: informar eventos macro próximos sin modificar scores ni oportunidades.
   const macroSignal = generateMacroSignal();
   let macroEventInfo: ScreenerResult['macroEventInfo'] = undefined;
   if (macroSignal.active) {
-    const macroPenalty = Math.round(macroSignal.score * 0.3); // Hasta -30pts de calidad
-    for (const asset of assets) {
-      if (asset.qualityScore != null) {
-        asset.qualityScore = Math.max(10, asset.qualityScore - macroPenalty);
-      }
-    }
     macroEventInfo = {
       active: true,
       description: macroSignal.description ?? '',
-      penalty: macroPenalty,
       score: macroSignal.score,
     };
     console.log(
-      `[Screener] 📅 Macro eventos: ${macroSignal.description}` +
-      ` · Penalizando calidad -${macroPenalty}pts en todos los activos`
+      `[Screener] 📅 Macro eventos informativos (sin penalización): ${macroSignal.description}`
     );
   } else {
     macroEventInfo = {
       active: false,
       description: 'Sin eventos macro próximos',
-      penalty: 0,
       score: 0,
     };
   }

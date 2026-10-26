@@ -1144,7 +1144,7 @@ export default function TacticalDashboard() {
                         ⚠️ {scanMacro.description}
                       </div>
                       <div style={{ display:'flex', gap:10, marginTop:3, fontSize:'0.68rem' }}>
-                        <span style={{ color:'#ef4444' }}>Penalización: -{scanMacro.penalty}pts</span>
+                        <span style={{ color:'#64748b' }}>Informativo — sin penalización en las oportunidades</span>
                         <span style={{ color:'#64748b' }}>| Señal: {scanMacro.score}/100</span>
                       </div>
                     </>

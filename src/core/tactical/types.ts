@@ -256,7 +256,6 @@ export interface ScreenerResult {
   macroEventInfo?: {
     active: boolean;
     description: string;
-    penalty: number;
     score: number;
   };
   diagnostics?: {
