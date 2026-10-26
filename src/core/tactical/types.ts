@@ -253,15 +253,6 @@ export interface ScreenerResult {
   warnings:      string[]; // NUEVO: warnings de ultra-fallbacks usados
   marketRegime?: RegimeState;
   backtest:      BacktestStub; // stub para compatibilidad con dashboard
-  // NUEVO: diagnóstico visible para el dashboard
-  narrativeStatus?: {
-    active: boolean;
-    sectorBiases: Record<string, number>;
-    marketWideBias: number;
-    marketSentiment: string;
-    topNarratives: string[];
-    error?: string;
-  };
   macroEventInfo?: {
     active: boolean;
     description: string;

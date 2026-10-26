@@ -234,8 +234,7 @@ export default function TacticalDashboard() {
   const [lastRun, setLastRun]   = useState<string | null>(state.lastScreened);
   const [scanMode, setScanMode] = useState<ScanMode>('core');
 
-  // ── Estado del último scan (narrative, macro, diagnóstico) ──
-  const [scanNarrative, setScanNarrative] = useState<ScreenerResult['narrativeStatus']>(undefined);
+  // ── Estado del último scan (macro y diagnóstico) ──
   const [scanMacro, setScanMacro] = useState<ScreenerResult['macroEventInfo']>(undefined);
   const [scanDiagnostics, setScanDiagnostics] = useState<ScreenerResult['diagnostics']>(undefined);
 
@@ -324,8 +323,7 @@ export default function TacticalDashboard() {
         opportunities,
         lastScreened: screennedAt,
       }));
-      // Guardar diagnóstico del scan (narrative, macro, contadores)
-      setScanNarrative(result.narrativeStatus);
+      // Guardar diagnóstico del scan (macro y contadores)
       setScanMacro(result.macroEventInfo);
       setScanDiagnostics(result.diagnostics);
       setLastRun(screennedAt);
@@ -1127,62 +1125,13 @@ export default function TacticalDashboard() {
       </div>
 
       {/* ── DIAGNÓSTICO DEL SCAN (si hay datos) ── */}
-      {(scanNarrative || scanMacro || scanDiagnostics) && (
+      {(scanMacro || scanDiagnostics) && (
         <div style={{ ...S.cardB, marginBottom:'1rem' }}>
           <details>
             <summary style={{ fontWeight:700, fontSize:'0.82rem', color:'#93c5fd', cursor:'pointer', marginBottom:'0.5rem', userSelect:'none' }}>
               📋 Diagnóstico del último scan
             </summary>
             <div style={{ marginTop:'0.5rem' }}>
-              {/* ── AI Narrative ── */}
-              {scanNarrative && (
-                <div style={{ background:'#0f172a', borderRadius:6, padding:'8px 10px', marginBottom:'0.5rem', border:'1px solid #334155' }}>
-                  <div style={{ fontWeight:700, fontSize:'0.7rem', color:'#f59e0b', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>
-                    🧠 AI Narrative
-                  </div>
-                  {scanNarrative.active ? (
-                    <>
-                      {scanNarrative.marketSentiment && (
-                        <div style={{ fontSize:'0.72rem', color:'#94a3b8', marginBottom:4 }}>
-                          Sentimiento: <span style={{ color:'#e2e8f0' }}>{scanNarrative.marketSentiment}</span>
-                        </div>
-                      )}
-                      {Object.keys(scanNarrative.sectorBiases).length > 0 && (
-                        <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginBottom:4 }}>
-                          {Object.entries(scanNarrative.sectorBiases)
-                            .filter(([, b]) => Math.abs(b) >= 5)
-                            .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-                            .map(([sector, bias]) => (
-                              <span key={sector} style={{
-                                ...S.badge,
-                                background: bias > 0 ? '#052e16' : '#450a0a',
-                                color: bias > 0 ? '#4ade80' : '#fca5a5',
-                                border: `1px solid ${bias > 0 ? '#16a34a' : '#ef4444'}44`,
-                              }}>
-                                {sector} {bias > 0 ? '+' : ''}{bias}
-                              </span>
-                            ))}
-                        </div>
-                      )}
-                      {scanNarrative.marketWideBias !== 0 && (
-                        <div style={{ fontSize:'0.7rem', color: scanNarrative.marketWideBias > 0 ? '#22c55e' : '#ef4444' }}>
-                          Mercado global: {scanNarrative.marketWideBias > 0 ? '+' : ''}{scanNarrative.marketWideBias}pts
-                        </div>
-                      )}
-                      {scanNarrative.topNarratives.length > 0 && (
-                        <div style={{ fontSize:'0.65rem', color:'#64748b', marginTop:3 }}>
-                          {scanNarrative.topNarratives.join(' · ')}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div style={{ fontSize:'0.7rem', color:'#64748b' }}>
-                      {scanNarrative.error ? `⚠️ ${scanNarrative.error}` : '⏸️ Sin datos de narrativa (motor offline)'}
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* ── Macro Events ── */}
               {scanMacro && (
                 <div style={{ background:'#0f172a', borderRadius:6, padding:'8px 10px', marginBottom:'0.5rem', border:'1px solid #334155' }}>

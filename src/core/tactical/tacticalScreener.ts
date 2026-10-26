@@ -65,7 +65,6 @@ import {
 } from './marketRegimeFilter';
 import { fetchFxRates, toEur, normalizeGbxToGbp, getCachedFxRates } from './fxConverter';
 import { integratedOverfittingMetric } from '../risk/overfittingMetric';
-import { fetchSectorNarrative, applyNarrativeBias } from './aiNarrative';
 import { fetchQ5Scores, applyQ5Boost, calcExecutionScoreWithQ5 } from './bridgeQ5Scores';
 
 export { CORE_TACTICAL_UNIVERSE, FULL_TACTICAL_UNIVERSE, VOLATILE_UNIVERSE };
@@ -678,35 +677,11 @@ export async function scanTacticalUniverse(
     }
   }
 
-    // Paso 6: régimen de mercado (necesario para narrative + filtros)
+  // Paso 6: régimen de mercado para filtros de señales
   const indexAsset = assets.find(a => ['CSPX.AS', 'SPY', 'QQQ', 'IVV'].includes(a.ticker)
   );
   const indexCloses = indexAsset?.closes ?? [];
   const marketRegime = detectMarketRegime(indexCloses, vixPrice);
-
-  // Paso 7: AI Narrative Overlay (Gemini Flash — gratis)
-  // Gemini analiza las narrativas de mercado actuales y ajusta calidad
-  // por sector. Si falla (sin API key), el sistema sigue sin penalización.
-  let narrativeStatus: ScreenerResult['narrativeStatus'] = undefined;
-  if (assets.length > 0) {
-    const narrative = await fetchSectorNarrative({
-      regime: marketRegime?.regime ?? 'RANGING',
-      vix: vixPrice,
-      spyPrice,
-    });
-    narrativeStatus = {
-      active: narrative.narrativeActive,
-      sectorBiases: narrative.sectorBiases,
-      marketWideBias: narrative.marketWideBias,
-      marketSentiment: narrative.marketSentiment,
-      topNarratives: narrative.topNarratives,
-    };
-    if (narrative.narrativeActive) {
-      for (const asset of assets) {
-        applyNarrativeBias(asset, narrative.sectorBiases, narrative.marketWideBias);
-      }
-    }
-  }
 
   // Paso 7b: Macro Event Signal (calendario económico)
   // Si hay eventos macro relevantes (FOMC, CPI, NFP) en los próximos
@@ -1005,7 +980,6 @@ export async function scanTacticalUniverse(
     errors,
     warnings,
     marketRegime,
-    narrativeStatus,
     macroEventInfo,
     diagnostics: {
       total: diag.total,
