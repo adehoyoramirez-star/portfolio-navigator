@@ -15,10 +15,14 @@ import { computeBtcTotalRisk } from "../core/backtest/compositeMetrics";
 import { computeUnifiedDrawdown, updateHighWaterMark } from "../core/risk/drawdown";
 import {
   computeShadowDivergence,
+  computeShadowTrack,
   divergenceBand,
+  divergenceBandFromL1,
   recordShadowSnapshot,
+  SHADOW_ALIGNED_L1_MAX_PP,
   SHADOW_HISTORY_MAX_ENTRIES,
   type ShadowEngineSide,
+  type ShadowSnapshot,
 } from "../core/monitor/shadowDivergence";
 
 // ── 8. Observatory: divergencia de sombra (solo observabilidad) ──────────
@@ -71,6 +75,49 @@ describe("Modo sombra — divergencia CORE vs v5.3", () => {
     expect(a?.deltaPp).toBeCloseTo(-56, 10);
     expect(d.l1Pp).toBeCloseTo(80, 10);
   });
+  // FIX-OBSERVATORY-SATURATION: la banda sale de L1, no del score capado a 25pp.
+  test("banda desde L1: 65.6pp es SEVERE y 26pp ya no comparte banda con 66pp", () => {
+    expect(divergenceBandFromL1(0)).toBe("LOW");
+    expect(divergenceBandFromL1(10)).toBe("LOW");
+    expect(divergenceBandFromL1(25)).toBe("MODERATE");
+    expect(divergenceBandFromL1(50)).toBe("HIGH");
+    expect(divergenceBandFromL1(65.6)).toBe("SEVERE");
+    expect(divergenceBandFromL1(Number.NaN)).toBe("LOW");
+    const legacy = mkSide([["A", 0.5], ["B", 0.5]], 1.0);
+    const core = mkSide([["A", 0.2], ["B", 0.8]], 1.0); // L1 = 60pp
+    const d = computeShadowDivergence(legacy, core);
+    expect(d.score).toBe(100); // score saturado…
+    expect(d.band).toBe("SEVERE"); // …y la banda sí refleja L1
+  });
+  test("mismo top ≠ acuerdo: aligned solo cuenta con L1 ≤ umbral", () => {
+    const nearLegacy = mkSide([["A", 0.6], ["B", 0.4]], 1.0);
+    const nearCore = mkSide([["A", 0.55], ["B", 0.45]], 1.0); // L1 = 10pp
+    const near = computeShadowDivergence(nearLegacy, nearCore);
+    expect(near.aligned).toBe(true);
+    expect(near.l1Pp).toBeCloseTo(10, 10);
+    expect(near.sameTopAgreement).toBe(true);
+
+    // Mismo líder (Gold) pero 65.6pp de separación — el caso del panel real.
+    const farLegacy = mkSide([["Gold", 0.321], ["BTC", 0.217], ["EM", 0.103], ["WLG", 0.141], ["URN", 0.101], ["SEMIS", 0.065]], 0.974);
+    const farCore = mkSide([["Gold", 0.671], ["BTC", 0.100], ["EM", 0.030], ["WLG", 0.080], ["URN", 0.048], ["SEMIS", 0.070]], 1.0);
+    const far = computeShadowDivergence(farLegacy, farCore);
+    expect(far.aligned).toBe(true); // mismo top
+    expect(far.l1Pp).toBeGreaterThan(SHADOW_ALIGNED_L1_MAX_PP);
+    expect(far.sameTopAgreement).toBe(false); // …pero no es acuerdo
+  });
+  test("concentración: compara fracciones, no porcentajes ya escalados", () => {
+    // v5.3: 32,1% / 21,7% de cartera (Gold es el mayor); CORE: Gold 67,1%.
+    const legacy = mkSide([["Gold", 0.321], ["BTC", 0.217]], 0.974);
+    const core = mkSide([["Gold", 0.671], ["BTC", 0.329]], 1.0);
+    const d = computeShadowDivergence(legacy, core);
+    expect(d.legacyMaxWeight?.name).toBe("Gold"); // 32,1 / 53,8 = 59,7% del invertido
+    expect(d.legacyMaxWeight?.pct).toBeCloseTo(59.7, 1);
+    expect(d.coreMaxWeight?.name).toBe("Gold");
+    expect(d.coreMaxWeight?.pct).toBeCloseTo(67.1, 1);
+    // Si el mayor NO es el primero de la lista, también debe detectarlo.
+    const btcFirst = mkSide([["Gold", 0.2], ["BTC", 0.6]], 1.0);
+    expect(computeShadowDivergence(btcFirst, core).legacyMaxWeight).toEqual({ name: "BTC", pct: expect.closeTo(75, 10) as unknown as number });
+  });
   test("recordShadowSnapshot: una fila por día (última gana), recorte al máximo", () => {
     const base = { aligned: true, legacyTop: "A", coreTop: "A" };
     const h1 = recordShadowSnapshot([], { date: "2026-09-28", divergenceScore: 5, l1Pp: 1.2, ...base });
@@ -83,6 +130,88 @@ describe("Modo sombra — divergencia CORE vs v5.3", () => {
       h = recordShadowSnapshot(h, { date, divergenceScore: i, l1Pp: i, aligned: true, legacyTop: "A", coreTop: "A" });
     }
     expect(h).toHaveLength(SHADOW_HISTORY_MAX_ENTRIES);
+  });
+});
+
+// ── Track forward: rendimiento de cada libro, no divergencia ─────────────
+describe("Track forward de la sombra", () => {
+  const snap = (date: string, prices: Record<string, number>, legacyW: Record<string, number>, coreW: Record<string, number>): ShadowSnapshot => ({
+    date, divergenceScore: 100, l1Pp: 60, aligned: true, legacyTop: "A", coreTop: "A",
+    legacyWeights: legacyW, coreWeights: coreW, prices,
+  });
+
+  test("sin observaciones con precios → track vacío (no se inventa retorno)", () => {
+    const t = computeShadowTrack([{ date: "2026-10-01", divergenceScore: 90, l1Pp: 50, aligned: true, legacyTop: "A", coreTop: "A" }]);
+    expect(t.intervals).toBe(0);
+    expect(t.startDate).toBeNull();
+    expect(t.legacyCumPct).toBe(0);
+    expect(t.coreCumPct).toBe(0);
+    expect(t.deltaPp).toBe(0);
+  });
+  test("compone el retorno de cada libro con sus pesos y los precios del día anterior", () => {
+    const history = [
+      snap("2026-10-01", { A: 100, B: 50 }, { A: 0.8, B: 0.2 }, { A: 0.2, B: 0.8 }),
+      snap("2026-10-02", { A: 110, B: 50 }, { A: 0.8, B: 0.2 }, { A: 0.2, B: 0.8 }),
+    ].sort((a, b) => a.date.localeCompare(b.date)); // el orden de entrada no importa
+    const t = computeShadowTrack(history);
+    expect(t.intervals).toBe(1);
+    expect(t.startDate).toBe("2026-10-01");
+    expect(t.legacyCumPct).toBeCloseTo(8, 6);   // 0,8 × +10%
+    expect(t.coreCumPct).toBeCloseTo(2, 6);     // 0,2 × +10%
+    expect(t.deltaPp).toBeCloseTo(6, 6);
+  });
+  test("cobertura de precios: 50% es válida, 40% descarta el intervalo", () => {
+    // B sin precio en ninguna de las dos fechas → cobertura 0,5 = umbral exacto.
+    const half = [
+      snap("2026-10-01", { A: 100 }, { A: 0.5, B: 0.5 }, { A: 0.5, B: 0.5 }),
+      snap("2026-10-02", { A: 120 }, { A: 0.5, B: 0.5 }, { A: 0.5, B: 0.5 }),
+    ];
+    const tHalf = computeShadowTrack(half);
+    expect(tHalf.intervals).toBe(1);
+    expect(tHalf.legacyCumPct).toBeCloseTo(10, 6); // 0,5 × +20% (B aporta 0)
+    // Por debajo del umbral el intervalo se descarta entero, no se reescala.
+    const low = [
+      snap("2026-10-01", { A: 100 }, { A: 0.4, B: 0.6 }, { A: 0.4, B: 0.6 }),
+      snap("2026-10-02", { A: 120 }, { A: 0.4, B: 0.6 }, { A: 0.4, B: 0.6 }),
+    ];
+    expect(computeShadowTrack(low).intervals).toBe(0);
+  });
+  test("drawdown realizado: pico propio por libro, no el del otro", () => {
+    const history = [
+      snap("2026-10-01", { A: 100 }, { A: 1 }, { A: 1 }),
+      snap("2026-10-02", { A: 120 }, { A: 1 }, { A: 1 }),
+      snap("2026-10-03", { A: 90 }, { A: 1 }, { A: 1 }),
+      snap("2026-10-04", { A: 100 }, { A: 1 }, { A: 1 }),
+    ];
+    const t = computeShadowTrack(history);
+    expect(t.intervals).toBe(3);
+    expect(t.legacy.cumPct).toBeCloseTo(0, 6); // 1,2 × 0,75 × 1,111… = 1
+    expect(t.legacy.maxDrawdownPct).toBeCloseTo(-25, 6); // 120 → 90
+    expect(t.legacy.volAnnualPct).toBeGreaterThan(0);
+  });
+  test("vol realizada: anualiza por día calendario y es null con un solo intervalo", () => {
+    // Un único intervalo de +10% en 10 días calendario: no hay dispersión → null.
+    const one = [
+      snap("2026-10-01", { A: 100 }, { A: 1 }, { A: 1 }),
+      snap("2026-10-11", { A: 110 }, { A: 1 }, { A: 1 }),
+    ];
+    expect(computeShadowTrack(one).legacy.volAnnualPct).toBeNull();
+    // Mismo +10% repartido en 1 día vs 10 días → mucha más vol anualizada en el primero.
+    const fast = [
+      snap("2026-10-01", { A: 100 }, { A: 1 }, { A: 1 }),
+      snap("2026-10-02", { A: 110 }, { A: 1 }, { A: 1 }),
+      snap("2026-10-03", { A: 99 }, { A: 1 }, { A: 1 }),
+    ];
+    const slow = [
+      snap("2026-10-01", { A: 100 }, { A: 0.5, B: 0.5 }, { A: 1 }),
+      snap("2026-10-11", { A: 110 }, { A: 0.5, B: 0.5 }, { A: 1 }),
+      snap("2026-10-21", { A: 99 }, { A: 0.5, B: 0.5 }, { A: 1 }),
+    ];
+    const fastVol = computeShadowTrack(fast).legacy.volAnnualPct;
+    const slowVol = computeShadowTrack(slow).legacy.volAnnualPct;
+    expect(fastVol).not.toBeNull();
+    expect(slowVol).not.toBeNull();
+    expect(fastVol as number).toBeGreaterThan(slowVol as number);
   });
 });
 

@@ -45,9 +45,17 @@ import { computeRealizedReturns, recordCurrentPositions, loadPositionHistory } f
 import { calculateRSI, calculateZScore } from "@/core/data/indicators";
 import { runOlympusEngine, AssetInput } from "@/core/engine/olympusV3";
 import { computeUnifiedDrawdown, updateHighWaterMark } from "@/core/risk/drawdown";
-import { computeShadowDivergence, divergenceBand, recordShadowSnapshot, type ShadowSnapshot } from "@/core/monitor/shadowDivergence";
+import {
+  computeShadowDivergence,
+  computeShadowTrack,
+  divergenceBandFromL1,
+  recordShadowSnapshot,
+  SHADOW_ALIGNED_L1_MAX_PP,
+  type DivergenceBand,
+  type ShadowSnapshot,
+} from "@/core/monitor/shadowDivergence";
 import type { InstitutionalBreadthState } from "@/core/risk/institutionalBreadth";
-import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked } from "@/core/macro/masterRegime";
+import { signalManualRefresh, setRegimeLock, clearRegimeLock, isRegimeLocked, type MasterRegimeLabel } from "@/core/macro/masterRegime";
 import { fromManualInputs } from "@/core/macro/liquidityCycle";
 import { fetchRealMarketData, MarketData } from "@/lib/marketData";
 import { ASSETS, KALMAN_FACTOR_PROXY_TICKERS, KALMAN_FACTOR_MIN_POINTS } from "@/lib/constants";
@@ -197,6 +205,18 @@ function loadInstitutionalBreadthState(): InstitutionalBreadthState {
 // ── Historial de la sombra CORE vs v5.3 (Observatory) ────────────────────
 const SHADOW_HISTORY_KEY = "olympus_core_shadow_history_v1";
 
+/** Pesos a 6 decimales: el snapshot se persiste en localStorage y no necesita más precisión. */
+function roundWeights(weights: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(weights)) out[k] = Math.round(v * 1e6) / 1e6;
+  return out;
+}
+
+/** Vol realizada anualizada → texto. null = sin intervalos suficientes (no hay 0 falso). */
+function fmtVol(volAnnualPct: number | null): string {
+  return volAnnualPct === null ? "—" : `${volAnnualPct.toFixed(1)}%`;
+}
+
 function loadShadowHistory(): ShadowSnapshot[] {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(SHADOW_HISTORY_KEY) ?? "[]");
@@ -248,7 +268,7 @@ const InstitutionalDashboard: React.FC = () => {
   const setDefensiveLiquidity = useCallback((action: number | ((prev: number) => number)) => {
     setPortfolioCash(prev => {
       const newVal = typeof action === 'function' ? action(prev.defensive) : action;
-      try { localStorage.setItem('olympus_defensive_liq', String(newVal)); } catch {}
+      try { localStorage.setItem('olympus_defensive_liq', String(newVal)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
       return { ...prev, defensive: newVal };
     });
   }, []);
@@ -258,7 +278,7 @@ const InstitutionalDashboard: React.FC = () => {
     setPortfolioCash(prev => {
       const effective = Math.min(amount, prev.operational);
       const newDefensive = prev.defensive + effective;
-      try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
+      try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
       return { operational: prev.operational - effective, defensive: newDefensive };
     });
   }, []);
@@ -266,7 +286,7 @@ const InstitutionalDashboard: React.FC = () => {
     setPortfolioCash(prev => {
       const effective = Math.min(amount, prev.defensive);
       const newDefensive = prev.defensive - effective;
-      try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {}
+      try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
       return { operational: prev.operational + effective, defensive: newDefensive };
     });
   }, []);
@@ -591,7 +611,7 @@ const formatCurrency = (value: number): string => {
       setPortfolio(prev => ({
         ...prev,
         assets: prev.assets.map((asset) => {
-          const idx = ASSETS.indexOf(asset.ticker as any);
+          const idx = (ASSETS as readonly string[]).indexOf(asset.ticker);
           if (idx === -1) return { ...asset, price: md.prices[asset.ticker] || asset.price };
 
           const closes = md.closesHistory[asset.ticker] || [];
@@ -680,9 +700,11 @@ const formatCurrency = (value: number): string => {
           });
           if (cryptoRaw.eurUsd > 0) setEurUsdRate(cryptoRaw.eurUsd);
           // btcVol24h removed - not in direct API
-          const hasVol = (cryptoRaw as any).btcVol24h > 0;
-          if (hasVol) {
-            const impliedAnnualVol = Math.abs((cryptoRaw as any).btcVol24h / 100) * Math.sqrt(365);
+          // btcVol24h no viaja en el tipo público de crypto-signals: se lee con
+          // una forma explícita (opcional) en vez de un `any`.
+          const btcVol24hRaw = (cryptoRaw as { btcVol24h?: number }).btcVol24h;
+          if (typeof btcVol24hRaw === "number" && btcVol24hRaw > 0) {
+            const impliedAnnualVol = Math.abs(btcVol24hRaw / 100) * Math.sqrt(365);
             setBtcVol(prev => parseFloat((prev * 0.70 + impliedAnnualVol * 0.30).toFixed(3)));
           }
         }
@@ -1197,7 +1219,7 @@ soxRsiWeekly,
           startPE = prev.targetPE;
           startBTC = prev.targetBTC;
         }
-      } catch {}
+      } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
       localStorage.setItem(RAMP_KEY, JSON.stringify({ startTs, startPE, startBTC, targetPE, targetBTC, targetRegime: currentRegime }));
     }
 
@@ -1348,6 +1370,20 @@ soxRsiWeekly,
       : null,
     [engineResult],
   );
+  // Precios por NOMBRE de activo (clave del snapshot del track forward). El motor
+  // identifica activos por name; marketData.prices va por ticker.
+  const shadowPrices = useMemo(() => {
+    if (!marketData?.prices) return undefined;
+    const byName: Record<string, number> = {};
+    for (const a of assetInputs) {
+      const price = marketData.prices[a.ticker ?? a.name];
+      if (Number.isFinite(price) && price > 0) byName[a.name] = price;
+    }
+    return Object.keys(byName).length > 0 ? byName : undefined;
+  }, [assetInputs, marketData?.prices]);
+  // Track forward (rendimiento realizado de cada libro). Sin datos → todo a 0 y
+  // el panel muestra "sin track aún" en vez de un retorno inventado.
+  const shadowTrack = useMemo(() => computeShadowTrack(shadowHistory), [shadowHistory]);
   const processedShadowObservationRef = useRef<string | null>(null);
   // Persistencia: un snapshot por observación de mercado (misma clave que el
   // breadth shadow), siempre la última del día. Sin estado del motor — es solo registro.
@@ -1363,13 +1399,17 @@ soxRsiWeekly,
       aligned: shadowDivergence.aligned,
       legacyTop: shadowDivergence.legacyTop,
       coreTop: shadowDivergence.coreTop,
+      // Pesos y precios del día: alimentan el track forward de rendimiento.
+      legacyWeights: roundWeights(shadowDivergence.legacyWeights),
+      coreWeights: roundWeights(shadowDivergence.coreWeights),
+      ...(shadowPrices ? { prices: shadowPrices } : {}),
       ...(engineResult.meta.coreDefShadow && coreDefDivergence ? {
         coreDefL1Pp: Math.round(coreDefDivergence.l1Pp * 10) / 10,
         coreDefInvestedPct: Math.round(engineResult.meta.coreDefShadow.totalInvested * 1000) / 10,
         coreDefOverlay: Math.round(engineResult.meta.coreDefShadow.tailRiskOverlay * engineResult.meta.coreDefShadow.volTargetMultiplier * 1000) / 1000,
       } : {}),
     }));
-  }, [breadthShadowObservationKey, shadowDivergence, coreDefDivergence, engineResult]);
+  }, [breadthShadowObservationKey, shadowDivergence, coreDefDivergence, engineResult, shadowPrices]);
   useEffect(() => {
     try {
       localStorage.setItem(SHADOW_HISTORY_KEY, JSON.stringify(shadowHistory));
@@ -1475,16 +1515,16 @@ soxRsiWeekly,
     if (previous >= 4 && current < 4 && current > 0) {
       // Salida de bloqueo → activar recuperación
       setRecoveryCycles(4);
-      try { sessionStorage.setItem('olympus_recovery_cycles', '4'); } catch {}
+      try { sessionStorage.setItem('olympus_recovery_cycles', '4'); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
     } else if (recoveryCycles > 0 && current === 0) {
       // Kill Switch desactivado completamente → cancelar recuperación pendiente
       setRecoveryCycles(0);
-      try { sessionStorage.removeItem('olympus_recovery_cycles'); } catch {}
+      try { sessionStorage.removeItem('olympus_recovery_cycles'); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
     } else if (recoveryCycles > 0) {
       // Decrementar ciclo en cada render donde Kill Switch sigue activo
       const next = recoveryCycles - 1;
       setRecoveryCycles(next);
-      try { sessionStorage.setItem('olympus_recovery_cycles', String(next)); } catch {}
+      try { sessionStorage.setItem('olympus_recovery_cycles', String(next)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
     }
 
     previousKillSwitchRef.current = current;
@@ -1955,12 +1995,12 @@ soxRsiWeekly,
   // Botón "Transferir sobrante a Liquidez Defensiva"
   // FEAT: persist manual vol overrides
   useEffect(() => {
-    try { localStorage.setItem('olympus_manual_vols', JSON.stringify(manualVols)); } catch {}
+    try { localStorage.setItem('olympus_manual_vols', JSON.stringify(manualVols)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
   }, [manualVols]);
 
   // Persist Composite Strategy olympusPct
   useEffect(() => {
-    try { localStorage.setItem('olympus_composite_pct', String(olympusPct)); } catch {}
+    try { localStorage.setItem('olympus_composite_pct', String(olympusPct)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
   }, [olympusPct]);
 
 
@@ -2012,7 +2052,7 @@ soxRsiWeekly,
     };
     const newLog = [record, ...tradeLog];
     setTradeLog(newLog);
-    try { localStorage.setItem('olympus_trade_log', JSON.stringify(newLog.slice(0, 200))); } catch {}
+    try { localStorage.setItem('olympus_trade_log', JSON.stringify(newLog.slice(0, 200))); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
 
     // 4. Cerrar modal
     setPendingTrade(null);
@@ -2280,7 +2320,7 @@ soxRsiWeekly,
 
     if (hasCovMatrix && hasEngineAllocs && ASSETS.length > 1) {
       // COMPOSITE STRATEGY: pesos compuestos con BTC satellite para Monte Carlo
-      const btcIdx = ASSETS.indexOf('BTC-EUR' as any);
+      const btcIdx = ASSETS.indexOf('BTC-EUR');
       const weights = ASSETS.map((ticker, i) => {
         const alloc = engineResult!.allocations.find(a => a.name === portfolio.assets.find(p => p.ticker === ticker)?.name);
         const engineW = alloc?.finalAllocation ?? (1 / ASSETS.length);
@@ -2859,7 +2899,7 @@ soxRsiWeekly,
                     clearRegimeLock();
                     setRegimeLockState(null);
                   } else {
-                    setRegimeLock(engineResult.regime as any, engineResult.masterRegime.regimePenalty);
+                    setRegimeLock(engineResult.regime as MasterRegimeLabel, engineResult.masterRegime.regimePenalty);
                     setRegimeLockState(isRegimeLocked());
                   }
                 }}
@@ -3159,7 +3199,7 @@ soxRsiWeekly,
               ● manual — Glassnode (Z &gt;7 techo, Z &lt;0 suelo)
             </span>
           </label>
-          <input type="number" value={mvrvZScore ?? ""} onChange={(e) => { const v = e.target.value === "" ? undefined : Number(e.target.value); setMvrvZScore(v); if (v !== undefined) try { localStorage.setItem(MVRV_ZSCORE_TS_KEY, Date.now().toString()); } catch {} }} style={styles.smallInput} step="0.01" min="-3" max="10" placeholder="— ej: 0.5" />
+          <input type="number" value={mvrvZScore ?? ""} onChange={(e) => { const v = e.target.value === "" ? undefined : Number(e.target.value); setMvrvZScore(v); if (v !== undefined) try { localStorage.setItem(MVRV_ZSCORE_TS_KEY, Date.now().toString()); } catch {/* best-effort: un fallo de persistencia no debe romper el render */} }} style={styles.smallInput} step="0.01" min="-3" max="10" placeholder="— ej: 0.5" />
           <label style={styles.label}>BTC RSI Semanal{" "}
             <span style={{ fontSize: "0.65rem",
               color: marketData?.btcRsiWeekly && marketData.btcRsiWeekly !== 50 ? "#10b981" : "#6b7280",
@@ -3478,11 +3518,16 @@ soxRsiWeekly,
             {(() => {
               const shadow = engineResult.meta.coreShadow;
               if (!shadow || !shadowDivergence) return null;
-              const band = divergenceBand(shadowDivergence.score);
+              const band = shadowDivergence.band;
               const color = band === "LOW" ? "#10b981" : band === "MODERATE" ? "#f59e0b" : "#ef4444";
               return (
-                <span style={{ fontSize: "0.78rem", fontWeight: "bold", color, background: "#1f2937", padding: "0.2rem 0.6rem", borderRadius: "0.4rem" }}>
-                  Divergencia {shadowDivergence.score}/100 · {band} · L1 {shadowDivergence.l1Pp.toFixed(1)}pp
+                <span style={{ display: "flex", gap: "0.4rem", alignItems: "baseline", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.78rem", fontWeight: "bold", color, background: "#1f2937", padding: "0.2rem 0.6rem", borderRadius: "0.4rem" }}>
+                    L1 {shadowDivergence.l1Pp.toFixed(1)}pp · {band}
+                  </span>
+                  <span style={{ fontSize: "0.68rem", color: "#6b7280" }}>
+                    score {shadowDivergence.score}/100 (satura en L1 ≥ 25pp)
+                  </span>
                 </span>
               );
             })()}
@@ -3491,6 +3536,8 @@ soxRsiWeekly,
             Ejecución dual en paralelo con los mismos inputs. La sombra es de solo-lectura:
             no puede alterar el resultado principal. Δ en puntos porcentuales de cartera
             (CORE − v5.3) sobre exposición absoluta; L1 = Σ|Δ| (pp de cartera que separan ambos motores).
+            La banda se deriva de L1 (≤10 LOW · ≤25 MODERATE · ≤50 HIGH · &gt;50 SEVERE): el score
+            = min(100, round(L1 × 4)) se satura en L1 ≥ 25pp y no distingue 26pp de 66pp.
           </p>
           {engineResult.meta.coreShadow && shadowDivergence ? (
             <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "1rem" }}>
@@ -3539,31 +3586,52 @@ soxRsiWeekly,
                     )}
                   </tbody>
                 </table>
+                {(() => {
+                  const legacyMax = shadowDivergence.legacyMaxWeight;
+                  const coreMax = shadowDivergence.coreMaxWeight;
+                  if (!legacyMax || !coreMax) return null;
+                  // CORE es HRP puro (sin cluster cap, tilt ni caps por activo): este
+                  // número es el que hay que vigilar, no la divergencia en sí.
+                  const risky = coreMax.pct >= 40;
+                  return (
+                    <p style={{ fontSize: "0.7rem", color: risky ? "#f59e0b" : "#9ca3af", margin: "0.5rem 0 0" }}>
+                      Concentración máx. del tramo invertido: v5.3 {legacyMax.name} {legacyMax.pct.toFixed(1)}% · CORE {coreMax.name} {coreMax.pct.toFixed(1)}%
+                      {risky ? " — un solo activo ≥ 40% del libro CORE" : ""}
+                    </p>
+                  );
+                })()}
               </div>
               <div>
                 <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: "0.4rem" }}>
-                  Historial ({shadowHistory.length} obs · máx 180) — {shadowHistory.filter(h => h.aligned).length} alineadas
+                  Historial ({shadowHistory.length} obs · máx 180) — {shadowHistory.filter(h => h.aligned && h.l1Pp <= SHADOW_ALIGNED_L1_MAX_PP).length} con mismo top y L1 ≤ {SHADOW_ALIGNED_L1_MAX_PP}pp
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem" }}>
                   <thead>
                     <tr style={{ color: "#9ca3af", textAlign: "right" }}>
                       <th style={{ textAlign: "left", fontWeight: 500, paddingBottom: "0.3rem" }}>Fecha</th>
-                      <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>Score</th>
+                      <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>L1 (pp)</th>
                       <th style={{ fontWeight: 500, paddingBottom: "0.3rem" }}>Top v5.3 / CORE</th>
                     </tr>
                   </thead>
                   <tbody>
                     {[...shadowHistory].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(h => {
-                      const band = divergenceBand(h.divergenceScore);
+                      const band = divergenceBandFromL1(h.l1Pp);
                       const color = band === "LOW" ? "#10b981" : band === "MODERATE" ? "#f59e0b" : "#ef4444";
+                      // "Mismo top" solo cuenta como acuerdo si las carteras están cerca;
+                      // liderar con el mismo activo a 65pp de distancia es coincidencia de ranking.
+                      const sameTop = h.aligned && h.l1Pp <= SHADOW_ALIGNED_L1_MAX_PP;
                       return (
                         <tr key={h.date} style={{ borderTop: "1px solid #374151" }}>
                           <td style={{ padding: "0.25rem 0", color: "#e5e7eb" }}>{h.date}</td>
                           <td style={{ textAlign: "right", fontWeight: "bold", color }}>
-                            {h.divergenceScore} {band === "LOW" ? "✅" : band === "MODERATE" ? "⚠️" : "🔴"}
+                            {h.l1Pp.toFixed(1)} {band === "LOW" ? "✅" : band === "MODERATE" ? "⚠️" : "🔴"}
                           </td>
-                          <td style={{ textAlign: "right", color: "#9ca3af" }}>
-                            {h.aligned ? "✅ mismo top" : `${h.legacyTop} → ${h.coreTop}`}
+                          <td style={{ textAlign: "right", color: h.aligned && !sameTop ? "#f59e0b" : "#9ca3af" }}>
+                            {!h.aligned
+                              ? `${h.legacyTop} → ${h.coreTop}`
+                              : sameTop
+                                ? "✅ mismo top"
+                                : `⚠️ mismo top, ${h.l1Pp.toFixed(0)}pp aparte`}
                           </td>
                         </tr>
                       );
@@ -3573,9 +3641,42 @@ soxRsiWeekly,
                     )}
                   </tbody>
                 </table>
-                {shadowDivergence.aligned
-                  ? <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.6rem" }}>✅ Hoy ambos motores lideran con el mismo activo ({shadowDivergence.legacyTop}).</p>
-                  : <p style={{ fontSize: "0.72rem", color: "#f59e0b", marginTop: "0.6rem" }}>⚠️ Hoy diverge el activo líder: v5.3 {shadowDivergence.legacyTop} vs CORE {shadowDivergence.coreTop}.</p>}
+                {shadowDivergence.sameTopAgreement
+                  ? <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.6rem" }}>✅ Hoy ambos motores lideran con el mismo activo ({shadowDivergence.legacyTop}) con L1 {shadowDivergence.l1Pp.toFixed(1)}pp.</p>
+                  : shadowDivergence.aligned
+                    ? <p style={{ fontSize: "0.72rem", color: "#f59e0b", marginTop: "0.6rem" }}>⚠️ Hoy el líder coincide ({shadowDivergence.legacyTop}) pero las carteras están a {shadowDivergence.l1Pp.toFixed(1)}pp: mismo top ≠ acuerdo.</p>
+                    : <p style={{ fontSize: "0.72rem", color: "#f59e0b", marginTop: "0.6rem" }}>⚠️ Hoy diverge el activo líder: v5.3 {shadowDivergence.legacyTop} vs CORE {shadowDivergence.coreTop}.</p>}
+                <div style={{ borderTop: "1px solid #374151", marginTop: "0.6rem", paddingTop: "0.55rem" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: "0.25rem" }}>
+                    Track forward — rendimiento realizado (buy & hold entre observaciones, sin costes)
+                  </div>
+                  {shadowTrack.intervals > 0 && shadowTrack.startDate ? (
+                    <>
+                      <p style={{ fontSize: "0.72rem", margin: 0, color: "#e5e7eb" }}>
+                        Desde {shadowTrack.startDate} ({shadowTrack.intervals} intervalos): v5.3{" "}
+                        <strong style={{ color: shadowTrack.legacyCumPct >= 0 ? "#10b981" : "#ef4444" }}>{shadowTrack.legacyCumPct >= 0 ? "+" : ""}{shadowTrack.legacyCumPct.toFixed(2)}%</strong>
+                        {" · "}CORE{" "}
+                        <strong style={{ color: shadowTrack.coreCumPct >= 0 ? "#10b981" : "#ef4444" }}>{shadowTrack.coreCumPct >= 0 ? "+" : ""}{shadowTrack.coreCumPct.toFixed(2)}%</strong>
+                        {" · "}Δ {shadowTrack.deltaPp >= 0 ? "+" : ""}{shadowTrack.deltaPp.toFixed(2)}pp
+                      </p>
+                      <p style={{ fontSize: "0.7rem", margin: "0.25rem 0 0", color: "#9ca3af" }}>
+                        Máx. DD desde su propio pico: v5.3{" "}
+                        <strong style={{ color: "#ef4444" }}>{shadowTrack.legacy.maxDrawdownPct.toFixed(2)}%</strong>
+                        {" · "}CORE{" "}
+                        <strong style={{ color: "#ef4444" }}>{shadowTrack.core.maxDrawdownPct.toFixed(2)}%</strong>
+                        {" · "}Vol anualizada: v5.3 {fmtVol(shadowTrack.legacy.volAnnualPct)} · CORE {fmtVol(shadowTrack.core.volAnnualPct)}
+                      </p>
+                    </>
+                  ) : (
+                    <p style={{ fontSize: "0.72rem", color: "#6b7280", margin: 0 }}>
+                      Sin track aún: necesita dos observaciones con precios (el histórico anterior no los guarda).
+                    </p>
+                  )}
+                  <p style={{ fontSize: "0.66rem", color: "#4b5563", margin: "0.25rem 0 0" }}>
+                    La divergencia mide distancia de composición, no rendimiento. Este track es la evidencia
+                    forward que pide el preregistro (≥ 90 días) antes de cualquier cutover.
+                  </p>
+                </div>
               </div>
             </div>
           ) : (
@@ -4497,7 +4598,7 @@ soxRsiWeekly,
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
           {portfolio.assets.map(asset => {
-            const assetIdx = ASSETS.indexOf(asset.ticker as any);
+            const assetIdx = (ASSETS as readonly string[]).indexOf(asset.ticker);
             const marketVol = (marketData?.realizedVols?.[assetIdx] ?? asset.volatility / 100) * 100;
             const manualVol = manualVols[asset.ticker];
             const displayVol = manualVol !== undefined ? manualVol : marketVol;
@@ -4766,7 +4867,7 @@ soxRsiWeekly,
                 <span>Objetivo Tramo 2: <strong>€{(monthlyInjection * 2).toFixed(0)}–€{(monthlyInjection * 3).toFixed(0)}</strong></span>
                 {defensiveLiquidity > 0 && (
                   <button
-                    onClick={() => { setDefensiveLiquidity(0); try { localStorage.removeItem('olympus_defensive_liq'); } catch {} }}
+                    onClick={() => { setDefensiveLiquidity(0); try { localStorage.removeItem('olympus_defensive_liq'); } catch {/* best-effort: un fallo de persistencia no debe romper el render */} }}
                     style={{ marginLeft: 'auto', fontSize: '0.7rem', padding: '0.1rem 0.5rem', background: '#450a0a', border: '1px solid #ef4444', borderRadius: 4, color: '#fca5a5', cursor: 'pointer' }}
                   >Resetear</button>
                 )}
@@ -4801,7 +4902,9 @@ soxRsiWeekly,
                     no solo los que tienen BUY/SELL. Los activos sin sugerencia se muestran
                     como HOLD con su drift, actual y objetivo. Así BTC siempre es visible. */}
                 {(() => {
-                  const allRows = portfolio.assets.map(asset => {
+                  // Tipo explícito de fila (sugerencia + flag): evita el `any` que
+                  // ocultaba errores al mezclar filas BUY/SELL con filas HOLD.
+                  const allRows: (RebalanceSuggestion & { _hasSuggestion: boolean })[] = portfolio.assets.map(asset => {
                     const suggestion = taxAwareRebalance!.suggestions.find(s => s.ticker === asset.ticker);
                     if (suggestion) return { ...suggestion, _hasSuggestion: true as const };
                     // Activo sin sugerencia → fila HOLD con estadísticas
@@ -4823,7 +4926,7 @@ soxRsiWeekly,
                       cycleIndicatorValue: undefined as string | undefined,
                     };
                   });
-                  return allRows.map((s: any) => (
+                  return allRows.map(s => (
                   <tr key={s.ticker} style={{ borderBottom: "1px solid #1f2937", background: s.action === "SELL" ? "rgba(239,68,68,0.07)" : s.action === "HOLD" ? "rgba(0,0,0,0.02)" : "transparent" }}>
                     <td style={{ padding: "0.5rem", fontWeight: "bold", color: s.action === "HOLD" ? "#6b7280" : undefined }}>{s.ticker}</td>
                     <td style={{ padding: "0.5rem", textAlign: "center" }}>
