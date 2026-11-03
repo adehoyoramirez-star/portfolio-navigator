@@ -13,11 +13,11 @@ describe("H-5 — convención drift OPUESTA rebalancer vs smartDCA", () => {
     const assets = [
       { ticker: "BTC-EUR", name: "Bitcoin", price: 100, shares: 1, targetAllocation: 0.30 },
     ];
-    // currentValue = 100, totalPortfolioValue = 1000 → currentPct = 0.10
-    // drift = 0.10 - 0.30 = -0.20 (infraponderado, NEGATIVO)
+    // currentValue = 100 · posiciones 1000 + caja 500 → FIX-NAV-BASE: base = NAV 1500
+    // currentPct = 100/1500 = 0.0667 → drift = 0.0667 - 0.30 = -0.2333 (NEGATIVO)
     const out = computeRebalanceSuggestions(assets, 500, 1000, 0.02, []);
     expect(out.buySuggestions.length).toBeGreaterThan(0);
-    expect(out.buySuggestions[0].drift).toBeCloseTo(-0.20, 6);
+    expect(out.buySuggestions[0].drift).toBeCloseTo(-0.233333, 5);
   });
 
   test("rebalancer: sobreponderado con techo → drift POSITIVO y SELL", () => {
@@ -50,6 +50,9 @@ describe("H-5 — convención drift OPUESTA rebalancer vs smartDCA", () => {
     const rebalAssets = [
       { ticker: "BTC-EUR", name: "Bitcoin", price: 100, shares: 1, targetAllocation: 0.30 },
     ];
+    // FIX-NAV-BASE: la base del rebalancer es NAV (1000 + 500) mientras que el
+    //   DCA sigue midiendo sobre el patrimonio declarado → se compara el SIGNO
+    //   de la convención, no el valor absoluto del drift.
     const rebalOut = computeRebalanceSuggestions(rebalAssets, 500, 1000, 0.02, []);
     const rebalDrift = rebalOut.buySuggestions[0]!.drift;
 
@@ -59,7 +62,7 @@ describe("H-5 — convención drift OPUESTA rebalancer vs smartDCA", () => {
     const dcaDrift = dcaOut.find(a => a.ticker === "BTC-EUR")!.drift!;
 
     // Convención opuesta: mismo caso, signos invertidos
-    expect(rebalDrift).toBeCloseTo(-0.20, 6);
+    expect(rebalDrift).toBeCloseTo(-0.233333, 5);
     expect(dcaDrift).toBeCloseTo(0.20, 6);
     expect(Math.sign(rebalDrift)).toBe(-1);
     expect(Math.sign(dcaDrift)).toBe(1);
@@ -71,7 +74,7 @@ describe("OVERWEIGHT TRIM — recorte institucional de sobrepeso (FIX-OVERWEIGHT
     const assets = [
       { ticker: "BTC-EUR", name: "Bitcoin", price: 100, shares: 5, targetAllocation: 0.20 },
     ];
-    // currentPct 0.50, target 0.20 → drift +0.30 (sobreponderado)
+    // cash 0 → base = NAV = posiciones (1000); currentPct 0.50, target 0.20 → drift +0.30
     const out = computeRebalanceSuggestions(assets, 0, 1000, 0.02, [], []);
     expect(out.sellSuggestions.length).toBe(1);
     const sell = out.sellSuggestions[0]!;

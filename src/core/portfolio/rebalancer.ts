@@ -160,7 +160,17 @@ export function computeRebalanceSuggestions(
    * Sustituye al mutex por SUGERENCIA (v1/v2), que paralizaba el DCA durante
    * todo el ciclo. La exclusión mutua pasa a depender del ESTADO compartido.
    */
-  dcaCommitted: Record<string, number> = {}
+  dcaCommitted: Record<string, number> = {},
+  /**
+   * FIX-NAV-BASE (Nov-2026): capital total de la estrategia (posiciones + caja
+   * del broker + liquidez defensiva). Si se pasa, es la BASE de los pesos
+   * (currentPct / Σtarget). Si no, la base es `totalPortfolioValue + availableCash`
+   * (NAV del broker). NUNCA la base es "solo posiciones": eso hacía que ΣcurrentPct
+   * fuera siempre 100% y que cualquier Σtarget < 100% pidiera vender en bucle.
+   * OJO: este parámetro afecta solo a la BASE DE MEDIDA, no al poder de compra
+   * (que sigue siendo `availableCash` + proceeds de ventas).
+   */
+  totalCapitalOverride?: number
 ): RebalanceOutput {
 
   const emptyOutput: RebalanceOutput = {
@@ -169,9 +179,24 @@ export function computeRebalanceSuggestions(
     remainingCash: availableCash, coverageRatio: 0, isFullyFunded: false,
   };
 
-  if (totalPortfolioValue <= 0) return emptyOutput;
+  // FIX-NAV-BASE (Nov-2026): la base de cálculo de pesos es el NAV (posiciones
+  //   + cash), no solo las posiciones.
+  //   ANTES (bug): currentPct = posición / posiciones → ΣcurrentPct = 100%
+  //   SIEMPRE, y el cash no diluía nada. Con Σtarget < 100% (bear-veto 60%,
+  //   64,5% con satélite…) el motor pedía vender todo el exceso y, al
+  //   ejecutarlo, la base encogía → el ciclo siguiente pedía OTRA venta del
+  //   mismo importe (bucle hacia cero: 4.775 € vendidos → siguiente ciclo
+  //   3.219 € → …). Además el cash (incluida la liquidez defensiva) era
+  //   invisible: el motor no podía saber que la cuenta ya estaba defendida.
+  //   CON NAV la cartera converge y queda ESTABLE en Σtarget, y el cash
+  //   diluye el peso de verdad (mover dinero a la caja activa las compras).
+  const hasCapitalOverride = Number.isFinite(totalCapitalOverride) && (totalCapitalOverride as number) > 0;
+  const totalValue = hasCapitalOverride
+    // El override nunca puede ser menor que las posiciones (evita denominadores absurdos).
+    ? Math.max(totalPortfolioValue, totalCapitalOverride as number)
+    : totalPortfolioValue + Math.max(0, availableCash);
 
-  const totalValue = totalPortfolioValue + Math.max(0, availableCash);
+  if (totalValue <= 0) return emptyOutput;
 
   // FIX-MUTEX-V3: € comprometidos por la capa SEMANAL (Smart DCA) en este ciclo,
   //   agregados por ticker base (exchange-agnostic: WLG ≈ 0P00000WLG.F).
@@ -187,7 +212,7 @@ export function computeRebalanceSuggestions(
 
   const withDrift = assets.map(asset => {
     const currentValue = asset.price * asset.shares;
-    const currentPct   = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
+    const currentPct   = currentValue / totalValue;
     const targetPct    = asset.targetAllocation;
     // CONVENCIÓN DRIFT (rebalancer): drift = current − target.
     //   POSITIVO = sobreponderado (vender) · NEGATIVO = infraponderado (comprar).
@@ -221,7 +246,7 @@ export function computeRebalanceSuggestions(
     if (trimPct <= 0 || asset.shares <= 0 || asset.price <= 0) continue;
 
     // Target-based: solo vender el exceso sobre el peso objetivo
-    const targetValue = asset.targetPct * totalPortfolioValue;
+    const targetValue = asset.targetPct * totalValue;
     const currentValue = asset.shares * asset.price;
     const excessValue = currentValue - targetValue;
     if (excessValue <= 0.01) continue; // ya está en peso o por debajo
@@ -278,7 +303,7 @@ export function computeRebalanceSuggestions(
     const excessOverFloor = asset.drift - floor;
     if (excessOverFloor <= driftThreshold) continue; // dentro del rango permitido
     const currentValue = asset.price * asset.shares;
-    const allowedValue = (asset.targetPct + floor) * totalPortfolioValue;
+    const allowedValue = (asset.targetPct + floor) * totalValue;
     const excessValue = currentValue - allowedValue;
     if (excessValue <= 0.01) continue;
     const sharesToSell = asset.ticker === "BTC-EUR"

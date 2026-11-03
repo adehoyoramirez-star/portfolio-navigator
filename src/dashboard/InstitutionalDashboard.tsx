@@ -924,6 +924,18 @@ const formatCurrency = (value: number): string => {
 
   const availableCash = cashReserve;
 
+  // FIX-NAV-BASE (Nov-2026): capital total de la ESTRATEGIA = posiciones + caja
+  //   del broker + liquidez defensiva. La liquidez defensiva es pólvora para
+  //   oportunidades (no un fondo de emergencia ajeno al sistema), así que cuenta
+  //   como capital y debe DILUIR los pesos del motor. Con la base anterior
+  //   (solo posiciones) el cash era invisible: el motor veía 100% invertido,
+  //   pedía vender todo el exceso sobre Σtarget y, al ejecutarlo, volvía a
+  //   pedir otra venta del mismo importe (bucle hacia cero).
+  //   Nota: la liquidez defensiva NO da poder de compra inmediato — el
+  //   rebalanceo compra solo con la caja del broker (availableCash); lo que
+  //   cambia es la base sobre la que se miden los pesos.
+  const totalStrategyCapital = totalPortfolioValue + availableCash + defensiveLiquidity;
+
   const corrMatrix = useMemo(() =>
     calculateCorrelationMatrix(portfolio.assets),
     [portfolio.assets]
@@ -1955,9 +1967,11 @@ soxRsiWeekly,
       0.02,
       cycleTopResult.signals,
       cycleBottomResult?.signals,
-      dcaCommitted
+      dcaCommitted,
+      // FIX-NAV-BASE: base de pesos = capital total (incluye liquidez defensiva).
+      totalStrategyCapital
     );
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult, olympusPct, smartDCAResult]);
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, totalStrategyCapital, cycleTopResult, cycleBottomResult, olympusPct, smartDCAResult]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";
@@ -2115,7 +2129,7 @@ soxRsiWeekly,
       const btcAsset = rebalanceAssets.find(a => a.ticker === 'BTC-EUR');
       if (btcAsset && btcAsset.targetAllocation > 0) {
         const currentValue = btcAsset.price * btcAsset.shares;
-        const currentPct = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
+        const currentPct = totalStrategyCapital > 0 ? currentValue / totalStrategyCapital : 0;
         const drift = currentPct - btcAsset.targetAllocation;
         const soldTickersForGuard = new Set(
           baseRebalance.suggestions.filter(s => s.action === 'SELL').map(s => s.ticker.split('.')[0])
@@ -2132,7 +2146,7 @@ soxRsiWeekly,
           console.warn('[BTC-BUY-GUARD] remainingCash=' + baseRebalance.remainingCash.toFixed(0) + ' buySuggestions=' + baseRebalance.buySuggestions.length + ' sellSuggestions=' + baseRebalance.suggestions.filter(s=>s.action==='SELL').length);
         }
         if (!alreadyInBuys && !hasActiveCycleTop && !soldTickersForGuard.has('BTC-EUR') && drift < -0.02 && currentValue > 0) {
-          const totalValue = totalPortfolioValue + availableCash;
+          const totalValue = totalStrategyCapital;
           const deficitValue = Math.max(0, btcAsset.targetAllocation * totalValue - currentValue);
           if (deficitValue > 0) {
             const maxAvailable = baseRebalance.remainingCash;
@@ -4880,7 +4894,8 @@ soxRsiWeekly,
             </div>
           )}
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "1rem" }}>
-            Basado en allocations reales del motor. Cash disponible: <strong>€{availableCash.toFixed(0)}</strong> ·
+            Basado en allocations reales del motor. Caja broker: <strong>€{availableCash.toFixed(0)}</strong> ·
+            Capital total (caja + liquidez defensiva): <strong>€{totalStrategyCapital.toFixed(0)}</strong> ·
             Cobertura del rebalanceo ideal: <strong>{(taxAwareRebalance!.coverageRatio * 100).toFixed(0)}%</strong>
           </p>
           <div style={{ overflowX: "auto" }}>
