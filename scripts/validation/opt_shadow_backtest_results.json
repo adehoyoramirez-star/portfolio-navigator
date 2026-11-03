@@ -1,0 +1,152 @@
+{
+  "preregSha": "947dd74d68565146",
+  "spec": {
+    "horizon": 20,
+    "eventThreshold": -0.07,
+    "l1Threshold": 0.12,
+    "leadLookback": 20,
+    "vixLevelCut": 25,
+    "liftMin": 1.5,
+    "falsePositiveMax": 0.6,
+    "minEpisodes": 5,
+    "bootstrapBlock": 20,
+    "bootstrapReps": 2000,
+    "seed": 20261016,
+    "ciPrimary": 0.95,
+    "ciExploratory": 0.99
+  },
+  "generatedAt": "2026-10-16T11:51:47.453Z",
+  "result": {
+    "sample": {
+      "firstDate": "2008-01-03",
+      "lastDate": "2026-10-15",
+      "rows": 5229,
+      "evaluable": 4634,
+      "stateShare": {
+        "NO_DATA": 0.0617708930961943,
+        "INSUFFICIENT_HISTORY": 0.04819277108433735,
+        "CALM": 0.5999235035379614,
+        "WATCH": 0.25913176515586156,
+        "CONFIRM": 0.03098106712564544
+      },
+      "confirmDays": 162,
+      "confirmEpisodes": 41,
+      "baseRateE": 0.10056107034958998
+    },
+    "a1": {
+      "nBase": 4634,
+      "nState": 162,
+      "pBase": 0.10056107034958998,
+      "pState": 0.3765432098765432,
+      "lift": 3.744423250145711,
+      "lo": 1.66890756302521,
+      "hi": 6.265139359362928,
+      "replicatesUsed": 2000,
+      "replicatesSkipped": 0,
+      "verdict": "PASA"
+    },
+    "a2": {
+      "nBase": 3789,
+      "nState": 17,
+      "pBase": 0.07759303246239113,
+      "pState": 0.058823529411764705,
+      "lift": 0.7581032412965186,
+      "lo": 0,
+      "hi": 2.761194029850746,
+      "replicatesUsed": 2000,
+      "replicatesSkipped": 0,
+      "verdict": "FALLA"
+    },
+    "a3": {
+      "episodes": 41,
+      "falsePositives": 30,
+      "rate": 0.7317073170731707,
+      "verdict": "FALLA"
+    },
+    "a4": {
+      "crossings": [
+        {
+          "date": "2025-04-03",
+          "warned": false,
+          "lead": 0
+        }
+      ],
+      "medianLead": 0,
+      "n": 1,
+      "descriptiveOnly": true,
+      "verdict": "NO_CONCLUYENTE"
+    },
+    "exploratory": {
+      "TS_BACKWARDATION": {
+        "nBase": 4634,
+        "nState": 468,
+        "pBase": 0.10056107034958998,
+        "pState": 0.24572649572649571,
+        "lift": 2.4435548952716335,
+        "lo": 1.248776105995958,
+        "hi": 3.8889110150204824,
+        "replicatesUsed": 2000,
+        "replicatesSkipped": 0
+      },
+      "VRP_NEGATIVA": {
+        "nBase": 4634,
+        "nState": 740,
+        "pBase": 0.10056107034958998,
+        "pState": 0.18243243243243243,
+        "lift": 1.8141456907551328,
+        "lo": 1.0223693045563549,
+        "hi": 2.7815126050420167,
+        "replicatesUsed": 2000,
+        "replicatesSkipped": 0
+      },
+      "VVIXVIX_Z": {
+        "nBase": 4634,
+        "nState": 286,
+        "pBase": 0.10056107034958998,
+        "pState": 0.05944055944055944,
+        "lift": 0.5910891683423872,
+        "lo": 0,
+        "hi": 1.8011451123435933,
+        "replicatesUsed": 2000,
+        "replicatesSkipped": 0
+      },
+      "SKEW_Z": {
+        "nBase": 4634,
+        "nState": 303,
+        "pBase": 0.10056107034958998,
+        "pState": 0.14521452145214522,
+        "lift": 1.4440431167580279,
+        "lo": 0.46217984520864913,
+        "hi": 2.814387431375213,
+        "replicatesUsed": 2000,
+        "replicatesSkipped": 0
+      },
+      "CONFIRM_SIN_SKEW_Z": {
+        "nBase": 4634,
+        "nState": 149,
+        "pBase": 0.10056107034958998,
+        "pState": 0.3624161073825503,
+        "lift": 3.603940432641069,
+        "lo": 0.7392845747509483,
+        "hi": 7.544821861831184,
+        "replicatesUsed": 2000,
+        "replicatesSkipped": 0
+      },
+      "CONFIRM_SIN_SKEW_Z|VIX<25": {
+        "nBase": 3789,
+        "nState": 15,
+        "pBase": 0.07759303246239113,
+        "pState": 0.06666666666666667,
+        "lift": 0.8591836734693877,
+        "lo": 0,
+        "hi": 4.967999999999999,
+        "replicatesUsed": 2000,
+        "replicatesSkipped": 0
+      }
+    },
+    "kill": {
+      "K1": true,
+      "K2": true
+    }
+  }
+}

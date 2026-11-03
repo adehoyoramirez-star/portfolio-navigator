@@ -94,6 +94,8 @@ import {
 } from "@/core/persistence/portfolioStorage";
 import {
   computeRebalanceSuggestions,
+  detectDeRiskEvent,
+  totalTarget,
   RebalanceAsset,
   RebalanceSuggestion,
 } from "@/core/portfolio/rebalancer";
@@ -152,6 +154,32 @@ import RealTimeMonitorPanel, {
 import { monteCarloJumpDiffusion, choleskyDecomposition, randomNormal } from "@/lib/monteCarlo";
 
 const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
+
+// ── FIX-DERISK-BANNER (Nov-2026) ──────────────────────────────────────────
+// Evento de de-risking (FASE 3B · CORRECCIÓN 2): si la exposición objetivo
+// TOTAL del motor (Σtarget) cae >5 pp respecto de su valor en el último
+// rebalanceo, hay que vender hacia el nuevo objetivo SIN esperar a la cadencia
+// mensual (en COVID-2020 la espera costó ~10,7 pp de MaxDD).
+// El detector (detectDeRiskEvent) existía pero solo se usaba en
+// scripts/validation — la UI nunca lo mostraba. Aquí vive la referencia:
+// Σtarget del último rebalanceo ejecutado.
+const DERISK_BASELINE_KEY = "olympus_derisk_baseline";
+
+type DeriskBaseline = { targetPct: number; ts: number };
+
+function readDeriskBaseline(): DeriskBaseline | null {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(DERISK_BASELINE_KEY) ?? "null");
+    if (!parsed || typeof parsed !== "object") return null;
+    const { targetPct, ts } = parsed as Partial<DeriskBaseline>;
+    if (typeof targetPct !== "number" || !Number.isFinite(targetPct) || targetPct <= 0) return null;
+    return { targetPct, ts: typeof ts === "number" ? ts : Date.now() };
+  } catch { return null; }
+}
+
+function writeDeriskBaseline(baseline: DeriskBaseline): void {
+  try { localStorage.setItem(DERISK_BASELINE_KEY, JSON.stringify(baseline)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
+}
 
 // ==================== COMPONENTE PRINCIPAL ====================
 // MIGRATION-CLOBBER (Ago-2026): firma de los defaults ANTIGUOS que el bug de
@@ -1930,6 +1958,52 @@ soxRsiWeekly,
   // cashReserve es ahora el único input de cash real para SmartDCA.
   }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, olympusPct, previousRegime]);
 
+  // ── FIX-DERISK-BANNER (Nov-2026) ────────────────────────────────────────
+  //   La referencia NO caduca por tiempo: solo se mueve al confirmar una
+  //   operación de rebalanceo (confirmTradeExecution) o al pulsar «He
+  //   rebalanceado» en el banner. Si caducara sola, una caída de 2 pp/mes se
+  //   lavaría en cada refresco y el evento nunca dispararía.
+  const [deriskBaseline, setDeriskBaseline] = useState<DeriskBaseline | null>(() => readDeriskBaseline());
+
+  // Exposición objetivo total de HOY (Σtarget composite) — misma base que
+  // rebalanceBase: allocation del motor × olympusPct + satélite BTC.
+  const currentTotalTarget = useMemo(() => {
+    if (!engineResult) return 0;
+    const targets: Record<string, number> = {};
+    for (const asset of portfolio.assets) {
+      const alloc = engineResult.allocations.find(a => a.name === asset.name);
+      targets[asset.ticker] = compositeTarget(alloc?.finalAllocation ?? 0, olympusPct, asset.ticker === "BTC-EUR");
+    }
+    return totalTarget(targets);
+  }, [engineResult, portfolio.assets, olympusPct]);
+
+  // Primera observación: sin referencia el detector no puede (ni debe) disparar.
+  useEffect(() => {
+    if (deriskBaseline || currentTotalTarget <= 0) return;
+    const baseline: DeriskBaseline = { targetPct: currentTotalTarget, ts: Date.now() };
+    writeDeriskBaseline(baseline);
+    setDeriskBaseline(baseline);
+  }, [deriskBaseline, currentTotalTarget]);
+
+  const deriskEvent = useMemo(() => {
+    if (!deriskBaseline || currentTotalTarget <= 0) return null;
+    if (!detectDeRiskEvent(deriskBaseline.targetPct, currentTotalTarget)) return null;
+    return {
+      prevPct: deriskBaseline.targetPct,
+      currPct: currentTotalTarget,
+      deltaPp: (deriskBaseline.targetPct - currentTotalTarget) * 100,
+      sinceTs: deriskBaseline.ts,
+    };
+  }, [deriskBaseline, currentTotalTarget]);
+
+  // «He rebalanceado»: reinicia la referencia al Σtarget actual.
+  const acknowledgeDerisk = useCallback(() => {
+    if (currentTotalTarget <= 0) return;
+    const baseline: DeriskBaseline = { targetPct: currentTotalTarget, ts: Date.now() };
+    writeDeriskBaseline(baseline);
+    setDeriskBaseline(baseline);
+  }, [currentTotalTarget]);
+
   // FIX-MUTEX-V3 (Oct-2026): única fuente de verdad del rebalanceo — calculada
   //   DESPUÉS del Smart DCA. El rebalanceo (MENSUAL) es la 2ª capa: recibe
   //   `dcaCommitted` (€ que la capa semanal ya despliega por ticker), cierra SOLO
@@ -2068,7 +2142,17 @@ soxRsiWeekly,
     setTradeLog(newLog);
     try { localStorage.setItem('olympus_trade_log', JSON.stringify(newLog.slice(0, 200))); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
 
-    // 4. Cerrar modal
+    // 4. FIX-DERISK-BANNER: un rebalanceo ejecutado ES el nuevo punto de
+    //    referencia del evento de de-risking (el detector compara contra el
+    //    Σtarget del último rebalanceo). Sin esto el banner quedaría encendido
+    //    para siempre tras el primer hueco de 5 pp.
+    if (source === 'REBALANCE' && currentTotalTarget > 0) {
+      const baseline: DeriskBaseline = { targetPct: currentTotalTarget, ts: Date.now() };
+      writeDeriskBaseline(baseline);
+      setDeriskBaseline(baseline);
+    }
+
+    // 5. Cerrar modal
     setPendingTrade(null);
     setExecPrice(0);
     setExecShares(0);
@@ -2597,6 +2681,45 @@ soxRsiWeekly,
   return (
     <div style={styles.container}>
       <h1 style={styles.title}>Institutional Portfolio Dashboard (Olympus Engine V3+)</h1>
+
+      {/* FIX-DERISK-BANNER (Nov-2026): evento de de-risking FUERA DE CADENCIA.
+          Σtarget de hoy vs Σtarget del último rebalanceo (>5 pp, umbral fijo de
+          DERISK_EVENT_CONFIG). El motor cambia día a día: sin este aviso el
+          recorte se aplicaba una cadencia mensual tarde (~10,7 pp de MaxDD en
+          COVID-2020, FASE 3A). Solo informa — no ejecuta ninguna orden. */}
+      {deriskEvent && (
+        <div style={{
+          background: '#3b0a0a', border: '2px solid #ef4444', borderRadius: '10px',
+          padding: '14px 18px', marginBottom: '16px', color: '#fecaca',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ fontWeight: 700, color: '#f87171', fontSize: '0.95rem' }}>
+              🚨 DE-RISKING — el motor recortó su exposición objetivo {deriskEvent.deltaPp.toFixed(1)} pp
+            </div>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>
+                referencia del {new Date(deriskEvent.sinceTs).toLocaleDateString('es-ES')}
+              </span>
+              <button
+                onClick={acknowledgeDerisk}
+                style={{ background: '#7f1d1d', color: '#fecaca', border: '1px solid #ef4444', borderRadius: 6, padding: '6px 14px', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}
+              >
+                ✓ He rebalanceado
+              </button>
+            </div>
+          </div>
+          <div style={{ fontSize: '0.82rem', marginTop: '8px', lineHeight: 1.55 }}>
+            Σtarget pasó de <strong style={{ color: '#fff' }}>{(deriskEvent.prevPct * 100).toFixed(1)}%</strong> a{' '}
+            <strong style={{ color: '#fff' }}>{(deriskEvent.currPct * 100).toFixed(1)}%</strong> — más de 5 pp: el motor
+            ha decidido retener más caja. Vende hacia el <strong>nuevo</strong> objetivo en la tabla de rebalanceo
+            <strong> hoy, sin esperar al primer día del mes</strong>. Esperar a la cadencia mensual es llegar tarde
+            y a peor precio.
+          </div>
+          <div style={{ fontSize: '0.72rem', color: '#fca5a5', marginTop: '6px' }}>
+            ⚠️ Solo ventas: las compras infraponderadas siguen su cadencia normal y la liquidez defensiva no se toca.
+          </div>
+        </div>
+      )}
 
       {/* PERSIST-04: Banner de sesión anterior — aparece al abrir el motor si hay datos guardados */}
       {showSessionBanner && (
