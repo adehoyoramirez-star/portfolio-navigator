@@ -4928,7 +4928,12 @@ soxRsiWeekly,
                     const isBtc = asset.ticker === 'BTC-EUR';
                     const compositeAlloc = compositeTarget(engineAlloc, olympusPct, isBtc);
                     const currentValue = asset.shares * asset.price;
-                    const currentPct = totalPortfolioValue > 0 ? currentValue / totalPortfolioValue : 0;
+                    // FIX-HOLD-ROWS-BASE (Nov-2026): la fila HOLD debe medirse sobre la
+                    // misma base que las filas BUY/SELL (capital total de la estrategia),
+                    // no sobre "solo posiciones". Con la base vieja un activo dentro de
+                    // la banda de ±2pp aparecía como "Sobreponderado 8,5pp" y el usuario
+                    // no entendía por qué el motor no lo recortaba.
+                    const currentPct = totalStrategyCapital > 0 ? currentValue / totalStrategyCapital : 0;
                     const drift = currentPct - compositeAlloc;
                     return {
                       ticker: asset.ticker, name: asset.name,
