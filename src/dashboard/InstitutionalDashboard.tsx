@@ -181,6 +181,28 @@ function writeDeriskBaseline(baseline: DeriskBaseline): void {
   try { localStorage.setItem(DERISK_BASELINE_KEY, JSON.stringify(baseline)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
 }
 
+// ── FIX-REBALANCE-CLARITY (Nov-2026) ──────────────────────────────────────
+// La cadencia mensual era una convención de operador SIN rastro en pantalla: el
+// panel no sabía si estabas dentro o fuera de la ventana de revisión. Aquí se
+// persiste la fecha del último rebalanceo EJECUTADO (se fija al confirmar una
+// orden de origen REBALANCE o al pulsar «He rebalanceado»).
+// OJO: es informativo — no bloquea nada. El motor sigue sugiriendo cualquier día;
+// la fecha solo evita que el operador pierda la cuenta del ciclo.
+const LAST_REBALANCE_KEY = "olympus_last_rebalance";
+
+function readLastRebalanceTs(): number | null {
+  try {
+    const raw = localStorage.getItem(LAST_REBALANCE_KEY);
+    if (!raw) return null;
+    const ts = Number(raw);
+    return Number.isFinite(ts) && ts > 0 ? ts : null;
+  } catch { return null; }
+}
+
+function writeLastRebalanceTs(ts: number): void {
+  try { localStorage.setItem(LAST_REBALANCE_KEY, String(ts)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
+}
+
 // ==================== COMPONENTE PRINCIPAL ====================
 // MIGRATION-CLOBBER (Ago-2026): firma de los defaults ANTIGUOS que el bug de
 // clobber podía escribir en localStorage. Si el portfolio guardado coincide
@@ -1972,6 +1994,14 @@ soxRsiWeekly,
   //   lavaría en cada refresco y el evento nunca dispararía.
   const [deriskBaseline, setDeriskBaseline] = useState<DeriskBaseline | null>(() => readDeriskBaseline());
 
+  // FIX-REBALANCE-CLARITY: fecha del último rebalanceo ejecutado (informativa).
+  const [lastRebalanceTs, setLastRebalanceTs] = useState<number | null>(() => readLastRebalanceTs());
+  const markRebalanceExecuted = useCallback(() => {
+    const ts = Date.now();
+    writeLastRebalanceTs(ts);
+    setLastRebalanceTs(ts);
+  }, []);
+
   // Exposición objetivo total de HOY (Σtarget composite) — misma base que
   // rebalanceBase: allocation del motor × olympusPct + satélite BTC.
   const currentTotalTarget = useMemo(() => {
@@ -2009,7 +2039,8 @@ soxRsiWeekly,
     const baseline: DeriskBaseline = { targetPct: currentTotalTarget, ts: Date.now() };
     writeDeriskBaseline(baseline);
     setDeriskBaseline(baseline);
-  }, [currentTotalTarget]);
+    markRebalanceExecuted();
+  }, [currentTotalTarget, markRebalanceExecuted]);
 
   // FIX-MUTEX-V3 (Oct-2026): única fuente de verdad del rebalanceo — calculada
   //   DESPUÉS del Smart DCA. El rebalanceo (MENSUAL) es la 2ª capa: recibe
@@ -2153,6 +2184,7 @@ soxRsiWeekly,
     //    referencia del evento de de-risking (el detector compara contra el
     //    Σtarget del último rebalanceo). Sin esto el banner quedaría encendido
     //    para siempre tras el primer hueco de 5 pp.
+    if (source === 'REBALANCE') markRebalanceExecuted();
     if (source === 'REBALANCE' && currentTotalTarget > 0) {
       const baseline: DeriskBaseline = { targetPct: currentTotalTarget, ts: Date.now() };
       writeDeriskBaseline(baseline);
@@ -2355,6 +2387,128 @@ soxRsiWeekly,
       sellSuggestions: modifiedSells,
     };
   }, [rebalanceFinal, taxAnalysis]);
+
+  // ── FIX-REBALANCE-CLARITY (Nov-2026) ────────────────────────────────────
+  //   Las reglas de rebalanceo existían en el motor pero no en pantalla: había
+  //   que comparar a mano el drift con la banda de 2 pp y nadie sabía cuándo
+  //   tocaba la revisión mensual. Este bloque EXHIBE (no decide) las 4 puertas,
+  //   la línea de tiempo y el reparto DCA/rebalanceo. Cero lógica nueva de
+  //   sizing: los umbrales son los mismos de rebalancer.ts y
+  //   DERISK_EVENT_CONFIG.
+  const rebalanceGates = useMemo(() => {
+    const BAND_PP = 0.02;
+    const totalValue = totalMotorCapital;
+    const rows = totalValue > 0
+      ? portfolio.assets.map(asset => {
+          const alloc = engineResult?.allocations.find(a => a.name === asset.name);
+          const targetPct = compositeTarget(alloc?.finalAllocation ?? 0, olympusPct, asset.ticker === "BTC-EUR");
+          const currentPct = (asset.shares * asset.price) / totalValue;
+          return { ticker: asset.ticker, targetPct, currentPct, drift: currentPct - targetPct };
+        })
+      : [];
+    const underweight = rows.filter(r => r.drift < -BAND_PP);
+    const overweight = rows.filter(r => r.drift > BAND_PP);
+    const maxAbsDrift = rows.reduce((m, r) => Math.max(m, Math.abs(r.drift)), 0);
+    const cycleSignals = (cycleTopResult?.signals ?? []).filter(s => s.shouldTrim && s.zone !== "SAFE");
+    const fmtList = (list: Array<{ ticker: string; drift: number }>) => list
+      .slice()
+      .sort((a, b) => a.drift - b.drift)
+      .map(r => `${r.ticker.split(".")[0]} ${(r.drift * 100).toFixed(1)}pp`)
+      .join(" · ");
+    const gates = [
+      {
+        id: "band",
+        label: "Banda de desviación (±2 pp)",
+        open: underweight.length > 0,
+        detail: underweight.length > 0
+          ? `infraponderados: ${fmtList(underweight)}`
+          : `nada que comprar — desvío máximo ${(maxAbsDrift * 100).toFixed(1)} pp`,
+      },
+      {
+        id: "overweight",
+        label: "Recorte de sobrepeso (±2 pp)",
+        open: overweight.length > 0,
+        detail: overweight.length > 0
+          ? `sobreponderados: ${fmtList(overweight)}`
+          : "ningún activo por encima de su objetivo",
+      },
+      {
+        id: "cycletop",
+        label: "Techo de ciclo (CAUTION/DANGER/EXTREME)",
+        open: cycleSignals.length > 0,
+        detail: cycleSignals.length > 0
+          ? cycleSignals.map(s => `${s.ticker.split(".")[0]} ${s.zone}`).join(" · ")
+          : "sin zonas de techo activas",
+      },
+      {
+        id: "derisk",
+        label: "De-risk del motor (Σtarget −5 pp)",
+        open: !!deriskEvent,
+        detail: deriskEvent
+          ? `Σtarget ${(deriskEvent.prevPct * 100).toFixed(1)}% → ${(deriskEvent.currPct * 100).toFixed(1)}% — vende hoy`
+          : `Σtarget estable en ${(currentTotalTarget * 100).toFixed(1)}%`,
+      },
+    ];
+    const openCount = gates.filter(g => g.open).length;
+    const verdict = deriskEvent
+      ? "de-risk activo: vende hacia el nuevo objetivo hoy, sin esperar al día 1"
+      : openCount > 0
+      ? `${underweight.length + overweight.length} activo(s) fuera de la banda de ±2 pp`
+      : "nada fuera de banda: la disciplina es no tocar";
+    return {
+      gates, openCount, verdict, rows, underweight, overweight,
+      buyCash: taxAwareRebalance?.totalCost ?? 0,
+      sellCash: taxAwareRebalance?.totalProceeds ?? 0,
+    };
+  }, [portfolio.assets, engineResult, olympusPct, totalMotorCapital, cycleTopResult, deriskEvent, currentTotalTarget, taxAwareRebalance]);
+
+  // FIX-REBALANCE-CLARITY: cuándo fue el último rebalanceo y cuándo toca el próximo.
+  const rebalanceTimeline = useMemo(() => {
+    const now = new Date();
+    const firstOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const ref = lastRebalanceTs != null ? new Date(lastRebalanceTs) : null;
+    const doneThisMonth = ref != null
+      && ref.getFullYear() === now.getFullYear()
+      && ref.getMonth() === now.getMonth();
+    const daysToNext = Math.max(0, Math.ceil((firstOfNextMonth.getTime() - now.getTime()) / 86400000));
+    const nextLabel = doneThisMonth
+      ? `${firstOfNextMonth.toLocaleDateString("es-ES")} (en ${daysToNext} día${daysToNext === 1 ? "" : "s"})`
+      : now.getDate() === 1
+      ? "hoy (primer día del mes)"
+      : "este mes está pendiente — revisa ya";
+    return {
+      lastLabel: ref ? ref.toLocaleDateString("es-ES") : "sin registro — primer ciclo",
+      doneThisMonth,
+      nextLabel,
+    };
+  }, [lastRebalanceTs]);
+
+  // FIX-REBALANCE-CLARITY: por qué queda caja sin usar (3 líneas, sin sumar
+  //   magnitudes heterogéneas: cada motivo se reporta por separado).
+  const cashIdleSummary = useMemo(() => {
+    const BAND_PP = 0.02;
+    const totalValue = totalMotorCapital;
+    const gapTotal = totalValue > 0
+      ? portfolio.assets.reduce((sum, asset) => {
+          const alloc = engineResult?.allocations.find(a => a.name === asset.name);
+          const targetPct = compositeTarget(alloc?.finalAllocation ?? 0, olympusPct, asset.ticker === "BTC-EUR");
+          return sum + Math.max(0, targetPct * totalValue - asset.shares * asset.price);
+        }, 0)
+      : 0;
+    const inBandCash = rebalanceGates.rows
+      .filter(r => r.drift >= -BAND_PP)
+      .reduce((sum, r) => sum + Math.max(0, (r.targetPct - r.currentPct) * totalValue), 0);
+    const dcaDeployed = (smartDCAResult?.allocationByAsset ?? [])
+      .reduce((sum, a) => sum + (a.skipped ? 0 : a.actualCost), 0);
+    const buys = taxAwareRebalance?.totalCost ?? 0;
+    const coverage = taxAwareRebalance?.coverageRatio ?? 1;
+    const ideal = coverage > 0 && coverage < 1 ? buys / coverage : buys;
+    const rounding = Math.max(0, ideal - buys);
+    const guardPending = (taxAwareRebalance?.buySuggestions ?? [])
+      .reduce((sum, b) => sum + (b.pendingDeficit ?? 0), 0);
+    const remainder = Math.max(0, availableCash - dcaDeployed - buys);
+    return { gapTotal, inBandCash, dcaDeployed, buys, coverage, rounding, guardPending, remainder };
+  }, [portfolio.assets, engineResult, olympusPct, totalMotorCapital, rebalanceGates.rows, smartDCAResult, taxAwareRebalance, availableCash]);
 
   const btcEntry = (() => {
     let score = 0;
@@ -5038,6 +5192,58 @@ soxRsiWeekly,
             Cobertura del rebalanceo ideal: <strong>{(taxAwareRebalance!.coverageRatio * 100).toFixed(0)}%</strong>
             {' · '}Reserva defensiva (fuera de la asignación): <strong>€{defensiveLiquidity.toFixed(0)}</strong>
           </p>
+
+          {/* FIX-REBALANCE-CLARITY: resumen de 3 líneas — por qué queda caja sin usar. */}
+          <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, padding: "0.7rem 0.9rem", marginBottom: "0.9rem", fontSize: "0.8rem", color: "#9ca3af", lineHeight: 1.6 }}>
+            <div>
+              <span style={{ color: "#e2e8f0", fontWeight: 600 }}>Hueco abierto: €{cashIdleSummary.gapTotal.toFixed(0)}</span>{" "}
+              · Smart DCA <strong style={{ color: "#60a5fa" }}>€{cashIdleSummary.dcaDeployed.toFixed(0)}</strong>
+              {" "}· rebalanceo <strong style={{ color: "#f59e0b" }}>€{cashIdleSummary.buys.toFixed(0)}</strong>
+              {" "}· cobertura <strong style={{ color: "#e2e8f0" }}>{(cashIdleSummary.coverage * 100).toFixed(0)}%</strong>
+            </div>
+            <div>
+              Quedan <strong style={{ color: "#e2e8f0" }}>€{cashIdleSummary.remainder.toFixed(0)}</strong> sin desplegar. La regla no pone más órdenes porque{" "}
+              {[
+                cashIdleSummary.inBandCash > 1 ? `hay €${cashIdleSummary.inBandCash.toFixed(0)} de hueco en activos ya dentro de ±2 pp (comprarlos los sobreponderaría)` : "",
+                cashIdleSummary.rounding > 1 ? `€${cashIdleSummary.rounding.toFixed(0)} se quedan en el redondeo a acciones enteras` : "",
+                cashIdleSummary.guardPending > 1 ? `€${cashIdleSummary.guardPending.toFixed(0)} esperan al siguiente rebalanceo por el tope de orden (25% NAV / €2.500)` : "",
+              ].filter(Boolean).join(" y ") || "no queda ningún hueco abierto que el motor quiera cubrir"}.
+            </div>
+            <div>
+              Caja broker <strong style={{ color: "#e2e8f0" }}>€{availableCash.toFixed(0)}</strong> sobre{" "}
+              <strong style={{ color: "#e2e8f0" }}>€{totalMotorCapital.toFixed(0)}</strong> gestionados
+              {totalMotorCapital > 0 ? ` (${((availableCash / totalMotorCapital) * 100).toFixed(1)}%)` : ""}
+              {" "}— por debajo de 2 pp de desvío el motor no compra.
+            </div>
+          </div>
+
+          {/* FIX-REBALANCE-CLARITY: ¿Rebalancear hoy? — las 4 puertas del reglamento. */}
+          <div style={{ border: `1.5px solid ${rebalanceGates.openCount > 0 ? "#f59e0b" : "#374151"}`, borderRadius: 8, padding: "0.85rem 1rem", marginBottom: "1rem", background: rebalanceGates.openCount > 0 ? "#1c1408" : "#0f172a" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: "0.55rem" }}>
+              <div style={{ fontWeight: 700, fontSize: "0.9rem", color: rebalanceGates.openCount > 0 ? "#fbbf24" : "#86efac" }}>
+                {rebalanceGates.openCount > 0 ? "🟡 ¿Rebalancear hoy? SÍ" : "🟢 ¿Rebalancear hoy? NO — todo en banda"}
+              </div>
+              <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
+                Último rebalanceo: <strong style={{ color: "#e2e8f0" }}>{rebalanceTimeline.lastLabel}</strong>
+                {" · "}Próxima revisión: <strong style={{ color: "#e2e8f0" }}>{rebalanceTimeline.nextLabel}</strong>
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: "0.3rem" }}>
+              {rebalanceGates.gates.map(gate => (
+                <div key={gate.id} style={{ display: "flex", gap: "0.5rem", alignItems: "baseline", fontSize: "0.78rem", flexWrap: "wrap" }}>
+                  <span style={{ flexShrink: 0, fontSize: "0.7rem" }}>{gate.open ? "🔴" : "🟢"}</span>
+                  <span style={{ color: gate.open ? "#fde68a" : "#9ca3af", fontWeight: 600, minWidth: "15rem" }}>{gate.label}</span>
+                  <span style={{ color: gate.open ? "#fca5a5" : "#6b7280" }}>{gate.detail}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: "0.55rem", paddingTop: "0.55rem", borderTop: "1px solid #1f2937", fontSize: "0.75rem", color: "#9ca3af" }}>
+              {rebalanceGates.verdict}
+              {" · "}Ventas <strong style={{ color: "#ef4444" }}>€{rebalanceGates.sellCash.toFixed(0)}</strong>
+              {" "}· Compras <strong style={{ color: "#f59e0b" }}>€{rebalanceGates.buyCash.toFixed(0)}</strong>
+              {" · "}{rebalanceGates.openCount > 0 ? "ejecuta solo las filas BUY/SELL; el resto se queda como está." : "no operes: pagarías comisiones por nada."}
+            </div>
+          </div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
               <thead>
@@ -5107,7 +5313,27 @@ soxRsiWeekly,
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: "0.5rem", textAlign: "right", color: s.action === "HOLD" ? "#9ca3af" : s.drift > 0 ? "#f59e0b" : "#ef4444" }}>{(s.drift * 100).toFixed(1)}pp</td>
+                    <td style={{ padding: "0.5rem", textAlign: "right", color: s.action === "HOLD" ? "#9ca3af" : s.drift > 0 ? "#f59e0b" : "#ef4444" }}>
+                      {/* FIX-REBALANCE-CLARITY: semáforo de banda — verde ≤1,5 pp (dentro),
+                          ámbar 1,5-2 pp (en el borde), rojo >2 pp (fuera) y ⚡ si >5 pp (escalada). */}
+                      {(() => {
+                        const absPp = Math.abs(s.drift * 100);
+                        const dot = absPp <= 1.5 ? "#10b981" : absPp <= 2 ? "#f59e0b" : "#ef4444";
+                        const label = absPp <= 1.5
+                          ? "Dentro de banda (±2 pp)"
+                          : absPp <= 2
+                          ? "En el borde de la banda (±2 pp)"
+                          : absPp > 5
+                          ? "Fuera de banda — escalada (>5 pp): ejecutable cualquier día"
+                          : "Fuera de banda (>2 pp)";
+                        return (
+                          <>
+                            <span title={label} style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: dot, marginRight: 6, verticalAlign: "middle" }} />
+                            {(s.drift * 100).toFixed(1)}pp{absPp > 5 ? " ⚡" : ""}
+                          </>
+                        );
+                      })()}
+                    </td>
                     <td style={{ padding: "0.5rem", textAlign: "right", color: "#6b7280" }}>
                       {s.action === "SELL"
                         ? <span style={{ color: "#ef4444" }}>−{s.sharesToSell} ({s.trimPct}%)</span>
@@ -5121,6 +5347,16 @@ soxRsiWeekly,
                         : s.action === "BUY"
                         ? <span style={{ color: "#f59e0b" }}>−€{s.cost.toFixed(0)}</span>
                         : <span>—</span>}
+                      {/* FIX-REBALANCE-CLARITY: déficit que el tope de orden deja para el
+                          siguiente rebalanceo. Se calculaba (pendingDeficit) y no se veía. */}
+                      {typeof s.pendingDeficit === "number" && s.pendingDeficit > 0.01 ? (
+                        <div
+                          title="Déficit no ejecutado por el tope de orden (25% NAV / €2.500). No se pierde: se cierra en el siguiente rebalanceo."
+                          style={{ fontSize: "0.62rem", color: "#a78bfa", marginTop: 2 }}
+                        >
+                          pend. €{s.pendingDeficit.toFixed(0)}
+                        </div>
+                      ) : null}
                     </td>
                     <td style={{ padding: "0.5rem", fontSize: "0.78rem" }}>
                       {s._hasSuggestion !== false ? (
@@ -5178,6 +5414,35 @@ soxRsiWeekly,
             Total compras: <strong style={{ color: "#f59e0b" }}>€{taxAwareRebalance!.totalCost.toFixed(0)}</strong> ·
             Restante: €{taxAwareRebalance!.remainingCash.toFixed(0)}
           </p>
+
+          {/* FIX-REBALANCE-CLARITY: el reglamento escrito, desplegable. Mismos umbrales
+              que rebalancer.ts / DERISK_EVENT_CONFIG / ORDER_GUARD_CONFIG. */}
+          <details style={{ marginTop: "0.9rem", background: "#0b1220", border: "1px solid #1f2937", borderRadius: 8, padding: "0.7rem 0.9rem" }}>
+            <summary style={{ cursor: "pointer", fontSize: "0.82rem", fontWeight: 600, color: "#93c5fd" }}>
+              📖 Reglas de rebalanceo — el reglamento completo
+            </summary>
+            <div style={{ marginTop: "0.7rem", fontSize: "0.76rem", color: "#9ca3af", lineHeight: 1.65 }}>
+              <div style={{ color: "#e2e8f0", fontWeight: 600, marginBottom: "0.35rem" }}>Las 4 puertas (si ninguna está abierta, no se opera)</div>
+              <div>1. <strong style={{ color: "#e2e8f0" }}>Banda de desviación (±2 pp)</strong> — un activo está más de 2 pp por debajo de su objetivo: se compra con la caja.</div>
+              <div>2. <strong style={{ color: "#e2e8f0" }}>Recorte de sobrepeso (±2 pp)</strong> — más de 2 pp por encima: se vende el exceso. Sin tope y sin necesitar caja.</div>
+              <div>3. <strong style={{ color: "#e2e8f0" }}>Techo de ciclo</strong> — una zona CAUTION/DANGER/EXTREME recorta hacia el objetivo ya reducido por el motor.</div>
+              <div>4. <strong style={{ color: "#e2e8f0" }}>De-risk (Σtarget −5 pp)</strong> — el motor baja su exposición total más de 5 pp: se vende HOY, fuera de cadencia.</div>
+
+              <div style={{ color: "#e2e8f0", fontWeight: 600, margin: "0.6rem 0 0.35rem" }}>Las 2 capas (un hueco, un euro)</div>
+              <div>· <strong style={{ color: "#e2e8f0" }}>Smart DCA (semanal)</strong>: despliega el 30% de la caja operativa (15% con Cycle Top activo).</div>
+              <div>· <strong style={{ color: "#e2e8f0" }}>Rebalanceo (mensual)</strong>: cierra solo el REMANENTE del hueco que el DCA no cubrió. Hueco = DCA + rebalanceo.</div>
+
+              <div style={{ color: "#e2e8f0", fontWeight: 600, margin: "0.6rem 0 0.35rem" }}>Frenos de ejecución</div>
+              <div>· Compra máxima: 25% del NAV por activo y €2.500 por orden. Lo que no cabe no se pierde: queda como déficit pendiente.</div>
+              <div>· Veto de compra en DANGER/EXTREME. En CAUTION se compra hasta el objetivo ya recortado.</div>
+              <div>· Las ventas nunca esperan: no dependen de la caja ni de la fecha.</div>
+
+              <div style={{ color: "#e2e8f0", fontWeight: 600, margin: "0.6rem 0 0.35rem" }}>Cadencia</div>
+              <div>· Revisión ordinaria: primer día hábil de cada mes.</div>
+              <div>· Adelantar hoy, cualquier día, si: sale el banner de de-risk, un activo pasa de 5 pp de desvío, o una zona DANGER/EXTREME pide recorte.</div>
+              <div>· Por debajo de esa banda la respuesta por defecto es NO TOCAR.</div>
+            </div>
+          </details>
         </div>
       )}
 
