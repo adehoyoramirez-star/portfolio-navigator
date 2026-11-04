@@ -2525,10 +2525,19 @@ soxRsiWeekly,
     }));
   }, [simulations]);
 
-  const pieData = portfolio.assets.map(asset => ({
-    name: asset.name,
-    value: asset.price * asset.shares
-  }));
+  // FIX-PIE-CASH (Nov-2026): el donut representa TODO el capital gestionado, no
+  //   solo lo invertido. Con el pie de posiciones, "Bitcoin 30%" contradecía el
+  //   "Peso act. 26,3%" de la tabla: el mismo activo con dos porcentajes en la
+  //   misma pantalla. La caja del broker entra como un segmento más porque es
+  //   capital real del NAV gestionado (munición sin asignar); la liquidez
+  //   defensiva queda fuera, igual que en los pesos del motor.
+  const pieData = [
+    ...portfolio.assets.map(asset => ({
+      name: asset.name,
+      value: asset.price * asset.shares
+    })),
+    ...(availableCash > 0 ? [{ name: "Caja broker", value: availableCash }] : []),
+  ];
 
   const updateAsset = (ticker: string, field: keyof Asset, value: number) => {
     setPortfolio(prev => ({
@@ -5366,12 +5375,17 @@ soxRsiWeekly,
         <div style={{ flex: 1, minWidth: "250px" }}>
           <h2>Distribución actual</h2>
           <p style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: "4px" }}>
-            Sobre lo invertido (sin caja): por eso estos % son más altos que «Peso act.».
+            Sobre el capital gestionado (posiciones + caja del broker): mismos % que «Peso act.».
           </p>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
               <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                {pieData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                {pieData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={entry.name === "Caja broker" ? "#64748b" : COLORS[index % COLORS.length]}
+                  />
+                ))}
               </Pie>
               <Tooltip formatter={(value: number) => formatCurrency(value)} />
             </PieChart>
