@@ -2312,7 +2312,7 @@ soxRsiWeekly,
       coverageRatio: 0,
       isFullyFunded: false,
     };
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, cycleTopResult, cycleBottomResult, rebalanceBase, olympusPct]);
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, totalMotorCapital, cycleTopResult, cycleBottomResult, rebalanceBase, olympusPct]);
 
   const taxAnalysis = useMemo((): PortfolioTaxSummary | null => {
     const sells = rebalanceFinal?.sellSuggestions ?? [];
