@@ -952,17 +952,21 @@ const formatCurrency = (value: number): string => {
 
   const availableCash = cashReserve;
 
-  // FIX-NAV-BASE (Nov-2026): capital total de la ESTRATEGIA = posiciones + caja
-  //   del broker + liquidez defensiva. La liquidez defensiva es pólvora para
-  //   oportunidades (no un fondo de emergencia ajeno al sistema), así que cuenta
-  //   como capital y debe DILUIR los pesos del motor. Con la base anterior
-  //   (solo posiciones) el cash era invisible: el motor veía 100% invertido,
-  //   pedía vender todo el exceso sobre Σtarget y, al ejecutarlo, volvía a
-  //   pedir otra venta del mismo importe (bucle hacia cero).
-  //   Nota: la liquidez defensiva NO da poder de compra inmediato — el
-  //   rebalanceo compra solo con la caja del broker (availableCash); lo que
-  //   cambia es la base sobre la que se miden los pesos.
-  const totalStrategyCapital = totalPortfolioValue + availableCash + defensiveLiquidity;
+  // FIX-NAV-BASE-V2 (Nov-2026): base de pesos = NAV que el motor GESTIONA
+  //   = posiciones + caja del broker. Se EXCLUYE la liquidez defensiva.
+  //   Historia del bug, para no repetirlo:
+  //   (a) con base "solo posiciones" el cash era invisible: ΣcurrentPct = 100%
+  //       siempre y cualquier Σtarget < 100% (bear-veto 60%, satélite…) pedía
+  //       vender en bucle hacia cero (FIX-NAV-BASE).
+  //   (b) incluir la liquidez defensiva corrigió el bucle, pero metió en la base
+  //       €8.000 que el rebalanceo NO puede desplegar (DEFENSIVE_GATE: solo se
+  //       abre con ≥2 señales macro). Con el motor al 100%, los objetivos suman
+  //       100% de un capital del que un tercio es intocable → TODOS los activos
+  //       aparecen ~1,55× infraponderados y la cobertura se queda clavada en
+  //       ~19% para siempre: un plan imposible de ejecutar.
+  //   La reserva defensiva sigue contando en el PATRIMONIO (HWM, drawdown,
+  //   retorno total), pero no diluye los pesos de asignación.
+  const totalMotorCapital = totalPortfolioValue + availableCash;
 
   const corrMatrix = useMemo(() =>
     calculateCorrelationMatrix(portfolio.assets),
@@ -1930,8 +1934,11 @@ soxRsiWeekly,
       currentAllocations: portfolio.assets.map(a => ({
         ticker: a.ticker,
         name: a.name,
-        currentWeight: totalPortfolioValue > 0
-          ? (a.price * a.shares) / totalPortfolioValue
+        // FIX-NAV-BASE-V2: mismo denominador que el rebalanceo (posiciones +
+        // caja del broker). Con la base vieja el DCA decía "ya en peso" para
+        // activos que el rebalanceo veía 5,8 pp infraponderados.
+        currentWeight: totalMotorCapital > 0
+          ? (a.price * a.shares) / totalMotorCapital
           : 0,
       })),
       cewsOutput: cewsResult ?? undefined,
@@ -1956,7 +1963,7 @@ soxRsiWeekly,
     });
   // CASH-REDESIGN-03: tacticalPct eliminado de deps (ya no existe).
   // cashReserve es ahora el único input de cash real para SmartDCA.
-  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, olympusPct, previousRegime]);
+  }, [btcRsi, btcZ, btcRet1m, engineResult, cashReserve, portfolio.assets, cewsResult, cewsPreviousLevel, defensiveLiquidity, cycleTopResult, cycleBottomResult, totalPortfolioValue, totalMotorCapital, olympusPct, previousRegime]);
 
   // ── FIX-DERISK-BANNER (Nov-2026) ────────────────────────────────────────
   //   La referencia NO caduca por tiempo: solo se mueve al confirmar una
@@ -2042,10 +2049,10 @@ soxRsiWeekly,
       cycleTopResult.signals,
       cycleBottomResult?.signals,
       dcaCommitted,
-      // FIX-NAV-BASE: base de pesos = capital total (incluye liquidez defensiva).
-      totalStrategyCapital
+      // FIX-NAV-BASE-V2: base de pesos = posiciones + caja del broker.
+      totalMotorCapital
     );
-  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, totalStrategyCapital, cycleTopResult, cycleBottomResult, olympusPct, smartDCAResult]);
+  }, [engineResult, portfolio.assets, availableCash, totalPortfolioValue, totalMotorCapital, cycleTopResult, cycleBottomResult, olympusPct, smartDCAResult]);
 
   const dcaAction = smartDCAResult?.action ?? "WATCH";
   const dcaBlocked = dcaAction === "BLOCK_VOL" || dcaAction === "BLOCK_CRISIS" || dcaAction === "BLOCK_TAIL_RISK" || dcaAction === "BLOCK_STALE_DATA";
@@ -2213,7 +2220,7 @@ soxRsiWeekly,
       const btcAsset = rebalanceAssets.find(a => a.ticker === 'BTC-EUR');
       if (btcAsset && btcAsset.targetAllocation > 0) {
         const currentValue = btcAsset.price * btcAsset.shares;
-        const currentPct = totalStrategyCapital > 0 ? currentValue / totalStrategyCapital : 0;
+        const currentPct = totalMotorCapital > 0 ? currentValue / totalMotorCapital : 0;
         const drift = currentPct - btcAsset.targetAllocation;
         const soldTickersForGuard = new Set(
           baseRebalance.suggestions.filter(s => s.action === 'SELL').map(s => s.ticker.split('.')[0])
@@ -2230,7 +2237,7 @@ soxRsiWeekly,
           console.warn('[BTC-BUY-GUARD] remainingCash=' + baseRebalance.remainingCash.toFixed(0) + ' buySuggestions=' + baseRebalance.buySuggestions.length + ' sellSuggestions=' + baseRebalance.suggestions.filter(s=>s.action==='SELL').length);
         }
         if (!alreadyInBuys && !hasActiveCycleTop && !soldTickersForGuard.has('BTC-EUR') && drift < -0.02 && currentValue > 0) {
-          const totalValue = totalStrategyCapital;
+          const totalValue = totalMotorCapital;
           const deficitValue = Math.max(0, btcAsset.targetAllocation * totalValue - currentValue);
           if (deficitValue > 0) {
             const maxAvailable = baseRebalance.remainingCash;
@@ -5018,8 +5025,9 @@ soxRsiWeekly,
           )}
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "1rem" }}>
             Basado en allocations reales del motor. Caja broker: <strong>€{availableCash.toFixed(0)}</strong> ·
-            Capital total (caja + liquidez defensiva): <strong>€{totalStrategyCapital.toFixed(0)}</strong> ·
+            Capital gestionado (posiciones + caja): <strong>€{totalMotorCapital.toFixed(0)}</strong> ·
             Cobertura del rebalanceo ideal: <strong>{(taxAwareRebalance!.coverageRatio * 100).toFixed(0)}%</strong>
+            {' · '}Reserva defensiva (fuera de la asignación): <strong>€{defensiveLiquidity.toFixed(0)}</strong>
           </p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
@@ -5056,7 +5064,7 @@ soxRsiWeekly,
                     // no sobre "solo posiciones". Con la base vieja un activo dentro de
                     // la banda de ±2pp aparecía como "Sobreponderado 8,5pp" y el usuario
                     // no entendía por qué el motor no lo recortaba.
-                    const currentPct = totalStrategyCapital > 0 ? currentValue / totalStrategyCapital : 0;
+                    const currentPct = totalMotorCapital > 0 ? currentValue / totalMotorCapital : 0;
                     const drift = currentPct - compositeAlloc;
                     return {
                       ticker: asset.ticker, name: asset.name,
@@ -5357,6 +5365,9 @@ soxRsiWeekly,
       <div key={totalPortfolioValue} style={{ ...styles.card, display: "flex", gap: "2rem", flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: "250px" }}>
           <h2>Distribución actual</h2>
+          <p style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: "4px" }}>
+            Sobre lo invertido (sin caja): por eso estos % son más altos que «Peso act.».
+          </p>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
               <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}>
@@ -5371,6 +5382,9 @@ soxRsiWeekly,
           <h2>Activos</h2>
           <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginBottom: "10px" }}>
             Los pesos objetivo son tus metas de asignación. El motor sugiere compras para acercarte a ellos.
+            {' '}Ambas columnas de peso se miden sobre el <strong>capital gestionado</strong> (posiciones + caja del broker
+            = {formatCurrency(totalMotorCapital)}); la liquidez defensiva (€{defensiveLiquidity.toFixed(0)}) queda fuera
+            de la asignación porque no la despliega el rebalanceo.
           </p>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
             <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", border: "1px solid #334155", minWidth: 130 }}>
@@ -5419,7 +5433,8 @@ soxRsiWeekly,
             <tbody>
               {portfolio.assets.map(asset => {
                 const valor = asset.price * asset.shares;
-                const pesoActual = (valor / totalPortfolioValue) * 100;
+                // FIX-NAV-BASE-V2: misma base que la tabla de rebalanceo.
+                const pesoActual = totalMotorCapital > 0 ? (valor / totalMotorCapital) * 100 : 0;
                 const ganancia = (asset.price - asset.avgPrice) * asset.shares;
                 const gananciaPorcentaje = ((asset.price - asset.avgPrice) / asset.avgPrice) * 100;
                 const buySignal = getAssetBuySignal(asset.ticker, cycleTopResult ?? undefined, cycleBottomResult ?? undefined);
@@ -5463,9 +5478,9 @@ soxRsiWeekly,
                         </div>
                       )}
                     </td>
-                    <td>
+                    <td title="Objetivo compuesto: allocation del motor × Olympus% + satélite BTC (el mismo número que la tabla de rebalanceo)">
                       {engineResult
-                        ? ((engineResult.allocations.find(a => a.name === asset.name)?.finalAllocation ?? 0) * 100).toFixed(1)
+                        ? (compositeTarget(engineResult.allocations.find(a => a.name === asset.name)?.finalAllocation ?? 0, olympusPct, asset.ticker === "BTC-EUR") * 100).toFixed(1)
                         : asset.weight
                       }%
                     </td>
