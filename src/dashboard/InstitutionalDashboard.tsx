@@ -2502,12 +2502,16 @@ soxRsiWeekly,
       .reduce((sum, a) => sum + (a.skipped ? 0 : a.actualCost), 0);
     const buys = taxAwareRebalance?.totalCost ?? 0;
     const coverage = taxAwareRebalance?.coverageRatio ?? 1;
-    const ideal = coverage > 0 && coverage < 1 ? buys / coverage : buys;
-    const rounding = Math.max(0, ideal - buys);
-    const guardPending = (taxAwareRebalance?.buySuggestions ?? [])
+    // FIX-REBALANCE-CLARITY-2: NO derivar el «redondeo» de coverageRatio. En
+    //   rebalancer.ts, coverageRatio = totalCost / Σmin(deficit, cash) y
+    //   pendingDeficit = deficit − cost, así que (buys/coverage − buys) ES la
+    //   misma cantidad que Σ pendingDeficit: se contaba dos veces con dos
+    //   causas distintas. Ahora se reporta UNA vez y con la causa real: el
+    //   déficit no ejecutado (redondeo a acciones enteras + topes de orden).
+    const pendingTotal = (taxAwareRebalance?.buySuggestions ?? [])
       .reduce((sum, b) => sum + (b.pendingDeficit ?? 0), 0);
     const remainder = Math.max(0, availableCash - dcaDeployed - buys);
-    return { gapTotal, inBandCash, dcaDeployed, buys, coverage, rounding, guardPending, remainder };
+    return { gapTotal, inBandCash, dcaDeployed, buys, coverage, pendingTotal, remainder };
   }, [portfolio.assets, engineResult, olympusPct, totalMotorCapital, rebalanceGates.rows, smartDCAResult, taxAwareRebalance, availableCash]);
 
   const btcEntry = (() => {
@@ -5205,8 +5209,7 @@ soxRsiWeekly,
               Quedan <strong style={{ color: "#e2e8f0" }}>€{cashIdleSummary.remainder.toFixed(0)}</strong> sin desplegar. La regla no pone más órdenes porque{" "}
               {[
                 cashIdleSummary.inBandCash > 1 ? `hay €${cashIdleSummary.inBandCash.toFixed(0)} de hueco en activos ya dentro de ±2 pp (comprarlos los sobreponderaría)` : "",
-                cashIdleSummary.rounding > 1 ? `€${cashIdleSummary.rounding.toFixed(0)} se quedan en el redondeo a acciones enteras` : "",
-                cashIdleSummary.guardPending > 1 ? `€${cashIdleSummary.guardPending.toFixed(0)} esperan al siguiente rebalanceo por el tope de orden (25% NAV / €2.500)` : "",
+                cashIdleSummary.pendingTotal > 1 ? `€${cashIdleSummary.pendingTotal.toFixed(0)} del hueco no caben en las órdenes de hoy (redondeo a acciones enteras y topes de 25% NAV / €2.500) y esperan al siguiente rebalanceo` : "",
               ].filter(Boolean).join(" y ") || "no queda ningún hueco abierto que el motor quiera cubrir"}.
             </div>
             <div>
@@ -5223,9 +5226,23 @@ soxRsiWeekly,
               <div style={{ fontWeight: 700, fontSize: "0.9rem", color: rebalanceGates.openCount > 0 ? "#fbbf24" : "#86efac" }}>
                 {rebalanceGates.openCount > 0 ? "🟡 ¿Rebalancear hoy? SÍ" : "🟢 ¿Rebalancear hoy? NO — todo en banda"}
               </div>
-              <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
-                Último rebalanceo: <strong style={{ color: "#e2e8f0" }}>{rebalanceTimeline.lastLabel}</strong>
-                {" · "}Próxima revisión: <strong style={{ color: "#e2e8f0" }}>{rebalanceTimeline.nextLabel}</strong>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: "0.72rem", color: "#9ca3af" }}>
+                <span>
+                  Último rebalanceo: <strong style={{ color: "#e2e8f0" }}>{rebalanceTimeline.lastLabel}</strong>
+                  {" · "}Próxima revisión: <strong style={{ color: "#e2e8f0" }}>{rebalanceTimeline.nextLabel}</strong>
+                </span>
+                {/* FIX-REBALANCE-CLARITY-2: el botón vivía SOLO dentro del banner de
+                    de-risk, así que sin evento de de-risk era imposible registrar un
+                    ciclo hecho a mano en el broker. Aquí queda siempre a la vista. */}
+                {!rebalanceTimeline.doneThisMonth && (
+                  <button
+                    onClick={markRebalanceExecuted}
+                    title="Registra HOY como fecha del último rebalanceo ejecutado. Es informativo: no mueve pesos ni órdenes."
+                    style={{ background: "#1e293b", color: "#93c5fd", border: "1px solid #334155", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: "0.7rem", fontWeight: 600 }}
+                  >
+                    ✓ He rebalanceado este ciclo
+                  </button>
+                )}
               </div>
             </div>
             <div style={{ display: "grid", gap: "0.3rem" }}>
@@ -5351,7 +5368,7 @@ soxRsiWeekly,
                           siguiente rebalanceo. Se calculaba (pendingDeficit) y no se veía. */}
                       {typeof s.pendingDeficit === "number" && s.pendingDeficit > 0.01 ? (
                         <div
-                          title="Déficit no ejecutado por el tope de orden (25% NAV / €2.500). No se pierde: se cierra en el siguiente rebalanceo."
+                          title="Déficit que no cupo en la orden de hoy: redondeo a acciones enteras y/o topes de 25% del NAV por activo y €2.500 por orden. No se pierde: se cierra en el siguiente rebalanceo."
                           style={{ fontSize: "0.62rem", color: "#a78bfa", marginTop: 2 }}
                         >
                           pend. €{s.pendingDeficit.toFixed(0)}
