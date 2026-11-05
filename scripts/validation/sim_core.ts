@@ -17,6 +17,8 @@ import { computeTradeCost, ASSET_COST_PARAMS } from '../../src/core/validation/t
 import { btcTotalExposure } from '../../src/core/backtest/composite';
 import { ASSETS } from '../../src/lib/constants';
 
+// dpy queda como FALLBACK cuando no hay fechas (y para xirr, que usa días de
+// calendario reales). metrics() deriva las observaciones/año de la serie.
 export const CFG = { lookbackDays: 252, rebalanceDays: 21, initialCapital: 10_000, monthlyContribution: 400, rf: 0.04, dpy: 365 };
 export const pct = (x: number, d = 2) => (x * 100).toFixed(d) + '%';
 
@@ -117,6 +119,9 @@ export function runEngine(ds: Dataset) {
     macroHistory: { vix: ds.macro.vix, yieldSpread, creditSpread, move: ds.macro.move, dxyTrend, btcVol: ds.macro.btcVol },
     lookbackDays: CFG.lookbackDays, rebalanceDays: CFG.rebalanceDays,
     initialCapital: CFG.initialCapital, transactionCostBps: 15,
+    // FIX-AUDIT-ANNUALIZATION: densidad real de la serie (251 en el dataset
+    // largo, 363 en el canónico con fines de semana rellenados).
+    periodsPerYear: periodsPerYear(ds.dates.slice(CFG.lookbackDays), ds.dates.length - CFG.lookbackDays),
   });
   const recs = bt.dailyRecords;
   const values = recs.map(r => r.portfolioValue);
@@ -144,6 +149,7 @@ export function simulate(ds: Dataset, opts: { startOffset?: number; costScale?: 
     macroHistory: { vix: ds.macro.vix, yieldSpread, creditSpread, move: ds.macro.move, dxyTrend, btcVol: ds.macro.btcVol },
     lookbackDays: CFG.lookbackDays, rebalanceDays: CFG.rebalanceDays,
     initialCapital: CFG.initialCapital, transactionCostBps: 15,
+    periodsPerYear: periodsPerYear(ds.dates.slice(CFG.lookbackDays), ds.dates.length - CFG.lookbackDays),
   });
   const recs = bt.dailyRecords;
   const off = Math.max(0, Math.min(startOffset, recs.length - 60));
@@ -386,15 +392,37 @@ export function metrics(twr: number[], vals: number[], dts: string[]) {
   const mu = twr.reduce((a, b) => a + b, 0) / Math.max(1, n);
   const sd = Math.sqrt(twr.reduce((s, r) => s + (r - mu) ** 2, 0) / Math.max(1, n));
   let g = 1; for (const r of twr) g *= (1 + r);
-  const years = n / CFG.dpy;
+  // FIX-AUDIT-ANNUALIZATION: anualizar con las observaciones REALES por año
+  // (n / años de calendario), no con 365. El dataset largo tiene 251 filas/año;
+  // el canónico 363 (relleno de fines de semana). Un divisor fijo estaba mal en
+  // al menos uno de los dos: 24,3%→16,0% de CAGR y 1,12→0,79 de Sharpe medidos.
+  const dpy = periodsPerYear(dts, n);
+  const years = n / dpy;
   const cagr = Math.pow(Math.max(1e-6, g), 1 / years) - 1;
-  const sharpe = sd > 0 ? (mu * CFG.dpy - CFG.rf) / (sd * Math.sqrt(CFG.dpy)) : 0;
+  const sharpe = sd > 0 ? (mu * dpy - CFG.rf) / (sd * Math.sqrt(dpy)) : 0;
   const dn = twr.filter(r => r < 0);
   const dsd = Math.sqrt(dn.reduce((s, r) => s + r * r, 0) / Math.max(1, dn.length));
-  const sortino = dsd > 0 ? (mu * CFG.dpy - CFG.rf) / (dsd * Math.sqrt(CFG.dpy)) : 0;
+  const sortino = dsd > 0 ? (mu * dpy - CFG.rf) / (dsd * Math.sqrt(dpy)) : 0;
   let peak = vals[0], mdd = 0;
   for (const v of vals) { if (v > peak) peak = v; const d = v / peak - 1; if (d < mdd) mdd = d; }
-  return { cagr, sharpe, sortino, maxDD: mdd, vol: sd * Math.sqrt(CFG.dpy), cvar95: cvarMonthly(twr, dts) };
+  return { cagr, sharpe, sortino, maxDD: mdd, vol: sd * Math.sqrt(dpy), cvar95: cvarMonthly(twr, dts) };
+}
+
+/** Observaciones por año de calendario a partir de las fechas de la serie. */
+export function periodsPerYear(dts: string[], n: number): number {
+  if (!dts || dts.length < 3 || n <= 0) return CFG.dpy;
+  const times: number[] = [];
+  for (let i = 0; i < dts.length && times.length < n + 1; i++) {
+    const t = Date.parse(dts[i]);
+    if (!isFinite(t)) break;
+    // Descarta centinelas de relleno (p.ej. [from, ...ds] en la ablación: '2000-01-01').
+    if (times.length === 1 && t - times[0] > 60 * 86_400_000) times.length = 0;
+    times.push(t);
+  }
+  if (times.length < 3) return CFG.dpy;
+  const spanDays = (times[times.length - 1] - times[0]) / 86_400_000;
+  if (spanDays <= 0) return CFG.dpy;
+  return (times.length - 1) / (spanDays / 365.25);
 }
 export function cvarMonthly(twr: number[], dts: string[]): number {
   const byM = new Map<string, number[]>();

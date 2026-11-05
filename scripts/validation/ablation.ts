@@ -8,7 +8,7 @@
 // Ejecutar: npx tsx scripts/validation/ablation.ts
 // ============================================================
 
-import { buildCanonicalDataset, runEngine, shadowSim, metrics, pct, CFG, deriveMacro } from './sim_core';
+import { buildCanonicalDataset, runEngine, shadowSim, metrics, pct, CFG, deriveMacro, periodsPerYear } from './sim_core';
 import { computeHRP } from '../../src/core/risk/hrp';
 import { computeVolTargetMultiplier } from '../../src/core/risk/volatilityTarget';
 import { computeTailRiskOverlay } from '../../src/core/risk/tailRisk';
@@ -129,7 +129,10 @@ for (const [n, twr, dt, c] of variants) {
 function sharpe(x: number[]): number {
   const mu = x.reduce((a, b) => a + b, 0) / x.length;
   const sd = Math.sqrt(x.reduce((s, r) => s + (r - mu) ** 2, 0) / x.length);
-  return sd > 0 ? (mu * CFG.dpy - CFG.rf) / (sd * Math.sqrt(CFG.dpy)) : 0;
+  // FIX-AUDIT-ANNUALIZATION: densidad real del dataset canónico (363 filas/año),
+  // no el 365 de calendario que inflaba el ΔSharpe del bootstrap.
+  const dpy = periodsPerYear(ds.dates, ds.dates.length);
+  return sd > 0 ? (mu * dpy - CFG.rf) / (sd * Math.sqrt(dpy)) : 0;
 }
 const oosStart = (dt: string[]) => dt.findIndex((d, i) => i > 0 && d >= SPLIT) - 1;
 const r5 = R.twr.slice(oosStart(R.dates)); const r3 = s3.twr.slice(oosStart(s3.dates));

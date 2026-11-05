@@ -12,7 +12,8 @@
 //   - Efectivo implícito (la suma de pesos puede ser < 1)
 // ===============================================
 
-import { ASSETS, RISK_FREE_RATE_DAILY, RISK_FREE_RATE_ANNUAL } from "../../lib/constants";
+import { ASSETS, RISK_FREE_RATE_DAILY, RISK_FREE_RATE_ANNUAL, TRADING_DAYS_PER_YEAR } from "../../lib/constants";
+import { computeTailRiskOverlay } from "../risk/tailRisk";
 import { dailyReturns, tradingDayReturns, mean, variance } from "../../lib/stats";
 import { getProxyUS, getEarningsYield, getBenchmarkWeight } from "../../lib/assetRegistry";
 import { covarianceMatrix } from "../../lib/marketData";
@@ -79,6 +80,20 @@ export interface BacktestInput {
   rebalanceDays?: number;
   initialCapital?: number;
   transactionCostBps?: number;
+  // FIX-AUDIT-CASH-YIELD: la caja se remuneraba al 0% (`currentCash * 0`), y el
+  // motor mantiene 22,8% de caja de media (p95 83%). En una cartera que
+  // des-riesga por vol/drawdown, ignorar el T-bill infravalora el retorno,
+  // no lo infla. Default = tipo libre de riesgo de la firma (4%).
+  cashYieldBps?: number;
+  // FIX-AUDIT-ANNUALIZATION: observaciones por año de la serie. 252 por defecto
+  // (sesiones bursátiles); 363 para datasets con fines de semana rellenados.
+  periodsPerYear?: number;
+  // FIX-AUDIT-DAILY-KS: el Kill Switch / tail risk se evaluaba SOLO en el día de
+  // rebalanceo (cada 21 sesiones). Un stop-loss consultado una vez al mes no es
+  // un stop-loss: en COVID el L2 duró 13 sesiones y el motor lo vio en 1 sola
+  // decisión. Con true (default) el overlay se evalúa a diario y des-riesga de
+  // inmediato si exige menos exposición que la vigente.
+  dailyTailRiskStop?: boolean;
   // FIX-AUDIT-T4: blendWeights opcionales para simular autocorrección del motor.
   // El dashboard los inyecta cuando WFO detecta overfitting.
   blendWeights?: {
@@ -207,6 +222,7 @@ export interface BacktestOutput {
   transactionCostBps: number;
   totalTransactionCosts: number;
   rebalanceCount: number;
+  dailyRiskStops: number;
   absoluteTrendGateDiagnostics: AbsoluteTrendGateDiagnostics;
   institutionalBreadthDiagnostics: InstitutionalBreadthDiagnostics;
   institutionalBreadthFinalState: InstitutionalBreadthState | null;
@@ -254,6 +270,7 @@ function emptyBacktest(initialCapital: number): BacktestOutput {
     regimeConditional: { EXPANSION: emptyRM, CONTRACTION: emptyRM, CRISIS: emptyRM },
     regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
     transactionCostBps: 15,
+    dailyRiskStops: 0,
     totalTransactionCosts: 0,
     rebalanceCount: 0,
     absoluteTrendGateDiagnostics: {
@@ -635,6 +652,9 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     rebalanceDays = 21,
     initialCapital = 10_000,
     transactionCostBps = 15,
+    cashYieldBps = RISK_FREE_RATE_ANNUAL * 10_000,
+    periodsPerYear = TRADING_DAYS_PER_YEAR,
+    dailyTailRiskStop = true,
   } = input;
   // FIX-AUDIT-INST-02: Costes realistas por activo (spread + fixed cost).
   // ANTES: 15bps flat para todos los activos, ignorando diferencias de liquidez.
@@ -647,6 +667,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   };
   let totalTransactionCosts = 0;
   let rebalanceCount = 0;
+  let dailyRiskStops = 0;
 
   const backtestTickers = Object.fromEntries(
     ASSETS.map(t => [t, getBacktestTicker(t, closesHistory)])
@@ -915,7 +936,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
           for (const ticker of ASSETS) {
             const assetTurnover = Math.abs((allocations[ticker] ?? 0) - (currentAllocations[ticker] ?? 0));
             if (assetTurnover > 1e-6) {
-              cost += portfolioValue * getAssetSpreadCost(ticker) * assetTurnover + 1.0;
+              cost += portfolioValue * Math.max(getAssetSpreadCost(ticker), txCostRate) * assetTurnover + 1.0;
             }
           }
           return cost;
@@ -971,7 +992,10 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
         const oldWeight = oldAllocations[ticker] ?? 0;
         const assetTurnover = Math.abs(newWeight - oldWeight);
         if (assetTurnover > 1e-6) {
-          const spread = getAssetSpreadCost(ticker);
+          // FIX-AUDIT-COST-DEAD: transactionCostBps solo actuaba como fallback de
+          // tickers desconocidos → 0/15/30/60 bps daban resultados idénticos.
+          // Ahora es un SUELO de coste por operación: nunca menos que el bps pedido.
+          const spread = Math.max(getAssetSpreadCost(ticker), txCostRate);
           costThisRebalance += portfolioValue * spread * assetTurnover;
           costThisRebalance += 1.0; // €1 fixed cost per traded asset
         }
@@ -1041,7 +1065,8 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
     }
 
     // Añadir retorno del efectivo (0%)
-    portfolioReturn += currentCash * 0;
+    // FIX-AUDIT-CASH-YIELD: la caja devenga el tipo libre de riesgo (antes ×0).
+    portfolioReturn += currentCash * (cashYieldBps / 10_000) / periodsPerYear;
 
     if (!isFinite(portfolioReturn)) portfolioReturn = 0;
     if (!isFinite(benchmarkReturn)) benchmarkReturn = 0;
@@ -1123,6 +1148,58 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       }
     }
 
+    // ── FIX-AUDIT-DAILY-KS: tail risk evaluado A DIARIO ──
+    // Misma señal y mismos umbrales que en el rebalanceo (no se añade una capa
+    // nueva): lo que cambia es la frecuencia. Mecanismo de stop puntual, distinto
+    // de la recalibración gradual del régimen.
+    if (dailyTailRiskStop) {
+      const stopVix = vixArray[t];
+      if (stopVix !== undefined && isFinite(stopVix) && strategyDailyReturns.length >= 21) {
+        const stopCredit = creditSpreadArray[t] ?? 2.5;
+        const stopDd = input.portfolioDrawdownOverride
+          ? input.portfolioDrawdownOverride(portfolioValue, peakValue, dayIndex)
+          : dd;
+        const stopStress = computeGlobalStress({
+          vix: stopVix,
+          creditSpread: stopCredit,
+          move: macroHistory.move?.[t] ?? (stopVix * 4.5 + 20),
+          dxyTrend: macroHistory.dxyTrend?.[t] ?? 0,
+          btcVol: macroHistory.btcVol?.[t] ?? 0.5,
+          wtiOil: macroHistory.wtiOil?.[t],
+        });
+        const recentReturns = strategyDailyReturns.slice(-63);
+        const recentMean = mean(recentReturns);
+        const realizedVol = Math.sqrt(variance(recentReturns.map(r => r - recentMean)) * TRADING_DAYS_PER_YEAR);
+        const stopOverlay = computeTailRiskOverlay({
+          drawdown: stopDd,
+          vix: stopVix,
+          creditSpread: stopCredit,
+          stressScore: stopStress.score,
+          portfolioVolatility: isFinite(realizedVol) ? realizedVol : undefined,
+          avgCorrelation: input.macroHistory?.avgCorrelation?.[t],
+        });
+        const invested = ASSETS.reduce((s, tk) => s + (currentAllocations[tk] ?? 0), 0);
+        const allowedExposure = Math.max(0, Math.min(1, stopOverlay.overlay));
+        if (invested > allowedExposure + 1e-6) {
+          const scale = allowedExposure / invested;
+          let deRiskCost = 0;
+          for (const tk of ASSETS) {
+            const weight = currentAllocations[tk] ?? 0;
+            const reduced = weight * scale;
+            const traded = Math.abs(weight - reduced);
+            if (traded > 1e-9) {
+              currentAllocations[tk] = reduced;
+              deRiskCost += portfolioValue * Math.max(getAssetSpreadCost(tk), txCostRate) * traded;
+            }
+          }
+          portfolioValue -= deRiskCost;
+          totalTransactionCosts += deRiskCost;
+          currentCash = 1 - allowedExposure;
+          dailyRiskStops++;
+        }
+      }
+    }
+
     regimeReturns[currentRegime].push(portfolioReturn);
     regimeDays[currentRegime]++;
 
@@ -1194,23 +1271,23 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
   institutionalBreadthDiagnostics.riskBreadthObservations = institutionalRiskBreadths;
 
   const regimeConditional: RegimeConditionalMetrics = {
-    EXPANSION:   computeRegimeMetrics(regimeReturns.EXPANSION),
-    CONTRACTION: computeRegimeMetrics(regimeReturns.CONTRACTION),
-    CRISIS:      computeRegimeMetrics(regimeReturns.CRISIS),
+    EXPANSION:   computeRegimeMetrics(regimeReturns.EXPANSION, periodsPerYear),
+    CONTRACTION: computeRegimeMetrics(regimeReturns.CONTRACTION, periodsPerYear),
+    CRISIS:      computeRegimeMetrics(regimeReturns.CRISIS, periodsPerYear),
   };
 
   // FIX-AUDIT-B4: computar HHI real desde las allocations finales.
   const finalAllocArray = ASSETS.map(t => currentAllocations[t] ?? 0);
   const finalHhi = finalAllocArray.some(w => w > 0) ? hhi(finalAllocArray) : 0;
 
-  const strategyMetrics = computeMetrics(strategyDailyReturns, initialCapital, portfolioValue, benchmarkDailyReturns);
+  const strategyMetrics = computeMetrics(strategyDailyReturns, initialCapital, portfolioValue, benchmarkDailyReturns, periodsPerYear);
   strategyMetrics.hhi = isFinite(finalHhi) ? finalHhi : 0;
 
   return {
     dailyRecords,
     metrics:          strategyMetrics,
-    benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue),
-    institutionalBenchmarkMetrics: computeMetrics(instBenchmarkDailyReturns, initialCapital, instBenchmarkValue),
+    benchmarkMetrics: computeMetrics(benchmarkDailyReturns, initialCapital, benchmarkValue, undefined, periodsPerYear),
+    institutionalBenchmarkMetrics: computeMetrics(instBenchmarkDailyReturns, initialCapital, instBenchmarkValue, undefined, periodsPerYear),
     regimeConditional,
     regimeDays,
     daysWithProxies,
@@ -1220,6 +1297,7 @@ export function runBacktest(input: BacktestInput): BacktestOutput {
       : 15,
     totalTransactionCosts,
     rebalanceCount,
+    dailyRiskStops,
     absoluteTrendGateDiagnostics: gateDiagnostics,
     institutionalBreadthDiagnostics,
     institutionalBreadthFinalState: input.institutionalBreadthCandidate?.enabled === true
@@ -1240,23 +1318,26 @@ function computeRollingSharpe(window: number[]): number {
   const excess = window.map(r => r - rfDaily);
   const m = mean(excess);
   const s = Math.sqrt(variance(excess.map(r => r - m)));
-  const sharpe = s > 0 ? (m / s) * Math.sqrt(365) : 0;
+  const sharpe = s > 0 ? (m / s) * Math.sqrt(TRADING_DAYS_PER_YEAR) : 0;
   return isFinite(sharpe) ? sharpe : 0;
 }
 
-export function computeMetrics(dailyRets: number[], initialCapital: number, finalValue: number, benchmarkRets?: number[]): BacktestMetrics {
+export function computeMetrics(dailyRets: number[], initialCapital: number, finalValue: number, benchmarkRets?: number[], daysPerYear: number = TRADING_DAYS_PER_YEAR): BacktestMetrics {
+  // FIX-AUDIT-ANNUALIZATION: densidad real de la serie (252 / 363 / 251).
+  const TRADING_DAYS_PER_YEAR = daysPerYear > 0 ? daysPerYear : 252;
   const clean = dailyRets.filter(r => isFinite(r));
   if (clean.length === 0) return emptyMetrics(initialCapital);
-  const years = clean.length / 365;
+  // FIX-AUDIT-ANNUALIZATION: 252 sesiones/año, no 365 (ver TRADING_DAYS_PER_YEAR).
+  const years = clean.length / TRADING_DAYS_PER_YEAR;
   const totalReturn = isFinite(finalValue) && finalValue > 0 ? finalValue / initialCapital - 1 : 0;
   const cagr = years > 0 ? ((1 + totalReturn) > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
-  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 365);
+  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * TRADING_DAYS_PER_YEAR);
   const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = clean.map(r => r - rfDaily);
   const excessMean = mean(excess);
-  const excessStd = Math.sqrt(variance(excess.map(r => r - excessMean)) * 365);
-  const sharpe = excessStd > 0 ? (excessMean * 365) / excessStd : 0;
+  const excessStd = Math.sqrt(variance(excess.map(r => r - excessMean)) * TRADING_DAYS_PER_YEAR);
+  const sharpe = excessStd > 0 ? (excessMean * TRADING_DAYS_PER_YEAR) / excessStd : 0;
   let peak = initialCapital, value = initialCapital, maxDD = 0;
   for (const r of clean) {
     value *= (1 + r);
@@ -1311,22 +1392,24 @@ export function computeMetrics(dailyRets: number[], initialCapital: number, fina
   };
 }
 
-function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
+function computeRegimeMetrics(dailyRets: number[], daysPerYear: number = TRADING_DAYS_PER_YEAR): RegimeMetrics {
+  const TRADING_DAYS_PER_YEAR = daysPerYear > 0 ? daysPerYear : 252;
   const clean = dailyRets.filter(r => isFinite(r));
   if (clean.length < 10) {
     return { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 };
   }
-  const years = clean.length / 365;
+  // FIX-AUDIT-ANNUALIZATION: 252 sesiones/año, no 365 (ver TRADING_DAYS_PER_YEAR).
+  const years = clean.length / TRADING_DAYS_PER_YEAR;
   const totalRet = clean.reduce((acc, r) => acc * (1 + r), 1) - 1;
   const cagr = years > 0 ? ((1 + totalRet) > 0 ? Math.pow(1 + totalRet, 1 / years) - 1 : -1) : 0;
   const dailyMean = mean(clean);
-  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * 365);
+  const vol = Math.sqrt(variance(clean.map(r => r - dailyMean)) * TRADING_DAYS_PER_YEAR);
   // FIX-AUDIT-R3 R3-03: rfDaily centralizado desde src/lib/constants (R2 users may forget to update here)
   const rfDaily = RISK_FREE_RATE_DAILY;
   const excess = clean.map(r => r - rfDaily);
   const exMean = mean(excess);
-  const exStd = Math.sqrt(variance(excess.map(r => r - exMean)) * 365);
-  const sharpe = exStd > 0 ? (exMean * 365) / exStd : 0;
+  const exStd = Math.sqrt(variance(excess.map(r => r - exMean)) * TRADING_DAYS_PER_YEAR);
+  const sharpe = exStd > 0 ? (exMean * TRADING_DAYS_PER_YEAR) / exStd : 0;
   let peak = 1, val = 1, maxDD = 0;
   for (const r of clean) {
     val *= (1 + r);
@@ -1338,7 +1421,7 @@ function computeRegimeMetrics(dailyRets: number[]): RegimeMetrics {
     cagr: isFinite(cagr) ? cagr : 0,
     sharpe: isFinite(sharpe) ? sharpe : 0,
     maxDrawdown: isFinite(maxDD) ? maxDD : 0,
-    annualizedReturn: isFinite(dailyMean * 365) ? dailyMean * 365 : 0,
+    annualizedReturn: isFinite(dailyMean * TRADING_DAYS_PER_YEAR) ? dailyMean * TRADING_DAYS_PER_YEAR : 0,
     volatility: isFinite(vol) ? vol : 0,
     totalDays: clean.length,
   };

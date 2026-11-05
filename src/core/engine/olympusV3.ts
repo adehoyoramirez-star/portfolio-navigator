@@ -1224,7 +1224,11 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
         targetVol:     input.targetVol ?? VOLATILITY_CONFIG.DEFAULT_TARGET_VOL,
         // legacy: vol del CORE (ex-BTC). CORE-DEF: vol completa (como la ablación V3).
         realizedVol:   coreVolTargetOn ? realizedVol : coreRealizedVol,
-        regimePenalty: coreVolTargetOn ? 1.0 : adjustedRegimePenalty,
+        // FIX-AUDIT-REGIME-ABSORB: el penalty de régimen entraba DENTRO del vol
+        // target (target efectivo = target × regimeFactor) y quedaba absorbido
+        // siempre que el multiplicador ya superase 1.0 antes del clamp. Ahora el
+        // vol target usa 1.0 y el penalty se aplica a la exposición FINAL.
+        regimePenalty: 1.0,
       });
 
   // ====== CAPA 8: TAIL RISK ======
@@ -1246,7 +1250,14 @@ export function runOlympusEngine(input: OlympusEngineInput): EngineOutput {
   //   La exposición total (totalInvested) = volTarget × tailRisk, clamped a [0.05, 1.0].
   //   finalAllocation[i] = relativeWeight[i] × totalInvested
   //   La parte no invertida (1 - totalInvested) es cash implícito.
-  const totalInvested_raw = Math.max(0.05, Math.min(1.0, volTarget.multiplier * tailRisk.overlay));
+  // FIX-AUDIT-REGIME-ABSORB: penalización de régimen aplicada DESPUÉS del clamp
+  // del vol target, para que no pueda ser anulada por un multiplicador > 1.
+  // CORE v1.0 mantiene su comportamiento preregistrado (vol target OFF = 1.0).
+  const regimeAppliedPenalty = coreMode ? 1.0 : adjustedRegimePenalty;
+  const totalInvested_raw = Math.max(
+    0.05,
+    Math.min(1.0, volTarget.multiplier * tailRisk.overlay * regimeAppliedPenalty),
+  );
 
   // 🚀 ALPHA-BOOST: "The Perfect Storm"
   // Si Régimen=EXPANSION, BTC=STRONG_BUY y Liquidez M2 > 0 → Forzamos exposición máxima.

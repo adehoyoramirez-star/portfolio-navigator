@@ -21,12 +21,19 @@ export type Asset = typeof ASSETS[number];
 // mueven el tipo rector, una única edición cambia la baseline en todo el sistema.
 // Antes del 2022 era ~0%, en JUN-2025 está en ~4.25%, expectativa para QT-end ~3.5-3.75%.
 export const RISK_FREE_RATE_ANNUAL = 0.04; // = BTP 10y expected/var proxy
-// FIX-ANNUALIZATION-365: los datos del pipeline son de calendario (365 días/año),
-// no bursátiles (252). BTC cotiza 365 días y el CSV marca todos los días naturales.
-// Anualizar con 252 subestimaba CAGR ~34% y vol ~17% (CRITICAL Ronda 1).
-export const RISK_FREE_RATE_DAILY = RISK_FREE_RATE_ANNUAL / 365;
-const TRADING_DAYS_PER_YEAR = 365;
-export { TRADING_DAYS_PER_YEAR };
+// FIX-ANNUALIZATION-365 (histórico, RESUELTO): se pasó de 252 a 365 porque el CSV
+// canónico marca días naturales (363 filas/año, BTC cotiza 7 días). Correcto para
+// ESE dataset, pero falso para toda serie de sesiones bursátiles (251 filas/año):
+// medido sobre el dataset largo, /365 inflaba CAGR 24,3%→16,0% y Sharpe 1,12→0,79.
+// Solución definitiva: aquí queda el valor de referencia bursátil (252) y cada
+// consumidor puede pasar su densidad real (ver periodsPerYear en backtestEngine
+// y periodsPerYear() en scripts/validation/sim_core.ts, que la deriva de fechas).
+// FIX-AUDIT-ANNUALIZATION: una serie de retornos diarios de mercado tiene ~252
+// observaciones por año, no 365. Anualizar con /365 (y √365) inflaba CAGR,
+// volatilidad y Sharpe por igual — medido: 24,3%→16,0% y 1,12→0,79 en la serie
+// larga. Este es el ÚNICO divisor de días hábiles del repo.
+export const TRADING_DAYS_PER_YEAR = 252;
+export const RISK_FREE_RATE_DAILY = RISK_FREE_RATE_ANNUAL / TRADING_DAYS_PER_YEAR;
 export const SECTOR_MAP: Record<Asset, string> = {
   "BTC-EUR":  "crypto",
   "EMXC.DE":  "emerging",

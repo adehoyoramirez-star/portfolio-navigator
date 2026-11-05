@@ -755,7 +755,7 @@ export function runWalkForwardTest(
         regimeConditional: { EXPANSION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CONTRACTION: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 }, CRISIS: { cagr: 0, sharpe: 0, maxDrawdown: 0, annualizedReturn: 0, volatility: 0, totalDays: 0 } },
         regimeDays: { EXPANSION: 0, CONTRACTION: 0, CRISIS: 0 },
         daysWithProxies: 0, daysWithRealData: 0,
-        transactionCostBps: 0, totalTransactionCosts: 0, rebalanceCount: 0,
+        transactionCostBps: 0, totalTransactionCosts: 0, rebalanceCount: 0, dailyRiskStops: 0,
         absoluteTrendGateDiagnostics: {
           evaluatedRebalances: 0,
           activeRebalances: 0,
