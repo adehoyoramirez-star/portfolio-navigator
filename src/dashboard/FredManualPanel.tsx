@@ -18,6 +18,8 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
   const [credit, setCredit] = useState(initial.creditSpread);
   const [be, setBE] = useState(initial.inflationBreakeven5y);
   const [realYield10y, setRealYield10y] = useState<number | undefined>(initial.realYield10y);
+  // GOLD-BOTTOM-DELTA: nivel de DFII10 hace ~6m — el suelo del oro puntúa la VARIACIÓN.
+  const [realYieldPrev6m, setRealYieldPrev6m] = useState<number | undefined>(initial.realYieldPrev6m);
   // LIQ-AUTO (Ago-2026): WALCL + ECBASSETSW para Liquidez Global automática
   const [fedBS, setFedBS] = useState<number | undefined>(initial.fedBalanceSheet);
   const [ecbBS, setEcbBS] = useState<number | undefined>(initial.ecbBalanceSheet);
@@ -33,6 +35,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
     const updated = saveFredManual({
       m2GrowthYoY: m2, cape, creditSpread: credit, inflationBreakeven5y: be,
       realYield10y,
+      realYieldPrev6m,
       fedBalanceSheet: fedBS, ecbBalanceSheet: ecbBS,
     });
     setLastUpdated(updated.lastUpdated);
@@ -48,6 +51,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
     setCredit(defaults.creditSpread);
     setBE(defaults.inflationBreakeven5y);
     setRealYield10y(defaults.realYield10y);
+    setRealYieldPrev6m(defaults.realYieldPrev6m);
     setFedBS(undefined);
     setEcbBS(undefined);
     saveFredManual(defaults);
@@ -64,6 +68,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
       setCredit(synced.creditSpread);
       setBE(synced.inflationBreakeven5y);
       setRealYield10y(synced.realYield10y);
+      setRealYieldPrev6m(synced.realYieldPrev6m);
       setFedBS(synced.fedBalanceSheet);
       setEcbBS(synced.ecbBalanceSheet);
       setLastUpdated(synced.lastUpdated);
@@ -114,6 +119,7 @@ const FredManualPanel: React.FC<FredManualPanelProps> = ({ onSaved }) => {
         <div><label style={lbl}>Credit Spread HY% <span style={{fontSize:"0.6rem",color:"#64748b"}}>BAMLH0A0HYM2</span></label><input type="number" value={credit} onChange={e => setCredit(Number(e.target.value))} style={inp} step="0.1" /></div>
         <div><label style={lbl}>Breakeven 5y% <span style={{fontSize:"0.6rem",color:"#64748b"}}>fallback</span></label><input type="number" value={be} onChange={e => setBE(Number(e.target.value))} style={inp} step="0.01" /></div>
         <div><label style={lbl}>Tipo real 10y% <span style={{fontSize:"0.6rem",color:"#10b981"}}>DFII10 · preferido</span></label><input type="number" value={realYield10y ?? ''} onChange={e => { const v = e.target.value; setRealYield10y(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 1.80" /></div>
+        <div><label style={lbl}>Tipo real 10y hace 6m% <span style={{fontSize:"0.6rem",color:"#f59e0b"}}>suelo oro · Δ6m</span></label><input type="number" value={realYieldPrev6m ?? ''} onChange={e => { const v = e.target.value; setRealYieldPrev6m(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 2.35" /></div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.75rem", marginTop: "0.75rem" }}>
         <div><label style={lbl}>Fed Balance Sheet (bill. $) <span style={{fontSize:"0.6rem",color:"#64748b"}}>WALCL</span></label><input type="number" value={fedBS ?? ''} onChange={e => { const v = e.target.value; setFedBS(v === '' ? undefined : Number(v)); }} style={inp} step="0.01" placeholder="ej: 6.80" /></div>

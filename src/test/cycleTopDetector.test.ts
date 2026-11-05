@@ -189,6 +189,50 @@ describe("detectCycleBottoms - structural signals", () => {
     expect(direct.indicatorValue).not.toContain("proxy (BE5Y)");
   });
 
+  // FIX-GOLD-BOTTOM-DELTA (Nov-2026): el suelo del oro puntúa la VARIACIÓN del tipo
+  // real a 6 meses, no su nivel (el nivel es la dimensión del detector de techo).
+  describe("Gold Bottom — puntuación por Δ6m del tipo real", () => {
+    const goldBot = (i: Parameters<typeof detectCycleBottoms>[0]) =>
+      detectCycleBottoms(i).signals.find(s => s.ticker === "PPFB.DE")!;
+
+    test("Δ −1,5pp + Brent>95 con techo SAFE → EXTREME (80) y ataque ×2", () => {
+      const s = goldBot({ bondYield10y: 4.2, realYield10y: 0, realYield10yPrev6m: 1.5, brentOil: 100 });
+      expect(s.opportunityScore).toBe(80);
+      expect(s.zone).toBe("EXTREME");
+      expect(s.attackMultiplier).toBe(2);
+      expect(s.indicatorValue).toContain("Δ6m -1.50 pp");
+    });
+
+    test("Δ −1,5pp + Brent 80 con techo SAFE → OPPORTUNITY (63)", () => {
+      const s = goldBot({ bondYield10y: 4.2, realYield10y: 0, realYield10yPrev6m: 1.5, brentOil: 80 });
+      expect(s.opportunityScore).toBe(63);
+      expect(s.zone).toBe("OPPORTUNITY");
+      expect(s.attackMultiplier).toBe(1.5);
+    });
+
+    test("EXTREME sigue siendo alcanzable con el techo activo (95 × 0,85 = 81)", () => {
+      const inp = { bondYield10y: 4.2, realYield10y: 1.0, realYield10yPrev6m: 2.5, brentOil: 100, dxy: 112 };
+      const raw = goldBot(inp);
+      const withTop = detectCycleBottoms(inp, detectCycleTops(inp).signals).signals.find(s => s.ticker === "PPFB.DE")!;
+      expect(raw.opportunityScore).toBe(95);
+      expect(raw.zone).toBe("EXTREME");
+      expect(withTop.opportunityScore).toBe(81);
+      expect(withTop.zone).toBe("EXTREME");
+    });
+
+    test("el NIVEL ya no puntúa: tipo real 3% plano o subiendo → 0 puntos", () => {
+      expect(goldBot({ bondYield10y: 4.2, realYield10y: 3.0, realYield10yPrev6m: 3.0 }).opportunityScore).toBe(0);
+      expect(goldBot({ bondYield10y: 4.2, realYield10y: 3.0, realYield10yPrev6m: 1.0 }).opportunityScore).toBe(0);
+    });
+
+    test("sin Δ6m no se puntúa el nivel y se declara en el motivo", () => {
+      const s = goldBot({ bondYield10y: 4.2, realYield10y: 3.0 });
+      expect(s.opportunityScore).toBe(0);
+      expect(s.reason).toContain("realYield10yPrev6m");
+      expect(s.indicatorValue).toContain("Δ6m —");
+    });
+  });
+
 
   function g(zone: string, trimPct: number): any {
     return { asset: "Gold (ETC)", ticker: "PPFB.DE", allocationMultiplier: 1 - trimPct / 100, zone, reason: "t", indicator: "i", indicatorValue: "v", shouldTrim: trimPct > 0, trimPct };

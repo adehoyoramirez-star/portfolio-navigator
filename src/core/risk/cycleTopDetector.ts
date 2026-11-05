@@ -137,6 +137,9 @@ soxSpyRelativeStrength?: number; // SOX/SPX Relative Strength (Z-score 200d). In
   bondYield10y: number;        // US10Y nominal, porcentaje; fallback del tipo real
   inflationBreakeven?: number; // Breakeven 5Y, porcentaje; fallback explícito
   realYield10y?: number;       // DFII10: rendimiento real 10Y TIPS, porcentaje; fuente preferida
+  realYield10yPrev6m?: number; // DFII10 de hace ~6 meses, porcentaje. El detector de SUELO del oro
+                               //   puntúa la VARIACIÓN (actual − este), no el nivel: el nivel es la
+                               //   dimensión que ya explota el detector de TECHO (FIX-GOLD-BOTTOM-DELTA).
   brentOil?: number;           // $/barril — si >$95 la guerra/inflación protege al oro → override HOLD
   goldCbPurchases?: number;   // GOLD-CB-SENSOR (Ago-2026, Comité): compras netas de oro de
                               //   bancos centrales (toneladas/año, World Gold Council trimestral).
@@ -1390,7 +1393,9 @@ function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
 
 // ── Oro Bottom ───────────────────────────────────────────────────
 // Invierte la lógica de detectGoldTop:
-//   Tipo real > 0.5% = presión (techo)  →  Tipo real > 2.0% = sobrecastigado (suelo)
+//   NIVEL del tipo real → TECHO (coste de oportunidad de mantener oro).
+//   VARIACIÓN del tipo real a 6m → SUELO (el viento en contra se disipa).
+//   Dos dimensiones distintas del mismo dato: evita que el detector se anule a sí mismo.
 //   Brent alto protege al oro en ambos casos.
 function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
   const { bondYield10y, inflationBreakeven, realYield10y, brentOil, dxy } = inputs;
@@ -1415,25 +1420,40 @@ function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
   let score = 0;
   const reasons: string[] = [];
 
-  // Tipo real MUY alto = oro está sobrecastigado (coste de oportunidad extremo ya priced in)
-  // La lógica: si el tipo real está forzando ventas masivas de oro, el precio ya lo descuenta.
-  // Un tipo real > 2.5% es históricamente insostenible y precede rallies de oro.
-  // CALIBRACIÓN: realRate>2.5% + Brent>95 debe alcanzar OPPORTUNITY (≥60).
-  //   El oro tiene menos indicadores → max teórico ~70 (OPPORTUNITY, no EXTREME).
-  //   Documentado: las puntuaciones no son comparables entre activos.
-  if (realRate > 2.5) {
-    score += 45;
-    reasons.push(`Tipo real ${realRate.toFixed(2)}% — oro sobrecastigado. Tipos reales >2.5% son históricamente insostenibles y han precedido rallies fuertes del oro.`);
-  } else if (realRate > 2.0) {
-    score += 25;
-    reasons.push(`Tipo real ${realRate.toFixed(2)}% — presión extrema sobre el oro. El mercado ya descuenta el coste de oportunidad.`);
-  } else if (realRate > 1.5) {
-    score += 12;
-    reasons.push(`Tipo real ${realRate.toFixed(2)}% — presión elevada. Potencial suelo si la Fed se acerca al final del ciclo.`);
-  } else if (realRate < -0.5) {
-    // Tipos reales negativos = oro barato en términos reales
-    score += 15;
-    reasons.push(`Tipo real ${realRate.toFixed(2)}% — tipos reales negativos. El oro protege el poder adquisitivo.`);
+  // FIX-GOLD-BOTTOM-DELTA (Nov-2026): el suelo del oro YA NO puntúa el NIVEL del tipo real.
+  //   Ese nivel es exactamente lo que dispara detectGoldTop, así que el detector se
+  //   anulaba a sí mismo: con tipos altos el suelo sumaba 45 y el techo recortaba ×0,80
+  //   (exclusión mutua), dejando un máximo práctico de 68 y 32-52 en el caso típico.
+  //   Ahora el suelo mide la TASA DE CAMBIO a 6 meses — dimensión distinta (nivel vs Δ),
+  //   el mismo criterio que AGENTS.md exige para compartir una variable entre capas.
+  //   Rampa: −1,50 pp→55 · −0,75→30 · −0,25→15 · plano o subiendo→0
+  //   Máximo bruto del detector: 55 (Δ) + 25 (Brent) + 15 (DXY) = 95 → EXTREME (≥80)
+  //   alcanzable por dos vías: (a) techo SAFE + Brent>95 → 80 exactos;
+  //   (b) con techo CAUTION (×0,85) → 95 × 0,85 = 81 → sigue EXTREME.
+  //   El tramo 55 (y no 45) es deliberado: con 45 el máximo era 85 y la exclusión
+  //   mutua del techo (×0,80-0,85) lo devolvía a OPPORTUNITY, dejando EXTREME
+  //   inalcanzable en la práctica.
+  const realYieldPrev6m = inputs.realYield10yPrev6m;
+  const hasDelta6m = isValidReading(realYieldPrev6m, -10, 50);
+  const realRateDelta6m = hasDelta6m ? realRate - realYieldPrev6m! : undefined;
+
+  if (realRateDelta6m !== undefined) {
+    const deltaTxt = `${realRateDelta6m >= 0 ? "+" : ""}${realRateDelta6m.toFixed(2)} pp en 6m`;
+    if (realRateDelta6m <= -1.5) {
+      score += 55;
+      reasons.push(`Tipo real ${deltaTxt} (${realYieldPrev6m!.toFixed(2)}% → ${realRate.toFixed(2)}%) — giro monetario agresivo: el coste de oportunidad del oro se disipa. Ventana histórica de acumulación.`);
+    } else if (realRateDelta6m <= -0.75) {
+      score += 30;
+      reasons.push(`Tipo real ${deltaTxt} — el viento en contra del oro cede con claridad.`);
+    } else if (realRateDelta6m <= -0.25) {
+      score += 15;
+      reasons.push(`Tipo real ${deltaTxt} — giro incipiente a favor del oro.`);
+    } else {
+      reasons.push(`Tipo real ${deltaTxt} — el coste de oportunidad del oro no cede (sin señal de suelo por tipos).`);
+    }
+  } else {
+    // Política de datos: sin Δ6m NO se puntúa el nivel (era el doble conteo con el techo).
+    reasons.push("Sin variación del tipo real a 6m (realYield10yPrev6m) — el suelo del oro no puntúa el nivel para no duplicar la señal del techo");
   }
 
   // Brent: petróleo alto → inflación → el oro sirve como cobertura
@@ -1472,8 +1492,8 @@ function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
     reason: reasons.length > 0 ? reasons.join(" · ") : "Oro en zona neutra — sin señal de suelo de ciclo",
     indicator: "Tipo Real 10Y TIPS (DFII10) + Brent + DXY",
     indicatorValue: hasDirectRealYield
-      ? `DFII10 ${realRate.toFixed(2)}% tipo real · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"}`
-      : `${bondYield10y.toFixed(2)}% − ${inflationBreakeven!.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real proxy (BE5Y) · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"}`,
+      ? `DFII10 ${realRate.toFixed(2)}% tipo real · Δ6m ${realRateDelta6m === undefined ? "—" : `${realRateDelta6m >= 0 ? "+" : ""}${realRateDelta6m.toFixed(2)} pp`} · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"}`
+      : `${bondYield10y.toFixed(2)}% − ${inflationBreakeven!.toFixed(2)}% = ${realRate.toFixed(2)}% tipo real proxy (BE5Y) · Δ6m ${realRateDelta6m === undefined ? "—" : `${realRateDelta6m >= 0 ? "+" : ""}${realRateDelta6m.toFixed(2)} pp`} · Brent $${brentOil?.toFixed(0) ?? "—"} · DXY ${dxy?.toFixed(1) ?? "—"}`,
     shouldAccumulate: score >= 40,
     attackMultiplier: attackMultiplierForScore(score),
   };

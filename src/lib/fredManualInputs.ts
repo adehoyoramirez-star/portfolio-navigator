@@ -18,6 +18,8 @@ export interface FredManualData {
   inflationBreakeven5y: number;
   /** 10Y TIPS real yield (DFII10), percentage points. Preferred gold Cycle Top input. */
   realYield10y?: number;
+  /** DFII10 de hace ~6 meses (percentage points). El suelo del oro puntúa la VARIACIÓN. */
+  realYieldPrev6m?: number;
   /** Fed Balance Sheet (WALCL) — total assets, billions USD */
   fedBalanceSheet?: number;
   /** ECB Balance Sheet (ECBASSETSW) — total assets, billions EUR */
@@ -41,6 +43,7 @@ const DEFAULTS: FredManualData = {
   creditSpread: 3.0,
   inflationBreakeven5y: 2.35,
   realYield10y: undefined,
+  realYieldPrev6m: undefined,
   lastUpdated: new Date().toISOString(),
   manuallyOverridden: false,
 };
@@ -76,6 +79,7 @@ export function saveFredManual(data: Partial<FredManualData> & { updatedBy?: str
     creditSpread: data.creditSpread ?? current.creditSpread,
     inflationBreakeven5y: data.inflationBreakeven5y ?? current.inflationBreakeven5y,
     realYield10y: data.realYield10y ?? current.realYield10y,
+    realYieldPrev6m: data.realYieldPrev6m ?? current.realYieldPrev6m,
     // LIQ-AUTO (Ago-2026): propagar WALCL + ECBASSETSW al persistir
     fedBalanceSheet: data.fedBalanceSheet ?? current.fedBalanceSheet,
     ecbBalanceSheet: data.ecbBalanceSheet ?? current.ecbBalanceSheet,
@@ -187,6 +191,7 @@ export async function fetchFredFromServer(): Promise<FredManualData | null> {
         creditSpread: json.creditSpread,
         inflationBreakeven5y: json.inflationBreakeven5y,
         realYield10y: typeof json.realYield10y === "number" ? json.realYield10y : undefined,
+        realYieldPrev6m: typeof json.realYieldPrev6m === "number" ? json.realYieldPrev6m : undefined,
         lastUpdated: json.fetchedAt ?? new Date().toISOString(),
         updatedBy: `server:${json.source ?? "FRED"}`,
         manuallyOverridden: false, // servidor nunca marca override

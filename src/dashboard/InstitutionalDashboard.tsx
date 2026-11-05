@@ -359,6 +359,8 @@ const InstitutionalDashboard: React.FC = () => {
   const [manualPER, setManualPER] = useState(29.69);
   const [manualBond10y, setManualBond10y] = useState(4.2);
   const [manualRealYield10y, setManualRealYield10y] = useState<number | undefined>(() => loadFredManual().realYield10y);
+  // GOLD-BOTTOM-DELTA: nivel de DFII10 hace ~6m → el suelo del oro puntúa la variación.
+  const [manualRealYieldPrev6m, setManualRealYieldPrev6m] = useState<number | undefined>(() => loadFredManual().realYieldPrev6m);
   const [bond2y, setBond2y] = useState(3.0);
   const [m2Growth, setM2Growth] = useState(4.3);
   const [creditSpread, setCreditSpread] = useState(1.5);
@@ -1221,6 +1223,7 @@ soxRsiWeekly,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       realYield10y: manualRealYield10y,
+      realYield10yPrev6m: manualRealYieldPrev6m,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
       wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
       wlgPERatio: cycleDQ.wlgPERatio,
@@ -1238,7 +1241,7 @@ soxRsiWeekly,
     return detectCycleTops(cycleInputs);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, manualRealYield10y, wtiOil,        wlgRsiWeekly, wlgPERatio,
         emxcRsiWeekly, emxcPERatio,
-        wlgEpsGrowth, marketData?.per, dxy, emxcDxyActive, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
+        wlgEpsGrowth, marketData?.per, dxy, emxcDxyActive, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases, manualRealYieldPrev6m]);
 
   // TACTICAL-DAILY (Jul 2026): track regime via state so React sees the dependency.
   // Declared before cycleBottomResult; useEffect (which sets it) is after engineResult.
@@ -1313,6 +1316,7 @@ soxRsiWeekly,
       bondYield10y: manualBond10y,
       inflationBreakeven,
       realYield10y: manualRealYield10y,
+      realYield10yPrev6m: manualRealYieldPrev6m,
       brentOil: wtiOil > 0 ? wtiOil : undefined,
       wlgRsiWeekly: cycleDQ.wlgRsiWeekly,
       wlgPERatio: cycleDQ.wlgPERatio,
@@ -1335,7 +1339,7 @@ soxRsiWeekly,
     return detectCycleBottoms(cycleInputs, cycleTopResult?.signals);
   }, [mvrvRatio, btcDominance, prevBtcDominance, btcRsiWeekly, puellMultiple, mvrvZScoreEffective, uraniumSpot, uraniumLT, siaSalesYoY, soxRsiWeekly, soxSpyRS, manualBond10y, inflationBreakeven, manualRealYield10y, wtiOil,        wlgRsiWeekly, wlgPERatio,
         emxcRsiWeekly, emxcPERatio,
-        wlgEpsGrowth, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases]);
+        wlgEpsGrowth, marketData?.per, dxy, cycleTopResult?.signals, marketData?.closesHistory, marketData?.prices, currentRegime, smoothedShiftPE, smoothedShiftBTC, creditSpread, goldCbPurchases, manualRealYieldPrev6m]);
 
   
 
@@ -4928,7 +4932,7 @@ soxRsiWeekly,
       )}
 
       {/* FIX-AUDIT-R9 UI: FRED Manual Inputs Panel — editar M2, CAPE, credit spread, breakeven */}
-      <FredManualPanel onSaved={() => { setManualRealYield10y(loadFredManual().realYield10y); refreshMarketData(); }} />
+      <FredManualPanel onSaved={() => { setManualRealYield10y(loadFredManual().realYield10y); setManualRealYieldPrev6m(loadFredManual().realYieldPrev6m); refreshMarketData(); }} />
 
       {/* OVERRIDE MANUAL DE PRECIOS — fijar precio a mano cuando Yahoo falla (ej. URNU.DE) */}
       <ManualPricePanel onSaved={refreshMarketData} currentPrices={marketData?.prices} />
