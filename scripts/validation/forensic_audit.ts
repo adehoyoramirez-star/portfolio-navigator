@@ -77,16 +77,17 @@ async function main() {
   const rowsPerYear = dts.length / years;
   const m252 = stats(twr, dts, 252);
   const m365 = stats(twr, dts, 365);
+  const mReal = stats(twr, dts, rowsPerYear);
 
   console.log('='.repeat(116));
   console.log(`  A1 · ANUALIZACIÓN — ${dts[0]} → ${dts[dts.length - 1]} · ${dts.length} sesiones · ${rowsPerYear.toFixed(0)} filas/año`);
   console.log('='.repeat(116));
-  console.log(`  ${'métrica'.padEnd(20)} ${'repo (/365)'.padStart(13)} ${'correcta (252)'.padStart(15)} ${'error'.padStart(11)}`);
-  console.log(`  ${'CAGR'.padEnd(20)} ${pc(bt.metrics.cagr).padStart(13)} ${pc(m252.cagr).padStart(15)} ${((bt.metrics.cagr - m252.cagr) * 100).toFixed(1).padStart(8)} pp`);
-  console.log(`  ${'Sharpe'.padEnd(20)} ${bt.metrics.sharpe.toFixed(2).padStart(13)} ${m252.sharpe.toFixed(2).padStart(15)} ${(bt.metrics.sharpe - m252.sharpe).toFixed(2).padStart(11)}`);
-  console.log(`  ${'Volatilidad'.padEnd(20)} ${pc(bt.metrics.volatility).padStart(13)} ${pc(m252.vol).padStart(15)} ${((bt.metrics.volatility - m252.vol) * 100).toFixed(1).padStart(8)} pp`);
-  console.log(`  ${'MaxDD'.padEnd(20)} ${pc(bt.metrics.maxDrawdown).padStart(13)} ${pc(m252.mdd).padStart(15)} ${'—'.padStart(11)}`);
-  console.log(`  ${'Calmar'.padEnd(20)} ${bt.metrics.calmar.toFixed(2).padStart(13)} ${m252.calmar.toFixed(2).padStart(15)} ${'—'.padStart(11)}`);
+  console.log(`  ${'métrica'.padEnd(20)} ${'motor'.padStart(13)} ${'densidad real'.padStart(15)} ${'delta'.padStart(11)}`);
+  console.log(`  ${'CAGR'.padEnd(20)} ${pc(bt.metrics.cagr).padStart(13)} ${pc(mReal.cagr).padStart(15)} ${((bt.metrics.cagr - mReal.cagr) * 100).toFixed(1).padStart(8)} pp`);
+  console.log(`  ${'Sharpe'.padEnd(20)} ${bt.metrics.sharpe.toFixed(2).padStart(13)} ${mReal.sharpe.toFixed(2).padStart(15)} ${(bt.metrics.sharpe - mReal.sharpe).toFixed(2).padStart(11)}`);
+  console.log(`  ${'Volatilidad'.padEnd(20)} ${pc(bt.metrics.volatility).padStart(13)} ${pc(mReal.vol).padStart(15)} ${((bt.metrics.volatility - mReal.vol) * 100).toFixed(1).padStart(8)} pp`);
+  console.log(`  ${'MaxDD'.padEnd(20)} ${pc(bt.metrics.maxDrawdown).padStart(13)} ${pc(mReal.mdd).padStart(15)} ${'—'.padStart(11)}`);
+  console.log(`  ${'Calmar'.padEnd(20)} ${bt.metrics.calmar.toFixed(2).padStart(13)} ${mReal.calmar.toFixed(2).padStart(15)} ${'—'.padStart(11)}`);
 
   const n = recs.length - 1;
   const ew = simWeights(ds.closes, LOOK, n, () => Object.fromEntries(ASSETS.map(a => [a, 1 / ASSETS.length])), REB, 6);
@@ -105,8 +106,27 @@ async function main() {
   }, REB, 6);
   const ewm = stats(ew, dts, 252);
   const ivm = stats(iv, dts, 252);
-  const withCash = twr.map((r, i) => r + (recs[i + 1].cash ?? 0) * RF / 252);
-  const cm = stats(withCash, dts, 252);
+  // FIX-AUDIT-CASH-YIELD: el motor YA remunera la caja al 4% por defecto, así que
+  // sumarla aquí duplicaba el devengo. Se mide el contrafactual SIN remunerar
+  // para cuantificar lo que aporta el fix.
+  const noCashBt = (() => {
+    const ys = ds.macro.tnx.map((v, i) => v - ds.macro.irx[i]);
+    const cs = ds.macro.hyg.map((v, i) => (v > 0 && ds.macro.lqd[i] > 0
+      ? Math.max(1, Math.min(9, ((0.045 + (1 - v / 100) * 0.03) - (0.035 + (1 - ds.macro.lqd[i] / 100) * 0.02)) * 100))
+      : 2.5 + ds.macro.vix[i] / 20));
+    const dt = ds.macro.dxy.map((_, i) => (i < 20 ? 0 : (ds.macro.dxy[i - 20] > 0 ? (ds.macro.dxy[i] / ds.macro.dxy[i - 20] - 1) * 100 : 0)));
+    return runBacktest({
+      closesHistory: ds.closes,
+      macroHistory: { vix: ds.macro.vix, yieldSpread: ys, creditSpread: cs, move: ds.macro.move, dxyTrend: dt, btcVol: ds.macro.btcVol },
+      lookbackDays: LOOK, rebalanceDays: REB, initialCapital: 10000, transactionCostBps: 15,
+      cashYieldBps: 0,
+    });
+  })();
+  const noCashTwr: number[] = [];
+  for (let i = 1; i < noCashBt.dailyRecords.length; i++) {
+    noCashTwr.push(noCashBt.dailyRecords[i].portfolioValue / noCashBt.dailyRecords[i - 1].portfolioValue - 1);
+  }
+  const cm = stats(noCashTwr, dts, 252);
 
   console.log('\n' + '='.repeat(116));
   console.log('  A2 · MOTOR vs BENCHMARKS (anualización 252; benchmarks con 6 bps por rebalanceo)');
@@ -114,7 +134,7 @@ async function main() {
   console.log(`  ${'cartera'.padEnd(22)} ${'CAGR'.padStart(9)} ${'Sharpe'.padStart(8)} ${'Vol'.padStart(8)} ${'MaxDD'.padStart(9)} ${'Calmar'.padStart(8)}`);
   const rows: [string, ReturnType<typeof stats>][] = [
     ['Motor V5 (15bps)', m252],
-    ['Motor + caja al 4%', cm],
+    ['Motor sin remunerar caja', cm],
     ['Eq-W 21d (6bps)', ewm],
     ['Inv-Vol 126d (6bps)', ivm],
   ];
