@@ -776,7 +776,7 @@ function detectWLGTop(inputs: CycleTopInputs, curves?: WlgCurveOverrides): Cycle
     //   Es un proxy de otro índice. Se muestra como contexto,
     //   pero NO modifica el multiplier. Mismo criterio que SIA y P/E EMXC.
     if (hasCAPE) {
-      valuationReasons.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)} — contexto: proxy de otro índice (dato informativo, no puntúa)`);
+      valuationReasons.push(`Shiller CAPE ${wlgCAPE.toFixed(1)} — contexto: proxy de otro índice (dato informativo, no puntúa)`);
     }
   } else if (hasCAPE) {
     // FALLBACK sin P/E real — usar solo S&P 500 P/E como referencia
@@ -798,7 +798,8 @@ function detectWLGTop(inputs: CycleTopInputs, curves?: WlgCurveOverrides): Cycle
 
   const parts: string[] = [];
   if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
-  if (isValidReading(wlgCAPE)) parts.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)}`);
+  // FIX-LABEL-CAPE (Nov-2026): wlgCAPE es el Shiller CAPE, no el P/E TTM.
+  if (isValidReading(wlgCAPE)) parts.push(`Shiller CAPE ${wlgCAPE.toFixed(1)}`);
   if (isValidReading(wlgPERatio)) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
   const indicatorValue = parts.join(" · ") || "Sin datos";
 
@@ -1243,6 +1244,10 @@ function detectBTCBottom(inputs: CycleTopInputs): CycleBottomSignal {
 
   // La detección estructural no incorpora RSI/Z-score diario ni precio intradía.
   // Esos indicadores permanecen disponibles para el escáner táctico separado.
+  // FIX-SCORE-RANGE (Nov-2026): el invariante declarado es opportunityScore ∈ [0,100]
+  //   (detectorInvariants.test.ts). BTC puede sumar 45+25+35 = 105 en capitulación
+  //   triple y se publicaba 105. Se acota aquí, no en el consumidor.
+  score = Math.min(100, Math.max(0, score));
   const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(mvrvZScore)) parts.push(`MVRV Z ${mvrvZScore.toFixed(2)}`);
@@ -1306,8 +1311,8 @@ function detectUraniumBottom(inputs: CycleTopInputs): CycleBottomSignal {
 
   // Señal estructural basada exclusivamente en Spot/LT. No usa RSI diario,
   // Z-score ni precio intradía; el escáner táctico queda separado.
-
-const zone = scoreToZone(score);
+  score = Math.min(100, Math.max(0, score));
+  const zone = scoreToZone(score);
 
   return {
     asset: "Uranium",
@@ -1361,6 +1366,10 @@ function detectSemisBottom(inputs: CycleTopInputs): CycleBottomSignal {
   }
 
   // La señal estructural no se altera por RSI diario, Z-score diario ni intradía.
+  // FIX-SCORE-RANGE (Nov-2026): el invariante declarado es opportunityScore ∈ [0,100]
+  //   (detectorInvariants.test.ts). BTC puede sumar 45+25+35 = 105 en capitulación
+  //   triple y se publicaba 105. Se acota aquí, no en el consumidor.
+  score = Math.min(100, Math.max(0, score));
   const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(siaSalesYoY, -100)) parts.push(`SIA sales ${siaSalesYoY > 0 ? "+" : ""}${siaSalesYoY.toFixed(1)}% YoY`);
@@ -1452,8 +1461,8 @@ function detectGoldBottom(inputs: CycleTopInputs): CycleBottomSignal {
   }
 
   // El oro no usa señales tácticas diarias ni precio intradía en el score estructural.
-
-const zone = scoreToZone(score);
+  score = Math.min(100, Math.max(0, score));
+  const zone = scoreToZone(score);
 
   return {
     asset: "Gold (ETC)",
@@ -1529,10 +1538,15 @@ function detectWLGBottom(inputs: CycleTopInputs): CycleBottomSignal {
   }
 
   // La señal estructural no se altera por RSI diario, Z-score diario ni intradía.
+  // FIX-SCORE-RANGE (Nov-2026): el invariante declarado es opportunityScore ∈ [0,100]
+  //   (detectorInvariants.test.ts). BTC puede sumar 45+25+35 = 105 en capitulación
+  //   triple y se publicaba 105. Se acota aquí, no en el consumidor.
+  score = Math.min(100, Math.max(0, score));
   const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(wlgRsiWeekly, 0, 100)) parts.push(`RSI-W ${wlgRsiWeekly.toFixed(0)}`);
-  if (isValidReading(wlgCAPE)) parts.push(`P/E S&P 500 ${wlgCAPE.toFixed(1)}`);
+  // FIX-LABEL-CAPE (Nov-2026): wlgCAPE es el Shiller CAPE, no el P/E TTM.
+  if (isValidReading(wlgCAPE)) parts.push(`Shiller CAPE ${wlgCAPE.toFixed(1)}`);
   if (isValidReading(wlgPERatio)) parts.push(`P/E ${wlgPERatio.toFixed(1)}`);
 
   return {
@@ -1605,6 +1619,10 @@ function detectEMXCBottom(inputs: CycleTopInputs): CycleBottomSignal {
   }
 
   // La señal estructural no se altera por RSI diario, Z-score diario ni intradía.
+  // FIX-SCORE-RANGE (Nov-2026): el invariante declarado es opportunityScore ∈ [0,100]
+  //   (detectorInvariants.test.ts). BTC puede sumar 45+25+35 = 105 en capitulación
+  //   triple y se publicaba 105. Se acota aquí, no en el consumidor.
+  score = Math.min(100, Math.max(0, score));
   const zone = scoreToZone(score);
   const parts: string[] = [];
   if (isValidReading(dxy, 50)) parts.push(`DXY ${dxy.toFixed(1)}`);

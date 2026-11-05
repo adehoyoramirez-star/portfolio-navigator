@@ -9,7 +9,7 @@ import type { CEWSOutput } from "../core/macro/crisisEarlyWarning";
 
 // ── Helper: base input con valores neutros ───────────────────────────────
 function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
-  return {
+  const input: SmartDCAInput = {
     btcRsi: 50,
     btcZScore: 0,
     btcMomentum1m: 0,
@@ -33,8 +33,11 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
       { name: "Gold", ticker: "PPFB.DE", finalAllocation: 0.15, price: 70 },
       { name: "Value", ticker: "VVSM.DE", finalAllocation: 0.10, price: 55 },
     ],
+    totalPortfolioValueEUR: 100_000,
     ...overrides,
   };
+  if (!overrides.currentAllocations) input.currentAllocations = input.motorAllocations.map(a => ({ ticker: a.ticker, name: a.name, currentWeight: 0 }));
+  return input;
 }
 
 // ── Helpers: condiciones para activar señales ─────────────────────────────

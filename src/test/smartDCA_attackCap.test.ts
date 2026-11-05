@@ -42,6 +42,27 @@ describe("CORRECCIÓN 4 (T6-2) — tope target+5 pp sin ×bottomMul", () => {
     expect(postWeight).toBeLessThanOrEqual(0.25 + 1e-6);
   });
 
+  test("EXTREME con activo ya en target + 4 pp solo puede usar el 1 pp restante", () => {
+    const input = atTarget();
+    input.currentAllocations = [
+      { ticker: "BTC-EUR", name: "Bitcoin", currentWeight: 0.24 },
+      { ticker: "0P00000WLG.F", name: "MSCI World", currentWeight: 0.20 },
+    ];
+    const r = computeSmartDCA(input);
+    const btc = r.allocationByAsset.find(a => a.ticker === "BTC-EUR")!;
+    const postWeight = (0.24 * TPV + btc.actualCost) / TPV;
+    expect(postWeight).toBeLessThanOrEqual(0.25 + 1e-6);
+  });
+
+  test("sin NAV o peso actual la validación final bloquea compras", () => {
+    const input = atTarget();
+    input.totalPortfolioValueEUR = undefined;
+    input.currentAllocations = undefined;
+    const r = computeSmartDCA(input);
+    expect(r.totalCashToInvest).toBe(0);
+    expect(r.allocationByAsset.every(a => a.skipped || a.actualCost === 0)).toBe(true);
+  });
+
   test("sin señal de suelo (activo en target) → no compra", () => {
     const r = computeSmartDCA(baseInput({
       totalPortfolioValueEUR: TPV, olympusAvailableCash: 20_000,

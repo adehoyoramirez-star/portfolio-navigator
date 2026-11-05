@@ -141,7 +141,10 @@ export function generateAlerts(input: AlertInput): RegimeAlert[] {
       timestamp: now,
       severity: "WARNING",
       title: `Vol Target: exposición reducida al ${(input.volTargetMultiplier * 100).toFixed(0)}%`,
-      message: `La volatilidad realizada del portfolio supera el objetivo del ${(VOLATILITY_CONFIG.DEFAULT_TARGET_VOL * 100).toFixed(0)}%. El motor escala exposición a ×${input.volTargetMultiplier.toFixed(2)}.`,
+      // FIX-VT-MESSAGE (Nov-2026): el motor NO usa σ del portfolio para el Vol Target
+      //   (olympusV3 usa la vol del núcleo ex-BTC). Decir «la volatilidad realizada
+      //   del portfolio» era falso y contradecía el σ mostrado en el panel.
+      message: `La volatilidad usada para el Vol Target supera el objetivo del ${(VOLATILITY_CONFIG.DEFAULT_TARGET_VOL * 100).toFixed(0)}%. El motor escala exposición a ×${input.volTargetMultiplier.toFixed(2)}.`,
       action: "No incrementar posiciones hasta que la volatilidad se normalice.",
       dismissible: true,
       regime: input.currentRegime,

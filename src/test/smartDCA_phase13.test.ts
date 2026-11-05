@@ -51,6 +51,7 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
     killSwitchLevel: 0, recoveryCyclesRemaining: 0,
     olympusAvailableCash: OLY, tacticalAvailableCash: DEF,
     accumulatedDefensiveLiquidity: 0,
+    totalPortfolioValueEUR: 100_000,
     motorAllocations: [
       { name: "BTC", ticker: "BTC-EUR", finalAllocation: 0.30, price: 68107 },
       { name: "WLG", ticker: "0P00000WLG.F", finalAllocation: 0.14, price: 72.10 },

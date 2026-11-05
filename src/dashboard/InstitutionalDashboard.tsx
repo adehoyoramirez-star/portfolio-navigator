@@ -1874,7 +1874,7 @@ soxRsiWeekly,
   }, [portfolio.assets, puellMultiple, mvrvZScoreEffective, hashRibbonState, piCycleMa111, piCycleMa350x2, elliottPivots, elliottCurrentWave]);
 
   const olympusAvailableCash = cashReserve;
-  const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK >= 4/7
+  const tacticalAvailableCash = defensiveLiquidity; // solo se activa en ATTACK >= 4/8
   const btcAsset = portfolio.assets.find(a => a.ticker === "BTC-EUR");
   const btcRsi = btcAsset?.rsi ?? calculateRSI(btcAsset?.history || [], 14);
   const btcZ = btcAsset?.zScore ?? calculateZScore(btcAsset?.history || [], 200);
@@ -1974,7 +1974,8 @@ soxRsiWeekly,
       // FIX-AUDIT-R9 4: stale data circuit breaker
       staleDataBlock,
       // FIX-CAP-ALLOC: pasar totalPortfolioValue para cap de compra por activo
-      totalPortfolioValueEUR: totalPortfolioValue,
+      // Misma base que currentWeight: NAV gestionado (posiciones + caja broker).
+      totalPortfolioValueEUR: totalMotorCapital,
       // Cycle Bottom Detection: per-asset attackMultiplier para escalar DCA en suelos
       cycleBottomSignals: (cycleBottomResult?.signals ?? []).map(s => ({
         ticker: s.ticker,
@@ -2095,7 +2096,8 @@ soxRsiWeekly,
   //   bloqueador. FIX-MUTEX-V3: el candado del rebalanceo ya no puede dejar el
   //   DCA en €0 — el reparto es por capas (DCA primero, rebalanceo el remanente).
   const dcaZeroReason = useMemo(() => {
-    if (!smartDCAResult || smartDCAResult.totalCashToInvest > 0.01) return "";
+    // El importe ejecutable son las ÓRDENAS, no el plan del tramo (totalCashToInvest).
+    if (!smartDCAResult || smartDCAResult.allocationByAsset.reduce((s, a) => s + (a.skipped ? 0 : a.actualCost), 0) > 0.01) return "";
     if (olympusAvailableCash <= 0) {
       return "la Caja de reserva (cash operativo del broker) está a €0 — el DCA normal solo invierte desde ahí.";
     }
@@ -2140,6 +2142,26 @@ soxRsiWeekly,
     const { ticker, name, action, source } = pendingTrade;
     const totalCost = execShares * execPrice;
 
+    // FIX-FUND-TACTICAL (Nov-2026): una compra no puede crear participaciones sin
+    // salida de caja. Antes se descontaba solo `cashReserve` con Math.max(0, …):
+    // si el plan incluía el tramo táctico (war chest) sin transferencia previa,
+    // el bróker quedaba en 0 y el NAV subía sin contrapartida de efectivo.
+    // Ahora: la caja operativa se completa con liquidez defensiva en UNA sola
+    // actualización (atómica) y, si tampoco alcanza, la operación NO se registra.
+    if (action === 'BUY') {
+      const shortfall = totalCost - cashReserve;
+      if (shortfall > defensiveLiquidity + 1e-9) {
+        window.alert(
+          `Fondos insuficientes para registrar la compra.\n\n` +
+          `Coste: €${totalCost.toFixed(2)}\n` +
+          `Caja operativa: €${cashReserve.toFixed(2)}\n` +
+          `Liquidez defensiva: €${defensiveLiquidity.toFixed(2)}\n\n` +
+          `Transfiere liquidez defensiva a la caja del bróker antes de ejecutar.`
+        );
+        return;
+      }
+    }
+
     // 1. Actualizar portfolio (shares + avgPrice)
     setPortfolio(prev => ({
       ...prev,
@@ -2158,9 +2180,20 @@ soxRsiWeekly,
       }),
     }));
 
-    // 2. Actualizar cashReserve
+    // 2. Actualizar caja y liquidez (atómico: operativa primero, defensiva después)
     if (action === 'BUY') {
-      setCashReserve(prev => Math.max(0, Math.round((prev - totalCost) * 100) / 100));
+      setPortfolioCash(prev => {
+        const fromOperational = Math.min(prev.operational, totalCost);
+        const fromDefensive = Math.round((totalCost - fromOperational) * 100) / 100;
+        const newDefensive = Math.max(0, Math.round((prev.defensive - fromDefensive) * 100) / 100);
+        if (fromDefensive > 0) {
+          try { localStorage.setItem('olympus_defensive_liq', String(newDefensive)); } catch {/* best-effort: un fallo de persistencia no debe romper el render */}
+        }
+        return {
+          operational: Math.round((prev.operational - fromOperational) * 100) / 100,
+          defensive: newDefensive,
+        };
+      });
     } else {
       setCashReserve(prev => Math.round((prev + totalCost) * 100) / 100);
     }
@@ -3484,9 +3517,12 @@ soxRsiWeekly,
             borderColor: wtiOil >= 115 ? "#ef4444" : wtiOil >= 95 ? "#f59e0b" : wtiOil >= 75 ? "#fcd34d" : "#374151",
           }} step="0.5" min="0" />
           <p style={{ fontSize: "0.65rem", margin: "0.2rem 0 0", color: wtiOil >= 115 ? "#ef4444" : wtiOil >= 95 ? "#f59e0b" : "#6b7280" }}>
-            {wtiOil >= 115 ? "🔴 CRISIS ENERGÉTICA — penalización ×0.50 al motor"
-              : wtiOil >= 95 ? "🟠 SHOCK GEOPOLÍTICO — penalización ×0.70 al motor"
-              : wtiOil >= 75 ? "🟡 Tensión elevada — penalización ×0.85 al motor"
+            {/* FIX-BRENT-LABEL (Nov-2026): las penalizaciones son CONTINUAS (1.00→0.50 en
+                $75→$130). Un literal «×0.70» en $95 mentía con Brent a $96.9 (real ×0.84).
+                El valor aplicado se muestra en la tarjeta «Régimen Global». */}
+            {wtiOil >= 115 ? "🔴 CRISIS ENERGÉTICA — penalización severa al motor"
+              : wtiOil >= 95 ? "🟠 SHOCK GEOPOLÍTICO — penalización al motor"
+              : wtiOil >= 75 ? "🟡 Tensión elevada — penalización leve al motor"
               : "🟢 Normal — sin penalización por petróleo"}
           </p>
         </div>
@@ -4034,7 +4070,7 @@ soxRsiWeekly,
                 {isBlocked
                   ? <p style={{ color: "#ef4444", fontSize: "0.8rem" }}>{dca?.blockReason}</p>
                   : <>
-                    <p>Invertir: <strong>{formatCurrency(dca?.totalCashToInvest ?? 0)}</strong> ({((dca?.buyFraction ?? 0) * 100).toFixed(0)}%)</p>
+                    <p>Invertir: <strong>{formatCurrency((dca?.allocationByAsset ?? []).reduce((s, a) => s + (a.skipped ? 0 : a.actualCost), 0))}</strong> ({((dca?.buyFraction ?? 0) * 100).toFixed(0)}%)</p>
                     <p style={{ color: "#9ca3af", fontSize: "0.78rem" }}>{dca?.reasoning}</p>
                   </>
                 }
@@ -4809,11 +4845,11 @@ soxRsiWeekly,
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.5rem' }}>
             <div>
-              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>Engine CAGR (3m)</div>
+              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>{benchmarkStatus.isAnnualized ? 'Engine CAGR (3m)' : 'Motor — retorno acumulado'}</div>
               <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: benchmarkStatus.engineCagr3m > 0 ? '#10b981' : '#ef4444' }}>{(benchmarkStatus.engineCagr3m * 100).toFixed(2)}%</div>
             </div>
             <div>
-              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>Benchmark CAGR (3m)</div>
+              <div style={{ fontSize: '0.62rem', color: '#6b7280' }}>{benchmarkStatus.isAnnualized ? 'Benchmark CAGR (3m)' : 'Benchmark — retorno acumulado'}</div>
               <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: benchmarkStatus.benchmarkCagr3m > 0 ? '#10b981' : '#ef4444' }}>{(benchmarkStatus.benchmarkCagr3m * 100).toFixed(2)}%</div>
             </div>
             <div>
@@ -5418,7 +5454,7 @@ soxRsiWeekly,
                             borderRadius: 4, padding: "0.2rem 0.5rem", cursor: "pointer",
                             fontSize: "0.72rem", whiteSpace: "nowrap",
                           }}
-                        >✓ Ejecutado</button>
+                        >Registrar ✓</button>
                       ) : null}
                     </td>
                   </tr>
@@ -5479,8 +5515,9 @@ soxRsiWeekly,
               backgroundColor: (smartDCAResult?.attackConfluence ?? 0) >= 4 ? "#14532d" : (smartDCAResult?.attackConfluence ?? 0) >= 3 ? "#065f46" : (smartDCAResult?.attackConfluence ?? 0) >= 2 ? "#1e3a5f" : "#374151",
               color: "#fff",
             }}>
-              {smartDCAResult?.attackConfluence ?? 0}/7 señales · Tramo {smartDCAResult?.attackTranche || "—"}
-              {(smartDCAResult?.attackMultiplier ?? 1) > 1 && ` · ×${smartDCAResult?.attackMultiplier ?? 1} DCA`}
+              {/* FIX-MULT-DISPLAY (Nov-2026): el ×N del tramo era decorativo —
+                  buildAllocations no lo recibe. El sizing lo fijan bottomMultipliers. */}
+              {smartDCAResult?.attackConfluence ?? 0}/8 señales · Tramo {smartDCAResult?.attackTranche || "—"}
               {smartDCAResult?.action === "BTC_CYCLE_OVERRIDE" && " · ⚡ OVERRIDE"}
             </div>
           </div>
@@ -5488,13 +5525,13 @@ soxRsiWeekly,
           <div style={{ marginBottom: "0.75rem", padding: "0.5rem 0.75rem", borderRadius: 8, backgroundColor: "#0f172a", border: "1px solid #1e3a5f", fontSize: "0.75rem", color: "#6b7280" }}>
             <span style={{ color: "#60a5fa" }}>⚡ Motor B (BTC Ciclo): </span>
             {(smartDCAResult?.attackConfluence ?? 0) >= 4
-              ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult?.attackConfluence ?? 0}/7 señales superan umbral de override</span>
-              : <span>Necesita {4 - (smartDCAResult?.attackConfluence ?? 0)} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS macro si ≥4/7)</span>
+              ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult?.attackConfluence ?? 0}/8 señales superan umbral de override</span>
+              : <span>Necesita {Math.max(0, 4 - (smartDCAResult?.attackConfluence ?? 0))} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS si ≥4/8)</span>
             }
             <br/>
             <span style={{ color: "#9ca3af", fontSize: "0.68rem" }}>
-              ⓘ Las 7 señales son indicadores de ciclo BTC/macro. Con régimen no-CRISIS y 4/7 activas → bonus BTC en DCA.
-              El DCA completo de cartera requiere además ≥1 señal macro (Régimen, CEWS o VIX) activa.
+              ⓘ Las 8 señales cubren ciclo BTC/macro y suelos por activo. Con régimen no-CRISIS y 4/8 activas → candidato a ataque según las puertas macro vigentes.
+              El ataque de cartera completa requiere ≥2 señales macro; con menos, el ataque queda BTC-only.
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.6rem", marginBottom: "1rem" }}>
@@ -5540,7 +5577,7 @@ soxRsiWeekly,
         <div style={styles.card}>
           <h2>💸 SmartDCA — Distribución por Motor (Nivel 4)</h2>
           <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{smartDCAResult?.reasoning}</p>
-          {smartDCAResult.totalCashToInvest <= 0.01 && (
+          {smartDCAResult.allocationByAsset.reduce((s, a) => s + (a.skipped ? 0 : a.actualCost), 0) <= 0.01 && (
             <div style={{ backgroundColor: "#78350f", border: "1px solid #f59e0b", borderRadius: 8, padding: "0.6rem 0.9rem", marginBottom: "0.75rem", fontSize: "0.8rem", color: "#fde68a" }}>
               <strong>⚠️ Despliegue €0 — motivo:</strong> {dcaZeroReason}
             </div>
@@ -5593,7 +5630,7 @@ soxRsiWeekly,
                             borderRadius: 4, padding: "0.2rem 0.5rem", cursor: "pointer",
                             fontSize: "0.72rem", whiteSpace: "nowrap",
                           }}
-                        >✓ Ejecutado</button>
+                        >Registrar ✓</button>
                       )}
                     </td>
                   </tr>
@@ -5618,12 +5655,12 @@ soxRsiWeekly,
                 )}
                 <tr style={{ borderTop: "1px solid #374151", backgroundColor: "#0f172a" }}>
                   <td colSpan={4} style={{ padding: "0.5rem", color: "#9ca3af", textAlign: "right" }}>Total a desembolsar:</td>
-                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f59e0b", fontSize: "1rem" }}>€{(smartDCAResult?.totalCashToInvest ?? 0).toFixed(0)}</td>
+                  <td style={{ padding: "0.5rem", textAlign: "right", fontWeight: "bold", color: "#f59e0b", fontSize: "1rem" }}>€{(smartDCAResult?.allocationByAsset ?? []).reduce((s, a) => s + (a.skipped ? 0 : a.actualCost), 0).toFixed(0)}</td>
                   <td style={{ padding: "0.5rem", fontSize: "0.7rem", color: "#4ade80" }}>✅ cubierto (broker + defensiva)</td>
                 </tr>
                 {(() => {
                   const realTotal = (smartDCAResult?.allocationByAsset ?? []).reduce((s, a) => s + a.actualCost, 0);
-                  const idealTotal = smartDCAResult?.totalCashToInvest ?? 0;
+                  const idealTotal = (smartDCAResult?.allocationByAsset ?? []).reduce((s, a) => s + (a.skipped ? 0 : a.actualCost), 0);
                   if (realTotal >= idealTotal - 0.5) return null; // sin caps relevantes
                   return (
                     <tr style={{ backgroundColor: "#0f172a" }}>

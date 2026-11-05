@@ -6,7 +6,7 @@
 //   - Olympus recibe el cash operativo mensual (cashReserve). Invierte 30% en DCA normal.
 //   - Táctico recibe el 100% de la liquidez defensiva acumulada. Solo invierte si attackConfluence ≥ 4.
 //   - El sobrante del Táctico se acumula como efectivo para el mes siguiente.
-//   - Graduación Kelly-inspired: Tramo 1 (4/7) 50% Oly + 33% Táct, Tramo 2 (5/7) 75% Oly + 66% Táct, Tramo 3 (6-7/7) 100% ambos.
+//   - Graduación Kelly-inspired sobre ocho señales: 3 PROBE, 4 ENTRY, 5 STRONG, 6+ MAX.
 
 import type { CEWSOutput, CEWSLevel } from "../macro/crisisEarlyWarning";
 import { isCycleTopBuyVeto } from "../config/engineConfig";
@@ -15,7 +15,7 @@ import { isCycleTopBuyVeto } from "../config/engineConfig";
 // Todos los magic numbers extraídos a este objeto para tuning consistente.
 // Si se ajusta un umbral, editar aquí — no hay números sueltos en el código.
 const DCA_CONFIG = {
-  // Umbrales de las 7 señales de confluencia de fondo
+  // Umbrales de señales de confluencia de fondo.
   SIGNALS: {
     BTC_RSI_OVERSOLD: 35,
     BTC_Z_OVERSOLD: -1.5,
@@ -35,7 +35,8 @@ const DCA_CONFIG = {
   },
   // Parámetros de ataque y graduación Kelly-inspired
   ATTACK: {
-    THRESHOLD: 3,                      // FIX-H7: bajado 4->3. PROBE (3/8) activa ataque con 25% Oly.
+    THRESHOLD: 3,                      // PROBE (3/8) habilita el tramo general de ataque.
+    BTC_OVERRIDE_THRESHOLD: 4,         // Mínimo propio del override BTC en CRISIS.
     MIN_MACRO_FOR_FULL_ATTACK: 2,      // señales macro mínimas para ataque a cartera completa (si <2 → BTC-only)
     BTC_OVERRIDE_FRACTION: 0.25,       // % Olympus a BTC en CRISIS + ≥4 señales
     GRADUATION: {
@@ -310,6 +311,59 @@ export function getBottomDriftFloor(attackMultiplier: number): number {
   return 0;
 }
 
+/** Última barrera común para asignaciones comprables, incluida la ruta fallback. */
+export function validateFinalAllocations(
+  allocations: DCAAllocation[],
+  totalBudget: number,
+  navEUR: number | undefined,
+  currentWeights: Map<string, number>,
+  cycleTopVeto: Set<string>,
+  bottomMultipliers: Map<string, number>,
+  cautionTickers: Set<string> = new Set(),
+): DCAAllocation[] {
+  let remainingBudget = Number.isFinite(totalBudget) ? Math.max(0, totalBudget) : 0;
+  const validNav = Number.isFinite(navEUR) && (navEUR ?? 0) > 0;
+  return allocations.map(allocation => {
+    if (allocation.skipped || allocation.actualCost <= 0) return allocation;
+    // Ticker ausente del mapa = sin posición (peso 0). Solo se bloquea si no hay
+    // datos de cartera en absoluto o el NAV no es válido.
+    const currentWeight = currentWeights.get(allocation.ticker) ?? 0;
+    if (!validNav || currentWeights.size === 0 || !Number.isFinite(currentWeight) || currentWeight < 0 ||
+        !Number.isFinite(allocation.motorWeight) || allocation.motorWeight < 0 ||
+        !Number.isFinite(allocation.pricePerShare) || allocation.pricePerShare <= 0 ||
+        !Number.isFinite(allocation.actualCost) || allocation.actualCost < 0 ||
+        cycleTopVeto.has(allocation.ticker)) {
+      return { ...allocation, cashToInvest: 0, actualCost: 0, shares: 0, skipped: true,
+        reason: "Validación final bloqueada: NAV/peso no válido o veto de ciclo activo" };
+    }
+    const bottomMultiplier = bottomMultipliers.get(allocation.ticker) ?? 1;
+    // CONVICCIÓN (Nov-2026): con señal de techo CAUTION no se añade por encima del
+    // target. El floor táctico (1,5–5 pp) solo tiene sentido cuando el ciclo no
+    // pide recortar; aplicarlo aquí haría que el DCA comprara justo lo que el
+    // detector de techo quiere vender.
+    const cautionCap = cautionTickers.has(allocation.ticker);
+    const maxWeight = allocation.motorWeight + (cautionCap ? 0 : getBottomDriftFloor(bottomMultiplier));
+    const allowedCost = Math.max(0, maxWeight * (navEUR as number) - currentWeight * (navEUR as number));
+    // SEMÁNTICA (Nov-2026): `cashToInvest` = PRESUPUESTO acotado por caps (pre-redondeo);
+    //   `actualCost` = lo realmente desembolsado tras el floor de participaciones.
+    //   Antes se sobrescribía cashToInvest con actualCost, y el reparto Olympus/Táctico
+    //   se escalaba por el desembolso: 1 acción de menos convertía €300 en €280.
+    const requestedCost = Number.isFinite(allocation.cashToInvest) && allocation.cashToInvest > 0
+      ? allocation.cashToInvest
+      : allocation.actualCost;
+    const cappedCost = Math.min(requestedCost, allowedCost, remainingBudget);
+    const rawShares = cappedCost / allocation.pricePerShare;
+    const shares = allocation.isFractional
+      ? Math.floor(rawShares * 1_000_000) / 1_000_000
+      : Math.floor(rawShares);
+    const actualCost = shares * allocation.pricePerShare;
+    remainingBudget = Math.max(0, remainingBudget - actualCost);
+    const skipped = shares <= 0 || actualCost <= 0;
+    return { ...allocation, cashToInvest: cappedCost, actualCost, shares, skipped, currentWeight,
+      reason: skipped ? "Validación final: sin espacio bajo target + floor" : allocation.reason };
+  });
+}
+
 export function buildAllocations(
   totalCash: number,
   assets: { ticker: string; name: string; finalAllocation: number; price: number }[],
@@ -318,7 +372,8 @@ export function buildAllocations(
   currentAllocations: Map<string, number> = new Map(),
   cycleTopActive = false,
   totalPortfolioValueEUR = 0,
-  bottomMultipliers: Map<string, number> = new Map()
+  bottomMultipliers: Map<string, number> = new Map(),
+  cautionTickers: Set<string> = new Set()
 ): DCAAllocation[] {
   // FIX-AUDIT-DEDUP: eliminar tickers duplicados antes de procesar.
   // Si el motor recibe assets duplicados (ej: VVSM.DE aparece 2 veces en el portfolio),
@@ -384,11 +439,14 @@ export function buildAllocations(
       : 0;
     // FIX-CAP-ALLOC: no comprar más de lo necesario para llegar al target.
     //   Con bottom signal: floor escalado en el cap (overweight proporcional a la señal).
-    const effectiveDriftForCap = bottomMul > 1.0
-      ? Math.max(a.drift, getBottomDriftFloor(bottomMul))
-      : Math.max(0, a.drift);
+    // CONVICCIÓN (Nov-2026): CAUTION retira el floor → tope = target.
+    const cautionCap = cautionTickers.has(a.ticker);
+    const allowedWeightRoom = Math.max(
+      0,
+      a.finalAllocation + (cautionCap ? 0 : getBottomDriftFloor(bottomMul)) - a.currentWeight,
+    );
     const maxCashToTarget = totalPortfolioValueEUR > 0
-      ? effectiveDriftForCap * totalPortfolioValueEUR
+      ? allowedWeightRoom * totalPortfolioValueEUR
       : cashAssignedRaw;
     // FIX-BOTTOM-MULT: si hay señal de suelo de ciclo, escalar asignación
     //   y relajar el cap proporcionalmente (entrar overweight es aceptable en un suelo).
@@ -445,8 +503,9 @@ export function buildAllocations(
     if (stranded > 0 && canBuyDrift > 0) extra = (effDrift / canBuyDrift) * stranded;
     const totalBeforeCap = a.cashAssigned + extra;
     // Re-aplicar cap después de redistribución para evitar leaks (con floor para bottom)
+    const cautionCap = cautionTickers.has(a.ticker);
     const maxCap = totalPortfolioValueEUR > 0
-      ? effDrift * totalPortfolioValueEUR
+      ? Math.max(0, a.finalAllocation + (cautionCap ? 0 : getBottomDriftFloor(bottomMul)) - a.currentWeight) * totalPortfolioValueEUR
       : totalBeforeCap;
     // FASE 3B · CORRECCIÓN 4 (T6-2): tope en target+floor (5 pp EXTREME), sin ×bottomMul.
     const total = Math.min(totalBeforeCap, maxCap);
@@ -458,7 +517,7 @@ export function buildAllocations(
       motorWeight: a.finalAllocation, shares,
       pricePerShare: a.price, isFractional: a.isFractional,
       skipped: false,
-      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)${capNote}${cycleTopActive ? ' ⚠️ cycle top activo' : ''}`,
+      reason: `${trancheLabel} ${(a.finalAllocation*100).toFixed(1)}% (drift ${(a.drift*100).toFixed(1)}pp)${capNote}${cautionCap ? ' · tope CAUTION en target' : ''}${cycleTopActive ? ' ⚠️ cycle top activo' : ''}`,
       drift: a.drift, currentWeight: a.currentWeight,
     };
   });
@@ -531,6 +590,16 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
       .filter(s => isCycleTopBuyVeto(s)) // solo DANGER/EXTREME: el objetivo ya lleva la señal
       .map(s => s.ticker)
   );
+  // ── CONVICCIÓN (Nov-2026) ─────────────────────────────────────────────
+  // CAUTION no veta la compra (el motor sigue rellenando el drift hacia el
+  // target), pero retira el floor táctico: nunca se añade por encima del target
+  // a un activo sobre el que el detector de ciclo ya pide recortar. Evita que el
+  // DCA compre y venda el mismo activo en el mismo tramo.
+  const cautionTickers = new Set<string>(
+    (input.cycleTopSignals ?? [])
+      .filter(s => s.shouldTrim && s.zone === "CAUTION")
+      .map(s => s.ticker)
+  );
 
   const attackSignals = detectBottomConfluence(input);
   const attackConfluence = attackSignals.filter(s => s.active).length;
@@ -572,12 +641,12 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const ksScaleWithRecovery = Math.min(1.0, ksScale * recoveryMultiplier);
 
   // ── 3. RÉGIMEN MACRO: CRISIS o penalty crítico ────────────────
-  // CRISIS bloquea DCA excepto si hay confluencia de fondo fuerte (≥4/7)
+  // CRISIS bloquea DCA excepto si hay confluencia de fondo fuerte (umbral override 4/8).
   // y no hay tail risk → en ese caso cedemos paso al BTC_CYCLE_OVERRIDE.
   // El override está diseñado para comprar BTC en capitulación macro —
   // incluso con penalty bajo (CRISIS profunda), las señales de fondo
   // justifican una posición pequeña (25% Olympus solo en BTC).
-  const isBTC_OverrideCandidate = attackConfluence >= ATK.THRESHOLD && !(tailRiskActive && ksScale <= 0) && regime === "CRISIS";
+  const isBTC_OverrideCandidate = attackConfluence >= ATK.BTC_OVERRIDE_THRESHOLD && !(tailRiskActive && ksScale <= 0) && regime === "CRISIS";
   if (!isBTC_OverrideCandidate) {
     if (regimePenalty <= BLK.REGIME_PENALTY_MIN) return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
     if (regime === "CRISIS") return emptyOutput("BLOCK_CRISIS", `CRISIS (×${regimePenalty.toFixed(2)}).`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
@@ -590,7 +659,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // (posición 2) ya protege contra riesgos de cola extremos.
   if (volTargetMultiplier < BLK.VOL_TARGET_MIN && !isBTC_OverrideCandidate) return emptyOutput("BLOCK_VOL", `Vol Target ×${volTargetMultiplier.toFixed(2)}.`, attackSignals, attackConfluence, olympusAvailableCash, tacticalAvailableCash);
 
-  // ── 5. BTC CYCLE OVERRIDE (≥4/7 en CRISIS, sin tail risk) ────
+  // ── 5. BTC CYCLE OVERRIDE (umbral propio 4/8 en CRISIS) ──────
   // Excepción táctica: comprar BTC en capitulación macro si las
   // señales de fondo son fuertes Y no hay kill switch activo.
   // Se ejecuta DESPUÉS de todos los bloqueos para garantizar que
@@ -616,10 +685,13 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
     }
     const btcOnly = motorAllocations.filter(a => a.ticker === "BTC-EUR");
     const btcCash = olympusAvailableCash * ATK.BTC_OVERRIDE_FRACTION;
-    const allocs = buildAllocations(btcCash, btcOnly, "OVERRIDE:", new Set(), new Map(), false, totalPortfolioValueEUR ?? 0, bottomMultipliers);
+    const allocs = validateFinalAllocations(
+      buildAllocations(btcCash, btcOnly, "OVERRIDE:", cycleTopTickers, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers, cautionTickers),
+      btcCash, totalPortfolioValueEUR,    currentAllocMap, cycleTopTickers, bottomMultipliers, cautionTickers,
+    );
     const cost = allocs.reduce((s, a) => s + a.actualCost, 0);
     const totalLiq = olympusAvailableCash + tacticalAvailableCash;
-    return { action: "BTC_CYCLE_OVERRIDE", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0.25, totalLiquidityFraction: totalLiq > 0 ? cost / totalLiq : 0, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: `⚡ BTC OVERRIDE — ${attackConfluence}/8 señales. €${cost.toFixed(0)}.`, attackMode: true, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: 1, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
+    return { action: cost > 0 ? "BTC_CYCLE_OVERRIDE" : "WAIT", score: attackConfluence, buyFraction: olympusAvailableCash > 0 ? cost / olympusAvailableCash : 0, totalLiquidityFraction: totalLiq > 0 ? cost / totalLiq : 0, totalCashToInvest: cost, allocationByAsset: allocs, reasoning: cost > 0 ? `⚡ BTC OVERRIDE — ${attackConfluence}/8 señales. €${cost.toFixed(0)}.` : "BTC override sin asignación ejecutable tras validar límites individuales.", attackMode: cost > 0, attackConfluence, attackSignals, attackMultiplier: 1, attackTranche: cost > 0 ? 1 : 0, olympusInvested: cost, tacticalInvested: 0, tacticalAccumulated: tacticalAvailableCash, rebalanceFirst: false };
   }
 
   // ── MODO ATAQUE ─────────────────────────────────────────────────────
@@ -733,7 +805,7 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   // con target 10.5% recibía €1,591). Ahora siempre se respetan las posiciones
   // actuales. El ataque despliega más cash pero solo en activos con drift > 0.
   let allocs = totalCash > 0
-    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", allocationSkipSet, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers)
+    ? buildAllocations(totalCash, allocAssets, canAttack ? "ATAQUE:" : "DCA:", allocationSkipSet, currentAllocMap, cycleTopActive, totalPortfolioValueEUR ?? 0, bottomMultipliers, cautionTickers)
     : [];
 
   // FIX-MUTEX-V3 (Oct-2026): ELIMINADO el candado rebalanceo→DCA por SUGERENCIA.
@@ -833,16 +905,36 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
       // solo infraponderados reciben cash. Ajustar olympusInvested/tacticalInvested.
       const actualDeployed = allocs.reduce((s, a) => s + a.actualCost, 0);
       if (actualDeployed < totalCash && totalCash > 0) {
+        // En esta ruta (fallback) el tramo entero puede quedar bloqueado: el sizing
+        // SÍ se recalibra al cash realmente desplegable.
         const scale = actualDeployed / totalCash;
         olympusInvested = Math.round(olympusInvested * scale);
         tacticalInvested = actualDeployed - olympusInvested;
-        // tacticalInvested no puede ser negativo (ej: olympusInvested > actualDeployed)
         if (tacticalInvested < 0) { olympusInvested = actualDeployed; tacticalInvested = 0; }
         tacticalAccumulated = tacticalAvailableCash - tacticalInvested;
         totalCash = actualDeployed;
       }
     }
   }
+
+  // Validación final común: ninguna ruta de asignación (incluido el fallback)
+  // puede eludir NAV, pesos actuales, veto cycle-top ni target + bottom floor.
+  allocs = validateFinalAllocations(
+    allocs, totalCash, totalPortfolioValueEUR,    currentAllocMap, cycleTopTickers, bottomMultipliers, cautionTickers,
+  );
+  // SEMÁNTICA DEL REPARTO (Nov-2026), fijada tras la auditoría:
+  //   · olympusInvested / tacticalInvested / totalCashToInvest = DECISIÓN DE SIZING
+  //     del tramo. No se reescalan por el redondeo de participaciones: un plan de
+  //     €898,98 con 0 acciones comprables (todo en target) sigue siendo el plan.
+  //   · allocationByAsset.actualCost = ÓRDENES realmente ejecutables. El panel
+  //     muestra «plan X · ejecutable Y» y los guards de ejecución usan esa suma.
+  //   La única ruta que recalibra el sizing es el fallback (tramo bloqueado).
+  //   Si la validación final bloquea TODAS las compras (sin NAV/pesos, o todo en
+  //   target) el motor no tiene nada que ejecutar: totalCashToInvest = 0 aunque
+  //   el plan siga visible en olympusInvested/tacticalInvested.
+  const ordersTotal = allocs.reduce((s, a) => s + (a.skipped ? 0 : a.actualCost), 0);
+  totalCash = ordersTotal > 0.01 ? olympusInvested + tacticalInvested : 0;
+
 
   // FIX-PROBE-OFFBYONE: la acción refleja el TRAMO real — 3/8 es PROBE (25%, sin war chest).
   const action: DCAAction = canAttack
@@ -854,7 +946,10 @@ export function computeSmartDCA(input: SmartDCAInput): SmartDCAOutput {
   const reasoning = canAttack
     ? btcOnlyAttack
       ? `🔷 ATAQUE BTC-ONLY — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} solo BTC.`
-      : `🚀 ATAQUE — ${attackConfluence}/8 señales (${macroConfluence} macro). Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)}.`
+      // FIX-PLAN-VS-ORDERS (Nov-2026): el panel narraba el PLAN (Olympus + Táctico)
+      //   como si fueran órdenes. Con caps por drift el importe ejecutable puede ser
+      //   mucho menor (caso live: plan €6.527 → órdenes €1.000). Se muestran ambos.
+      : `🚀 ATAQUE — ${attackConfluence}/8 señales (${macroConfluence} macro). Plan Olympus €${olympusInvested.toFixed(0)} + Táctico €${tacticalInvested.toFixed(0)} · ejecutable €${totalCash.toFixed(0)}.`
     : `DCA normal Olympus €${olympusInvested.toFixed(0)}${recoveryMultiplier > 1 ? ` (recuperación ×${recoveryMultiplier.toFixed(1)} tras Kill Switch — quedan ${recoveryCyclesRemaining} ciclos)` : ''}${cycleTopActive ? ` (reducido al ${(NRM.OLYMPUS_FRACTION_CYCLE_TOP*100).toFixed(0)}% por Cycle Top activo — el rebalanceo mensual cubrirá el remanente del hueco)` : ''}. Táctico acumula €${tacticalAccumulated.toFixed(0)}.`;
 
   const M = ATK.MULTIPLIERS;

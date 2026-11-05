@@ -25,7 +25,19 @@
 //   NO usar ^IRX (T-Bill 3 meses ≈ 5.2%) — son instrumentos distintos.
 // ===============================================
 
-export const ENGINE_CONFIG_VERSION = "3.9.0"; // OLYMPUS CORE v1.0: perfil canónico de la auditoría (Phases 9-12) + overlay Trend Gate opcional
+export const ENGINE_CONFIG_VERSION = "3.10.0"; // 3.10.0: semántica plan/órdenes en DCA + tope CAUTION en target
+// ── CHANGELOG 3.10.0 (Nov-2026) — cambios de sizing aprobados ──────────────
+// 1. DCA · semántica plan/órdenes:
+//    olympusInvested / tacticalInvested / totalCashToInvest = PLAN del tramo; no se
+//    reescalan por el redondeo de participaciones. allocationByAsset.actualCost =
+//    órdenes ejecutables. totalCashToInvest = 0 si ningún activo es comprable.
+// 2. validateFinalAllocations: ticker ausente de currentAllocations = sin posición
+//    (peso 0). Solo bloquea si no hay mapa de cartera en absoluto o el NAV no es válido.
+// 3. Señal de techo CAUTION: retira el floor táctico (tope = target). No veta la compra
+//    por debajo del target; solo impide añadir sobre él.
+// 4. Vol Target SIN cambios (decisión explícita): la σ del core ex-BTC (~34%) es la
+//    volatilidad del libro 100% invertido; la σ_p del panel (17,6%) ya incluye la caja
+//    del 52%. Cambiar la base a la σ actual multiplicaría el riesgo real por ~2.
 
 // ── ERP TRIGGER ────────────────────────────────────────────────────────────
 // Reducción forzada de exposición cuando el Equity Risk Premium está comprimido.

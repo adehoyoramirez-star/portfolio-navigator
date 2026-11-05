@@ -10,7 +10,7 @@ import {
 
 // ---- Helpers ----
 function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
-  return {
+  const input: SmartDCAInput = {
     btcRsi: 50, btcZScore: 0, btcMomentum1m: 0,
     btcDominance: 50, mvrvRatio: 2.0,
     regime: "EXPANSION", regimePenalty: 0.80,
@@ -27,8 +27,11 @@ function baseInput(overrides: Partial<SmartDCAInput> = {}): SmartDCAInput {
       { name: "Gold", ticker: "PPFB.DE", finalAllocation: 0.15, price: 70 },
       { name: "Value", ticker: "VVSM.DE", finalAllocation: 0.10, price: 55 },
     ],
+    totalPortfolioValueEUR: 100_000,
     ...overrides,
   };
+  if (!overrides.currentAllocations) input.currentAllocations = input.motorAllocations.map(a => ({ ticker: a.ticker, name: a.name, currentWeight: 0 }));
+  return input;
 }
 
 const assets3 = [
@@ -181,6 +184,19 @@ describe("buildAllocations con cycleBottomSignals", () => {
     // Sin bottom signal: 300 cash prorrateado. Con cap: max 1400.
     expect(btc.cashToInvest).toBeLessThanOrEqual(1400);
   });
+
+  test("CAUTION retira el floor táctico: techo = target, no target+5pp", () => {
+    const assets = [{ ticker: "0P00000WLG.F", name: "MSCI World", finalAllocation: 0.30, price: 70 }];
+    const cur = new Map<string, number>([["0P00000WLG.F", 0.28]]);
+    const bm = new Map<string, number>([["0P00000WLG.F", 2.0]]); // EXTREME: floor +5pp
+    const base = buildAllocations(1000, assets, "DCA:", new Set(), cur, false, 10000, bm);
+    const caution = buildAllocations(1000, assets, "DCA:", new Set(), cur, false, 10000, bm, new Set(["0P00000WLG.F"]));
+    // Sin CAUTION: tope 35% (target + 5pp) ≈ 700 € → 9 acciones (699,9999/70 = 9,999…).
+    expect(base[0].actualCost).toBe(630);
+    // Con CAUTION: tope 30% (target) ≈ 200 € → 2 acciones (140 €).
+    expect(caution[0].actualCost).toBe(140);
+    expect(caution[0].reason).toContain("tope CAUTION");
+  });
 });
 
 // ── 5. RECOVERY CYCLES ───────────────────────────────────────────────
@@ -243,7 +259,12 @@ describe("cycleBottom en computeSmartDCA", () => {
   });
 
   test("sin cycleBottom -> DCA normal sin boost", () => {
-    const r = computeSmartDCA(baseInput({ cycleTopSignals: [{ ticker: "0P00000WLG.F", shouldTrim: true, zone: "CAUTION" }] }));
+    const r = computeSmartDCA(baseInput({
+      cycleTopSignals: [{ ticker: "0P00000WLG.F", shouldTrim: true, zone: "CAUTION" }],
+      // FIX-CYCLE-REBALANCED: cycleTopActive exige que el peso actual siga por encima
+      // del target post-trim. Con WLG a 0% el rebalanceo ya está hecho → 30% normal.
+      currentAllocations: [{ ticker: "0P00000WLG.F", name: "MSCI World", currentWeight: 0.35 }],
+    }));
     // cycleTopActive = true -> 15% fraction. No bottom boost -> 15%
     expect(r.olympusInvested).toBe(150);
   });

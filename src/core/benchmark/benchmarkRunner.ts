@@ -99,6 +99,12 @@ export interface BenchmarkStatus {
   benchmarkTotalReturn: number;
   /** Mensaje legible para el dashboard */
   message: string;
+  /**
+   * true si engineCagr3m/benchmarkCagr3m son CAGR anualizados (≥30 días reales).
+   * FIX-BENCH-LABEL (Nov-2026): con <30 días se devuelve retorno SIMPLE y el panel
+   * los rotulaba igualmente «CAGR (3m)» — etiqueta falsa sobre un acumulado.
+   */
+  isAnnualized?: boolean;
 }
 
 // ── Helpers de persistencia ─────────────────────────────────────────
@@ -298,6 +304,7 @@ export function getBenchmarkStatus(): BenchmarkStatus {
       lastUpdated: returnRecords[returnRecords.length - 1].timestamp,
       engineTotalReturn: simpleEngine,
       benchmarkTotalReturn: simpleBenchmark,
+      isAnnualized: false,
       message: `Recolectando datos del benchmark... ${windowSize}/${MIN_DATA_POINTS} snapshots. Retorno acumulado: engine ${(simpleEngine * 100).toFixed(2)}% · benchmark ${(simpleBenchmark * 100).toFixed(2)}%.`,
     };
   }
@@ -400,6 +407,7 @@ export function getBenchmarkStatus(): BenchmarkStatus {
     lastUpdated: returnRecords[returnRecords.length - 1].timestamp,
     engineTotalReturn: isFinite(engineTotalReturn) ? engineTotalReturn : 0,
     benchmarkTotalReturn: isFinite(benchmarkTotalReturn) ? benchmarkTotalReturn : 0,
+    isAnnualized: hasEnoughData,
     message,
   };
 }

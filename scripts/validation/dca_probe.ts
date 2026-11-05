@@ -82,7 +82,8 @@ for (const mode of ['NORMAL', 'ATAQUE'] as const) {
 console.log('  FÓRMULA VERIFICADA (smartDCA.ts:373-441):');
 console.log('    effDrift = max(drift, getBottomDriftFloor(mul))');
 console.log('    maxCap   = effDrift × TPV');
-console.log('    total    = min(cashAsignado, maxCap × bottomMul)   ← el multiplicador DOBLA el cap');
+console.log('    total    = min(cashAsignado × bottomMul, (target + floor − pesoActual) × TPV)');
+console.log('               ← el cap NO se multiplica por bottomMul (FASE 3B · CORRECCIÓN 4)');
 console.log(`    → con mul=2.0 el cap real es ${pct(0.05)} × 2.0 = ${pct(0.10)} de TPV, no ${pct(0.05)}.\n`);
 
 console.log('='.repeat(104));
