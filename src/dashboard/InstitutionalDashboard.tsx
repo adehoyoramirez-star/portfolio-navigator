@@ -5528,7 +5528,7 @@ soxRsiWeekly,
             }}>
               {/* FIX-MULT-DISPLAY (Nov-2026): el ×N del tramo era decorativo —
                   buildAllocations no lo recibe. El sizing lo fijan bottomMultipliers. */}
-              {smartDCAResult?.attackConfluence ?? 0}/8 señales · Tramo {smartDCAResult?.attackTranche || "—"}
+              {smartDCAResult?.attackConfluence ?? 0}/7 señales · Tramo {smartDCAResult?.attackTranche || "—"}
               {smartDCAResult?.action === "BTC_CYCLE_OVERRIDE" && " · ⚡ OVERRIDE"}
             </div>
           </div>
@@ -5537,15 +5537,15 @@ soxRsiWeekly,
             <span style={{ color: "#60a5fa" }}>⚡ Motor B (BTC Ciclo): </span>
             {engineResult?.regime === "CRISIS"
               ? ((smartDCAResult?.attackConfluence ?? 0) >= 4
-                ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult?.attackConfluence ?? 0}/8 señales superan umbral de override</span>
-                : <span>Necesita {Math.max(0, 4 - (smartDCAResult?.attackConfluence ?? 0))} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS si ≥4/8)</span>)
+                ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult?.attackConfluence ?? 0}/7 señales superan umbral de override</span>
+                : <span>Necesita {Math.max(0, 4 - (smartDCAResult?.attackConfluence ?? 0))} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS si ≥4/7)</span>)
               : <span style={{ color: "#9ca3af" }}>
-                  EN ESPERA — {smartDCAResult?.attackConfluence ?? 0}/8 señales (umbral 4/8), pero el override solo actúa en CRISIS; régimen actual {engineResult?.regime ?? "—"}
+                  EN ESPERA — {smartDCAResult?.attackConfluence ?? 0}/7 señales (umbral 4/7), pero el override solo actúa en CRISIS; régimen actual {engineResult?.regime ?? "—"}
                 </span>
             }
             <br/>
             <span style={{ color: "#9ca3af", fontSize: "0.68rem" }}>
-              ⓘ Las 8 señales cubren ciclo BTC/macro y suelos por activo. Con régimen no-CRISIS y 4/8 activas → candidato a ataque según las puertas macro vigentes.
+              ⓘ Las 7 señales cubren ciclo BTC/on-chain, macro y suelos por activo. Con régimen no-CRISIS y 4/7 activas → candidato a ataque según las puertas macro vigentes.
               El ataque de cartera completa requiere ≥2 señales macro; con menos, el ataque queda BTC-only.
             </span>
           </div>

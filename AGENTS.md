@@ -144,7 +144,7 @@ la referencia canónica. Cualquier propuesta de nueva señal debe consultarse aq
 | `creditSpread` | `globalStress` (CONTINUO desde Oct-2026: piecewise 2→6% → 0→2 pts, sin cliffs en 3.0/5.0 — FIX-CLIFF-CREDIT-01) | También en `crisis.ts` (×2×0.4 en score) y `CEWS_CONFIG` (warning 2.0/danger 3.5). El antiguo escalón +1 en >3 causó el evento "225 URNU" (10 pb volteaban CONTRACTION→CRISIS). |
 | `m2Growth` | `detectRegimeProbabilistic` (3er input), `CEWS_CONFIG` (warning: 2.0, danger: 0.0) | Dinero AMPLIO. NO confundir con CB Liquidity (dinero BASE). |
 | `cbLiquidityGrowth` | `globalStress` (+2 si < 0%, +3 si < -5%) | Dinero BASE (QE/QT directo). Defensa aprobada Jul-2026. Ver sección CB Liquidity vs M2. |
-| `vix` | `globalStress` (+1 si > 18, +2 si > 25), `crisis.ts` (+1 si > 20) | Misma variable, distinto mecanismo: régimen vs stop-loss puntual. ✅ |
+| `vix` | `globalStress` (+1 si > 18, +2 si > 25), `crisis.ts` (+1 si > 20), `CEWS volClustering` (nivel 22/35 + tendencia persistente de 2 lecturas) | Misma variable, distinto mecanismo: régimen vs stop-loss puntual vs índice de alerta temprana. Las tres son de NIVEL; las de tendencia quedan fuera del ataque (ver rechazadas). ✅ |
 | `wtiOil` *(Brent real)* — score | `globalStress` (CONTINUO desde Oct-2026: 0→3 pts en $75→$115 — FIX-CLIFF-STRESS-02) | El multiplicador ×0.85/0.70/0.50 ahora TAMBIÉN es continuo (1.00→0.50 en $75→$130). Etiqueta wtiShock = display only. El +2 cliff en $95 causó el CRISIS espurio de Oct-2026 con VIX 16. |
 | `cbLiquidityGrowth` — score | `globalStress` (CONTINUO desde Oct-2026: 0→3 pts en +1%→−5%, valor 0.5 en 0.00 — FIX-CLIFF-STRESS-02) | El +2 cliff en 0⁻ volteaba EXPANSION↔CRISIS con 2bp de revisión WALCL. Defensa base-vs-amplio vs M2: ver sección CB Liquidity vs M2. |
 | `move` — score | `globalStress` (CONTINUO desde Oct-2026: 0→1 en 110→140, 1→2 en 140→180) | El +1 cliff en 110 era el tercer sostenedor del CRISIS espurio de Oct-2026. |
@@ -157,6 +157,7 @@ la referencia canónica. Cualquier propuesta de nueva señal debe consultarse aq
 |---|---|---|
 | `dxyTrend` | Gate 3 Absolute Trend | Doble conteo con globalStress (mismos umbrales, mismo efecto). |
 | `yieldSpread` | cycleTopDetector | Ya en crisis.ts + CEWS. Mismo dato, misma dirección. |
+| `vix` (tendencia) | «VIX Normalizándose» en `detectBottomConfluence` (ataque de cartera) — **eliminada Nov-2026** (FIX-VIX-LAYER) | VIX ya puntúa en `globalStress`, `crisis.ts` y `CEWS volClustering`: la señal del ataque era la CUARTA capa. Tampoco pasaba el criterio 2 (su guard `CLEAR` = <2 lecturas >22 en 12 solapa con el `>18` de globalStress), y su efecto ya lo cubre «CEWS Recuperándose» (nivel agregado). Junto a «Régimen Mejorando» era lo que inflaba la confluencia a 4/8 sin transición macro verificada. Con ella fuera, el pool macro son 2 señales y el ataque a cartera completa exige ambas. |
 
 ### CB Liquidity vs M2 — precedente de la regla institucional (Jul-2026)
 

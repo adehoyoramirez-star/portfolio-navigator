@@ -20,7 +20,8 @@ import { computeRebalanceSuggestions, type RebalanceAsset } from "../core/portfo
 import type { CEWSOutput, CEWSLevel } from "../core/macro/crisisEarlyWarning";
 
 // Stub CEWS tipado para activar señales macro sin construir el objeto completo.
-// (smartDCA solo lee cewsOutput.level y cewsOutput.signals.volClustering)
+// (smartDCA solo lee cewsOutput.level — volClustering dejó de alimentar el ataque
+//  al retirarse «VIX Normalizándose», FIX-VIX-LAYER Nov-2026)
 function cewsStub(level: CEWSLevel, volTrend: "IMPROVING" | "STABLE" | "DETERIORATING"): CEWSOutput {
   return {
     level,

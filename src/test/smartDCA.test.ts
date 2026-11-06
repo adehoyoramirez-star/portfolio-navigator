@@ -317,22 +317,19 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
 
   test("4 señales (2 macro + 2 on-chain) → ATTACK_ENTRY, cartera completa", () => {
     // Necesitamos exactamente 4 señales con ≥2 macro.
-    // Usamos: Regimen (macro) + VIX (macro) + BTC.D + MVRV = 4
-    // VIX requiere cews con volClustering.trend=IMPROVING y level=CLEAR
-    // CEWS no debe activarse (necesita previous ALERT/WARNING + current WATCH/CLEAR)
-    // Con cewsPreviousLevel=CLEAR y cewsOutput.level=CLEAR → NO activa
+    // Usamos: Regimen (macro) + CEWS (macro) + BTC.D + MVRV = 4
+    // FIX-VIX-LAYER (Nov-2026): el 2º macro era «VIX Normalizándose», retirada por la
+    // regla de capas. Ahora el 2º macro es CEWS recuperándose (ALERT→CLEAR), que es
+    // el nivel agregado del mismo fenómeno.
     const result = computeSmartDCA(baseInput({
       btcDominance: 60,
       mvrvRatio: 1.4,
       regime: "CONTRACTION",
       regimePenalty: 0.70,
-      cewsOutput: cewsRecovering(),  // VIX se activa por volClustering IMPROVING
-      cewsPreviousLevel: "CLEAR",     // CEWS NO se activa (CLEAR→WATCH/CLEAR, pero level=CLEAR no es WATCH/CLEAR... espera)
+      cewsOutput: cewsRecovering(),  // level CLEAR
+      cewsPreviousLevel: "ALERT",     // ALERT→CLEAR → CEWS recuperándose ✅
     }));
-    // cewsRecovering().level = "CLEAR", cewsPreviousLevel = "CLEAR"
-    // CEWS requiere previous ALERT/WARNING → NO activa
-    // VIX requiere trend=IMPROVING y nivel CLEAR ✅
-    // Activas: BTC.D (1) + MVRV (2) + Regimen (3 macro) + VIX (4 macro) = 4 total, 2 macro
+    // Activas: BTC.D (1) + MVRV (2) + Regimen (3 macro) + CEWS (4 macro) = 4 total, 2 macro
 
     expect(result.attackConfluence).toBe(4);
     expect(result.attackMode).toBe(true);
@@ -348,7 +345,7 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
     expect(result.tacticalInvested).toBeCloseTo(140.25, 2);
   });
 
-  test("7 señales con 3 macro → ATTACK_MAX, cartera completa", () => {
+  test("6 señales con 2 macro → ATTACK_MAX, cartera completa", () => {
     const result = computeSmartDCA(baseInput({
       btcRsi: 30,
       btcZScore: -2.0,
@@ -360,10 +357,10 @@ describe("Full Portfolio Attack (≥4 señales, ≥2 macro)", () => {
       cewsOutput: cewsRecovering(),
       cewsPreviousLevel: "ALERT",
     }));
-    // Activas: BTC oversold (1) + momentum (2) + BTC.D (3) + MVRV (4) + Regimen (5 macro) + CEWS (6 macro) + VIX (7 macro)
-    // = 7 total, 3 macro → full portfolio attack, ATTACK_MAX (≥6)
+    // Activas: BTC oversold (1) + momentum (2) + BTC.D (3) + MVRV (4) + Regimen (5 macro) + CEWS (6 macro)
+    // = 6 total, 2 macro → full portfolio attack, ATTACK_MAX (≥6)
 
-    expect(result.attackConfluence).toBe(7);
+    expect(result.attackConfluence).toBe(6);
     expect(result.action).toBe("ATTACK_MAX");
     expect(result.attackMode).toBe(true);
     // Múltiples activos
@@ -657,7 +654,7 @@ describe("Edge Cases", () => {
     expect(result.olympusInvested).toBe(300);
   });
 
-  test("Attack con 7 señales y 3 macro → ATTACK_MAX full cartera", () => {
+  test("Attack con 6 señales y 2 macro → ATTACK_MAX full cartera", () => {
     const result = computeSmartDCA(baseInput({
       btcRsi: 30,
       btcZScore: -2.0,
@@ -669,9 +666,9 @@ describe("Edge Cases", () => {
       cewsOutput: cewsRecovering(),
       cewsPreviousLevel: "ALERT",
     }));
-    // 7 señales: oversold + momentum + BTC.D + MVRV + Regimen + CEWS + VIX = 7
+    // 6 señales: oversold + momentum + BTC.D + MVRV + Regimen + CEWS = 6
 
-    expect(result.attackConfluence).toBe(7);
+    expect(result.attackConfluence).toBe(6);
     expect(result.action).toBe("ATTACK_MAX");
     expect(result.allocationByAsset.length).toBeGreaterThan(1);
     // Attack multiplier: Tramo 3 (6-7/7) = 3.0
@@ -729,9 +726,9 @@ describe("Edge Cases", () => {
 
     expect(result.attackMode).toBe(true);
     expect(result.olympusInvested).toBe(0);
-    // Tramo STRONG (5/8): 66% táctico × regimeAttackScale 0.85 (penalty 0.70+0.15)
-    expect(result.tacticalInvested).toBeCloseTo(561, 2);
-    expect(result.totalCashToInvest).toBeCloseTo(561, 2);
+    // Tramo ENTRY (4/7): 33% táctico × regimeAttackScale 0.85 (penalty 0.70+0.15)
+    expect(result.tacticalInvested).toBeCloseTo(280.5, 2);
+    expect(result.totalCashToInvest).toBeCloseTo(280.5, 2);
   });
 
   // FIX-TEST-RECALIBRACION (Jul-2026): verificar que el fallback recalibra

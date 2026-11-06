@@ -83,13 +83,13 @@ describe("detectBottomConfluence", () => {
 
   test("mvrvZScore primario sobre ratio bruto", () => {
     const r = detectBottomConfluence(baseInput({ mvrvZScore: 0.5, mvrvRatio: 3.5 }));
-    const mvrv = r[6]; // "MVRV Zona de Valor"
+    const mvrv = r[5]; // "MVRV Zona de Valor" (FIX-VIX-LAYER: era r[6] con 8 señales)
     expect(mvrv.active).toBe(true);
   });
 
   test("mvrvZScore=2.0 -> NO activo (Z > 1.0 threshold)", () => {
     const r = detectBottomConfluence(baseInput({ mvrvZScore: 2.0 }));
-    const mvrv = r[6];
+    const mvrv = r[5];
     expect(mvrv.active).toBe(false);
   });
 
@@ -99,25 +99,25 @@ describe("detectBottomConfluence", () => {
     expect(reg.active).toBe(true);
   });
 
-  test("cycleBottomSignals EXTREME -> senal #8 activa", () => {
+  test("cycleBottomSignals EXTREME -> senal #7 activa", () => {
     const r = detectBottomConfluence(baseInput({
       cycleBottomSignals: [{ ticker: "BTC-EUR", attackMultiplier: 2.0, shouldAccumulate: true, zone: "EXTREME" }],
     }));
-    const bottom = r[7]; // "Cycle Bottom"
+    const bottom = r[6]; // "Cycle Bottom" (FIX-VIX-LAYER: era r[7] con 8 señales)
     expect(bottom.active).toBe(true);
     expect(bottom.description).toContain("EXTREME");
   });
 
-  test("cycleBottomSignals VALUE only -> NO activa #8", () => {
+  test("cycleBottomSignals VALUE only -> NO activa #7", () => {
     const r = detectBottomConfluence(baseInput({
       cycleBottomSignals: [{ ticker: "PPFB.DE", attackMultiplier: 1.25, shouldAccumulate: true, zone: "VALUE" }],
     }));
-    const bottom = r[7];
+    const bottom = r[6];
     expect(bottom.active).toBe(false);
     expect(bottom.description).toContain("VALUE");
   });
 
-  test("todas las senales juntas -> 8/8", () => {
+  test("todas las senales juntas -> 7/7", () => {
     const r = detectBottomConfluence(baseInput({
       btcRsi: 30, btcZScore: -2.0, btcMomentum1m: -0.15,
       btcDominance: 60, mvrvRatio: 1.2,
@@ -135,7 +135,8 @@ describe("detectBottomConfluence", () => {
       cewsPreviousLevel: "ALERT" as any,
       cycleBottomSignals: [{ ticker: "BTC-EUR", attackMultiplier: 2.0, shouldAccumulate: true, zone: "EXTREME" }],
     }));
-    expect(r.filter((s: any) => s.active).length).toBe(8);
+    expect(r.filter((s: any) => s.active).length).toBe(7);
+    expect(r).toHaveLength(7);
   });
 });
 
