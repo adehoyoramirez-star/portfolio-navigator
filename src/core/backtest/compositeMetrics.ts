@@ -25,6 +25,10 @@ export interface CompositeInput {
   btcPrices: number[];          // serie completa de precios BTC-EUR
   olympusPct: number;           // 0-100 (% asignado a Olympus, el resto a BTC)
   initialCapital: number;
+  // FIX-AUDIT-ANNUALIZATION: observaciones reales por año de la serie. Default
+  // 365 para no alterar el comportamiento previo (UI/tests); los backtests deben
+  // pasar la densidad real (251 en el dataset largo) igual que el sleeve.
+  periodsPerYear?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -85,6 +89,7 @@ const TRADING_DAYS = 365;
 
 export function computeCompositeMetrics(input: CompositeInput): CompositeMetrics {
   const { olympusDailyValues, btcPrices, olympusPct, initialCapital } = input;
+  const dpy = input.periodsPerYear ?? TRADING_DAYS;
   const btcPct = btcSatPct(olympusPct);
   const olyPct = olyPctFraction(olympusPct);
 
@@ -150,16 +155,16 @@ export function computeCompositeMetrics(input: CompositeInput): CompositeMetrics
     if (dd < maxDD) maxDD = dd;
   }
 
-  const years = compositeRets.length / TRADING_DAYS;
+  const years = compositeRets.length / dpy;
   const totalRet = value / initialCapital - 1;
   const cagr = years > 0 && totalRet > -1 ? Math.pow(1 + totalRet, 1 / years) - 1 : 0;
   const mean = compositeRets.reduce((a, b) => a + b, 0) / compositeRets.length;
-  const vol = Math.sqrt(compositeRets.reduce((s, r) => s + (r - mean) ** 2, 0) / compositeRets.length * TRADING_DAYS);
-  const rfDaily = RISK_FREE_RATE / TRADING_DAYS;
+  const vol = Math.sqrt(compositeRets.reduce((s, r) => s + (r - mean) ** 2, 0) / compositeRets.length * dpy);
+  const rfDaily = RISK_FREE_RATE / dpy;
   const excess = compositeRets.map(r => r - rfDaily);
   const exMean = excess.reduce((a, b) => a + b, 0) / excess.length;
-  const exStd = Math.sqrt(excess.reduce((s, r) => s + (r - exMean) ** 2, 0) / excess.length * TRADING_DAYS);
-  const sharpe = exStd > 0 ? (exMean * TRADING_DAYS) / exStd : 0;
+  const exStd = Math.sqrt(excess.reduce((s, r) => s + (r - exMean) ** 2, 0) / excess.length * dpy);
+  const sharpe = exStd > 0 ? (exMean * dpy) / exStd : 0;
   const calmar = maxDD < 0 ? cagr / Math.abs(maxDD) : 0;
 
   return { cagr, sharpe, maxDrawdown: maxDD, calmar, volatility: vol, finalValue: value, totalReturn: totalRet };
@@ -194,6 +199,7 @@ export interface CoupledBacktestInput extends Omit<BacktestInput, "initialCapita
   olympusPct: number;   // 0-100 (% asignado a Olympus, el resto a BTC)
   initialCapital: number;
   btcPrices: number[];  // serie completa de precios BTC-EUR (misma ventana que closesHistory)
+  periodsPerYear?: number; // FIX-AUDIT-ANNUALIZATION: densidad real (sleeve y compuesto)
 }
 
 export function runBacktestCoupled(input: CoupledBacktestInput): {
@@ -210,6 +216,7 @@ export function runBacktestCoupled(input: CoupledBacktestInput): {
     transactionCostBps = 15,
     useDynamicCovariance = true,
     macroHistory,
+    periodsPerYear,
   } = input;
 
   // PASADA 1: baseline (kill switch por DD del sleeve motor)
@@ -221,6 +228,7 @@ export function runBacktestCoupled(input: CoupledBacktestInput): {
     initialCapital,
     transactionCostBps,
     useDynamicCovariance,
+    periodsPerYear,
   });
   const recLen = base.dailyRecords.length;
   const olyVals = base.dailyRecords.map((r) => r.portfolioValue);
@@ -263,6 +271,7 @@ export function runBacktestCoupled(input: CoupledBacktestInput): {
     initialCapital,
     transactionCostBps,
     useDynamicCovariance,
+    periodsPerYear,
     portfolioDrawdownOverride: (_pv, _peak, dayIndex) => ddSeries[dayIndex] ?? 0,
   });
   const cVals = coupled.dailyRecords.map((r) => r.portfolioValue);
@@ -271,6 +280,7 @@ export function runBacktestCoupled(input: CoupledBacktestInput): {
     btcPrices,
     olympusPct,
     initialCapital,
+    periodsPerYear,
   });
   return { composite, backtest: coupled };
 }
