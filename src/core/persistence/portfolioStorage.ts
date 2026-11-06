@@ -166,6 +166,34 @@ export function loadRegimeHistory(): RegimeHistoryEntry[] {
   } catch { return []; }
 }
 
+// FIX-REGIME-TRANSITION-ORDER (Nov-2026): régimen inmediatamente ANTERIOR al actual.
+//   El historial es NEWEST-FIRST (saveRegimeEntry hace unshift). El consumidor del
+//   dashboard lo recorría desde el final del array, es decir del más antiguo al más
+//   nuevo, y devolvía el primer régimen distinto del actual: el MÁS ANTIGUO de los
+//   90 guardados, no el anterior. Con [CONTRACTION, CRISIS, …, EXPANSION] comparaba
+//   el CONTRACTION de hoy contra CRISIS o EXPANSION de hace meses y concluía
+//   "Régimen Mejorando" en una transición que en realidad fue EXPANSION→CONTRACTION
+//   (deterioro). Aquí se recorre en orden cronológico inverso, que es el del array.
+//   ALL_CASH se normaliza a CRISIS (es como lo etiqueta el motor de régimen).
+const normalizeRegime = (r: string): string => (r === "ALL_CASH" ? "CRISIS" : r);
+
+export function findPreviousRegime(
+  history: RegimeHistoryEntry[],
+  current: string,
+): string | undefined {
+  const cur = normalizeRegime(current);
+  for (const entry of history) {
+    const regime = normalizeRegime(entry.regime);
+    if (regime !== cur) return regime;
+  }
+  // Historial no vacío pero todo el régimen conocido es el actual → el anterior
+  // conocido ES el mismo régimen: persistencia, no mejora. Devolver `cur` lo
+  // hace explícito y evita que el consumidor caiga al fallback legacy por nivel
+  // (que se encendía con CONTRACTION ×0.78 sin ninguna transición).
+  // undefined queda reservado a "no hay historial", único caso con fallback.
+  return history.length > 0 ? cur : undefined;
+}
+
 // ==================== SNAPSHOTS DIARIOS ====================
 // FIX-HISTORY-01: Sistema que da al motor memoria temporal real.
 //

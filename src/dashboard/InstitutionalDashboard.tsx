@@ -88,7 +88,7 @@ import {
 import {
   savePortfolio, loadPortfolio,
   saveMacro, loadMacro,
-  saveRegimeEntry, loadRegimeHistory,
+  saveRegimeEntry, loadRegimeHistory, findPreviousRegime,
   loadDailySnapshots,
   clearAll, RegimeHistoryEntry,
 } from "@/core/persistence/portfolioStorage";
@@ -1539,20 +1539,26 @@ soxRsiWeekly,
       portfolioDrawdown: portfolioDrawdown ?? 0,
       volTargetMultiplier: engineResult.volTargetMultiplier,
     });
+    // FIX-REGIME-HISTORY-QUIET (Nov-2026): el registro del cambio de régimen vivía
+    //   DENTRO de `if (newAlerts.length > 0)`, y generateAlerts devuelve [] cuando el
+    //   Kill Switch es 0 → las transiciones ocurridas en periodos tranquilos no se
+    //   guardaban NUNCA. Sin entrada previa, "Régimen Mejorando" caía al fallback
+    //   legacy por NIVEL y se encendía sin transición verificable. El log de régimen
+    //   es estado del motor, no una alerta: se escribe siempre.
+    if (currentRegime !== previousRegimeRef.current && previousRegimeRef.current !== null) {
+      const entry: RegimeHistoryEntry = {
+        timestamp: new Date().toISOString(),
+        regime: currentRegime,
+        regimePenalty: engineResult.masterRegime.regimePenalty,
+        confidence: engineResult.meta.confidence,
+        vix,
+      };
+      saveRegimeEntry(entry);
+      setRegimeHistory(loadRegimeHistory());
+    }
+
     if (newAlerts.length > 0) {
       setActiveAlerts(prev => [...newAlerts, ...prev].slice(0, 10));
-
-      if (currentRegime !== previousRegimeRef.current && previousRegimeRef.current !== null) {
-        const entry: RegimeHistoryEntry = {
-          timestamp: new Date().toISOString(),
-          regime: currentRegime,
-          regimePenalty: engineResult.masterRegime.regimePenalty,
-          confidence: engineResult.meta.confidence,
-          vix,
-        };
-        saveRegimeEntry(entry);
-        setRegimeHistory(loadRegimeHistory());
-      }
 
       const totalValue = portfolio.assets.reduce((s, a) => s + a.price * a.shares, 0);
 
@@ -1907,14 +1913,15 @@ soxRsiWeekly,
   // FIX-REGIME-TRANSITION (Phase 13): régimen previo real desde regimeHistory —
   //   permite a la señal "Régimen Mejorando" del attack medir una TRANSICIÓN
   //   (CRISIS→CONTRACTION, CONTRACTION→EXPANSION) en vez del nivel persistente.
-  const previousRegime = useMemo(() => {
-    const current = engineResult ? (engineResult.regime === "ALL_CASH" ? "CRISIS" : engineResult.regime) : undefined;
-    if (!current) return undefined;
-    for (let i = regimeHistory.length - 1; i >= 0; i--) {
-      if (regimeHistory[i].regime !== current) return regimeHistory[i].regime;
-    }
-    return undefined;
-  }, [engineResult?.regime, regimeHistory]);
+  // FIX-REGIME-TRANSITION-ORDER (Nov-2026): el recorrido manual del array iba del
+  //   final al principio sobre un historial NEWEST-FIRST → devolvía el régimen más
+  //   ANTIGUO distinto del actual. Un EXPANSION→CONTRACTION se comparaba contra un
+  //   CRISIS viejo y se publicaba como "mejora confirmada". Ahora delega en
+  //   findPreviousRegime, que recorre en el orden real del array.
+  const previousRegime = useMemo(
+    () => (engineResult?.regime ? findPreviousRegime(regimeHistory, engineResult.regime) : undefined),
+    [engineResult?.regime, regimeHistory]
+  );
 
   const smartDCAResult = useMemo(() => {
     // FIX-DCA-01: no emitir señal de compra si el engine todavía no tiene datos.
@@ -5528,9 +5535,13 @@ soxRsiWeekly,
           {/* Indicador de progreso hacia BTC_CYCLE_OVERRIDE */}
           <div style={{ marginBottom: "0.75rem", padding: "0.5rem 0.75rem", borderRadius: 8, backgroundColor: "#0f172a", border: "1px solid #1e3a5f", fontSize: "0.75rem", color: "#6b7280" }}>
             <span style={{ color: "#60a5fa" }}>⚡ Motor B (BTC Ciclo): </span>
-            {(smartDCAResult?.attackConfluence ?? 0) >= 4
-              ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult?.attackConfluence ?? 0}/8 señales superan umbral de override</span>
-              : <span>Necesita {Math.max(0, 4 - (smartDCAResult?.attackConfluence ?? 0))} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS si ≥4/8)</span>
+            {engineResult?.regime === "CRISIS"
+              ? ((smartDCAResult?.attackConfluence ?? 0) >= 4
+                ? <span style={{ color: "#22c55e", fontWeight: "bold" }}>ACTIVO — {smartDCAResult?.attackConfluence ?? 0}/8 señales superan umbral de override</span>
+                : <span>Necesita {Math.max(0, 4 - (smartDCAResult?.attackConfluence ?? 0))} señal(es) más para BTC_CYCLE_OVERRIDE (actúa en CRISIS si ≥4/8)</span>)
+              : <span style={{ color: "#9ca3af" }}>
+                  EN ESPERA — {smartDCAResult?.attackConfluence ?? 0}/8 señales (umbral 4/8), pero el override solo actúa en CRISIS; régimen actual {engineResult?.regime ?? "—"}
+                </span>
             }
             <br/>
             <span style={{ color: "#9ca3af", fontSize: "0.68rem" }}>
